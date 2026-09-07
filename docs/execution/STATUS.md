@@ -1,6 +1,14 @@
 # AnnotAgent Label Pipeline Alpha Status
 
-Last updated: 2026-09-05 CST
+Last updated: 2026-09-07 CST
+
+## Web interface languages — 2026-09-07
+
+- Added persistent English/Simplified Chinese selection in the page header, browser-language
+  defaults and same-origin tab synchronization without remounting unsaved forms.
+- Added a shared translation catalog covering the main Project, Automation, Run, Review, Export,
+  Registry and lifecycle interfaces; raw technical data and untranslated diagnostics keep their source text.
+- TypeScript/build, 67 unit tests and 48 Chromium scenarios passed. See [language support](../I18N.md).
 
 ## Small-Object Localization Recovery M7 — 2026-09-05
 

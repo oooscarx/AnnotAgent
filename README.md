@@ -33,6 +33,9 @@ cargo run -p annotagent -- serve --workspace ./workspace --open
 
 In the browser:
 
+Use **Language / 语言** in the page header to switch between English and **简体中文**. The choice
+is saved in your browser and survives restarts. See [interface languages](docs/I18N.md).
+
 1. Open **Projects** and choose **New project**. The four-step wizard asks what to annotate, where the data is, which speed/accuracy priority matters, and which registered model connection to use. Internal IDs and generated YAML stay under Advanced.
 2. In **Data**, add workspace-local images. In **Labels**, define annotation semantics such as classification or bounding box labels.
 3. In **Automation**, preview a registry-bounded recommendation, apply it to the editable Draft, and adjust the readable Recipe or its node settings. The full typed graph remains in Expert mode.

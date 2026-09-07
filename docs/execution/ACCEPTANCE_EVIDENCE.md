@@ -1,5 +1,15 @@
 # AnnotAgent Acceptance Evidence
 
+## Web interface languages — 2026-09-07
+
+- TypeScript check and production build passed; Vitest: 14 files, 67 tests passed.
+- Chromium E2E: all 48 tests passed, including language reload persistence, primary browser-locale
+  detection, mobile Settings navigation, and cross-tab switching with unsaved form retention.
+- Inspected the Chinese Home and current RoboCup Pipeline management pages against the local server.
+- Original screenshot modifications were restored byte-for-byte; tests used isolated workspaces
+  and local fixture Providers, with no paid model call or real Project mutation.
+- Translation boundaries and extension instructions: [I18N.md](../I18N.md).
+
 ## Small-Object Localization Recovery M7 — 2026-09-05
 
 ### Current Project evidence

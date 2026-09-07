@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { annotationColor, annotationVisual } from "../annotationVisuals";
 import type { AnnotationVisualContext } from "../annotationVisuals";
@@ -179,20 +180,20 @@ export function AnnotationCanvas({
   return (
     <div className="canvas-shell">
       <div className="canvas-tools">
-        <span>Canvas</span>
-        <div className="canvas-zoom-controls" role="group" aria-label="Canvas zoom">
-          <button aria-label="Zoom out" title="Zoom out" onClick={() => applyZoom(zoom - 0.1)}>−</button>
+        <span>{t("Canvas")}</span>
+        <div className="canvas-zoom-controls" role="group" aria-label={t("Canvas zoom")}>
+          <button aria-label={t("Zoom out")} title={t("Zoom out")} onClick={() => applyZoom(zoom - 0.1)}>−</button>
           <strong aria-live="polite">{Math.round(zoom * 100)}%</strong>
-          <button aria-label="Zoom in" title="Zoom in" onClick={() => applyZoom(zoom + 0.1)}>+</button>
+          <button aria-label={t("Zoom in")} title={t("Zoom in")} onClick={() => applyZoom(zoom + 0.1)}>+</button>
         </div>
-        <button className="canvas-fit-button" aria-label="Fit image" title="Fit image" onClick={() => { setZoom(1); setPan([0, 0]); }}>Fit</button>
+        <button className="canvas-fit-button" aria-label={t("Fit image")} title={t("Fit image")} onClick={() => { setZoom(1); setPan([0, 0]); }}>{t("Fit")}</button>
       </div>
-      <ul className="canvas-annotation-list" aria-label="Annotations on canvas">
+      <ul className="canvas-annotation-list" aria-label={t("Annotations on canvas")}>
         {annotations.map((annotation) => {
           const visual = annotationVisual(annotation, visualContext);
           return <li key={annotation.id}><button aria-pressed={annotation.id === selectedId} onClick={() => onSelect(annotation.id)}><i aria-hidden="true" style={{ borderColor: annotationColor(visual.slot) }} /><span><strong>{annotation.label ?? annotation.task_id}</strong><small>{annotation.value.kind.replaceAll("_", " ")} · {Math.round((annotation.confidence ?? 0) * 100)}%</small></span></button></li>;
         })}
-        {annotations.length === 0 && <li className="canvas-annotation-empty">No annotations selected</li>}
+        {annotations.length === 0 && <li className="canvas-annotation-empty">{t("No annotations selected")}</li>}
       </ul>
       {imageUrl && (
         <img
@@ -244,9 +245,7 @@ export function AnnotationCanvas({
           {imageUrl ? (
             <image href={imageUrl} width={width} height={height} />
           ) : (
-            <text x={width / 2} y={height / 2} textAnchor="middle" fill="var(--aa-text-muted)" fontSize="22">
-              Select an image or review item
-            </text>
+            <text x={width / 2} y={height / 2} textAnchor="middle" fill="var(--aa-text-muted)" fontSize="22">{t("Select an image or review item")}</text>
           )}
           {annotations.map((annotation) => (
             <AnnotationShape
@@ -292,7 +291,7 @@ export function AnnotationCanvas({
           ))}
         </g>
       </svg>
-      <p className="canvas-hint">{editingHint}</p>
+      <p className="canvas-hint">{t(editingHint)}</p>
     </div>
   );
 }

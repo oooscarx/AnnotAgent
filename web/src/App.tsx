@@ -1,4 +1,6 @@
+import { t, localeTag, useLocale } from "./i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { LanguageSelector } from "./components/LanguageSelector";
 import { ApiRequestError, api, subscribeEvents } from "./api";
 import { AnnotationCanvas } from "./components/AnnotationCanvas";
 import { ImproveAutomationPanel } from "./components/GeometrySafetyPanel";
@@ -242,6 +244,7 @@ function pipelineDiffRows(diff: PipelineDraftDiff, proposal: WorkflowDraft) {
 }
 
 export function App() {
+  useLocale();
   const [route, setRoute] = useState(() =>
     parseWorkspaceRoute(
       window.location.pathname,
@@ -537,9 +540,7 @@ export function App() {
 
   return (
     <div className="app-shell">
-      <a className="skip-link" href="#main-content">
-        Skip to workspace
-      </a>
+      <a className="skip-link" href="#main-content">{t("Skip to workspace")}</a>
       <aside className="sidebar aa-dark">
         <a
           className="brand"
@@ -562,7 +563,7 @@ export function App() {
             aria-hidden="true"
           />
         </a>
-        <nav aria-label="Primary navigation">
+        <nav aria-label={t("Primary navigation")}>
           {PRIMARY_NAVIGATION.map((item) => (
             <Nav
               key={item.page}
@@ -583,14 +584,14 @@ export function App() {
               href={item.href}
               onClick={() => navigate(item.href)}
             >
-              {item.label}
+              {t(item.label)}
             </Nav>
           ))}
         </nav>
         <div className="sidebar-foot">
-          <span className={`live-dot ${connection}`} aria-hidden="true" /> SSE {connection}
+          <span className={`live-dot ${connection}`} aria-hidden="true" /> SSE {t(connection)}
           <small>
-            {events.at(-1)?.kind.replaceAll("_", " ") ?? "waiting for events"}
+            {events.at(-1)?.kind.replaceAll("_", " ") ?? t("waiting for events")}
           </small>
         </div>
       </aside>
@@ -602,9 +603,10 @@ export function App() {
       >
         <header className="topbar">
           <div>
-            <span className="product-tagline">{PRODUCT_TAGLINE}</span>
-            <h1 ref={pageTitleRef} tabIndex={-1}>{PAGE_TITLES[page]}</h1>
+            <span className="product-tagline">{t(PRODUCT_TAGLINE)}</span>
+            <h1 ref={pageTitleRef} tabIndex={-1}>{t(PAGE_TITLES[page])}</h1>
           </div>
+          <LanguageSelector />
           {routeProjectId && <div className="project-switch">
             {activeSkills(selectedProject).map((skill) => {
               const profile = visualProfilesForSkills([skill.id])[0];
@@ -617,16 +619,14 @@ export function App() {
                 </span>
               );
             })}
-            <span aria-hidden="true">Project context</span>
-            <label className="sr-only" htmlFor="active-project">
-              Active project
-            </label>
+            <span aria-hidden="true">{t("Project context")}</span>
+            <label className="sr-only" htmlFor="active-project">{t("Active project")}</label>
             <select
               id="active-project"
               value={projectId}
               onChange={(event) => switchProject(event.target.value)}
             >
-              <option value="">{NO_PROJECT_MESSAGE}</option>
+              <option value="">{t(NO_PROJECT_MESSAGE)}</option>
               {projects.map((project) => (
                 <option key={project.id} value={project.id}>
                   {project.name}
@@ -638,19 +638,17 @@ export function App() {
         {visibleError && (
           <div className="error-banner" role="alert">
             <span className="error-message">
-              <strong>AnnotAgent couldn’t complete that action.</strong>
+              <strong>{t("AnnotAgent couldn’t complete that action.")}</strong>
               <span>{readableErrorMessage(visibleError)}</span>
               <small>Saved workspace data remains on the server. Dismiss this message, correct the indicated input if needed, then retry the same action on this page.</small>
             </span>
             <span className="error-actions">
-              <button onClick={retryCurrentView}>Retry this view</button>
-              <button aria-label="Dismiss error" onClick={() => setError("")}>
-                Dismiss
-              </button>
+              <button onClick={retryCurrentView}>{t("Retry this view")}</button>
+              <button aria-label={t("Dismiss error")} onClick={() => setError("")}>{t("Dismiss")}</button>
             </span>
           </div>
         )}
-        {!loaded && <div className="loading-banner" role="status">Loading workspace state…</div>}
+        {!loaded && <div className="loading-banner" role="status">{t("Loading workspace state…")}</div>}
         {loaded && route.kind === "home" && (
           <Dashboard
             projects={projects}
@@ -863,8 +861,8 @@ function ProjectBreadcrumb({
   onOpenProject?: () => void;
 }) {
   return (
-    <nav className="breadcrumb" aria-label="Breadcrumb">
-      <button className="text-button" onClick={onOpenProjects}>Projects</button>
+    <nav className="breadcrumb" aria-label={t("Breadcrumb")}>
+      <button className="text-button" onClick={onOpenProjects}>{t("Projects")}</button>
       {project && (
         <>
           <span aria-hidden="true">/</span>
@@ -872,7 +870,7 @@ function ProjectBreadcrumb({
         </>
       )}
       <span aria-hidden="true">/</span>
-      <strong>{current}</strong>
+      <strong>{t(current)}</strong>
     </nav>
   );
 }
@@ -944,9 +942,9 @@ function BuildWorkspace({
       <ProjectBreadcrumb project={project} current="Build" onOpenProjects={onOpenProjects} onOpenProject={onOpenProject} />
       <BuildNavigation step={step} guidance={summary?.guidance} onNavigate={onNavigate} />
       {!project ? (
-        <Empty title="Project unavailable" detail="Return to Projects and choose a valid Project." />
+        <Empty title={t("Project unavailable")} detail={t("Return to Projects and choose a valid Project.")} />
       ) : !summary ? (
-        <div className="loading-banner" role="status">Loading Build readiness…</div>
+        <div className="loading-banner" role="status">{t("Loading Build readiness…")}</div>
       ) : !allowed ? (
         <BuildBlocker guidance={summary.guidance} onNavigate={onNavigate} />
       ) : step === "data" ? (
@@ -974,10 +972,10 @@ function BuildBlocker({
   onNavigate: (step: BuildStep) => void;
 }) {
   const destination = guidance.primary_action.destination?.match(/\/build\/(data|labels|pipeline|test)$/)?.[1] as BuildStep | undefined;
-  return <section className="build-blocker" aria-label="Build step blocked">
+  return <section className="build-blocker" aria-label={t("Build step blocked")}>
     <span aria-hidden="true">!</span>
-    <div><span className="eyebrow">Complete the current step first</span><h2>{guidance.headline}</h2><p>{guidance.explanation}</p></div>
-    {destination && <button className="primary" onClick={() => onNavigate(destination)}>{guidance.primary_action.label}</button>}
+    <div><span className="eyebrow">{t("Complete the current step first")}</span><h2>{t(guidance.headline)}</h2><p>{t(guidance.explanation)}</p></div>
+    {destination && <button className="primary" onClick={() => onNavigate(destination)}>{t(guidance.primary_action.label)}</button>}
   </section>;
 }
 
@@ -996,16 +994,16 @@ function BuildFooter({
 }) {
   const name = (step: BuildStep) => step === "pipeline" ? "Automation" : step === "test" ? "Test & Activate" : step[0].toUpperCase() + step.slice(1);
   return <footer className="build-footer">
-    <span>Changes in this step are saved to the Project as you complete them.</span>
+    <span>{t("Changes in this step are saved to the Project as you complete them.")}</span>
     <div className="button-row">
-      {previous && <button onClick={() => onNavigate(previous)}>← {name(previous)}</button>}
+      {previous && <button onClick={() => onNavigate(previous)}>← {t(name(previous))}</button>}
       {next && <button
         className={nextEnabled && nextPrimary ? "primary" : ""}
         aria-disabled={!nextEnabled}
-        aria-label={!nextEnabled ? `Continue to ${name(next)} unavailable: complete this step first` : undefined}
-        title={!nextEnabled ? "Complete this step before continuing" : undefined}
+        aria-label={!nextEnabled ? `Continue to ${t(name(next))} unavailable: complete this step first` : undefined}
+        title={!nextEnabled ? t("Complete this step before continuing") : undefined}
         onClick={() => nextEnabled && onNavigate(next)}
-      >Continue to {name(next)} →</button>}
+      >{t("Continue to")}{" "}{t(name(next))} →</button>}
     </div>
   </footer>;
 }
@@ -1020,7 +1018,7 @@ function BuildNavigation({
   onNavigate: (step: BuildStep) => void;
 }) {
   return (
-    <nav className="section-tabs build-steps" aria-label="Build steps">
+    <nav className="section-tabs build-steps" aria-label={t("Build steps")}>
       {BUILD_SEQUENCE.map((item, index) => {
         const journey = guidance && journeyForBuildStep(guidance, item);
         const complete = journey?.state === "complete" || (item === "test" && guidance?.journey.find((entry) => entry.id === "activation")?.state === "complete");
@@ -1031,12 +1029,12 @@ function BuildNavigation({
           className={`${step === item ? "active" : ""} ${complete ? "complete" : ""}`.trim()}
           aria-current={step === item ? "step" : undefined}
           aria-disabled={!allowed}
-          aria-label={!allowed ? `${item === "pipeline" ? "Automation" : item === "test" ? "Test & Activate" : item[0].toUpperCase() + item.slice(1)} unavailable until the earlier Build step is complete` : undefined}
-          title={!allowed ? "Complete the earlier Build step first" : journey?.detail}
+          aria-label={!allowed ? `${item === "pipeline" ? "Automation" : item === "test" ? "Test & Activate" : t(item[0].toUpperCase() + item.slice(1))} unavailable until the earlier Build step is complete` : undefined}
+          title={!allowed ? t("Complete the earlier Build step first") : journey?.detail}
           onClick={() => allowed && onNavigate(item)}
         >
           <span>{complete ? "✓" : index + 1}</span>
-          {item === "pipeline" ? "Automation" : item === "test" ? "Test & Activate" : item[0].toUpperCase() + item.slice(1)}
+          {item === "pipeline" ? t("Automation") : item === "test" ? t("Test & Activate") : t(item[0].toUpperCase() + item.slice(1))}
         </button>
       )})}
     </nav>
@@ -1088,39 +1086,37 @@ function BuildData({
   };
   return (
     <>
-      <div className="build-step-heading"><span className="eyebrow">Step 1 · Data</span><h2>Add images to your Project</h2><p>Import PNG or JPEG files already reachable by this local AnnotAgent server. It validates every image, skips matching content, and keeps the Project copy under its dataset root.</p></div>
+      <div className="build-step-heading"><span className="eyebrow">{t("Step 1 · Data")}</span><h2>{t("Add images to your Project")}</h2><p>Import PNG or JPEG files already reachable by this local AnnotAgent server. It validates every image, skips matching content, and keeps the Project copy under its dataset root.</p></div>
       <div className="metrics-grid build-metrics">
-        <Metric label="Project images" value={images.length} detail="Ready for sample testing" />
-        <Metric label="Latest import" value={result?.imported ?? 0} detail={`${result?.discovered ?? 0} supported files found`} />
-        <Metric label="Needs attention" value={(result?.duplicates ?? 0) + (result?.corrupt.length ?? 0)} detail={`${result?.duplicates ?? 0} duplicate · ${result?.corrupt.length ?? 0} corrupt`} />
+        <Metric label={t("Project images")} value={images.length} detail={t("Ready for sample testing")} />
+        <Metric label={t("Latest import")} value={result?.imported ?? 0} detail={`${result?.discovered ?? 0} supported files found`} />
+        <Metric label={t("Needs attention")} value={(result?.duplicates ?? 0) + (result?.corrupt.length ?? 0)} detail={`${result?.duplicates ?? 0} duplicate · ${result?.corrupt.length ?? 0} corrupt`} />
       </div>
-      <Panel title="Import from a local path" eyebrow="Advanced server-local source">
-        <label>
-          Server-local image file or folder path
-          <input value={source} onChange={(event) => setSource(event.target.value)} placeholder="/workspace/dataset/images" />
+      <Panel title={t("Import from a local path")} eyebrow={t("Advanced server-local source")}>
+        <label>{t("Server-local image file or folder path")}<input value={source} onChange={(event) => setSource(event.target.value)} placeholder="/workspace/dataset/images" />
         </label>
         <div className="button-row">
           <button className={imagesLoaded && images.length === 0 ? "primary" : ""} disabled={busy || !source.trim()} onClick={importImages}>
-            {busy ? "Importing…" : "Add images"}
+            {busy ? t("Importing…") : t("Add images")}
           </button>
           <small>This is not a browser file picker. The path is read by the local AnnotAgent process. Supported: PNG and JPEG · recursive discovery · 100 MP decode safety limit.</small>
         </div>
         {result && <div className="import-outcome" aria-live="polite">
-          <strong>{result.imported} images added</strong>
-          <span>{result.discovered} discovered · {result.duplicates} duplicates skipped · {result.unsupported_files} unsupported files ignored</span>
-          <small>Source: {result.source}</small>
-          {result.corrupt.length > 0 && <details><summary>{result.corrupt.length} corrupt images were not imported</summary><ul>{result.corrupt.map((issue) => <li key={`${issue.name}:${issue.message}`}><strong>{issue.name}</strong> — {issue.message}</li>)}</ul></details>}
+          <strong>{result.imported}{" "}{t("images added")}</strong>
+          <span>{result.discovered}{" "}{t("discovered ·")}{" "}{result.duplicates}{" "}{t("duplicates skipped ·")}{" "}{result.unsupported_files}{" "}{t("unsupported files ignored")}</span>
+          <small>{t("Source:")}{" "}{result.source}</small>
+          {result.corrupt.length > 0 && <details><summary>{result.corrupt.length}{" "}{t("corrupt images were not imported")}</summary><ul>{result.corrupt.map((issue) => <li key={`${issue.name}:${issue.message}`}><strong>{issue.name}</strong> — {issue.message}</li>)}</ul></details>}
         </div>}
       </Panel>
-      <Panel title="Project images" eyebrow={`${images.length} registered · ${project.dataset.root}`}>
+      <Panel title={t("Project images")} eyebrow={`${images.length} registered · ${project.dataset.root}`}>
         {images.length ? <div className="build-image-list">
           {images.map((image) => <article key={image.image_id}>
             <img src={image.url} alt="" />
             <span><strong>{image.name}</strong><small>{image.path} · {(image.size_bytes / 1024).toFixed(1)} KB</small></span>
-            <button className="danger-text" disabled={busy} onClick={() => removeImage(image)} aria-label={`Remove ${image.name} from Project`}>Remove</button>
+            <button className="danger-text" disabled={busy} onClick={() => removeImage(image)} aria-label={`Remove ${image.name} from Project`}>{t("Remove")}</button>
           </article>)}
-        </div> : <Empty title="No images yet" detail="Add a supported image or folder to complete the Data step." />}
-        <details className="advanced-settings"><summary>Dataset discovery settings</summary><Fact label="Discovery" value={project.dataset.recursive ? "Recursive" : "Top level"} /><TagGroup title="Include patterns" values={project.dataset.include} /></details>
+        </div> : <Empty title={t("No images yet")} detail={t("Add a supported image or folder to complete the Data step.")} />}
+        <details className="advanced-settings"><summary>{t("Dataset discovery settings")}</summary><Fact label={t("Discovery")} value={project.dataset.recursive ? "Recursive" : "Top level"} /><TagGroup title={t("Include patterns")} values={project.dataset.include} /></details>
       </Panel>
     </>
   );
@@ -1181,39 +1177,39 @@ function BuildLabels({
   };
   return (
     <>
-      <div className="build-step-heading"><span className="eyebrow">Step 2 · Labels</span><h2>What do you want to annotate?</h2><p>Labels describe the meaning and output you want. Models and execution order belong to the next Automation step.</p></div>
+      <div className="build-step-heading"><span className="eyebrow">{t("Step 2 · Labels")}</span><h2>{t("What do you want to annotate?")}</h2><p>Labels describe the meaning and output you want. Models and execution order belong to the next Automation step.</p></div>
       <div className="build-label-layout">
-      <Panel title="Add a Label group" eyebrow="Annotation meaning">
+      <Panel title={t("Add a Label group")} eyebrow={t("Annotation meaning")}>
         <div className="label-group-form">
-        <label>What should this group be called?<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Football" /></label>
-        <label>What kind of annotation?<select value={kind} onChange={(event) => setKind(event.target.value)}>
-          <option value="classification">Classification</option>
-          <option value="bounding_box">Bounding box</option>
-          <option value="keypoints">Keypoints</option>
-          <option value="polygon">Polygon</option>
-          <option value="semantic_mask">Semantic mask</option>
+        <label>{t("What should this group be called?")}<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Football" /></label>
+        <label>{t("What kind of annotation?")}<select value={kind} onChange={(event) => setKind(event.target.value)}>
+          <option value="classification">{t("Classification")}</option>
+          <option value="bounding_box">{t("Bounding box")}</option>
+          <option value="keypoints">{t("Keypoints")}</option>
+          <option value="polygon">{t("Polygon")}</option>
+          <option value="semantic_mask">{t("Semantic mask")}</option>
         </select></label>
-        <label>Labels to use<input value={labels} onChange={(event) => setLabels(event.target.value)} placeholder="football, training ball" /></label>
-        <div className="label-output-preview"><span>Output</span><strong>{outputName(kind)}</strong></div>
-        <details className="advanced-settings"><summary>Attributes and internal settings</summary>
+        <label>{t("Labels to use")}<input value={labels} onChange={(event) => setLabels(event.target.value)} placeholder="football, training ball" /></label>
+        <div className="label-output-preview"><span>{t("Output")}</span><strong>{outputName(kind)}</strong></div>
+        <details className="advanced-settings"><summary>{t("Attributes and internal settings")}</summary>
           <div className="form-grid">
-            <label>Optional attribute<input value={attributeName} onChange={(event) => setAttributeName(event.target.value)} placeholder="occluded" /></label>
-            <label>Attribute type<select value={attributeKind} onChange={(event) => setAttributeKind(event.target.value as typeof attributeKind)}>
-              <option value="string">Text</option><option value="boolean">Boolean</option><option value="number">Number</option><option value="enum">Choice</option>
+            <label>{t("Optional attribute")}<input value={attributeName} onChange={(event) => setAttributeName(event.target.value)} placeholder="occluded" /></label>
+            <label>{t("Attribute type")}<select value={attributeKind} onChange={(event) => setAttributeKind(event.target.value as typeof attributeKind)}>
+              <option value="string">{t("Text")}</option><option value="boolean">{t("Boolean")}</option><option value="number">{t("Number")}</option><option value="enum">{t("Choice")}</option>
             </select></label>
           </div>
-          <small>The internal task ID is generated from the display name and validated by Core. Raw Schema fields remain an Advanced concern.</small>
+          <small>{t("The internal task ID is generated from the display name and validated by Core. Raw Schema fields remain an Advanced concern.")}</small>
         </details>
-        <button className={project.annotation_schema.length === 0 ? "primary form-submit-action" : "form-submit-action"} disabled={busy || !displayName.trim() || !labels.trim()} onClick={create}>{busy ? "Adding…" : "Add Label group"}</button>
+        <button className={project.annotation_schema.length === 0 ? "primary form-submit-action" : "form-submit-action"} disabled={busy || !displayName.trim() || !labels.trim()} onClick={create}>{busy ? t("Adding…") : t("Add Label group")}</button>
         </div>
       </Panel>
-      <Panel title="Current Labels" eyebrow={`${project.task_count} groups`}>
+      <Panel title={t("Current Labels")} eyebrow={`${project.task_count} groups`}>
         <div className="label-definition-list">
           {project.annotation_schema.map((task) => (
-            <article key={task.id}><span><strong>{kindName(task.kind)}</strong><small>{task.display_name}</small></span><dl><div><dt>Labels</dt><dd>{task.labels.join(", ") || "None"}</dd></div><div><dt>Output</dt><dd>{outputName(task.kind)}</dd></div></dl><details><summary>Advanced internal ID</summary><code>{task.id}</code></details></article>
+            <article key={task.id}><span><strong>{kindName(task.kind)}</strong><small>{task.display_name}</small></span><dl><div><dt>{t("Labels")}</dt><dd>{task.labels.join(", ") || t("None")}</dd></div><div><dt>{t("Output")}</dt><dd>{outputName(task.kind)}</dd></div></dl><details><summary>{t("Advanced internal ID")}</summary><code>{task.id}</code></details></article>
           ))}
         </div>
-        {project.annotation_schema.length === 0 && <Empty title="No Labels defined" detail="Create the first semantic Label group. Models and execution order belong in Pipeline." />}
+        {project.annotation_schema.length === 0 && <Empty title={t("No Labels defined")} detail="Create the first semantic Label group. Models and execution order belong in Pipeline." />}
       </Panel>
       </div>
     </>
@@ -1422,79 +1418,79 @@ function BuildTestPublish({
   useEffect(() => {
     setSampleCount((current) => Math.min(current, Math.max(1, sampleLimit)));
   }, [sampleLimit]);
-  const draftControls = <div className="sample-test-controls" aria-label="Sample Test controls">
-    <label className="sample-test-field"><span>Automation Draft</span><select aria-label="Current Draft" value={draftId} onChange={(event) => chooseDraft(event.target.value)}><option value="">Choose Current Draft…</option>{drafts.filter((draft) => draft.status !== "archived").map((draft) => <option key={draft.id} value={draft.id}>{draft.name} · {draft.status === "published" ? "Activated" : draft.status.replaceAll("_", " ")}</option>)}</select></label>
-    <label className="sample-test-field"><span>Sample images</span><input type="number" min="1" max={Math.max(1, sampleLimit)} value={sampleCount} disabled={sampleLimit === 0} aria-describedby="sample-image-limit" onChange={(event) => setSampleCount(Math.max(1, Math.min(Math.max(1, sampleLimit), Number(event.target.value))))} /><small id="sample-image-limit">{sampleLimit ? `Up to ${sampleLimit} available Project image${sampleLimit === 1 ? "" : "s"}` : "No Project images are available"}</small></label>
-    <button className={!report && sampleLimit > 0 ? "primary" : ""} onClick={test} disabled={busy || reportLoading || !draftId || isActivated || sampleLimit === 0}>{busy ? "Testing…" : isActivated ? "Already activated" : sampleLimit === 0 ? "Add images first" : report ? "Test again" : "Test samples"}</button>
-    {sampleLimit === 0 && <button onClick={() => onNavigate("data")}>Open Data step</button>}
+  const draftControls = <div className="sample-test-controls" aria-label={t("Sample Test controls")}>
+    <label className="sample-test-field"><span>{t("Automation Draft")}</span><select aria-label={t("Current Draft")} value={draftId} onChange={(event) => chooseDraft(event.target.value)}><option value="">{t("Choose Current Draft…")}</option>{drafts.filter((draft) => draft.status !== "archived").map((draft) => <option key={draft.id} value={draft.id}>{draft.name} · {draft.status === "published" ? t("Activated") : draft.status.replaceAll("_", " ")}</option>)}</select></label>
+    <label className="sample-test-field"><span>{t("Sample images")}</span><input type="number" min="1" max={Math.max(1, sampleLimit)} value={sampleCount} disabled={sampleLimit === 0} aria-describedby="sample-image-limit" onChange={(event) => setSampleCount(Math.max(1, Math.min(Math.max(1, sampleLimit), Number(event.target.value))))} /><small id="sample-image-limit">{sampleLimit ? t("Up to {count} available Project images", { count: sampleLimit }) : t("No Project images are available")}</small></label>
+    <button className={!report && sampleLimit > 0 ? "primary" : ""} onClick={test} disabled={busy || reportLoading || !draftId || isActivated || sampleLimit === 0}>{busy ? t("Testing…") : isActivated ? t("Already activated") : sampleLimit === 0 ? t("Add images first") : report ? t("Test again") : t("Test samples")}</button>
+    {sampleLimit === 0 && <button onClick={() => onNavigate("data")}>{t("Open Data step")}</button>}
   </div>;
   return (
     <>
       <div className="toolbar-panel sample-test-toolbar">
-        <div className="sample-test-toolbar-copy"><span className="eyebrow">Step 4 · Test & Activate</span><h2>Test samples, then activate automation</h2><p>A Sample Test executes up to 10 available Project images in a sandbox and never writes formal annotations. Activation publishes the tested Draft as an immutable Version.</p></div>
-        <button className="sample-test-back" onClick={() => onNavigate("pipeline", draftId)}>← Edit Automation</button>
+        <div className="sample-test-toolbar-copy"><span className="eyebrow">{t("Step 4 · Test & Activate")}</span><h2>{t("Test samples, then activate automation")}</h2><p>A Sample Test executes up to 10 available Project images in a sandbox and never writes formal annotations. Activation publishes the tested Draft as an immutable Version.</p></div>
+        <button className="sample-test-back" onClick={() => onNavigate("pipeline", draftId)}>{t("← Edit Automation")}</button>
         {draftControls}
       </div>
-      {!report && <ol className="activation-lifecycle" aria-label="Automation activation lifecycle">
-        <li className={draftId ? "complete" : "current"}><span>1</span><strong>{draftId ? "Unpublished changes" : "Choose a Draft"}</strong></li>
-        <li className={draftId ? "current" : ""}><span>2</span><strong>Check setup</strong></li>
-        <li><span>3</span><strong>Test samples</strong></li>
-        <li><span>4</span><strong>Activate automation</strong></li>
+      {!report && <ol className="activation-lifecycle" aria-label={t("Automation activation lifecycle")}>
+        <li className={draftId ? "complete" : "current"}><span>1</span><strong>{draftId ? t("Unpublished changes") : t("Choose a Draft")}</strong></li>
+        <li className={draftId ? "current" : ""}><span>2</span><strong>{t("Check setup")}</strong></li>
+        <li><span>3</span><strong>{t("Test samples")}</strong></li>
+        <li><span>4</span><strong>{t("Activate automation")}</strong></li>
       </ol>}
       {summary ? (
         <>
-          <section className={`sample-test-hero ${report.validation.valid ? "ready" : "blocked"}`} aria-label="Dry Run result summary">
+          <section className={`sample-test-hero ${report.validation.valid ? "ready" : "blocked"}`} aria-label={t("Dry Run result summary")}>
             <div className="sample-test-hero-copy">
-              <span className="eyebrow">{isActivated ? "Activated evidence" : report.validation.valid ? "Ready to activate" : "Automation needs changes"}</span>
-              <h2>Sample test complete</h2>
+              <span className="eyebrow">{isActivated ? t("Activated evidence") : report.validation.valid ? t("Ready to activate") : t("Automation needs changes")}</span>
+              <h2>{t("Sample test complete")}</h2>
               <p>AnnotAgent tested real Project images in a sandbox. No formal Annotations were written.</p>
             </div>
             <dl className="sample-outcome-metrics">
-              <div><dt>Images</dt><dd>{summary.image_count}</dd><small>tested</small></div>
-              <div><dt>Results found</dt><dd>{resultCount}</dd><small>{summary.auto_accepted_count} ready to accept</small></div>
-              <div><dt>Needs attention</dt><dd>{needsAttention}</dd><small>{summary.needs_review_count} review · {summary.failed_count} failed</small></div>
+              <div><dt>{t("Images")}</dt><dd>{summary.image_count}</dd><small>{t("tested")}</small></div>
+              <div><dt>{t("Results found")}</dt><dd>{resultCount}</dd><small>{summary.auto_accepted_count}{" "}{t("ready to accept")}</small></div>
+              <div><dt>{t("Needs attention")}</dt><dd>{needsAttention}</dd><small>{summary.needs_review_count}{" "}{t("review ·")}{" "}{summary.failed_count}{" "}{t("failed")}</small></div>
             </dl>
             <div className="sample-test-context">
-              <span>{summary.empty_count} no-target result{summary.empty_count === 1 ? "" : "s"}</span>
-              <span>{summary.fallback_count} fallback{summary.fallback_count === 1 ? "" : "s"}</span>
-              <span>{summary.cache_hit_count} cache hit{summary.cache_hit_count === 1 ? "" : "s"}</span>
+              <span>{summary.empty_count}{" "}{t("no-target result")}{summary.empty_count === 1 ? "" : t("s")}</span>
+              <span>{summary.fallback_count}{" "}{t("fallback")}{summary.fallback_count === 1 ? "" : t("s")}</span>
+              <span>{summary.cache_hit_count}{" "}{t("cache hit")}{summary.cache_hit_count === 1 ? "" : t("s")}</span>
               <span>{formatSampleDuration(summary.duration_ms)}</span>
-              <span>{hasUnknownRemoteModelCost ? "Sample cost unknown" : `$${summary.usage.estimated_cost} sample cost`}</span>
-              {restoredAt && <span title={new Date(restoredAt).toLocaleString()}>Restored saved Sample Test</span>}
+              <span>{hasUnknownRemoteModelCost ? t("Sample cost unknown") : `$${summary.usage.estimated_cost} sample cost`}</span>
+              {restoredAt && <span title={new Date(restoredAt).toLocaleString(localeTag())}>{t("Restored saved Sample Test")}</span>}
             </div>
-            {isActivated ? <div className="activation-success" role="status"><span><strong>Automation activated</strong><small>This saved Sample Test belongs to the immutable active Version.</small></span><button className="primary" disabled={!publishedWorkflow || startingRun || Boolean(project.active_batch || project.active_run)} onClick={startFullRun}>{startingRun ? "Starting…" : project.active_batch || project.active_run ? "Run already active" : "Start full Run"}</button></div> : <>
+            {isActivated ? <div className="activation-success" role="status"><span><strong>{t("Automation activated")}</strong><small>{t("This saved Sample Test belongs to the immutable active Version.")}</small></span><button className="primary" disabled={!publishedWorkflow || startingRun || Boolean(project.active_batch || project.active_run)} onClick={startFullRun}>{startingRun ? t("Starting…") : project.active_batch || project.active_run ? t("Run already active") : t("Start full Run")}</button></div> : <>
               <div className="button-row">
-                {!report.validation.valid || summary.failed_count > 0 ? <button className="primary" onClick={() => onNavigate("pipeline", draftId)}>Fix automation</button> : summary.needs_review_count > 0 ? <button className="primary" onClick={() => document.getElementById("uncertain-results")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Inspect uncertain samples</button> : <button className="primary" onClick={publish} disabled={busy || Boolean(activated)}>{busy ? "Activating…" : "Activate automation"}</button>}
-                {report.validation.valid && summary.needs_review_count > 0 && <button onClick={publish} disabled={busy || Boolean(activated)}>{busy ? "Activating…" : "Activate with Review gate"}</button>}
+                {!report.validation.valid || summary.failed_count > 0 ? <button className="primary" onClick={() => onNavigate("pipeline", draftId)}>{t("Fix automation")}</button> : summary.needs_review_count > 0 ? <button className="primary" onClick={() => document.getElementById("uncertain-results")?.scrollIntoView({ behavior: "smooth", block: "start" })}>{t("Inspect uncertain samples")}</button> : <button className="primary" onClick={publish} disabled={busy || Boolean(activated)}>{busy ? t("Activating…") : t("Activate automation")}</button>}
+                {report.validation.valid && summary.needs_review_count > 0 && <button onClick={publish} disabled={busy || Boolean(activated)}>{busy ? t("Activating…") : t("Activate with Review gate")}</button>}
               </div>
-              {activated && <div className="activation-success" role="status"><span><strong>Automation activated</strong><small>Immutable Version v{activated.version} is ready for the full Dataset Run.</small></span><button className="primary" disabled={startingRun || Boolean(project.active_batch || project.active_run)} onClick={startFullRun}>{startingRun ? "Starting…" : project.active_batch || project.active_run ? "Run already active" : "Start full Run"}</button></div>}
+              {activated && <div className="activation-success" role="status"><span><strong>{t("Automation activated")}</strong><small>{t("Immutable Version v")}{activated.version}{" "}{t("is ready for the full Dataset Run.")}</small></span><button className="primary" disabled={startingRun || Boolean(project.active_batch || project.active_run)} onClick={startFullRun}>{startingRun ? t("Starting…") : project.active_batch || project.active_run ? t("Run already active") : t("Start full Run")}</button></div>}
             </>}
           </section>
-          {fullRun && <section className="full-run-estimate" aria-label="Full Run Estimate">
-            <div><span className="eyebrow">Full Run Estimate</span><h2>{fullRun.image_count} Project images</h2><p>Projected from this Sample Test; actual usage can vary with image content and Provider behavior.</p></div>
-            <dl><div><dt>Estimated cost</dt><dd>{hasUnknownRemoteModelCost ? "Unknown" : `$${fullRun.estimated_cost}`}</dd></div><div><dt>Estimated duration</dt><dd>{formatSampleDuration(fullRun.duration_ms)}</dd></div><div><dt>Review workload</dt><dd>{fullRun.review_count_min === fullRun.review_count_max ? fullRun.review_count_min : `${fullRun.review_count_min}–${fullRun.review_count_max}`} results</dd></div></dl>
+          {fullRun && <section className="full-run-estimate" aria-label={t("Full Run Estimate")}>
+            <div><span className="eyebrow">{t("Full Run Estimate")}</span><h2>{fullRun.image_count}{" "}{t("Project images")}</h2><p>{t("Projected from this Sample Test; actual usage can vary with image content and Provider behavior.")}</p></div>
+            <dl><div><dt>{t("Estimated cost")}</dt><dd>{hasUnknownRemoteModelCost ? t("Unknown") : `$${fullRun.estimated_cost}`}</dd></div><div><dt>{t("Estimated duration")}</dt><dd>{formatSampleDuration(fullRun.duration_ms)}</dd></div><div><dt>{t("Review workload")}</dt><dd>{fullRun.review_count_min === fullRun.review_count_max ? fullRun.review_count_min : `${fullRun.review_count_min}–${fullRun.review_count_max}`}{" "}{t("results")}</dd></div></dl>
           </section>}
           <SampleExecutionSummary
             report={report}
             sampleTestId={activeSampleTest?.draftId === draftId ? activeSampleTest.id : undefined}
           />
           <section className="sample-results-section" aria-labelledby="sample-results-title">
-            <div className="section-heading"><div><span className="eyebrow">Results Gallery</span><h2 id="sample-results-title">What the automation found</h2></div><small>{summary.image_count} sandbox image{summary.image_count === 1 ? "" : "s"}</small></div>
+            <div className="section-heading"><div><span className="eyebrow">{t("Results Gallery")}</span><h2 id="sample-results-title">{t("What the automation found")}</h2></div><small>{summary.image_count} sandbox image{summary.image_count === 1 ? "" : t("s")}</small></div>
             <div className="sample-results-gallery">{report.samples.map((sample) => <SampleResultCard key={`${sample.image_index}-${sample.image_name}`} sample={sample} image={images.find((item) => item.index === sample.image_index)} onInspect={() => setInspectedSampleIndex(sample.image_index)} />)}</div>
           </section>
           <section className="sample-results-section uncertain-results" id="uncertain-results" aria-labelledby="uncertain-results-title">
-            <div className="section-heading"><div><span className="eyebrow">Uncertain Results</span><h2 id="uncertain-results-title">What needs a human decision</h2></div><small>{uncertainSamples.length} image{uncertainSamples.length === 1 ? "" : "s"}</small></div>
-            {uncertainSamples.length ? <div className="sample-results-gallery">{uncertainSamples.map((sample) => <SampleResultCard key={`uncertain-${sample.image_index}-${sample.image_name}`} sample={sample} image={images.find((item) => item.index === sample.image_index)} compact onInspect={() => setInspectedSampleIndex(sample.image_index)} />)}</div> : <div className="positive-empty"><strong>No uncertain results in this sample</strong><span>The configured confidence and Review gates accepted every result.</span></div>}
+            <div className="section-heading"><div><span className="eyebrow">{t("Uncertain Results")}</span><h2 id="uncertain-results-title">{t("What needs a human decision")}</h2></div><small>{uncertainSamples.length}{" "}{t("image")}{uncertainSamples.length === 1 ? "" : t("s")}</small></div>
+            {uncertainSamples.length ? <div className="sample-results-gallery">{uncertainSamples.map((sample) => <SampleResultCard key={`uncertain-${sample.image_index}-${sample.image_name}`} sample={sample} image={images.find((item) => item.index === sample.image_index)} compact onInspect={() => setInspectedSampleIndex(sample.image_index)} />)}</div> : <div className="positive-empty"><strong>{t("No uncertain results in this sample")}</strong><span>{t("The configured confidence and Review gates accepted every result.")}</span></div>}
           </section>
-          <section className="sample-diagnostics" aria-label="Sample Test diagnostics">
-            <div className="section-heading"><div><span className="eyebrow">Diagnostics</span><h2>Inspect only when you need to troubleshoot</h2></div></div>
-            <details><summary>Pipeline Diagnostics</summary><div>{report.validation.issues.map((issue) => <div className="error-banner" key={`${issue.path}-${issue.code}`}><span>{issue.code}: {issue.message}</span></div>)}{!report.validation.issues.length && <p>No blocking static or execution issues.</p>}</div></details>
-            <details><summary>Model Usage</summary><dl className="diagnostic-facts"><div><dt>Input tokens</dt><dd>{summary.usage.input_tokens.toLocaleString()}</dd></div><div><dt>Output tokens</dt><dd>{summary.usage.output_tokens.toLocaleString()}</dd></div><div><dt>Estimated cost</dt><dd>{hasUnknownRemoteModelCost ? "Unknown" : `$${summary.usage.estimated_cost}`}</dd></div></dl></details>
-            <details><summary>Node Timings</summary>{report.samples.map((sample) => <div className="diagnostic-sample" key={`timing-${sample.image_index}`}><strong>{sample.image_name}</strong>{sample.nodes.map((node) => <span key={node.node_id}>{node.node_id}<small>{node.latency_ms} ms · {node.status}</small></span>)}</div>)}</details>
-            <details><summary>Technical Artifacts</summary>{report.samples.map((sample) => <div className="diagnostic-sample" key={`artifacts-${sample.image_index}`}><strong>{sample.image_name}</strong>{sample.nodes.filter((node) => node.output_types.length).map((node) => <span key={node.node_id}>{node.node_id}<small>{node.output_types.join(", ")}</small></span>)}</div>)}</details>
+          <section className="sample-diagnostics" aria-label={t("Sample Test diagnostics")}>
+            <div className="section-heading"><div><span className="eyebrow">{t("Diagnostics")}</span><h2>{t("Inspect only when you need to troubleshoot")}</h2></div></div>
+            <details><summary>{t("Pipeline Diagnostics")}</summary><div>{report.validation.issues.map((issue) => <div className="error-banner" key={`${issue.path}-${issue.code}`}><span>{issue.code}: {issue.message}</span></div>)}{!report.validation.issues.length && <p>{t("No blocking static or execution issues.")}</p>}</div></details>
+            <details><summary>{t("Model Usage")}</summary><dl className="diagnostic-facts"><div><dt>{t("Input tokens")}</dt><dd>{summary.usage.input_tokens.toLocaleString(localeTag())}</dd></div><div><dt>{t("Output tokens")}</dt><dd>{summary.usage.output_tokens.toLocaleString(localeTag())}</dd></div><div><dt>{t("Estimated cost")}</dt><dd>{hasUnknownRemoteModelCost ? t("Unknown") : `$${summary.usage.estimated_cost}`}</dd></div></dl></details>
+            <details><summary>{t("Node Timings")}</summary>{report.samples.map((sample) => <div className="diagnostic-sample" key={`timing-${sample.image_index}`}><strong>{sample.image_name}</strong>{sample.nodes.map((node) => <span key={node.node_id}>{node.node_id}<small>{node.latency_ms} ms · {node.status}</small></span>)}</div>)}</details>
+            <details><summary>{t("Technical Artifacts")}</summary>{report.samples.map((sample) => <div className="diagnostic-sample" key={`artifacts-${sample.image_index}`}><strong>{sample.image_name}</strong>{sample.nodes.filter((node) => node.output_types.length).map((node) => <span key={node.node_id}>{node.node_id}<small>{node.output_types.join(", ")}</small></span>)}</div>)}</details>
           </section>
         </>
-      ) : reportLoading ? <div className="loading-banner" role="status">Restoring the saved Sample Test…</div> : staleReport ? <Empty title="Sample Test is out of date" detail="This Draft changed after its saved Sample Test. Test the current Draft again before activation." /> : <Empty title="No Sample Test result" detail="Choose a Current Draft and test 1–10 images to see result counts, diagnostics, and trace." />}
+      ) : reportLoading ? <div className="loading-banner" role="status">{t("Restoring the saved Sample Test…")}</div> : staleReport ? <Empty title={t("Sample Test is out of date")} detail={t("This Draft changed after its saved Sample Test. Test the current Draft again before activation.")} /> : <Empty title={t("No Sample Test result")} detail={t("Choose a Current Draft and test 1–10 images to see result counts, diagnostics, and trace.")} />}
       {inspectedSample && <SampleAnnotationDialog
         sample={inspectedSample}
         image={images.find((item) => item.index === inspectedSample.image_index)}
@@ -1502,7 +1498,7 @@ function BuildTestPublish({
         sampleTestId={activeSampleTest?.draftId === draftId ? activeSampleTest.id : undefined}
         onClose={() => setInspectedSampleIndex(undefined)}
       />}
-      {!isActivated && <details className="advanced-settings"><summary>Discard this Draft</summary><p>Archiving removes this unpublished Draft from the active Build flow. Published Versions are never changed.</p><button onClick={discard} disabled={busy || !draftId}>Discard unpublished changes</button></details>}
+      {!isActivated && <details className="advanced-settings"><summary>{t("Discard this Draft")}</summary><p>Archiving removes this unpublished Draft from the active Build flow. Published Versions are never changed.</p><button onClick={discard} disabled={busy || !draftId}>{t("Discard unpublished changes")}</button></details>}
     </>
   );
 }
@@ -1646,10 +1642,10 @@ function SampleExecutionSummary({
   return <>
     <section className="sample-execution-summary" aria-labelledby="sample-execution-title">
     <div className="section-heading">
-      <div><span className="eyebrow">Execution Evidence</span><h2 id="sample-execution-title">What actually ran</h2></div>
-      <small>{observed ? "Persisted node facts" : "No execution trace available"}</small>
+      <div><span className="eyebrow">{t("Execution Evidence")}</span><h2 id="sample-execution-title">{t("What actually ran")}</h2></div>
+      <small>{observed ? t("Persisted node facts") : t("No execution trace available")}</small>
     </div>
-    {!observed ? <div className="sample-execution-empty"><strong>This result has no model-input trace.</strong><span>Run this Draft again to record exact submitted pixels, recovery routes, and refiner execution.</span></div> : <div className="sample-execution-grid">
+    {!observed ? <div className="sample-execution-empty"><strong>{t("This result has no model-input trace.")}</strong><span>Run this Draft again to record exact submitted pixels, recovery routes, and refiner execution.</span></div> : <div className="sample-execution-grid">
       {report.samples.map((sample) => {
         const calls = sample.nodes.flatMap((node) => {
           const trace = asModelInputTrace(node);
@@ -1657,7 +1653,7 @@ function SampleExecutionSummary({
         });
         const routes = sample.nodes.filter((node) => node.metadata?.selected_route != null || node.metadata?.requested_route != null);
         return <article className="sample-execution-card" key={`execution-${sample.image_index}`}>
-          <header><div><strong>{sample.image_name}</strong><small>{calls.length} model call{calls.length === 1 ? "" : "s"} with input evidence</small></div><Status status={sample.failed ? "Failed" : sample.review_count ? "Needs review" : "Completed"} /></header>
+          <header><div><strong>{sample.image_name}</strong><small>{calls.length} model call{calls.length === 1 ? "" : t("s")} with input evidence</small></div><Status status={sample.failed ? "Failed" : sample.review_count ? "Needs review" : "Completed"} /></header>
           {calls.length ? <div className="model-input-evidence-list">{calls.map(({ node, trace }) => <article key={node.node_id} className="model-input-evidence">
             {sampleTestId ? <button
               type="button"
@@ -1670,24 +1666,24 @@ function SampleExecutionSummary({
                 url: sampleModelInputUrl(sampleTestId, sample.image_index, node.node_id),
                 overlays: modelInputOverlays(sample, node, trace),
               })}
-            ><img src={sampleModelInputUrl(sampleTestId, sample.image_index, node.node_id)} alt="" /><span>Actual submitted image<small>Open full size</small></span></button> : <div className="model-input-placeholder">Saved preview unavailable</div>}
+            ><img src={sampleModelInputUrl(sampleTestId, sample.image_index, node.node_id)} alt="" /><span>{t("Actual submitted image")}<small>{t("Open full size")}</small></span></button> : <div className="model-input-placeholder">{t("Saved preview unavailable")}</div>}
             <div className="model-input-evidence-body">
               <header><strong>{metadataText(node.metadata?.model, node.node_id)}</strong><small>{metadataText(node.metadata?.provider, "Model backend")}</small></header>
               <dl>
-                <div><dt>Node</dt><dd>{node.node_id}</dd></div>
-                <div><dt>Source pixels</dt><dd>{trace.source_region_pixels.join(" × ")}</dd></div>
-                <div><dt>Crop → submitted</dt><dd>{trace.crop_dimensions.join("×")} → {trace.submitted_dimensions.join("×")}</dd></div>
-                <div><dt>Preprocessing</dt><dd>{trace.interpolation} · {trace.color_format}</dd></div>
-                <div><dt>Provider effective</dt><dd>{metadataText(trace.provider_effective_dimensions, "Unknown")}</dd></div>
-                <div><dt>Latency · cost</dt><dd>{node.latency_ms} ms · {modelCallCost(node)}</dd></div>
+                <div><dt>{t("Node")}</dt><dd>{node.node_id}</dd></div>
+                <div><dt>{t("Source pixels")}</dt><dd>{trace.source_region_pixels.join(" × ")}</dd></div>
+                <div><dt>{t("Crop → submitted")}</dt><dd>{trace.crop_dimensions.join("×")} → {trace.submitted_dimensions.join("×")}</dd></div>
+                <div><dt>{t("Preprocessing")}</dt><dd>{trace.interpolation} · {trace.color_format}</dd></div>
+                <div><dt>{t("Provider effective")}</dt><dd>{metadataText(trace.provider_effective_dimensions, "Unknown")}</dd></div>
+                <div><dt>{t("Latency · cost")}</dt><dd>{node.latency_ms} ms · {modelCallCost(node)}</dd></div>
               </dl>
               <code title={trace.submitted_image_sha256}>Input SHA · {trace.submitted_image_sha256.slice(0, 16)}…</code>
             </div>
           </article>)}</div> : <p className="sample-execution-note">No model call with a persisted input trace executed for this image.</p>}
           <div className="recovery-route-summary">
-            <strong>Recovery and refinement</strong>
-            {routes.length ? routes.map((node) => <div key={`route-${node.node_id}`}><span><b>{node.node_id}</b><small>attempt {metadataText(node.metadata?.recovery_attempt, "—")} / {metadataText(node.metadata?.maximum_recovery_attempts, "—")}</small></span><span><b>{metadataText(node.metadata?.selected_route, "No route")}</b><small>{metadataText(node.metadata?.failure_code, "No failure reason")}</small></span></div>) : <span className="sample-execution-note">No recovery Gate executed.</span>}
-            <small>{sample.nodes.some((node) => node.output_types.some((type) => String(type).toLowerCase().includes("mask"))) ? "Prompted segmentation produced a Mask Artifact." : "No Mask Artifact was produced; a configured refiner may not have been reached."}</small>
+            <strong>{t("Recovery and refinement")}</strong>
+            {routes.length ? routes.map((node) => <div key={`route-${node.node_id}`}><span><b>{node.node_id}</b><small>attempt {metadataText(node.metadata?.recovery_attempt, "—")} / {metadataText(node.metadata?.maximum_recovery_attempts, "—")}</small></span><span><b>{metadataText(node.metadata?.selected_route, "No route")}</b><small>{metadataText(node.metadata?.failure_code, "No failure reason")}</small></span></div>) : <span className="sample-execution-note">{t("No recovery Gate executed.")}</span>}
+            <small>{sample.nodes.some((node) => node.output_types.some((type) => String(type).toLowerCase().includes("mask"))) ? t("Prompted segmentation produced a Mask Artifact.") : t("No Mask Artifact was produced; a configured refiner may not have been reached.")}</small>
           </div>
         </article>;
       })}
@@ -1719,8 +1715,8 @@ function ModelInputPreviewDialog({
   }}>
     <section className="model-input-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="model-input-preview-title">
       <header>
-        <div><span className="eyebrow">Submitted model input</span><h2 id="model-input-preview-title">{inspection.node.node_id}</h2><small>{inspection.imageName}</small></div>
-        <button type="button" onClick={onClose} aria-label="Close model input preview">Close</button>
+        <div><span className="eyebrow">{t("Submitted model input")}</span><h2 id="model-input-preview-title">{inspection.node.node_id}</h2><small>{inspection.imageName}</small></div>
+        <button type="button" onClick={onClose} aria-label={t("Close model input preview")}>{t("Close")}</button>
       </header>
       <div className="model-input-preview-layout">
         <figure><div className="model-input-preview-canvas" style={{ aspectRatio: `${inspection.trace.submitted_dimensions[0]} / ${inspection.trace.submitted_dimensions[1]}` }}>
@@ -1732,12 +1728,12 @@ function ModelInputPreviewDialog({
           ><b>{overlay.label}</b></span>)}
         </div></figure>
         <aside>
-          <div className="model-input-overlay-legend"><span>Visible overlays</span>{inspection.overlays.length ? inspection.overlays.map((overlay) => <strong className={overlay.tone} key={`legend-${overlay.id}`}>{overlay.label}</strong>) : <strong>No bbox is associated with this model call</strong>}<small>Overlays are drawn by AnnotAgent and were not part of the submitted image bytes.</small></div>
-          <div><span>Model</span><strong>{metadataText(inspection.node.metadata?.model, inspection.node.node_id)}</strong></div>
-          <div><span>Source region</span><strong>{inspection.trace.source_region_pixels.join(" × ")} px</strong></div>
-          <div><span>Crop → submitted</span><strong>{inspection.trace.crop_dimensions.join("×")} → {inspection.trace.submitted_dimensions.join("×")}</strong></div>
-          <div><span>Preprocessing</span><strong>{inspection.trace.interpolation} · {inspection.trace.color_format}</strong></div>
-          <div><span>Provider effective</span><strong>{metadataText(inspection.trace.provider_effective_dimensions, "Unknown")}</strong></div>
+          <div className="model-input-overlay-legend"><span>{t("Visible overlays")}</span>{inspection.overlays.length ? inspection.overlays.map((overlay) => <strong className={overlay.tone} key={`legend-${overlay.id}`}>{overlay.label}</strong>) : <strong>{t("No bbox is associated with this model call")}</strong>}<small>Overlays are drawn by AnnotAgent and were not part of the submitted image bytes.</small></div>
+          <div><span>{t("Model")}</span><strong>{metadataText(inspection.node.metadata?.model, inspection.node.node_id)}</strong></div>
+          <div><span>{t("Source region")}</span><strong>{inspection.trace.source_region_pixels.join(" × ")} px</strong></div>
+          <div><span>{t("Crop → submitted")}</span><strong>{inspection.trace.crop_dimensions.join("×")} → {inspection.trace.submitted_dimensions.join("×")}</strong></div>
+          <div><span>{t("Preprocessing")}</span><strong>{inspection.trace.interpolation} · {inspection.trace.color_format}</strong></div>
+          <div><span>{t("Provider effective")}</span><strong>{metadataText(inspection.trace.provider_effective_dimensions, "Unknown")}</strong></div>
           <div><span>Submitted SHA-256</span><code>{inspection.trace.submitted_image_sha256}</code></div>
         </aside>
       </div>
@@ -1795,23 +1791,23 @@ function SampleResultCard({
   const state = sample.failed ? "Failed" : sample.review_count ? "Needs review" : sample.empty ? "No target found" : "Ready";
   return <article className={`sample-result-card ${sample.failed ? "failed" : sample.review_count ? "review" : "ready"} ${compact ? "compact" : ""}`}>
     <figure className="sample-result-preview" style={{ aspectRatio: `${sample.width} / ${sample.height}` }}>
-      {image ? <img src={image.url} alt={sample.image_name} /> : <div className="image-placeholder">Preview unavailable</div>}
+      {image ? <img src={image.url} alt={sample.image_name} /> : <div className="image-placeholder">{t("Preview unavailable")}</div>}
       {boxes.map((outcome) => {
         const rect = outcome.value?.kind === "bounding_box" ? outcome.value.rect : undefined;
         return rect ? <span className={`sample-result-box ${selectedStage === "final" ? "final" : "diagnostic"}`} key={outcome.id} style={{ left: `${rect[0] * 100}%`, top: `${rect[1] * 100}%`, width: `${rect[2] * 100}%`, height: `${rect[3] * 100}%` }}><b>{outcome.label}{outcome.confidence != null ? ` ${Math.round(outcome.confidence * 100)}%` : ""}</b></span> : null;
       })}
       <button className="sample-result-preview-trigger" type="button" onClick={onInspect} aria-label={`Open annotation preview for ${sample.image_name}`}>
-        <span>Open annotation preview</span>
+        <span>{t("Open annotation preview")}</span>
       </button>
     </figure>
     <div className="sample-result-body">
       <header className="sample-result-heading"><strong>{sample.image_name}</strong><Status status={state} /></header>
-      <p className="sample-result-summary">{sample.failed ? "A Pipeline step failed on this image." : sample.empty ? "No target found. This is a valid empty result." : `${sample.result_count} ${hasTerminalProjection ? "terminal" : "legacy"} result${sample.result_count === 1 ? "" : "s"} · ${sample.auto_accepted_count} ready · ${sample.review_count} review`}</p>
-      {!hasTerminalProjection && <aside className="sample-legacy-projection"><strong>Legacy result aggregation</strong><span>This saved Sample Test predates terminal projection and may include intermediate detections. Test this Draft again to generate final-only Results and lineage Diagnostics.</span></aside>}
-      {terminalCandidates.length > 0 && <div className="sample-terminal-facts">{terminalCandidates.map((candidate) => <article key={candidate.lineage_id}><header><strong>{candidate.outcome.label}</strong><small>{candidate.outcome.confidence != null ? `${Math.round(candidate.outcome.confidence * 100)}%` : "Score not provided"}</small></header><dl><div><dt>Localization</dt><dd>{candidate.localization}</dd></div><div><dt>Geometry</dt><dd>{candidate.geometry}</dd></div><div><dt>Final status</dt><dd>{candidate.final_status}</dd></div></dl></article>)}</div>}
+      <p className="sample-result-summary">{sample.failed ? t("A Pipeline step failed on this image.") : sample.empty ? t("No target found. This is a valid empty result.") : `${sample.result_count} ${hasTerminalProjection ? "terminal" : "legacy"} result${sample.result_count === 1 ? "" : t("s")} · ${sample.auto_accepted_count} ready · ${sample.review_count} review`}</p>
+      {!hasTerminalProjection && <aside className="sample-legacy-projection"><strong>{t("Legacy result aggregation")}</strong><span>This saved Sample Test predates terminal projection and may include intermediate detections. Test this Draft again to generate final-only Results and lineage Diagnostics.</span></aside>}
+      {terminalCandidates.length > 0 && <div className="sample-terminal-facts">{terminalCandidates.map((candidate) => <article key={candidate.lineage_id}><header><strong>{candidate.outcome.label}</strong><small>{candidate.outcome.confidence != null ? `${Math.round(candidate.outcome.confidence * 100)}%` : t("Score not provided")}</small></header><dl><div><dt>{t("Localization")}</dt><dd>{candidate.localization}</dd></div><div><dt>{t("Geometry")}</dt><dd>{candidate.geometry}</dd></div><div><dt>{t("Final status")}</dt><dd>{candidate.final_status}</dd></div></dl></article>)}</div>}
       {!terminalCandidates.length && sample.outcomes.length > 0 && <ul className="sample-legacy-outcomes">{sample.outcomes.map((outcome) => <li key={`summary-${outcome.id}`}><span>{outcome.label}</span><small>{outcome.status.replaceAll("_", " ")}{outcome.confidence != null ? ` · ${Math.round(outcome.confidence * 100)}%` : ""}</small></li>)}</ul>}
       {reviewExplanation && <aside className="sample-result-explanation"><strong>{reviewExplanation.title}</strong><p>{reviewExplanation.summary}</p>{reviewExplanation.recommendation && <small>{reviewExplanation.recommendation}</small>}</aside>}
-      {stages.length > 0 && <details className="sample-lineage-debug"><summary>Diagnostics · {stages.length} lineage stage{stages.length === 1 ? "" : "s"}</summary><div className="sample-lineage-stage-tabs" role="tablist" aria-label={`Artifact lineage for ${sample.image_name}`}>{availableStages.map((stage) => <button key={stage} role="tab" aria-selected={selectedStage === stage} className={selectedStage === stage ? "active" : ""} onClick={() => setSelectedStage(stage)}>{stage === "search_region" ? "Search region" : stage === "prompt_coverage" ? "Prompt coverage" : stage[0].toUpperCase() + stage.slice(1)}</button>)}</div><div className="sample-lineage-stage-detail"><strong>{selectedStage === "final" ? "Final terminal projection" : selectedStage.replaceAll("_", " ")}</strong>{selectedStage === "final" ? <span>Only committed or current Review candidates appear here.</span> : selectedStages.length ? selectedStages.map((stage, index) => <span key={`${stage.artifact_id}-${index}`}><b>{stage.source}</b>{stage.detail ? ` · ${stage.detail}` : ""}<code>{stage.artifact_ref}</code></span>) : <span>No Artifact was produced for this stage.</span>}</div></details>}
+      {stages.length > 0 && <details className="sample-lineage-debug"><summary>Diagnostics · {stages.length} lineage stage{stages.length === 1 ? "" : t("s")}</summary><div className="sample-lineage-stage-tabs" role="tablist" aria-label={`Artifact lineage for ${sample.image_name}`}>{availableStages.map((stage) => <button key={stage} role="tab" aria-selected={selectedStage === stage} className={selectedStage === stage ? "active" : ""} onClick={() => setSelectedStage(stage)}>{stage === "search_region" ? t("Search region") : stage === "prompt_coverage" ? t("Prompt coverage") : stage[0].toUpperCase() + stage.slice(1)}</button>)}</div><div className="sample-lineage-stage-detail"><strong>{selectedStage === "final" ? t("Final terminal projection") : selectedStage.replaceAll("_", " ")}</strong>{selectedStage === "final" ? <span>{t("Only committed or current Review candidates appear here.")}</span> : selectedStages.length ? selectedStages.map((stage, index) => <span key={`${stage.artifact_id}-${index}`}><b>{stage.source}</b>{stage.detail ? ` · ${stage.detail}` : ""}<code>{stage.artifact_ref}</code></span>) : <span>{t("No Artifact was produced for this stage.")}</span>}</div></details>}
     </div>
   </article>;
 }
@@ -1864,36 +1860,36 @@ function SampleAnnotationDialog({
   }}>
     <section className="sample-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="sample-preview-title">
       <header className="sample-preview-header">
-        <div><span className="eyebrow">Sample annotation</span><h2 id="sample-preview-title">{sample.image_name}</h2></div>
-        <button type="button" onClick={onClose} aria-label="Close annotation preview">Close</button>
+        <div><span className="eyebrow">{t("Sample annotation")}</span><h2 id="sample-preview-title">{sample.image_name}</h2></div>
+        <button type="button" onClick={onClose} aria-label={t("Close annotation preview")}>{t("Close")}</button>
       </header>
-      <nav className="sample-preview-stage-tabs" aria-label="Annotation stages">
-        {availableStages.map((stage) => <button key={stage} type="button" className={selectedStage === stage ? "active" : ""} aria-pressed={selectedStage === stage} onClick={() => setSelectedStage(stage)}>{stage === "search_region" ? "Search region" : stage === "prompt_coverage" ? "Prompt coverage" : stage[0].toUpperCase() + stage.slice(1)}</button>)}
+      <nav className="sample-preview-stage-tabs" aria-label={t("Annotation stages")}>
+        {availableStages.map((stage) => <button key={stage} type="button" className={selectedStage === stage ? "active" : ""} aria-pressed={selectedStage === stage} onClick={() => setSelectedStage(stage)}>{stage === "search_region" ? t("Search region") : stage === "prompt_coverage" ? t("Prompt coverage") : stage[0].toUpperCase() + stage.slice(1)}</button>)}
       </nav>
       <div className="sample-preview-layout">
         <figure className="sample-preview-canvas" style={{ aspectRatio: `${sample.width} / ${sample.height}` }}>
-          {image ? <img src={image.url} alt={sample.image_name} /> : <div className="image-placeholder">Preview unavailable</div>}
+          {image ? <img src={image.url} alt={sample.image_name} /> : <div className="image-placeholder">{t("Preview unavailable")}</div>}
           {boxes.map((result) => {
             const rect = result.value?.kind === "bounding_box" ? result.value.rect : undefined;
             return rect ? <span className={`sample-result-box ${selectedStage === "final" ? "final" : "diagnostic"}`} key={result.id} style={{ left: `${rect[0] * 100}%`, top: `${rect[1] * 100}%`, width: `${rect[2] * 100}%`, height: `${rect[3] * 100}%` }}><b>{result.label}{result.confidence != null ? ` ${Math.round(result.confidence * 100)}%` : ""}</b></span> : null;
           })}
         </figure>
         <aside className="sample-preview-inspector">
-          <div><span className="eyebrow">Visible stage</span><h3>{selectedStage === "final" ? "Final annotation" : selectedStage.replaceAll("_", " ")}</h3><p>{boxes.length} bounding box{boxes.length === 1 ? "" : "es"} shown</p></div>
+          <div><span className="eyebrow">{t("Visible stage")}</span><h3>{selectedStage === "final" ? t("Final annotation") : selectedStage.replaceAll("_", " ")}</h3><p>{boxes.length}{" "}{t("bounding box")}{boxes.length === 1 ? "" : "es"}{" "}{t("shown")}</p></div>
           <section className={`sample-refiner-state ${configuredRefiners.length && !reachedRefiners.length ? "warning" : ""}`}>
-            <strong>Geometry refinement</strong>
-            {!configuredRefiners.length ? <span>No segmentation or refiner node is configured in this Draft.</span> : reachedRefiners.length ? <span>{reachedRefiners.length} of {configuredRefiners.length} configured refiner node{configuredRefiners.length === 1 ? "" : "s"} executed.</span> : <span>A refiner is configured but was not reached in this Sample Test.{coverage?.detail ? ` ${coverage.detail}` : ""}</span>}
+            <strong>{t("Geometry refinement")}</strong>
+            {!configuredRefiners.length ? <span>{t("No segmentation or refiner node is configured in this Draft.")}</span> : reachedRefiners.length ? <span>{reachedRefiners.length}{" "}{t("of")}{" "}{configuredRefiners.length} configured refiner node{configuredRefiners.length === 1 ? "" : t("s")} executed.</span> : <span>{t("A refiner is configured but was not reached in this Sample Test.")}{coverage?.detail ? ` ${coverage.detail}` : ""}</span>}
           </section>
           <section className="sample-preview-stage-detail">
-            <strong>Stage evidence</strong>
-            {selectedStage === "final" ? <span>Only terminal results eligible for Review or Commit are displayed.</span> : selectedStages.length ? selectedStages.map((stage, index) => <span key={`${stage.artifact_id}-${index}`}><b>{stage.source}</b>{stage.detail ? ` · ${stage.detail}` : ""}</span>) : <span>No Artifact was produced for this stage.</span>}
+            <strong>{t("Stage evidence")}</strong>
+            {selectedStage === "final" ? <span>Only terminal results eligible for Review or Commit are displayed.</span> : selectedStages.length ? selectedStages.map((stage, index) => <span key={`${stage.artifact_id}-${index}`}><b>{stage.source}</b>{stage.detail ? ` · ${stage.detail}` : ""}</span>) : <span>{t("No Artifact was produced for this stage.")}</span>}
           </section>
           <section className="sample-preview-model-inputs">
-            <strong>Actual model inputs</strong>
+            <strong>{t("Actual model inputs")}</strong>
             {modelInputs.length ? modelInputs.map(({ node, trace }) => <article key={`preview-input-${node.node_id}`}>
               {sampleTestId && <img src={sampleModelInputUrl(sampleTestId, sample.image_index, node.node_id)} alt={`Actual image submitted to ${node.node_id}`} />}
               <span><b>{metadataText(node.metadata?.model, node.node_id)}</b><small>{trace.submitted_dimensions.join("×")} · {trace.interpolation} · {node.latency_ms} ms · {modelCallCost(node)}</small></span>
-            </article>) : <span>No persisted model-input evidence exists for this result.</span>}
+            </article>) : <span>{t("No persisted model-input evidence exists for this result.")}</span>}
           </section>
         </aside>
       </div>
@@ -1914,7 +1910,7 @@ function SettingsWorkspace({
 }) {
   return (
     <section className="page-stack">
-      <nav className="section-tabs" aria-label="Settings sections">
+      <nav className="section-tabs" aria-label={t("Settings sections")}>
         {(
           [
             ["providers", "Providers"],
@@ -1931,7 +1927,7 @@ function SettingsWorkspace({
             aria-current={section === value ? "page" : undefined}
             onClick={() => onNavigate(value)}
           >
-            {label}
+            {t(label)}
           </button>
         ))}
       </nav>
@@ -1986,72 +1982,65 @@ function Dashboard({
     <section className="page-stack">
       <div className="hero-panel aa-dark">
         <div>
-          <span className="kicker">Guided annotation workspace</span>
-          <h2>
-            Move vision data from setup
-            <br />
+          <span className="kicker">{t("Guided annotation workspace")}</span>
+          <h2>{t("Move vision data from setup")}<br />
             {" "}
-            <em>to reviewed output.</em>
+            <em>{t("to reviewed output.")}</em>
           </h2>
-          <p>
-            Open a Project to import data, define Labels, build and test a
-            Pipeline, run it, inspect its work, and review the result.
-          </p>
+          <p>{t("Open a Project to import data, define Labels, build and test a Pipeline, run it, inspect its work, and review the result.")}</p>
         </div>
         <div className="hero-actions">
           <button
             className="primary"
             onClick={onNewProject}
-          >
-            New project
-          </button>
-          <button onClick={onRefresh}>Refresh state</button>
+          >{t("New project")}</button>
+          <button onClick={onRefresh}>{t("Refresh state")}</button>
         </div>
       </div>
       <div className="metrics-grid platform-metrics">
         <Metric
-          label="Projects"
+          label={t("Projects")}
           value={projects.length}
-          detail={`${projects.reduce((sum, project) => sum + project.image_count, 0)} images registered`}
+          detail={t("{count} images registered", { count: projects.reduce((sum, project) => sum + project.image_count, 0) })}
         />
         <Metric
-          label="Active runs"
+          label={t("Active runs")}
           value={activeRuns}
-          detail={`${runs.length} total executions`}
+          detail={t("{count} total executions", { count: runs.length })}
           live={activeRuns > 0}
         />
         <Metric
-          label="Review queue"
+          label={t("Review queue")}
           value={reviewQueue}
-          detail="Annotations requiring attention"
+          detail={t("Annotations requiring attention")}
           accent={reviewQueue > 0}
         />
       </div>
-      <p className="platform-usage-line" aria-label="Workspace model usage">Persisted model usage across {runs.length} Run{runs.length === 1 ? "" : "s"}: <strong>{tokens.toLocaleString()} tokens</strong> · <strong>${cost.toFixed(4)}</strong></p>
+      <p className="platform-usage-line" aria-label={t("Workspace model usage")}>{t("Persisted model usage across")}{" "}{runs.length}{" "}{t("Run")}{runs.length === 1 ? "" : t("s")}: <strong>{tokens.toLocaleString(localeTag())}{" "}{t("tokens")}</strong> · <strong>${cost.toFixed(4)}</strong></p>
       <div className="platform-grid">
-        <Panel title="Recent projects" eyebrow="Concrete annotation work">
+        <Panel title={t("Recent projects")} eyebrow={t("Concrete annotation work")}>
           <ProjectList projects={projects.slice(0, 5)} onSelect={onSelect} />
         </Panel>
-        <Panel title="Active runs" eyebrow="Work in progress">
+        <Panel title={t("Active runs")} eyebrow={t("Work in progress")}>
           <button className="summary-link" onClick={onOpenRuns}>
-            <strong>{activeRuns} active</strong>
-            <small>Open progress, errors, cost, and artifacts</small>
+            <strong>{activeRuns}{" "}{t("active")}</strong>
+            <small>{t("Open progress, errors, cost, and artifacts")}</small>
           </button>
         </Panel>
-        <Panel title="Needs review" eyebrow="Human decisions">
+        <Panel title={t("Needs review")} eyebrow={t("Human decisions")}>
           <button className="summary-link" onClick={onOpenReview}>
-            <strong>{reviewQueue} waiting</strong>
-            <small>Accept, edit, reject, or remove results</small>
+            <strong>{reviewQueue}{" "}{t("waiting")}</strong>
+            <small>{t("Accept, edit, reject, or remove results")}</small>
           </button>
         </Panel>
-        <Panel title="Recent failures" eyebrow="Requires attention">
+        <Panel title={t("Recent failures")} eyebrow={t("Requires attention")}>
           {failures.length ? (
             <button className="summary-link" onClick={onOpenRuns}>
               <strong>{failures[0].workflow_name}</strong>
               <small>{failures[0].terminal_reason ?? failures[0].status}</small>
             </button>
           ) : (
-            <Empty title="No recent failures" detail="Recent terminal runs are healthy." />
+            <Empty title={t("No recent failures")} detail={t("Recent terminal runs are healthy.")} />
           )}
         </Panel>
       </div>
@@ -2079,18 +2068,16 @@ function ProjectsPage({
     <section className="page-stack">
       <div className="toolbar-panel">
         <div>
-          <span className="eyebrow">Project inventory</span>
-          <h2>Datasets, schemas, Workflows, and bindings</h2>
+          <span className="eyebrow">{t("Project inventory")}</span>
+          <h2>{t("Datasets, schemas, Workflows, and bindings")}</h2>
           <p>
             A Project is concrete annotation work; Skills remain reusable
             extensions.
           </p>
         </div>
-        <button className="primary" onClick={() => setCreating(true)}>
-          New project
-        </button>
+        <button className="primary" onClick={() => setCreating(true)}>{t("New project")}</button>
       </div>
-      <Panel title="All projects" eyebrow={`${projects.length} configured`}>
+      <Panel title={t("All projects")} eyebrow={`${projects.length} configured`}>
         <ProjectList projects={projects} onSelect={onSelect} />
       </Panel>
       {creating && (
@@ -2120,7 +2107,7 @@ function ProjectList({
     <div className="table-list">
       {projects.length === 0 && (
         <Empty
-          title="No projects yet"
+          title={t("No projects yet")}
           detail="Create a Project from a validated schema and a registered Skill template."
         />
       )}
@@ -2231,15 +2218,15 @@ function ProjectPage({
     return (
       <section className="page-stack">
         <Empty
-          title="No project opened"
-          detail="Choose a Project from Projects or the active Project switcher."
+          title={t("No project opened")}
+          detail={t("Choose a Project from Projects or the active Project switcher.")}
         />
       </section>
     );
   if (!activeWorkspace)
     return (
       <section className="page-stack">
-        <div className="loading-banner" role="status">Loading Project guidance…</div>
+        <div className="loading-banner" role="status">{t("Loading Project guidance…")}</div>
       </section>
     );
   const projectRuns = runs.filter((run) => run.project_id === project.project_id);
@@ -2360,35 +2347,35 @@ function ProjectPage({
   return (
     <section className="page-stack">
       <nav className="section-tabs" aria-label={`${project.name} workspace`}>
-        <button className="active" aria-current="page">Overview</button>
-        <button onClick={() => onOpenBuild("data")}>Build</button>
-        <button onClick={() => onNavigate(projectRunsPath(project.id))}>Runs</button>
-        <button onClick={onOpenReview}>Review</button>
-        <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}/export`)}>Export</button>
+        <button className="active" aria-current="page">{t("Overview")}</button>
+        <button onClick={() => onOpenBuild("data")}>{t("Build")}</button>
+        <button onClick={() => onNavigate(projectRunsPath(project.id))}>{t("Runs")}</button>
+        <button onClick={onOpenReview}>{t("Review")}</button>
+        <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}/export`)}>{t("Export")}</button>
       </nav>
       <header className="project-context-header">
         <div>
-          <span className="eyebrow">Project workspace</span>
+          <span className="eyebrow">{t("Project workspace")}</span>
           <h2>{project.name}</h2>
-          <p>{project.description || "No Project description provided."}</p>
+          <p>{project.description || t("No Project description provided.")}</p>
         </div>
-        <div className="project-context-facts" aria-label="Project status">
-          <span><b>{project.image_count}</b> Images</span>
-          <span><b>{labelCount}</b> Labels</span>
-          <span><b>{project.review_count}</b> Needs review</span>
+        <div className="project-context-facts" aria-label={t("Project status")}>
+          <span><b>{project.image_count}</b>{" "}{t("Images")}</span>
+          <span><b>{labelCount}</b>{" "}{t("Labels")}</span>
+          <span><b>{project.review_count}</b>{" "}{t("Needs review")}</span>
         </div>
-        <div className="project-context-status" aria-label="Project operational status">
-          <span>Automation <b>{project.default_workflow_version?.name ?? "Not active"}</b></span>
-          <span>Active run <b>{project.active_run?.status ?? project.active_batch?.status ?? "None"}</b></span>
-          <span>Readiness <b>{guidance.stage.replaceAll("_", " ")}</b></span>
+        <div className="project-context-status" aria-label={t("Project operational status")}>
+          <span>{t("Automation")}{" "}<b>{project.default_workflow_version?.name ?? t("Not active")}</b></span>
+          <span>{t("Active run")}{" "}<b>{project.active_run?.status ?? project.active_batch?.status ?? t("None")}</b></span>
+          <span>{t("Readiness")}{" "}<b>{guidance.stage.replaceAll("_", " ")}</b></span>
         </div>
       </header>
 
       <section className="guidance-hero" aria-labelledby="project-guidance-title">
         <div className="guidance-copy">
-          <span className="eyebrow">Next step · {guidance.completed_steps} of {guidance.total_steps} complete</span>
-          <h2 id="project-guidance-title">{guidance.headline}</h2>
-          <p>{guidance.explanation}</p>
+          <span className="eyebrow">{t("Next step ·")}{" "}{guidance.completed_steps}{" "}{t("of")}{" "}{guidance.total_steps}{" "}{t("complete")}</span>
+          <h2 id="project-guidance-title">{t(guidance.headline)}</h2>
+          <p>{t(guidance.explanation)}</p>
           <div className="guidance-progress" aria-label={`${guidance.completed_steps} of ${guidance.total_steps} journey steps complete`}>
             <i style={{ width: `${(guidance.completed_steps / guidance.total_steps) * 100}%` }} />
           </div>
@@ -2397,80 +2384,80 @@ function ProjectPage({
           <button
             className="primary"
             aria-disabled={starting || !guidance.primary_action.enabled}
-            aria-label={!guidance.primary_action.enabled && guidance.primary_action.disabled_reason ? `${guidance.primary_action.label} unavailable: ${guidance.primary_action.disabled_reason}` : undefined}
+            aria-label={!guidance.primary_action.enabled && guidance.primary_action.disabled_reason ? `${t(guidance.primary_action.label)} unavailable: ${guidance.primary_action.disabled_reason}` : undefined}
             title={guidance.primary_action.disabled_reason}
             onClick={() => !starting && guidance.primary_action.enabled && runGuidedAction(guidance.primary_action)}
           >
-            {starting ? "Starting…" : guidance.primary_action.label}
+            {starting ? t("Starting…") : t(guidance.primary_action.label)}
           </button>
           {guidance.secondary_actions.slice(0, 2).map((action) => (
-            <button key={`${action.kind}:${action.destination}`} aria-disabled={!action.enabled} aria-label={!action.enabled && action.disabled_reason ? `${action.label} unavailable: ${action.disabled_reason}` : undefined} title={action.disabled_reason} onClick={() => action.enabled && runGuidedAction(action)}>{action.label}</button>
+            <button key={`${action.kind}:${action.destination}`} aria-disabled={!action.enabled} aria-label={!action.enabled && action.disabled_reason ? `${t(action.label)} unavailable: ${action.disabled_reason}` : undefined} title={action.disabled_reason} onClick={() => action.enabled && runGuidedAction(action)}>{t(action.label)}</button>
           ))}
-          {project.available_workflow_versions.some((workflow) => workflow.status === "published") && <button onClick={onOpenWorkflows}>Improve automation</button>}
+          {project.available_workflow_versions.some((workflow) => workflow.status === "published") && <button onClick={onOpenWorkflows}>{t("Improve automation")}</button>}
         </div>
-        {guidance.blockers.length > 0 && <div className="guidance-blockers" aria-label="Project blockers">
+        {guidance.blockers.length > 0 && <div className="guidance-blockers" aria-label={t("Project blockers")}>
           {guidance.blockers.map((blocker) => <article key={blocker.code}>
             <span aria-hidden="true">!</span>
-            <div><strong>{blocker.title}</strong><small>{blocker.explanation}</small></div>
-            {blocker.repair_action && blocker.repair_action.kind !== guidance.primary_action.kind && <button onClick={() => runGuidedAction(blocker.repair_action!)}>{blocker.repair_action.label}</button>}
+            <div><strong>{t(blocker.title)}</strong><small>{t(blocker.explanation)}</small></div>
+            {blocker.repair_action && blocker.repair_action.kind !== guidance.primary_action.kind && <button onClick={() => runGuidedAction(blocker.repair_action!)}>{t(blocker.repair_action.label)}</button>}
           </article>)}
         </div>}
       </section>
 
       <section className="journey-panel" aria-labelledby="project-journey-title">
-        <div className="section-heading"><div><span className="eyebrow">Project journey</span><h2 id="project-journey-title">From data to compatible export</h2></div><small>Server-owned state · updated {new Date(guidance.updated_at).toLocaleString()}</small></div>
+        <div className="section-heading"><div><span className="eyebrow">{t("Project journey")}</span><h2 id="project-journey-title">{t("From data to compatible export")}</h2></div><small>{t("Server-owned state · updated")}{" "}{new Date(guidance.updated_at).toLocaleString(localeTag())}</small></div>
         <ol className="journey-timeline">
           {guidance.journey.map((step, index) => <li key={step.id} className={step.state}>
-            <button onClick={() => step.destination && openJourneyStep(step)} aria-disabled={!step.destination} aria-label={`${step.label}: ${step.detail}${step.destination ? "" : ". No action is available yet."}`}>
+            <button onClick={() => step.destination && openJourneyStep(step)} aria-disabled={!step.destination} aria-label={`${t(step.label)}: ${t(step.detail)}${step.destination ? "" : ". No action is available yet."}`}>
               <i aria-hidden="true">{step.state === "complete" ? "✓" : index + 1}</i>
-              <span><strong>{step.label}</strong><small>{step.detail}</small></span>
+              <span><strong>{t(step.label)}</strong><small>{t(step.detail)}</small></span>
               <b>{step.state.replaceAll("_", " ")}</b>
             </button>
           </li>)}
         </ol>
       </section>
       {(project.active_batch || project.active_run || project.last_run || selectedPublishedWorkflow) && <div className="run-state-grid" id="project-active-run">
-        <Panel title="Active Run" eyebrow="Server-owned state">
+        <Panel title={t("Active Run")} eyebrow={t("Server-owned state")}>
           {project.active_batch ? (
             <>
-              <Fact label="Batch" value={project.active_batch.id.slice(0, 8)} />
+              <Fact label={t("Batch")} value={project.active_batch.id.slice(0, 8)} />
               <Status status={project.active_batch.status} />
               {project.active_batch_progress && (
                 <Fact
-                  label="Images"
+                  label={t("Images")}
                   value={`${project.active_batch_progress.completed_images}/${project.active_batch_progress.total_images}`}
                 />
               )}
               <div className="button-row" aria-label="Active Batch controls">
-                {visibleStatus === "running" && <button onClick={() => control("pause")}><img src="/brand/core/icons/pause.svg" alt="" aria-hidden="true" /> Pause</button>}
-                {visibleStatus === "paused" && <button onClick={() => control("resume")}><img src="/brand/core/icons/resume.svg" alt="" aria-hidden="true" /> Resume</button>}
-                <button className="danger" onClick={() => control("cancel")}><img src="/brand/core/icons/cancel.svg" alt="" aria-hidden="true" /> Cancel</button>
+                {visibleStatus === "running" && <button onClick={() => control("pause")}><img src="/brand/core/icons/pause.svg" alt="" aria-hidden="true" />{" "}{t("Pause")}</button>}
+                {visibleStatus === "paused" && <button onClick={() => control("resume")}><img src="/brand/core/icons/resume.svg" alt="" aria-hidden="true" />{" "}{t("Resume")}</button>}
+                <button className="danger" onClick={() => control("cancel")}><img src="/brand/core/icons/cancel.svg" alt="" aria-hidden="true" />{" "}{t("Cancel")}</button>
               </div>
             </>
           ) : project.active_run ? (
             <>
-              <Fact label="Run" value={project.active_run.id.slice(0, 8)} />
+              <Fact label={t("Run")} value={project.active_run.id.slice(0, 8)} />
               <Status status={project.active_run.status} />
               <div className="button-row" aria-label="Active Run controls">
-                {visibleStatus === "running" && <button onClick={() => control("pause")}><img src="/brand/core/icons/pause.svg" alt="" aria-hidden="true" /> Pause</button>}
-                {visibleStatus === "paused" && <button onClick={() => control("resume")}><img src="/brand/core/icons/resume.svg" alt="" aria-hidden="true" /> Resume</button>}
-                <button className="danger" onClick={() => control("cancel")}><img src="/brand/core/icons/cancel.svg" alt="" aria-hidden="true" /> Cancel</button>
+                {visibleStatus === "running" && <button onClick={() => control("pause")}><img src="/brand/core/icons/pause.svg" alt="" aria-hidden="true" />{" "}{t("Pause")}</button>}
+                {visibleStatus === "paused" && <button onClick={() => control("resume")}><img src="/brand/core/icons/resume.svg" alt="" aria-hidden="true" />{" "}{t("Resume")}</button>}
+                <button className="danger" onClick={() => control("cancel")}><img src="/brand/core/icons/cancel.svg" alt="" aria-hidden="true" />{" "}{t("Cancel")}</button>
               </div>
             </>
           ) : (
             <div className="empty-run-state">
               <Empty
-                title="No active Run"
-                detail="Run every image with the selected immutable Workflow Version."
+                title={t("No active Run")}
+                detail={t("Run every image with the selected immutable Workflow Version.")}
               />
-              {selectedPublishedWorkflow && <button disabled={starting} onClick={startBatch}>{starting ? "Starting…" : "Start full Run"}</button>}
+              {selectedPublishedWorkflow && <button disabled={starting} onClick={startBatch}>{starting ? t("Starting…") : t("Start full Run")}</button>}
             </div>
           )}
         </Panel>
-        <Panel title="Last Run" eyebrow="Terminal history">
+        <Panel title={t("Last Run")} eyebrow={t("Terminal history")}>
           {project.last_run ? (
             <>
-              <Fact label="Run" value={project.last_run.id.slice(0, 8)} />
+              <Fact label={t("Run")} value={project.last_run.id.slice(0, 8)} />
               <Status status={project.last_run.status} />
               {project.last_run.terminal_reason && (
                 <small className="run-reason">
@@ -2480,8 +2467,8 @@ function ProjectPage({
             </>
           ) : (
             <Empty
-              title="No completed Run"
-              detail="Terminal history will appear here."
+              title={t("No completed Run")}
+              detail={t("Terminal history will appear here.")}
             />
           )}
         </Panel>
@@ -2490,7 +2477,7 @@ function ProjectPage({
         <div className="run-progress aa-dark" aria-live="polite">
           <div>
             <span className="live-dot" aria-hidden="true" />
-            <strong>Run {activeRun.slice(0, 8)}</strong>
+            <strong>{t("Run")}{" "}{activeRun.slice(0, 8)}</strong>
             <small>
               {lastTask ?? "restored active Run"} ·{" "}
               {runEvents.at(-1)?.kind.replaceAll("_", " ") ??
@@ -2500,7 +2487,7 @@ function ProjectPage({
           <div
             className={`progress-track${activeProgress === undefined ? " indeterminate" : ""}`}
             role="progressbar"
-            aria-label="Active Run progress"
+            aria-label={t("Active Run progress")}
             aria-valuemin={activeProgress === undefined ? undefined : 0}
             aria-valuemax={activeProgress === undefined ? undefined : 100}
             aria-valuenow={activeProgress}
@@ -2514,44 +2501,44 @@ function ProjectPage({
             {usage
               ? JSON.stringify(usage.payload.data, null, 2)
               : activeSummary
-                ? `${(activeSummary.input_tokens + activeSummary.output_tokens).toLocaleString()} tokens\n$${activeSummary.cost}`
+                ? `${(activeSummary.input_tokens + activeSummary.output_tokens).toLocaleString(localeTag())} tokens\n$${activeSummary.cost}`
                 : "usage pending"}
           </pre>
         </div>
       )}
       <div className="project-support-grid">
-        <Panel title="Recent activity" eyebrow="Latest dataset work">
+        <Panel title={t("Recent activity")} eyebrow={t("Latest dataset work")}>
           {projectRuns.length ? <div className="activity-list">
-            {projectRuns.slice(0, 3).map((run) => <button key={run.id} onClick={() => onOpenRun(run.id)}><span><strong>{run.workflow_name}</strong><small>{new Date(run.updated_at).toLocaleString()}</small></span><Status status={run.status} /></button>)}
-          </div> : <Empty title="No Runs yet" detail="Dataset activity will appear after the first active Automation Run." />}
+            {projectRuns.slice(0, 3).map((run) => <button key={run.id} onClick={() => onOpenRun(run.id)}><span><strong>{run.workflow_name}</strong><small>{new Date(run.updated_at).toLocaleString(localeTag())}</small></span><Status status={run.status} /></button>)}
+          </div> : <Empty title={t("No Runs yet")} detail="Dataset activity will appear after the first active Automation Run." />}
         </Panel>
-        <Panel title="Usage" eyebrow="Persisted across Project Runs">
-          <div className="usage-summary"><span><b>{projectRuns.length}</b> Runs</span><span><b>{projectUsage.tokens.toLocaleString()}</b> Tokens</span><span><b>${projectUsage.cost.toFixed(4)}</b> Cost</span></div>
+        <Panel title={t("Usage")} eyebrow={t("Persisted across Project Runs")}>
+          <div className="usage-summary"><span><b>{projectRuns.length}</b>{" "}{t("Runs")}</span><span><b>{projectUsage.tokens.toLocaleString(localeTag())}</b>{" "}{t("Tokens")}</span><span><b>${projectUsage.cost.toFixed(4)}</b>{" "}{t("Cost")}</span></div>
         </Panel>
       </div>
 
       <details className="advanced-project-details" id="project-advanced-details">
-        <summary><span><strong>Current Project configuration</strong><small>Read-only schema, Automation, model, Skill, and image records</small></span><b aria-hidden="true">⌄</b></summary>
+        <summary><span><strong>{t("Current Project configuration")}</strong><small>{t("Read-only schema, Automation, model, Skill, and image records")}</small></span><b aria-hidden="true">⌄</b></summary>
         <div className="project-overview-grid">
-        <Panel title="Dataset" eyebrow="Project-owned">
-          <Fact label="Root" value={project.dataset.root} />
-          <Fact label="Images" value={project.dataset.image_count} />
+        <Panel title={t("Dataset")} eyebrow={t("Project-owned")}>
+          <Fact label={t("Root")} value={project.dataset.root} />
+          <Fact label={t("Images")} value={project.dataset.image_count} />
           <Fact
-            label="Discovery"
+            label={t("Discovery")}
             value={project.dataset.recursive ? "Recursive" : "Top level"}
           />
-          <TagGroup title="Include patterns" values={project.dataset.include} />
+          <TagGroup title={t("Include patterns")} values={project.dataset.include} />
         </Panel>
         <Panel
-          title="Active Workflow"
+          title={t("Active Workflow")}
           eyebrow={`${project.active_workflow.validation_status} · ${project.active_workflow.status}`}
         >
-          <Fact label="Version" value={`v${project.active_workflow.version}`} />
-          <Fact label="Nodes" value={project.active_workflow.nodes.length} />
-          <Fact label="Source" value={project.active_workflow.source} />
-          <button onClick={onOpenWorkflows}>Open Automation editor</button>
+          <Fact label={t("Version")} value={`v${project.active_workflow.version}`} />
+          <Fact label={t("Nodes")} value={project.active_workflow.nodes.length} />
+          <Fact label={t("Source")} value={project.active_workflow.source} />
+          <button onClick={onOpenWorkflows}>{t("Open Automation editor")}</button>
         </Panel>
-        <Panel title="Enabled Skills" eyebrow="Domain extensions">
+        <Panel title={t("Enabled Skills")} eyebrow={t("Domain extensions")}>
           {project.enabled_skills.length ? (
             <div className="catalog-list">
               {project.enabled_skills.map((skill) => (
@@ -2570,13 +2557,13 @@ function ProjectPage({
             </div>
           ) : (
             <Empty
-              title="No Skills enabled"
-              detail="Stable schema and hash visuals remain available."
+              title={t("No Skills enabled")}
+              detail={t("Stable schema and hash visuals remain available.")}
             />
           )}
-          <button onClick={() => onOpenBuild("pipeline")}>Edit Skills in Automation</button>
+          <button onClick={() => onOpenBuild("pipeline")}>{t("Edit Skills in Automation")}</button>
         </Panel>
-        <Panel title="Model Bindings" eyebrow="Node execution">
+        <Panel title={t("Model Bindings")} eyebrow={t("Node execution")}>
           {project.model_bindings.map((binding) => (
             <Fact
               key={binding.id}
@@ -2586,7 +2573,7 @@ function ProjectPage({
           ))}
         </Panel>
         <Panel
-          title="Annotation Schema"
+          title={t("Annotation Schema")}
           eyebrow={`${project.annotation_schema.length} typed tasks`}
         >
           <div className="schema-list">
@@ -2599,31 +2586,31 @@ function ProjectPage({
                     {task.required ? " · required" : ""}
                   </small>
                 </span>
-                <span>{task.labels.join(", ") || "No labels"}</span>
+                <span>{task.labels.join(", ") || t("No labels")}</span>
               </article>
             ))}
           </div>
-          <button onClick={() => onOpenBuild("labels")}>Edit Labels in Build</button>
+          <button onClick={() => onOpenBuild("labels")}>{t("Edit Labels in Build")}</button>
         </Panel>
-        <Panel title="Versions, Runs & Reviews" eyebrow="Project outputs">
+        <Panel title={t("Versions, Runs & Reviews")} eyebrow={t("Project outputs")}>
           <Fact
-            label="Workflow versions"
+            label={t("Workflow versions")}
             value={project.available_workflow_versions.length}
           />
-          <Fact label="Runs" value={projectRuns.length} />
+          <Fact label={t("Runs")} value={projectRuns.length} />
           <Fact
-            label="Runs awaiting review"
+            label={t("Runs awaiting review")}
             value={
               projectRuns.filter(
                 (run) => run.status === "completed_with_review",
               ).length
             }
           />
-          <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}/export`)}>Open Export workspace</button>
+          <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}/export`)}>{t("Open Export workspace")}</button>
         </Panel>
         </div>
         <ProjectAgentActivity projectId={project.id} onError={onError} />
-      <Panel title="Dataset images" eyebrow={`${images.length} visible`}>
+      <Panel title={t("Dataset images")} eyebrow={`${images.length} visible`}>
         <div className="image-grid">
           {images.map((image) => (
             <article key={image.image_id}>
@@ -2631,23 +2618,23 @@ function ProjectPage({
               <div>
                 <span>
                   <strong>{image.name}</strong>
-                  <small>Image {image.index + 1}</small>
+                  <small>{t("Image")}{" "}{image.index + 1}</small>
                 </span>
                 <Status status={image.status} />
               </div>
               <button
                 aria-disabled={Boolean(startingImageId || project.active_batch || project.active_run) || !selectedPublishedWorkflow}
                 aria-label={!selectedPublishedWorkflow ? `Run ${image.name} unavailable: publish an Automation first` : project.active_batch || project.active_run ? `Run ${image.name} unavailable: another Run is active` : undefined}
-                title={!selectedPublishedWorkflow ? "Publish an Automation before running this image." : undefined}
+                title={!selectedPublishedWorkflow ? t("Publish an Automation before running this image.") : undefined}
                 onClick={() => !(startingImageId || project.active_batch || project.active_run) && selectedPublishedWorkflow && startImageRun(image)}
               >
-                {startingImageId === image.image_id ? "Starting…" : "Run this image"}
+                {startingImageId === image.image_id ? t("Starting…") : t("Run this image")}
               </button>
             </article>
           ))}
           {images.length === 0 && (
             <Empty
-              title="No images"
+              title={t("No images")}
               detail="Import images with the CLI or controlled workspace import API."
             />
           )}
@@ -2718,72 +2705,72 @@ function ProjectExportPage({
       .catch(() => setCopyStatus("Select the path above to copy it"));
   };
   if (!project)
-    return <section className="page-stack"><Empty title="Project unavailable" detail="Return to Projects and choose a valid Project." /></section>;
+    return <section className="page-stack"><Empty title={t("Project unavailable")} detail={t("Return to Projects and choose a valid Project.")} /></section>;
   return (
     <section className="page-stack export-workspace">
       <ProjectBreadcrumb project={project} current="Export" onOpenProjects={() => onNavigate("/projects")} onOpenProject={() => onNavigate(`/projects/${encodeURIComponent(project.id)}`)} />
       <nav className="section-tabs" aria-label={`${project.name} workspace`}>
-        <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}`)}>Overview</button>
-        <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}/build/data`)}>Build</button>
-        <button onClick={() => onNavigate(projectRunsPath(project.id))}>Runs</button>
-        <button onClick={() => onNavigate(projectReviewPath(project.id))}>Review</button>
-        <button className="active" aria-current="page">Export</button>
+        <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}`)}>{t("Overview")}</button>
+        <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}/build/data`)}>{t("Build")}</button>
+        <button onClick={() => onNavigate(projectRunsPath(project.id))}>{t("Runs")}</button>
+        <button onClick={() => onNavigate(projectReviewPath(project.id))}>{t("Review")}</button>
+        <button className="active" aria-current="page">{t("Export")}</button>
       </nav>
       {!activeReadiness ? (
-        <div className="loading-banner" role="status">Checking dataset export readiness…</div>
+        <div className="loading-banner" role="status">{t("Checking dataset export readiness…")}</div>
       ) : (
         <>
           <header className={`export-hero ${activeReadiness.ready ? "ready" : "blocked"}`}>
             <div>
-              <span className="eyebrow">Dataset delivery</span>
-              <h2>{activeReadiness.ready ? "Your dataset is ready" : "Export needs attention"}</h2>
-              <p>{activeReadiness.ready ? "All images have completed runs and every review decision is resolved. Choose a compatible format to create the dataset." : "Resolve the items below before creating a formal dataset export."}</p>
+              <span className="eyebrow">{t("Dataset delivery")}</span>
+              <h2>{activeReadiness.ready ? t("Your dataset is ready") : t("Export needs attention")}</h2>
+              <p>{activeReadiness.ready ? "All images have completed runs and every review decision is resolved. Choose a compatible format to create the dataset." : t("Resolve the items below before creating a formal dataset export.")}</p>
             </div>
             <dl className="export-readiness-metrics">
-              <div><dt>Images</dt><dd>{activeReadiness.image_count}</dd><small>{activeReadiness.processed_image_count} processed</small></div>
-              <div><dt>Accepted annotations</dt><dd>{activeReadiness.accepted_annotations}</dd><small>Included in export</small></div>
-              <div><dt>Unresolved reviews</dt><dd>{activeReadiness.unresolved_reviews}</dd><small>{activeReadiness.unresolved_reviews ? "Blocking export" : "Queue is clear"}</small></div>
+              <div><dt>{t("Images")}</dt><dd>{activeReadiness.image_count}</dd><small>{activeReadiness.processed_image_count} processed</small></div>
+              <div><dt>{t("Accepted annotations")}</dt><dd>{activeReadiness.accepted_annotations}</dd><small>{t("Included in export")}</small></div>
+              <div><dt>{t("Unresolved reviews")}</dt><dd>{activeReadiness.unresolved_reviews}</dd><small>{activeReadiness.unresolved_reviews ? t("Blocking export") : t("Queue is clear")}</small></div>
             </dl>
           </header>
 
           {activeReadiness.blocking_issues.length > 0 && <section className="export-blockers" aria-labelledby="export-blockers-title">
-            <div className="section-heading"><div><span className="eyebrow">Blocking reviews and setup</span><h2 id="export-blockers-title">Complete these items</h2></div></div>
+            <div className="section-heading"><div><span className="eyebrow">{t("Blocking reviews and setup")}</span><h2 id="export-blockers-title">{t("Complete these items")}</h2></div></div>
             {activeReadiness.blocking_issues.map((issue) => <article key={issue.code}>
               <span aria-hidden="true">!</span>
               <div><strong>{issue.title}</strong><small>{issue.explanation}</small></div>
-              <button onClick={() => onNavigate(issue.repair_destination)}>Resolve</button>
+              <button onClick={() => onNavigate(issue.repair_destination)}>{t("Resolve")}</button>
             </article>)}
           </section>}
 
           <section className="export-format-section" aria-labelledby="export-format-title">
-            <div className="section-heading"><div><span className="eyebrow">Schema compatibility</span><h2 id="export-format-title">Choose an export format</h2></div><small>The recommendation is calculated from the active Project Schema.</small></div>
+            <div className="section-heading"><div><span className="eyebrow">{t("Schema compatibility")}</span><h2 id="export-format-title">{t("Choose an export format")}</h2></div><small>{t("The recommendation is calculated from the active Project Schema.")}</small></div>
             <div className="export-format-grid">
               {activeReadiness.formats.map((item) => <label className={`export-format-card ${format === item.format ? "selected" : ""} ${!item.supported ? "unsupported" : ""}`} key={item.format}>
                 <input type="radio" name="export-format" value={item.format} checked={format === item.format} disabled={!item.supported} onChange={() => setFormat(item.format)} />
                 <span>
-                  <span className="export-format-title"><strong>{item.display_name}</strong>{item.recommended && <b>Recommended</b>}{!item.supported && <b>Incompatible</b>}</span>
+                  <span className="export-format-title"><strong>{item.display_name}</strong>{item.recommended && <b>{t("Recommended")}</b>}{!item.supported && <b>{t("Incompatible")}</b>}</span>
                   <small>{item.summary}</small>
-                  {item.unsupported_task_kinds.length > 0 && <small>Unsupported: {item.unsupported_task_kinds.join(", ")}</small>}
+                  {item.unsupported_task_kinds.length > 0 && <small>{t("Unsupported:")}{" "}{item.unsupported_task_kinds.join(", ")}</small>}
                   {item.warnings.map((warning) => <small key={warning}>{warning}</small>)}
                 </span>
               </label>)}
             </div>
             <div className="export-actions">
-              <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}`)}>Back to Project</button>
+              <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}`)}>{t("Back to Project")}</button>
               <button className="primary" disabled={!activeReadiness.ready || !format || exporting} onClick={executeExport}>
-                {exporting ? "Exporting dataset…" : `Export ${activeReadiness.formats.find((item) => item.format === format)?.display_name ?? "dataset"} dataset`}
+                {exporting ? t("Exporting dataset…") : `Export ${activeReadiness.formats.find((item) => item.format === format)?.display_name ?? "dataset"} dataset`}
               </button>
             </div>
           </section>
 
           {result && <section className="export-success" aria-live="polite">
-            <div className="export-success-heading"><span aria-hidden="true">✓</span><div><span className="eyebrow">Export complete</span><h2>Dataset exported successfully</h2><p>{result.report.exported_count} annotation{result.report.exported_count === 1 ? "" : "s"} exported · {result.report.skipped_count} skipped · {new Date(result.completed_at).toLocaleString()}</p></div></div>
-            <div className="export-result-path"><span>Result folder</span><code>{result.output_path}</code><button onClick={copyOutputPath}>Copy folder path</button>{copyStatus && <small role="status">{copyStatus}</small>}</div>
-            <details className="export-report"><summary>View export report</summary><dl>
-              <div><dt>Format</dt><dd>{result.format}</dd></div>
-              <div><dt>Exported</dt><dd>{result.report.exported_count}</dd></div>
-              <div><dt>Skipped</dt><dd>{result.report.skipped_count}</dd></div>
-              <div><dt>Files</dt><dd>{result.report.output_files.length}</dd></div>
+            <div className="export-success-heading"><span aria-hidden="true">✓</span><div><span className="eyebrow">{t("Export complete")}</span><h2>{t("Dataset exported successfully")}</h2><p>{result.report.exported_count} annotation{result.report.exported_count === 1 ? "" : t("s")} exported · {result.report.skipped_count} skipped · {new Date(result.completed_at).toLocaleString(localeTag())}</p></div></div>
+            <div className="export-result-path"><span>{t("Result folder")}</span><code>{result.output_path}</code><button onClick={copyOutputPath}>{t("Copy folder path")}</button>{copyStatus && <small role="status">{copyStatus}</small>}</div>
+            <details className="export-report"><summary>{t("View export report")}</summary><dl>
+              <div><dt>{t("Format")}</dt><dd>{result.format}</dd></div>
+              <div><dt>{t("Exported")}</dt><dd>{result.report.exported_count}</dd></div>
+              <div><dt>{t("Skipped")}</dt><dd>{result.report.skipped_count}</dd></div>
+              <div><dt>{t("Files")}</dt><dd>{result.report.output_files.length}</dd></div>
             </dl>
               {result.report.output_files.length > 0 && <ul>{result.report.output_files.map((file) => <li key={file}><code>{file}</code></li>)}</ul>}
               {result.report.warnings.length > 0 && <ul>{result.report.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}
@@ -2919,7 +2906,7 @@ function InlineProviderSetup({
   };
   return (
     <details className="inline-provider-setup" open>
-      <summary>Provider setup required</summary>
+      <summary>{t("Provider setup required")}</summary>
       <p>
         Pipeline Builder needs an Available text model with Tool Calls and
         Structured Output. This setup keeps the current Draft and returns here
@@ -2927,9 +2914,7 @@ function InlineProviderSetup({
       </p>
       {!created ? (
         <div className="inline-provider-form">
-          <label>
-            Provider preset
-            <select
+          <label>{t("Provider preset")}<select
               value={presetId}
               onChange={(event) => choosePreset(event.target.value)}
             >
@@ -2940,24 +2925,18 @@ function InlineProviderSetup({
               ))}
             </select>
           </label>
-          <label>
-            Connection name
-            <input
+          <label>{t("Connection name")}<input
               value={displayName}
               onChange={(event) => setDisplayName(event.target.value)}
             />
           </label>
-          <label>
-            Agent model
-            <input
+          <label>{t("Agent model")}<input
               value={modelId}
               onChange={(event) => setModelId(event.target.value)}
-              placeholder="Exact Provider model ID"
+              placeholder={t("Exact Provider model ID")}
             />
           </label>
-          <label>
-            Credential source
-            <select
+          <label>{t("Credential source")}<select
               value={credentialSource}
               onChange={(event) =>
                 setCredentialSource(
@@ -2968,17 +2947,13 @@ function InlineProviderSetup({
                 )
               }
             >
-              <option value="workspace_file">Local workspace file</option>
-              <option value="environment_variable">
-                Server environment variable
-              </option>
-              <option value="session_only">This server session only</option>
+              <option value="workspace_file">{t("Local workspace file")}</option>
+              <option value="environment_variable">{t("Server environment variable")}</option>
+              <option value="session_only">{t("This server session only")}</option>
             </select>
           </label>
           {credentialSource === "environment_variable" ? (
-            <label>
-              Environment variable name
-              <input
+            <label>{t("Environment variable name")}<input
                 value={environmentVariable}
                 onChange={(event) =>
                   setEnvironmentVariable(event.target.value)
@@ -2987,9 +2962,7 @@ function InlineProviderSetup({
               />
             </label>
           ) : (
-            <label>
-              API key
-              <input
+            <label>{t("API key")}<input
                 type="password"
                 autoComplete="off"
                 value={secret}
@@ -3009,8 +2982,8 @@ function InlineProviderSetup({
             onClick={() => void connect()}
           >
             {busy === "connect"
-              ? "Saving and checking…"
-              : "Save and check connection"}
+              ? t("Saving and checking…")
+              : t("Save and check connection")}
           </button>
         </div>
       ) : (
@@ -3028,13 +3001,13 @@ function InlineProviderSetup({
             disabled={busy === "probe"}
             onClick={() => void probe()}
           >
-            {busy === "probe" ? "Testing model…" : "Run billable model test"}
+            {busy === "probe" ? t("Testing model…") : t("Run billable model test")}
           </button>
         </div>
       )}
       <div className="button-row">
-        <button onClick={onOpenProviders}>Open Provider settings</button>
-        <button onClick={onOpenModels}>Open Model settings</button>
+        <button onClick={onOpenProviders}>{t("Open Provider settings")}</button>
+        <button onClick={onOpenModels}>{t("Open Model settings")}</button>
       </div>
     </details>
   );
@@ -3923,7 +3896,7 @@ function WorkflowsPage({
     (issue) => issue.blocking && geometryBlockingCodes.has(issue.code),
   ) ?? [];
   if (activeProject && !buildSummary)
-    return <section className="page-stack"><ProjectBreadcrumb project={activeProject} current="Build" onOpenProjects={onOpenProjects} onOpenProject={onOpenProject} /><BuildNavigation step="pipeline" onNavigate={onNavigate} /><div className="loading-banner" role="status">Loading Build readiness…</div></section>;
+    return <section className="page-stack"><ProjectBreadcrumb project={activeProject} current="Build" onOpenProjects={onOpenProjects} onOpenProject={onOpenProject} /><BuildNavigation step="pipeline" onNavigate={onNavigate} /><div className="loading-banner" role="status">{t("Loading Build readiness…")}</div></section>;
   if (buildSummary && !buildStepAllowed(buildSummary.guidance, "pipeline"))
     return <section className="page-stack"><ProjectBreadcrumb project={activeProject} current="Build" onOpenProjects={onOpenProjects} onOpenProject={onOpenProject} /><BuildNavigation step="pipeline" guidance={buildSummary.guidance} onNavigate={onNavigate} /><BuildBlocker guidance={buildSummary.guidance} onNavigate={onNavigate} /></section>;
   return (
@@ -3932,47 +3905,35 @@ function WorkflowsPage({
       <BuildNavigation step="pipeline" guidance={buildSummary?.guidance} onNavigate={(step) => onNavigate(step, step === "test" ? draft?.id : undefined)} />
       <div className="toolbar-panel workflow-designer-header">
         <div>
-          <span className="eyebrow">Step 3 · Automation</span>
-          <h2>How AnnotAgent will label your data</h2>
-          <p>
-            Start from a registered recipe or Advisor suggestion, then edit the
-            same autosaved Draft. Technical graph details remain available for
-            expert inspection.
-          </p>
+          <span className="eyebrow">{t("Step 3 · Automation")}</span>
+          <h2>{t("How AnnotAgent will label your data")}</h2>
+          <p>{t("Start from a registered recipe or Advisor suggestion, then edit the same autosaved Draft. Technical graph details remain available for expert inspection.")}</p>
         </div>
         <div className="button-row">
-          <small className="save-indicator" aria-live="polite">
-            Saved {Math.max(0, Math.floor((clock - (savedAt?.getTime() ?? new Date(draft?.updated_at ?? clock).getTime())) / 1000))} seconds ago
-          </small>
+          <small className="save-indicator" aria-live="polite">{t("Saved")}{" "}{Math.max(0, Math.floor((clock - (savedAt?.getTime() ?? new Date(draft?.updated_at ?? clock).getTime())) / 1000))}{" "}{t("seconds ago")}</small>
           <button
             onClick={() => create(false)}
             disabled={busy || !activeProjectId}
-          >
-            New Draft
-          </button>
+          >{t("New Draft")}</button>
         </div>
       </div>
       {draftConflict && (
         <section className="draft-conflict-panel" role="alert">
           <div>
-            <span className="eyebrow">Draft conflict</span>
-            <h3>This Draft changed in another tab</h3>
-            <p>
-              Your revision {draftConflict.local.revision} was not saved over
-              server revision {draftConflict.server?.revision ?? "unknown"}.
-              Choose which copy to continue with; no edits were discarded.
-            </p>
+            <span className="eyebrow">{t("Draft conflict")}</span>
+            <h3>{t("This Draft changed in another tab")}</h3>
+            <p>{t("Your revision")}{" "}{draftConflict.local.revision}{" "}{t("was not saved over server revision")}{" "}{draftConflict.server?.revision ?? "unknown"}{t(". Choose which copy to continue with; no edits were discarded.")}</p>
             <details>
-              <summary>Compare Draft snapshots</summary>
+              <summary>{t("Compare Draft snapshots")}</summary>
               <div className="draft-conflict-comparison">
-                <div><strong>Your unsaved copy</strong><pre>{JSON.stringify(draftConflict.local, null, 2)}</pre></div>
-                <div><strong>Latest server copy</strong><pre>{draftConflict.server ? JSON.stringify(draftConflict.server, null, 2) : draftConflict.message}</pre></div>
+                <div><strong>{t("Your unsaved copy")}</strong><pre>{JSON.stringify(draftConflict.local, null, 2)}</pre></div>
+                <div><strong>{t("Latest server copy")}</strong><pre>{draftConflict.server ? JSON.stringify(draftConflict.server, null, 2) : draftConflict.message}</pre></div>
               </div>
             </details>
           </div>
           <div className="button-row">
-            <button onClick={preserveConflictedDraft} disabled={busy}>Save mine as new Draft</button>
-            <button className="primary" onClick={reloadConflictedDraft} disabled={!draftConflict.server || busy}>Reload latest Draft</button>
+            <button onClick={preserveConflictedDraft} disabled={busy}>{t("Save mine as new Draft")}</button>
+            <button className="primary" onClick={reloadConflictedDraft} disabled={!draftConflict.server || busy}>{t("Reload latest Draft")}</button>
           </div>
         </section>
       )}
@@ -3993,7 +3954,7 @@ function WorkflowsPage({
       />}
       <section className="pipeline-model-overview" aria-labelledby="pipeline-model-overview-title">
         <header>
-          <div><span className="eyebrow">Runtime model calls</span><h2 id="pipeline-model-overview-title">Models this automation will call</h2><p>The Builder LLM plans the Draft; only the calls below process your images.</p></div>
+          <div><span className="eyebrow">{t("Runtime model calls")}</span><h2 id="pipeline-model-overview-title">{t("Models this automation will call")}</h2><p>{t("The Builder LLM plans the Draft; only the calls below process your images.")}</p></div>
           <strong>{pipelineModelCalls.length}</strong>
         </header>
         {pipelineModelCalls.length ? <ol className="pipeline-model-call-list">
@@ -4001,22 +3962,22 @@ function WorkflowsPage({
             <span className="pipeline-model-call-index">{index + 1}</span>
             <span className="pipeline-model-call-copy"><strong>{node.id.replaceAll("_", " ")}</strong><small>{node.node_type.replaceAll("_", " ")}</small></span>
             <span className="pipeline-model-call-model"><strong>{modelName}</strong>{providerName && <small>via {providerName}</small>}</span>
-            <span className={`status ${!report || executedImageCount ? "status-auto-accepted" : "status-needs-review"}`}>{!report ? "Configured" : executedImageCount ? `Reached · ${executedImageCount}/${report.samples.length}` : "Not reached"}</span>
+            <span className={`status ${!report || executedImageCount ? "status-auto-accepted" : "status-needs-review"}`}>{!report ? t("Configured") : executedImageCount ? `Reached · ${executedImageCount}/${report.samples.length}` : t("Not reached")}</span>
           </li>)}
-        </ol> : <div className="pipeline-model-empty"><strong>No image-processing model is bound</strong><span>Choose a Draft or ask AnnotAgent to propose a model-backed automation.</span></div>}
-        {configuredRefinerSkipped && <aside className="pipeline-model-warning"><strong>Segmentation was configured but did not run in the latest Sample Test.</strong><span>{latestPromptCoverage?.detail ?? "An earlier gate routed the candidate away from refinement."}</span></aside>}
+        </ol> : <div className="pipeline-model-empty"><strong>{t("No image-processing model is bound")}</strong><span>Choose a Draft or ask AnnotAgent to propose a model-backed automation.</span></div>}
+        {configuredRefinerSkipped && <aside className="pipeline-model-warning"><strong>Segmentation was configured but did not run in the latest Sample Test.</strong><span>{latestPromptCoverage?.detail ?? t("An earlier gate routed the candidate away from refinement.")}</span></aside>}
       </section>
       <div className="workflow-command-grid">
         <details className="workflow-command-card workflow-start-options">
-          <summary>Start from a template</summary>
+          <summary>{t("Start from a template")}</summary>
           <div className="workflow-template-controls">
             <p>Use a registered starting recipe instead of asking the Builder Agent.</p>
             <select
-              aria-label="Workflow template"
+              aria-label={t("Workflow template")}
               value={templateId}
               onChange={(event) => setTemplateId(event.target.value)}
             >
-              <option value="">Generic project template</option>
+              <option value="">{t("Generic project template")}</option>
               {(catalog?.workflow_templates ?? []).map((template) => (
                 <option key={template.id} value={template.id}>
                   {template.name}
@@ -4026,25 +3987,19 @@ function WorkflowsPage({
             <button
               onClick={() => create(true, templateId || undefined)}
               disabled={busy || !activeProjectId}
-            >
-              Create from Template
-            </button>
+            >{t("Create from Template")}</button>
           </div>
         </details>
         <section className="workflow-command-card workflow-advisor-recommendation">
-          <span className="eyebrow">Builder LLM · does not label images</span>
-          <h3>Build a recommended automation</h3>
-          <p>{targetLabel ? `Set the boundaries for ${targetLabel}. The Agent may inspect, draft, validate, and Dry Run, but it cannot activate the result.` : "Choose a Label and bounded objective before starting the Agent."}</p>
+          <span className="eyebrow">{t("Builder LLM · does not label images")}</span>
+          <h3>{t("Build a recommended automation")}</h3>
+          <p>{targetLabel ? `Set the boundaries for ${targetLabel}. The Agent may inspect, draft, validate, and Dry Run, but it cannot activate the result.` : t("Choose a Label and bounded objective before starting the Agent.")}</p>
           {registryLoading ? (
-            <div className="loading-banner compact" role="status">
-              Finding compatible Agent models…
-            </div>
+            <div className="loading-banner compact" role="status">{t("Finding compatible Agent models…")}</div>
           ) : liveAgentModels.length ? (
             <fieldset className="agent-model-choice">
-              <legend>Builder LLM</legend>
-              <label>
-                Model Profile
-                <select
+              <legend>{t("Builder LLM")}</legend>
+              <label>{t("Model Profile")}<select
                   value={selectedAgentModelId}
                   disabled={modelBindingBusy || advisorRunning}
                   onChange={(event) =>
@@ -4062,7 +4017,7 @@ function WorkflowsPage({
                     );
                     return (
                       <option key={model.id} value={model.id}>
-                        {model.display_name} via {provider?.display_name ?? "Provider"}
+                        {model.display_name} via {provider?.display_name ?? t("Provider")}
                       </option>
                     );
                   })}
@@ -4076,15 +4031,15 @@ function WorkflowsPage({
                   </span>
                   <Status status={selectedAgentModel.status} />
                   <div className="tag-group">
-                    <span>Plans the pipeline</span>
-                    <span>Not a Runtime image call</span>
+                    <span>{t("Plans the pipeline")}</span>
+                    <span>{t("Not a Runtime image call")}</span>
                     <span>
                       {agentProjectBinding
-                        ? "Project choice"
+                        ? t("Project choice")
                         : globalModelDefaults.pipeline_builder ===
                             selectedAgentModel.id
-                          ? "Global default"
-                          : "Compatible fallback"}
+                          ? t("Global default")
+                          : t("Compatible fallback")}
                     </span>
                   </div>
                 </div>
@@ -4104,9 +4059,7 @@ function WorkflowsPage({
                       event.target.checked,
                     )
                   }
-                />
-                Lock this Project choice so the Agent cannot replace it
-              </label>
+                />{t("Lock this Project choice so the Agent cannot replace it")}</label>
             </fieldset>
           ) : (
             <InlineProviderSetup
@@ -4116,33 +4069,31 @@ function WorkflowsPage({
               onError={onError}
             />
           )}
-          <fieldset className="agent-objective agent-objective-primary" aria-label="Pipeline Builder objective">
-            <legend>Annotation goal</legend>
-            <label>Target task<select aria-label="Target task" value={targetTaskId} onChange={(event) => {
+          <fieldset className="agent-objective agent-objective-primary" aria-label={t("Pipeline Builder objective")}>
+            <legend>{t("Annotation goal")}</legend>
+            <label>{t("Target task")}<select aria-label={t("Target task")} value={targetTaskId} onChange={(event) => {
               const taskId = event.target.value;
               setTargetTaskId(taskId);
               setTargetLabel(activeProject?.annotation_schema.find((task) => task.id === taskId)?.labels[0] ?? "");
             }}>
               {(activeProject?.annotation_schema ?? []).map((task) => <option key={task.id} value={task.id}>{task.id} · {task.kind}</option>)}
             </select></label>
-            <label>Target Label<select aria-label="Target Label" value={targetLabel} onChange={(event) => setTargetLabel(event.target.value)}>
+            <label>{t("Target Label")}<select aria-label={t("Target Label")} value={targetLabel} onChange={(event) => setTargetLabel(event.target.value)}>
               {(targetTask?.labels ?? []).map((label) => <option key={label} value={label}>{label}</option>)}
             </select></label>
-            <label>Priority<select aria-label="Optimization priority" value={builderConstraints.priority} onChange={(event) => setBuilderConstraints((current) => ({ ...current, priority: event.target.value as OptimizationPriority }))}>
-              <option value="balanced">Balanced</option>
-              <option value="accurate">Accuracy first</option>
-              <option value="fast">Speed first</option>
-              <option value="low_cost">Lowest cost</option>
+            <label>{t("Priority")}<select aria-label={t("Optimization priority")} value={builderConstraints.priority} onChange={(event) => setBuilderConstraints((current) => ({ ...current, priority: event.target.value as OptimizationPriority }))}>
+              <option value="balanced">{t("Balanced")}</option>
+              <option value="accurate">{t("Accuracy first")}</option>
+              <option value="fast">{t("Speed first")}</option>
+              <option value="low_cost">{t("Lowest cost")}</option>
             </select></label>
           </fieldset>
           <details className="builder-advanced-options">
-            <summary>Build mode, review and limits</summary>
-            <fieldset className="agent-objective" aria-label="Advanced Pipeline Builder objective">
-              <legend>Advanced constraints</legend>
-              <label>
-                Build mode
-                <select
-                  aria-label="Pipeline Build mode"
+            <summary>{t("Build mode, review and limits")}</summary>
+            <fieldset className="agent-objective" aria-label={t("Advanced Pipeline Builder objective")}>
+              <legend>{t("Advanced constraints")}</legend>
+              <label>{t("Build mode")}<select
+                  aria-label={t("Pipeline Build mode")}
                   value={buildModeKind}
                   onChange={(event) =>
                     setBuildModeKind(
@@ -4150,28 +4101,28 @@ function WorkflowsPage({
                     )
                   }
                 >
-                  <option value="from_scratch">Build from scratch</option>
-                  <option value="repair_draft" disabled={!draft || ["published", "archived"].includes(draft.status)}>Repair current Draft</option>
-                  <option value="resolve_bindings" disabled={!draft || ["published", "archived"].includes(draft.status)}>Resolve current bindings</option>
-                  <option value="improve_existing" disabled={!selected?.workflow.source.startsWith("published draft")}>Improve Published Version</option>
+                  <option value="from_scratch">{t("Build from scratch")}</option>
+                  <option value="repair_draft" disabled={!draft || ["published", "archived"].includes(draft.status)}>{t("Repair current Draft")}</option>
+                  <option value="resolve_bindings" disabled={!draft || ["published", "archived"].includes(draft.status)}>{t("Resolve current bindings")}</option>
+                  <option value="improve_existing" disabled={!selected?.workflow.source.startsWith("published draft")}>{t("Improve Published Version")}</option>
                 </select>
                 <small>
                   {buildModeKind === "from_scratch"
-                    ? "Starts with a new empty Working Draft."
+                    ? t("Starts with a new empty Working Draft.")
                     : buildModeKind === "improve_existing"
-                      ? "Uses the selected immutable Version as an explicit base."
+                      ? t("Uses the selected immutable Version as an explicit base.")
                       : buildModeKind === "resolve_bindings"
-                        ? "Keeps the graph and resolves its model bindings."
-                        : "Keeps the selected editable Draft and its identity."}
+                        ? t("Keeps the graph and resolves its model bindings.")
+                        : t("Keeps the selected editable Draft and its identity.")}
                 </small>
               </label>
-              <label>Maximum cost per image<input aria-label="Maximum cost per image" inputMode="decimal" placeholder="No per-image limit" value={builderConstraints.max_cost_per_image ?? ""} onChange={(event) => setBuilderConstraints((current) => ({ ...current, max_cost_per_image: event.target.value || undefined }))} /></label>
-              <label>Maximum latency (ms)<input aria-label="Maximum latency" type="number" min="1" placeholder="No latency limit" value={builderConstraints.max_expected_latency_ms ?? ""} onChange={(event) => setBuilderConstraints((current) => ({ ...current, max_expected_latency_ms: event.target.value ? Number(event.target.value) : undefined }))} /></label>
-              <label>Desired Review workload<input aria-label="Desired review rate" type="number" min="0" max="100" value={Math.round((builderConstraints.target_review_rate ?? 0) * 100)} onChange={(event) => setBuilderConstraints((current) => ({ ...current, target_review_rate: Number(event.target.value) / 100 }))} /><small>Percent of decided candidates</small></label>
-              <label className="checkbox-row"><input type="checkbox" checked={builderConstraints.allow_external_models} onChange={(event) => setBuilderConstraints((current) => ({ ...current, allow_external_models: event.target.checked }))} />Allow configured external APIs</label>
-              <label className="checkbox-row"><input type="checkbox" checked={builderConstraints.allow_human_review} onChange={(event) => setBuilderConstraints((current) => ({ ...current, allow_human_review: event.target.checked }))} />Allow Human Review</label>
+              <label>{t("Maximum cost per image")}<input aria-label={t("Maximum cost per image")} inputMode="decimal" placeholder={t("No per-image limit")} value={builderConstraints.max_cost_per_image ?? ""} onChange={(event) => setBuilderConstraints((current) => ({ ...current, max_cost_per_image: event.target.value || undefined }))} /></label>
+              <label>{t("Maximum latency (ms)")}<input aria-label={t("Maximum latency")} type="number" min="1" placeholder={t("No latency limit")} value={builderConstraints.max_expected_latency_ms ?? ""} onChange={(event) => setBuilderConstraints((current) => ({ ...current, max_expected_latency_ms: event.target.value ? Number(event.target.value) : undefined }))} /></label>
+              <label>{t("Desired Review workload")}<input aria-label={t("Desired review rate")} type="number" min="0" max="100" value={Math.round((builderConstraints.target_review_rate ?? 0) * 100)} onChange={(event) => setBuilderConstraints((current) => ({ ...current, target_review_rate: Number(event.target.value) / 100 }))} /><small>{t("Percent of decided candidates")}</small></label>
+              <label className="checkbox-row"><input type="checkbox" checked={builderConstraints.allow_external_models} onChange={(event) => setBuilderConstraints((current) => ({ ...current, allow_external_models: event.target.checked }))} />{t("Allow configured external APIs")}</label>
+              <label className="checkbox-row"><input type="checkbox" checked={builderConstraints.allow_human_review} onChange={(event) => setBuilderConstraints((current) => ({ ...current, allow_human_review: event.target.checked }))} />{t("Allow Human Review")}</label>
               <div className="agent-worker-summary">
-                <span>Available local expert models</span>
+                <span>{t("Available local expert models")}</span>
                 <strong>
                   {catalog?.expert_models
                     .filter(
@@ -4184,13 +4135,13 @@ function WorkflowsPage({
                         model.availability_evidence.weights_ready,
                     )
                     .map((model) => model.display_name)
-                    .join(", ") || "None ready"}
+                    .join(", ") || t("None ready")}
                 </strong>
               </div>
             </fieldset>
           </details>
           <details className="project-model-choices">
-            <summary>Project model choices</summary>
+            <summary>{t("Project model choices")}</summary>
             <p>
               Reuse Available Model Profiles for each capability. Node overrides
               remain part of the Draft and are frozen when published.
@@ -4207,9 +4158,9 @@ function WorkflowsPage({
                 const models = compatibleModels[choice.role] ?? [];
                 return (
                   <label key={choice.role}>
-                    {choice.label}
+                    {t(choice.label)}
                     <select
-                      aria-label={choice.label}
+                      aria-label={t(choice.label)}
                       value={binding?.model_profile_id ?? ""}
                       disabled={modelBindingBusy}
                       onChange={(event) =>
@@ -4221,14 +4172,14 @@ function WorkflowsPage({
                         )
                       }
                     >
-                      <option value="">Use a node-specific choice</option>
+                      <option value="">{t("Use a node-specific choice")}</option>
                       {models.map((model) => {
                         const provider = registryProviders.find(
                           (candidate) => candidate.id === model.provider_id,
                         );
                         return (
                           <option key={model.id} value={model.id}>
-                            {model.display_name} via {provider?.display_name ?? "Provider"}
+                            {model.display_name} via {provider?.display_name ?? t("Provider")}
                           </option>
                         );
                       })}
@@ -4236,60 +4187,60 @@ function WorkflowsPage({
                     <small>
                       {models.length
                         ? `${models.length} compatible and Available`
-                        : "No compatible Profile is Available"}
+                        : t("No compatible Profile is Available")}
                     </small>
                   </label>
                 );
               })}
             </div>
             <div className="button-row">
-              <button onClick={onOpenModels}>Manage Model Profiles</button>
-              <button onClick={onOpenProviders}>Manage Providers</button>
+              <button onClick={onOpenModels}>{t("Manage Model Profiles")}</button>
+              <button onClick={onOpenProviders}>{t("Manage Providers")}</button>
             </div>
           </details>
-          <details className="advanced-settings"><summary>Agent limits and provider</summary><div className="workflow-advisor-fields">
+          <details className="advanced-settings"><summary>{t("Agent limits and provider")}</summary><div className="workflow-advisor-fields">
             <p className="field-note">AnnotAgent uses the selected live Agent model. Test fixtures are never eligible for generated Pipelines.</p>
-            <label>Maximum model calls / image<input type="number" min="1" max="16" value={builderConstraints.max_model_calls_per_image ?? ""} onChange={(event) => setBuilderConstraints((current) => ({ ...current, max_model_calls_per_image: event.target.value ? Number(event.target.value) : undefined }))} /></label>
-            <label>Maximum Agent turns<input type="number" min="1" max="64" value={builderConstraints.maximum_agent_turns} onChange={(event) => setBuilderConstraints((current) => ({ ...current, maximum_agent_turns: Number(event.target.value) }))} /></label>
-            <label>Maximum Tool Calls<input type="number" min="1" max="128" value={builderConstraints.maximum_tool_calls} onChange={(event) => setBuilderConstraints((current) => ({ ...current, maximum_tool_calls: Number(event.target.value) }))} /></label>
-            <label>Maximum Dry Runs<input type="number" min="1" max="10" value={builderConstraints.maximum_dry_runs} onChange={(event) => setBuilderConstraints((current) => ({ ...current, maximum_dry_runs: Number(event.target.value) }))} /></label>
-            <label>Maximum Agent cost<input inputMode="decimal" value={builderConstraints.maximum_agent_cost} onChange={(event) => setBuilderConstraints((current) => ({ ...current, maximum_agent_cost: event.target.value }))} /></label>
-            <button onClick={suggest} disabled={busy || !activeProjectId}>Build complete Project automation</button>
+            <label>{t("Maximum model calls / image")}<input type="number" min="1" max="16" value={builderConstraints.max_model_calls_per_image ?? ""} onChange={(event) => setBuilderConstraints((current) => ({ ...current, max_model_calls_per_image: event.target.value ? Number(event.target.value) : undefined }))} /></label>
+            <label>{t("Maximum Agent turns")}<input type="number" min="1" max="64" value={builderConstraints.maximum_agent_turns} onChange={(event) => setBuilderConstraints((current) => ({ ...current, maximum_agent_turns: Number(event.target.value) }))} /></label>
+            <label>{t("Maximum Tool Calls")}<input type="number" min="1" max="128" value={builderConstraints.maximum_tool_calls} onChange={(event) => setBuilderConstraints((current) => ({ ...current, maximum_tool_calls: Number(event.target.value) }))} /></label>
+            <label>{t("Maximum Dry Runs")}<input type="number" min="1" max="10" value={builderConstraints.maximum_dry_runs} onChange={(event) => setBuilderConstraints((current) => ({ ...current, maximum_dry_runs: Number(event.target.value) }))} /></label>
+            <label>{t("Maximum Agent cost")}<input inputMode="decimal" value={builderConstraints.maximum_agent_cost} onChange={(event) => setBuilderConstraints((current) => ({ ...current, maximum_agent_cost: event.target.value }))} /></label>
+            <button onClick={suggest} disabled={busy || !activeProjectId}>{t("Build complete Project automation")}</button>
           </div></details>
-          <button className={activeAgentSession?.draft_id ? undefined : "primary"} onClick={suggestLabelPipeline} disabled={busy || advisorRunning || !activeProjectId || !targetTaskId || !targetLabel || !selectedAgentModelId}>{advisorRunning ? "Agent is working…" : "Ask AnnotAgent"}</button>
+          <button className={activeAgentSession?.draft_id ? undefined : "primary"} onClick={suggestLabelPipeline} disabled={busy || advisorRunning || !activeProjectId || !targetTaskId || !targetLabel || !selectedAgentModelId}>{advisorRunning ? t("Agent is working…") : t("Ask AnnotAgent")}</button>
         </section>
         <section className="workflow-command-card workflow-version-actions">
-          <span className="eyebrow">Current Automation</span>
-          <h3>{immutable ? "Immutable Version" : "Autosaved Draft"}</h3>
-          <p>{immutable ? "Clone this Version before making changes." : "Edits stay unpublished until you test and activate them in the next step."}</p>
+          <span className="eyebrow">{t("Current Automation")}</span>
+          <h3>{immutable ? t("Immutable Version") : t("Autosaved Draft")}</h3>
+          <p>{immutable ? t("Clone this Version before making changes.") : t("Edits stay unpublished until you test and activate them in the next step.")}</p>
           <div className="button-row">
-            {!immutable && undoDraft && <button onClick={undoAgentApply} disabled={busy}>Undo Agent changes</button>}
-            {!immutable && <button onClick={discardChanges} disabled={busy || !draft}>Discard</button>}
-            {!immutable && <button onClick={() => onNavigate("test", draft?.id)} disabled={busy || !draft}>Open Test &amp; Activate</button>}
-            {immutable && <button onClick={clonePublished} disabled={busy || !selected?.workflow.source.startsWith("published draft")}>Clone to Draft</button>}
-            <button onClick={() => document.getElementById("improve-automation")?.scrollIntoView({ behavior: "smooth" })}>Improve from evidence</button>
-            {!immutable && draft && <details className="action-menu"><summary>More</summary><div><button onClick={archive} disabled={busy}>Archive</button></div></details>}
+            {!immutable && undoDraft && <button onClick={undoAgentApply} disabled={busy}>{t("Undo Agent changes")}</button>}
+            {!immutable && <button onClick={discardChanges} disabled={busy || !draft}>{t("Discard")}</button>}
+            {!immutable && <button onClick={() => onNavigate("test", draft?.id)} disabled={busy || !draft}>{t("Open Test & Activate")}</button>}
+            {immutable && <button onClick={clonePublished} disabled={busy || !selected?.workflow.source.startsWith("published draft")}>{t("Clone to Draft")}</button>}
+            <button onClick={() => document.getElementById("improve-automation")?.scrollIntoView({ behavior: "smooth" })}>{t("Improve from evidence")}</button>
+            {!immutable && draft && <details className="action-menu"><summary>{t("More")}</summary><div><button onClick={archive} disabled={busy}>{t("Archive")}</button></div></details>}
           </div>
         </section>
       </div>
       {geometryBlockingIssues.length > 0 && <section className="geometry-safety-blocker" role="alert">
         <div>
-          <span className="eyebrow">Publication blocked</span>
-          <h2>Automatic acceptance is unsafe</h2>
+          <span className="eyebrow">{t("Publication blocked")}</span>
+          <h2>{t("Automatic acceptance is unsafe")}</h2>
           <p>The selected model score describes semantic or relative confidence, but the bounding boxes do not have valid geometry evidence for this Project.</p>
           <ul>{geometryBlockingIssues.map((issue) => <li key={`${issue.code}:${issue.path}`}><strong>{issue.code.replaceAll("_", " ")}</strong><span>{issue.message}</span></li>)}</ul>
         </div>
         <div className="geometry-repair-actions">
-          <button className="primary" disabled={busy || !selected?.workflow.source.startsWith("published draft")} onClick={createSafeDraft}>Require human review</button>
-          <button onClick={() => document.getElementById("improve-automation")?.scrollIntoView({ behavior: "smooth" })}>Add compatible refiner</button>
+          <button className="primary" disabled={busy || !selected?.workflow.source.startsWith("published draft")} onClick={createSafeDraft}>{t("Require human review")}</button>
+          <button onClick={() => document.getElementById("improve-automation")?.scrollIntoView({ behavior: "smooth" })}>{t("Add compatible refiner")}</button>
           <button onClick={() => {
             document.querySelector<HTMLDetailsElement>(".geometry-calibration-panel")?.setAttribute("open", "");
             document.getElementById("improve-automation")?.scrollIntoView({ behavior: "smooth" });
-          }}>Run geometry calibration</button>
+          }}>{t("Run geometry calibration")}</button>
         </div>
       </section>}
       {(advisorRunning || (activeAgentSession && !advisorProposal)) && (
-        <Panel title="Agent progress" eyebrow={advisorRunning ? "Live persisted Pipeline Builder session" : "Recovered persisted Pipeline Builder session"}>
+        <Panel title={t("Agent progress")} eyebrow={advisorRunning ? t("Live persisted Pipeline Builder session") : t("Recovered persisted Pipeline Builder session")}>
           {activeAgentSession ? (
             <AgentSessionTrace
               session={activeAgentSession}
@@ -4305,17 +4256,17 @@ function WorkflowsPage({
               }
             />
           ) : (
-            <div className="loading-banner" role="status">Starting the bounded Agent session…</div>
+            <div className="loading-banner" role="status">{t("Starting the bounded Agent session…")}</div>
           )}
         </Panel>
       )}
       {advisorProposal && (
         <Panel
-          title={advisorProposalRecovered ? "Saved Agent Result" : "Proposed Changes"}
-          eyebrow={advisorProposalRecovered ? "Recovered from server · editable Draft · not activated" : "Advisor preview · Draft only · never activated automatically"}
+          title={advisorProposalRecovered ? t("Saved Agent Result") : t("Proposed Changes")}
+          eyebrow={advisorProposalRecovered ? t("Recovered from server · editable Draft · not activated") : t("Advisor preview · Draft only · never activated automatically")}
         >
           {advisorProposalRecovered && <div className="saved-agent-result-summary">
-            <span><strong>{advisorProposal.draft.name}</strong><small>{advisorProposal.estimated_model_calls_per_image} Runtime model calls per image · {advisorProposal.unresolved_model_bindings.length ? `${advisorProposal.unresolved_model_bindings.length} unresolved bindings` : "bindings resolved"}</small></span>
+            <span><strong>{advisorProposal.draft.name}</strong><small>{advisorProposal.estimated_model_calls_per_image}{" "}{t("Runtime model calls per image ·")}{" "}{advisorProposal.unresolved_model_bindings.length ? `${advisorProposal.unresolved_model_bindings.length} unresolved bindings` : "bindings resolved"}</small></span>
             <Status status={advisorProposal.draft.status} />
           </div>}
           <details
@@ -4327,26 +4278,26 @@ function WorkflowsPage({
               )
             }
           >
-            <summary>{advisorProposalRecovered ? "View Builder reasoning and diagnostics" : "Review proposed automation"}</summary>
+            <summary>{advisorProposalRecovered ? t("View Builder reasoning and diagnostics") : t("Review proposed automation")}</summary>
             <div className="advisor-result-details-body">
           <div className="advisor-proposal-grid">
             <div>
-              <h3>Automation Recipe</h3>
+              <h3>{t("Automation Recipe")}</h3>
               <ol className="advisor-recipe-list">
                 {guidedWorkflowNodes(advisorProposal.draft.nodes).map((node) => <li key={node.id}>{workflowNodeTitle(node.node_type)} <small>{node.model_binding ?? "Core"}</small></li>)}
               </ol>
             </div>
             <div className="fact-grid">
-              <Fact label="Model calls / image" value={advisorProposal.estimated_model_calls_per_image} />
-              <Fact label="Estimated latency" value={advisorProposal.estimated_latency_ms ? `${advisorProposal.estimated_latency_ms} ms` : "Unresolved"} />
-              <Fact label="Cost tier" value={advisorProposal.estimated_cost_tier} />
-              <Fact label="Expected Review workload" value={advisorProposal.agent_dry_run ? `${advisorProposal.agent_dry_run.summary.needs_review_count} of ${advisorProposal.agent_dry_run.summary.image_count} samples` : "Test required"} />
-              <Fact label={advisorProposalRecovered ? "Persistence" : "Compared with current"} value={advisorProposalRecovered ? "Saved on server" : draft ? `${advisorProposal.draft.nodes.length - draft.nodes.length >= 0 ? "+" : ""}${advisorProposal.draft.nodes.length - draft.nodes.length} nodes` : "No Current Draft"} />
+              <Fact label={t("Model calls / image")} value={advisorProposal.estimated_model_calls_per_image} />
+              <Fact label={t("Estimated latency")} value={advisorProposal.estimated_latency_ms ? `${advisorProposal.estimated_latency_ms} ms` : "Unresolved"} />
+              <Fact label={t("Cost tier")} value={advisorProposal.estimated_cost_tier} />
+              <Fact label={t("Expected Review workload")} value={advisorProposal.agent_dry_run ? `${advisorProposal.agent_dry_run.summary.needs_review_count} of ${advisorProposal.agent_dry_run.summary.image_count} samples` : "Test required"} />
+              <Fact label={advisorProposalRecovered ? t("Persistence") : t("Compared with current")} value={advisorProposalRecovered ? "Saved on server" : draft ? `${advisorProposal.draft.nodes.length - draft.nodes.length >= 0 ? "+" : ""}${advisorProposal.draft.nodes.length - draft.nodes.length} nodes` : "No Current Draft"} />
             </div>
           </div>
           {showProposalComparison && proposalDiff && (
-            <fieldset className="advisor-change-preview" aria-label="Draft Diff">
-              <legend>Review changes</legend>
+            <fieldset className="advisor-change-preview" aria-label={t("Draft Diff")}>
+              <legend>{t("Review changes")}</legend>
               {pipelineDiffRows(proposalDiff, advisorProposal.draft).map((change) => (
                 <label className={change.tone} key={change.id}>
                   <input
@@ -4360,14 +4311,14 @@ function WorkflowsPage({
                   <span>{change.tone === "added" ? "+" : change.tone === "removed" ? "−" : "~"} {change.label}</span>
                 </label>
               ))}
-              {!pipelineDiffChangeIds(proposalDiff).length && <p>No changes from the Current Draft.</p>}
+              {!pipelineDiffChangeIds(proposalDiff).length && <p>{t("No changes from the Current Draft.")}</p>}
             </fieldset>
           )}
-          <TagGroup title="Why" values={advisorProposal.rationale} />
-          <TagGroup title="Unresolved bindings" values={advisorProposal.unresolved_model_bindings} />
-          {!!advisorProposal.unresolved_model_bindings.length && <div className="unresolved-plugin-action"><span><strong>A required Expert Model capability is not Ready.</strong><small>Inspect compatible installed contracts, add legal checkpoint files, and run the isolated Rust process test. AnnotAgent will keep this as a blocked Draft until you retry.</small></span><button onClick={onOpenPlugins}>Install or finish model setup</button></div>}
-          <TagGroup title="Warnings" values={advisorProposal.warnings} />
-          <TagGroup title="Alternatives" values={advisorProposal.alternatives} />
+          <TagGroup title={t("Why")} values={advisorProposal.rationale} />
+          <TagGroup title={t("Unresolved bindings")} values={advisorProposal.unresolved_model_bindings} />
+          {!!advisorProposal.unresolved_model_bindings.length && <div className="unresolved-plugin-action"><span><strong>{t("A required Expert Model capability is not Ready.")}</strong><small>Inspect compatible installed contracts, add legal checkpoint files, and run the isolated Rust process test. AnnotAgent will keep this as a blocked Draft until you retry.</small></span><button onClick={onOpenPlugins}>{t("Install or finish model setup")}</button></div>}
+          <TagGroup title={t("Warnings")} values={advisorProposal.warnings} />
+          <TagGroup title={t("Alternatives")} values={advisorProposal.alternatives} />
           {advisorProposal.agent_session && (
             <AgentSessionTrace
               session={advisorProposal.agent_session}
@@ -4391,17 +4342,17 @@ function WorkflowsPage({
           )}
           {!advisorProposalRecovered && <div className="button-row">
             <>
-              <button className="primary" onClick={() => applyProposalChanges()} disabled={!proposalDiff || !selectedProposalChanges.length || busy}>Apply selected</button>
-              <button onClick={() => proposalDiff && applyProposalChanges(pipelineDiffChangeIds(proposalDiff))} disabled={!proposalDiff || !pipelineDiffChangeIds(proposalDiff).length || busy}>Apply all</button>
-              <button onClick={() => setShowProposalComparison((value) => !value)}>{showProposalComparison ? "Hide comparison" : "Compare with current"}</button>
-              <button onClick={() => { setAdvisorProposal(undefined); setAdvisorProposalRecovered(false); setProposalDiff(undefined); setSelectedProposalChanges([]); }}>Reject proposal</button>
+              <button className="primary" onClick={() => applyProposalChanges()} disabled={!proposalDiff || !selectedProposalChanges.length || busy}>{t("Apply selected")}</button>
+              <button onClick={() => proposalDiff && applyProposalChanges(pipelineDiffChangeIds(proposalDiff))} disabled={!proposalDiff || !pipelineDiffChangeIds(proposalDiff).length || busy}>{t("Apply all")}</button>
+              <button onClick={() => setShowProposalComparison((value) => !value)}>{showProposalComparison ? t("Hide comparison") : t("Compare with current")}</button>
+              <button onClick={() => { setAdvisorProposal(undefined); setAdvisorProposalRecovered(false); setProposalDiff(undefined); setSelectedProposalChanges([]); }}>{t("Reject proposal")}</button>
             </>
           </div>}
             </div>
           </details>
           {advisorProposalRecovered && <div className="button-row">
-            <button className="primary" onClick={() => openAgentDraft(advisorProposal.draft.id)}>Open saved Draft</button>
-            <button onClick={() => { setAdvisorProposal(undefined); setAdvisorProposalRecovered(false); }}>Dismiss result</button>
+            <button className="primary" onClick={() => openAgentDraft(advisorProposal.draft.id)}>{t("Open saved Draft")}</button>
+            <button onClick={() => { setAdvisorProposal(undefined); setAdvisorProposalRecovered(false); }}>{t("Dismiss result")}</button>
           </div>}
         </Panel>
       )}
@@ -4427,19 +4378,19 @@ function WorkflowsPage({
         onError={onError}
       />}
       <details className="panel version-history">
-        <summary>Version History</summary>
+        <summary>{t("Version History")}</summary>
       <div className="toolbar-panel">
         <div>
-          <span className="eyebrow">Version comparison</span>
-          <p>Compare immutable node sets and content hashes.</p>
+          <span className="eyebrow">{t("Version comparison")}</span>
+          <p>{t("Compare immutable node sets and content hashes.")}</p>
         </div>
         <div className="button-row">
           <select
-            aria-label="Left Workflow Version"
+            aria-label={t("Left Workflow Version")}
             value={compareLeft}
             onChange={(event) => setCompareLeft(event.target.value)}
           >
-            <option value="">Left version…</option>
+            <option value="">{t("Left version…")}</option>
             {publishedEntries.map(({ workflow }) => (
               <option
                 key={`left-${workflow.workflow_id}-${workflow.version}`}
@@ -4450,11 +4401,11 @@ function WorkflowsPage({
             ))}
           </select>
           <select
-            aria-label="Right Workflow Version"
+            aria-label={t("Right Workflow Version")}
             value={compareRight}
             onChange={(event) => setCompareRight(event.target.value)}
           >
-            <option value="">Right version…</option>
+            <option value="">{t("Right version…")}</option>
             {publishedEntries.map(({ workflow }) => (
               <option
                 key={`right-${workflow.workflow_id}-${workflow.version}`}
@@ -4467,13 +4418,11 @@ function WorkflowsPage({
           <button
             onClick={compareVersions}
             disabled={busy || !compareLeft || !compareRight}
-          >
-            Compare
-          </button>
+          >{t("Compare")}</button>
         </div>
         {comparison && (
           <small>
-            {comparison.same_content ? "Same content" : "Different content"} · +
+            {comparison.same_content ? t("Same content") : t("Different content")} · +
             {comparison.added_nodes.length} / −{comparison.removed_nodes.length}{" "}
             / changed {comparison.changed_nodes.length}
           </small>
@@ -4482,8 +4431,8 @@ function WorkflowsPage({
       </details>
       <div className="workflow-layout">
         <aside className="panel workflow-list">
-          <span className="eyebrow">Current Draft</span>
-          <h2>{draft ? draft.name : "No Current Draft"}</h2>
+          <span className="eyebrow">{t("Current Draft")}</span>
+          <h2>{draft ? draft.name : t("No Current Draft")}</h2>
           {draft && (
             <button
               key={draft.id}
@@ -4501,13 +4450,13 @@ function WorkflowsPage({
           )}
           {drafts.length === 0 && (
             <Empty
-              title="No drafts"
+              title={t("No drafts")}
               detail="Create a blank Draft, use a template, or ask the registry-bound Advisor."
             />
           )}
           {drafts.length > 1 && (
             <details className="draft-history">
-              <summary>Historical Drafts ({drafts.filter((item) => item.id !== draft?.id).length})</summary>
+              <summary>{t("Historical Drafts (")}{drafts.filter((item) => item.id !== draft?.id).length})</summary>
               {drafts.filter((item) => item.id !== draft?.id).map((item) => (
                 <button key={item.id} onClick={() => { setDraft(item); setReport(undefined); onSelectContext({ draftId: item.id }); }}>
                   <span><strong>{item.name}</strong><small>{item.updated_at}</small></span>
@@ -4516,9 +4465,7 @@ function WorkflowsPage({
               ))}
             </details>
           )}
-          <span className="eyebrow workflow-published-title">
-            Default Published Version
-          </span>
+          <span className="eyebrow workflow-published-title">{t("Default Published Version")}</span>
           {entries.filter(({ project, workflow }) => project.id === activeProjectId && workflow.is_default).map(({ project, workflow }) => (
             <button
               key={`${project.id}-${workflow.workflow_id}-${workflow.version}`}
@@ -4551,9 +4498,7 @@ function WorkflowsPage({
               title={draft.name}
               eyebrow={`${draft.status} · autosaved Automation Draft`}
             >
-              {!immutable && <label className="workflow-draft-name">
-                Draft name
-                <input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+              {!immutable && <label className="workflow-draft-name">{t("Draft name")}<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
               </label>}
               {draft.label_pipeline && (
                 <LabelPipelineEditor
@@ -4566,13 +4511,13 @@ function WorkflowsPage({
               {!draft.label_pipeline && (
                 <>
               <details className="natural-workflow-recipe">
-                <summary>Full Automation Recipe · {guidedWorkflowNodes(draft.nodes).length} steps</summary>
-                <ol>{guidedWorkflowNodes(draft.nodes).map((node) => <li key={`recipe-${node.id}`}><strong>{workflowNodeTitle(node.node_type)}</strong><small>{node.model_binding ? `Model · ${node.model_binding}` : "Reliable built-in step"}</small></li>)}</ol>
-                {!draft.nodes.length && <Empty title="No Automation steps" detail="Start from a template or preview an AnnotAgent recommendation." />}
+                <summary>{t("Full Automation Recipe ·")}{" "}{guidedWorkflowNodes(draft.nodes).length}{" "}{t("steps")}</summary>
+                <ol>{guidedWorkflowNodes(draft.nodes).map((node) => <li key={`recipe-${node.id}`}><strong>{workflowNodeTitle(node.node_type)}</strong><small>{node.model_binding ? `Model · ${node.model_binding}` : t("Reliable built-in step")}</small></li>)}</ol>
+                {!draft.nodes.length && <Empty title={t("No Automation steps")} detail={t("Start from a template or preview an AnnotAgent recommendation.")} />}
               </details>
               <details className="advanced-graph">
-                <summary>View technical graph (read-only)</summary>
-                <p><strong>Inspection only.</strong> Graph-safe port selection, cycle checks, and undo are not released. Edit this Draft through the guided Automation Recipe controls.</p>
+                <summary>{t("View technical graph (read-only)")}</summary>
+                <p><strong>{t("Inspection only.")}</strong> Graph-safe port selection, cycle checks, and undo are not released. Edit this Draft through the guided Automation Recipe controls.</p>
               <div className="workflow-nodes editable-workflow">
                 {draft.nodes.map((node, index) => (
                   <article key={node.id}>
@@ -4580,9 +4525,7 @@ function WorkflowsPage({
                       {String(index + 1).padStart(2, "0")}
                     </span>
                     <div>
-                      <label>
-                        Node ID
-                        <input
+                      <label>{t("Node ID")}<input
                           value={node.id}
                           disabled
                           onChange={(event) =>
@@ -4591,9 +4534,7 @@ function WorkflowsPage({
                         />
                       </label>
                       <div className="form-grid">
-                        <label>
-                          Node type
-                          <select
+                        <label>{t("Node type")}<select
                             value={node.node_type}
                             disabled
                             onChange={(event) =>
@@ -4612,9 +4553,7 @@ function WorkflowsPage({
                             ))}
                           </select>
                         </label>
-                        <label>
-                          Model binding
-                          <select
+                        <label>{t("Model binding")}<select
                             value={node.model_binding ?? ""}
                             disabled
                             onChange={(event) =>
@@ -4623,7 +4562,7 @@ function WorkflowsPage({
                               })
                             }
                           >
-                            <option value="">No model</option>
+                            <option value="">{t("No model")}</option>
                             {workflowCatalogModelOptions(catalog).map((model) => (
                               <option key={model.id} value={model.id}>
                                 {model.display_name}
@@ -4631,12 +4570,10 @@ function WorkflowsPage({
                             ))}
                           </select>
                         </label>
-                        <label>
-                          Fallback node
-                          <input
+                        <label>{t("Fallback node")}<input
                             value={node.fallback ?? ""}
                             disabled
-                            placeholder="none"
+                            placeholder={t("none")}
                             onChange={(event) =>
                               updateNode(index, {
                                 fallback: event.target.value || undefined,
@@ -4644,9 +4581,7 @@ function WorkflowsPage({
                             }
                           />
                         </label>
-                        <label>
-                          Retries
-                          <input
+                        <label>{t("Retries")}<input
                             type="number"
                             min="0"
                             value={node.max_retries}
@@ -4659,9 +4594,7 @@ function WorkflowsPage({
                           />
                         </label>
                       </div>
-                      <label>
-                        Depends on
-                        <input
+                      <label>{t("Depends on")}<input
                           value={node.depends_on.join(", ")}
                           disabled
                           onChange={(event) =>
@@ -4675,9 +4608,7 @@ function WorkflowsPage({
                         />
                       </label>
                       <div className="form-grid">
-                        <label>
-                          Validators
-                          <input
+                        <label>{t("Validators")}<input
                             value={node.validators.join(", ")}
                             disabled
                             onChange={(event) =>
@@ -4690,9 +4621,7 @@ function WorkflowsPage({
                             }
                           />
                         </label>
-                        <label>
-                          Refiners
-                          <input
+                        <label>{t("Refiners")}<input
                             value={node.refiners.join(", ")}
                             disabled
                             onChange={(event) =>
@@ -4716,12 +4645,8 @@ function WorkflowsPage({
                               review_gate: event.target.checked,
                             })
                           }
-                        />
-                        Human review gate
-                      </label>
-                      <label>
-                        Parameters (JSON)
-                        <textarea
+                        />{t("Human review gate")}</label>
+                      <label>{t("Parameters (JSON)")}<textarea
                           value={JSON.stringify(node.parameters, null, 2)}
                           disabled
                           onChange={(event) => {
@@ -4738,17 +4663,15 @@ function WorkflowsPage({
                         />
                       </label>
                       <div className="node-meta">
-                        <span>
-                          Inputs ·{" "}
+                        <span>{t("Inputs ·")}{" "}
                           {node.inputs
                             ?.map((port) => `${port.id}:${port.artifact_type}`)
-                            .join(", ") || "none"}
+                            .join(", ") || t("none")}
                         </span>
-                        <span>
-                          Outputs ·{" "}
+                        <span>{t("Outputs ·")}{" "}
                           {node.outputs
                             ?.map((port) => `${port.id}:${port.artifact_type}`)
-                            .join(", ") || "none"}
+                            .join(", ") || t("none")}
                         </span>
                       </div>
                     </div>
@@ -4761,9 +4684,7 @@ function WorkflowsPage({
                     <span className="node-index">E{index + 1}</span>
                     <div>
                       <div className="form-grid">
-                        <label>
-                          From node
-                          <input
+                        <label>{t("From node")}<input
                             value={edge.from_node}
                             disabled
                             onChange={(event) =>
@@ -4773,9 +4694,7 @@ function WorkflowsPage({
                             }
                           />
                         </label>
-                        <label>
-                          From port
-                          <input
+                        <label>{t("From port")}<input
                             value={edge.from_port}
                             disabled
                             onChange={(event) =>
@@ -4785,9 +4704,7 @@ function WorkflowsPage({
                             }
                           />
                         </label>
-                        <label>
-                          To node
-                          <input
+                        <label>{t("To node")}<input
                             value={edge.to_node}
                             disabled
                             onChange={(event) =>
@@ -4795,9 +4712,7 @@ function WorkflowsPage({
                             }
                           />
                         </label>
-                        <label>
-                          To port
-                          <input
+                        <label>{t("To port")}<input
                             value={edge.to_port}
                             disabled
                             onChange={(event) =>
@@ -4805,9 +4720,7 @@ function WorkflowsPage({
                             }
                           />
                         </label>
-                        <label>
-                          Gate route
-                          <input
+                        <label>{t("Gate route")}<input
                             value={edge.route ?? ""}
                             disabled
                             onChange={(event) =>
@@ -4822,8 +4735,8 @@ function WorkflowsPage({
                   </article>
                 ))}
               </div>
-              <section className="runtime-policy-summary" aria-label="Runtime Policies">
-                <span className="eyebrow">Runtime behavior · not graph nodes</span>
+              <section className="runtime-policy-summary" aria-label={t("Runtime Policies")}>
+                <span className="eyebrow">{t("Runtime behavior · not graph nodes")}</span>
                 <p>Cache, replay, retry, timeout, budget, checkpoints, run control, usage, and history apply across the graph.</p>
                 <div className="node-meta">
                   {(catalog?.runtime_policies ?? []).map((policy) => (
@@ -4844,7 +4757,7 @@ function WorkflowsPage({
                 >
                   <strong>
                     {report.validation.valid
-                      ? "Dry Run passed"
+                      ? t("Dry Run passed")
                       : `${report.validation.issues.length} validation issues`}
                   </strong>
                   {report.validation.execution_order.length > 0 && (
@@ -4878,8 +4791,8 @@ function WorkflowsPage({
             />
           ) : (
             <Empty
-              title="Select a Workflow"
-              detail="Choose a Project and create or select a Draft."
+              title={t("Select a Workflow")}
+              detail={t("Choose a Project and create or select a Draft.")}
             />
           )}
         </div>
@@ -5009,9 +4922,9 @@ function ExpertGraphEditor({
 }) {
   const raw = JSON.stringify(draft.label_pipeline, null, 2);
   return <details className="advanced-graph">
-    <summary>View technical graph (read-only)</summary>
-    <p><strong>Inspection only.</strong> Graph-safe editing remains unreleased. Use the guided Pipeline controls above; static validation still checks the resulting Draft before Sample Test.</p>
-    <textarea aria-label="Technical graph JSON" value={raw} readOnly />
+    <summary>{t("View technical graph (read-only)")}</summary>
+    <p><strong>{t("Inspection only.")}</strong> Graph-safe editing remains unreleased. Use the guided Pipeline controls above; static validation still checks the resulting Draft before Sample Test.</p>
+    <textarea aria-label={t("Technical graph JSON")} value={raw} readOnly />
   </details>;
 }
 
@@ -5454,8 +5367,8 @@ function LabelPipelineEditor({
     <div className="label-pipeline-editor">
       <div className="pipeline-section-heading">
         <div>
-          <span className="eyebrow">Shared Stages</span>
-          <h3>Runs once per image, then serves every Label Pipeline</h3>
+          <span className="eyebrow">{t("Shared Stages")}</span>
+          <h3>{t("Runs once per image, then serves every Label Pipeline")}</h3>
         </div>
         <small>{composition.shared_stages.length} shared stage(s)</small>
       </div>
@@ -5482,12 +5395,12 @@ function LabelPipelineEditor({
       ))}
       <div className="pipeline-section-heading">
         <div>
-          <span className="eyebrow">Label Pipelines</span>
-          <h3>One execution method per semantic Label</h3>
+          <span className="eyebrow">{t("Label Pipelines")}</span>
+          <h3>{t("One execution method per semantic Label")}</h3>
         </div>
         <div className="button-row">
           <select
-            aria-label="Edited Label Pipeline"
+            aria-label={t("Edited Label Pipeline")}
             value={selected?.id ?? ""}
             onChange={(event) => setPipelineId(event.target.value)}
           >
@@ -5497,9 +5410,9 @@ function LabelPipelineEditor({
               </option>
             ))}
           </select>
-          <details className="recipe-edit-menu"><summary>Edit automation</summary><div>
+          <details className="recipe-edit-menu"><summary>{t("Edit automation")}</summary><div>
           <select
-            aria-label="Node Catalog"
+            aria-label={t("Node Catalog")}
             value={catalogNode}
             onChange={(event) => setCatalogNode(event.target.value)}
           >
@@ -5514,9 +5427,7 @@ function LabelPipelineEditor({
                 </option>
               ))}
           </select>
-          <button onClick={addCatalogNode} disabled={immutable || !selected}>
-            Add step
-          </button>
+          <button onClick={addCatalogNode} disabled={immutable || !selected}>{t("Add step")}</button>
           <button
             onClick={applyDetectCropTemplate}
             disabled={
@@ -5528,9 +5439,7 @@ function LabelPipelineEditor({
               ].some((step) => step.kind === "vision_model" && Object.values(step.outputs).includes("detection_set"))
             }
             title="Internal graph: detector → filter → Core Crop; Detection remains the bbox result"
-          >
-            Add detection + crop
-          </button>
+          >{t("Add detection + crop")}</button>
           <button
             onClick={applyVlmDetectCropTemplate}
             disabled={
@@ -5543,9 +5452,7 @@ function LabelPipelineEditor({
               )
             }
             title="VLM DetectionSet → Filter → Core Crop; bbox Commit remains on the filtered DetectionSet"
-          >
-            Use VLM detection + crop
-          </button>
+          >{t("Use VLM detection + crop")}</button>
           </div></details>
         </div>
       </div>
@@ -5611,24 +5518,22 @@ function PipelineStepCard({
 }) {
   return (
     <article className="pipeline-step-card">
-      <span className="pipeline-step-kind">{shared ? "shared" : "Label pipeline"}</span>
+      <span className="pipeline-step-kind">{shared ? "shared" : t("Label pipeline")}</span>
       <strong>{pipelineStepTitle(step, targetLabel)}</strong>
       <small>{pipelineStepDescription(step, targetLabel)}</small>
       <div className="pipeline-card-summary">
-        <span>Runs with <strong>{step.model_binding?.model_id ?? "AnnotAgent Core"}</strong></span>
-        {mergedCount > 1 && <span>Guided action <strong>{mergedCount} coordinated operations</strong></span>}
+        <span>{t("Runs with")}{" "}<strong>{step.model_binding?.model_id ?? "AnnotAgent Core"}</strong></span>
+        {mergedCount > 1 && <span>{t("Guided action")}{" "}<strong>{mergedCount} coordinated operations</strong></span>}
         <Status status={immutable ? "published" : "valid"} />
       </div>
       <button
-        aria-label={immutable ? "Inspect node" : "Configure node"}
+        aria-label={immutable ? t("Inspect node") : t("Configure node")}
         onClick={onConfigure}
       >
-        {immutable ? "Inspect" : "Configure"}
+        {immutable ? t("Inspect") : t("Configure")}
       </button>
       {onRemove && step.kind !== "commit" && (
-        <button className="danger" onClick={onRemove} disabled={immutable}>
-          Remove step
-        </button>
+        <button className="danger" onClick={onRemove} disabled={immutable}>{t("Remove step")}</button>
       )}
     </article>
   );
@@ -5686,48 +5591,48 @@ function PipelineNodeDrawer({
     <div className="drawer-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <aside className="node-drawer" role="dialog" aria-modal="true" aria-labelledby="node-drawer-title">
         <header>
-          <div><span className="eyebrow">Pipeline step</span><h2 id="node-drawer-title">{pipelineStepTitle(step)}</h2></div>
-          <button ref={closeRef} onClick={onClose} aria-label="Close node configuration">Close</button>
+          <div><span className="eyebrow">{t("Pipeline step")}</span><h2 id="node-drawer-title">{pipelineStepTitle(step)}</h2></div>
+          <button ref={closeRef} onClick={onClose} aria-label={t("Close node configuration")}>{t("Close")}</button>
         </header>
-        <Fact label="Status" value={immutable ? "Published · read only" : "Draft · editable"} />
+        <Fact label={t("Status")} value={immutable ? "Published · read only" : "Draft · editable"} />
         {step.model_binding && (
-          <label>Model<select value={step.model_binding.model_id} disabled={immutable} onChange={(event) => onChange({ ...step, model_binding: { ...step.model_binding!, model_id: event.target.value } })}>
+          <label>{t("Model")}<select value={step.model_binding.model_id} disabled={immutable} onChange={(event) => onChange({ ...step, model_binding: { ...step.model_binding!, model_id: event.target.value } })}>
             {workflowCatalogModelOptions(catalog).filter((model) => model.capabilities.includes(step.model_binding!.capability)).map((model) => <option key={model.id} value={model.id}>{model.display_name}</option>)}
           </select></label>
         )}
         {Array.isArray(step.parameters.labels) && (
-          <label>Labels<input value={step.parameters.labels.join(", ")} disabled={immutable} onChange={(event) => onChange({ ...step, parameters: { ...step.parameters, labels: event.target.value.split(",").map((label) => label.trim()).filter(Boolean) } })} /></label>
+          <label>{t("Labels")}<input value={step.parameters.labels.join(", ")} disabled={immutable} onChange={(event) => onChange({ ...step, parameters: { ...step.parameters, labels: event.target.value.split(",").map((label) => label.trim()).filter(Boolean) } })} /></label>
         )}
         {isDetection && typeof step.parameters.object_description === "string" && (
-          <label>What should the model find?<textarea value={step.parameters.object_description} disabled={immutable} onChange={(event) => onChange({ ...step, parameters: { ...step.parameters, object_description: event.target.value } })} /></label>
+          <label>{t("What should the model find?")}<textarea value={step.parameters.object_description} disabled={immutable} onChange={(event) => onChange({ ...step, parameters: { ...step.parameters, object_description: event.target.value } })} /></label>
         )}
-        {step.node_type === "core.confidence_gate" && <label>Confidence threshold<input type="number" min="0" max="1" step="0.05" value={Number(step.parameters.threshold ?? 0)} disabled={immutable} onChange={(event) => updateNumber("threshold", Number(event.target.value))} /></label>}
-        {step.node_type === "core.filter" && <label>Minimum confidence<input type="number" min="0" max="1" step="0.05" value={Number(step.parameters.minimum_confidence ?? 0)} disabled={immutable} onChange={(event) => updateNumber("minimum_confidence", Number(event.target.value))} /></label>}
-        {step.node_type === "core.crop" && <label>Crop padding<input type="number" min="0" max="0.5" step="0.01" value={Number(step.parameters.padding ?? 0)} disabled={immutable} onChange={(event) => updateNumber("padding", Number(event.target.value))} /></label>}
+        {step.node_type === "core.confidence_gate" && <label>{t("Confidence threshold")}<input type="number" min="0" max="1" step="0.05" value={Number(step.parameters.threshold ?? 0)} disabled={immutable} onChange={(event) => updateNumber("threshold", Number(event.target.value))} /></label>}
+        {step.node_type === "core.filter" && <label>{t("Minimum confidence")}<input type="number" min="0" max="1" step="0.05" value={Number(step.parameters.minimum_confidence ?? 0)} disabled={immutable} onChange={(event) => updateNumber("minimum_confidence", Number(event.target.value))} /></label>}
+        {step.node_type === "core.crop" && <label>{t("Crop padding")}<input type="number" min="0" max="0.5" step="0.01" value={Number(step.parameters.padding ?? 0)} disabled={immutable} onChange={(event) => updateNumber("padding", Number(event.target.value))} /></label>}
         {isDetection && (
           <fieldset className="grounding-assist-fieldset">
-            <legend>Positioning assistance</legend>
-            <label className="checkbox-row"><input type="checkbox" checked={Boolean(groundingAssist.enabled)} disabled={immutable} onChange={(event) => updateGroundingAssist({ enabled: event.target.checked })} />Use a positioning grid to improve coordinate accuracy</label>
+            <legend>{t("Positioning assistance")}</legend>
+            <label className="checkbox-row"><input type="checkbox" checked={Boolean(groundingAssist.enabled)} disabled={immutable} onChange={(event) => updateGroundingAssist({ enabled: event.target.checked })} />{t("Use a positioning grid to improve coordinate accuracy")}</label>
             {Boolean(groundingAssist.enabled) && <div className="form-grid">
-              <label>Grid rows<input type="number" min="2" max="16" value={Number(groundingAssist.rows ?? 10)} disabled={immutable} onChange={(event) => updateGroundingAssist({ rows: Number(event.target.value) })} /></label>
-              <label>Grid columns<input type="number" min="2" max="16" value={Number(groundingAssist.columns ?? 10)} disabled={immutable} onChange={(event) => updateGroundingAssist({ columns: Number(event.target.value) })} /></label>
+              <label>{t("Grid rows")}<input type="number" min="2" max="16" value={Number(groundingAssist.rows ?? 10)} disabled={immutable} onChange={(event) => updateGroundingAssist({ rows: Number(event.target.value) })} /></label>
+              <label>{t("Grid columns")}<input type="number" min="2" max="16" value={Number(groundingAssist.columns ?? 10)} disabled={immutable} onChange={(event) => updateGroundingAssist({ columns: Number(event.target.value) })} /></label>
             </div>}
             <small>The original image remains the source of truth; the grid is sent only as a second calibration view.</small>
           </fieldset>
         )}
-        <details><summary>Expert details</summary>
+        <details><summary>{t("Expert details")}</summary>
           <code>{step.node_type} · {step.id}</code>
-          <label>Input<input readOnly value={Object.entries(step.inputs).map(([name, source]) => `${name}: ${source.source === "image" ? "Image" : `${source.step_id}.${source.port}`}`).join(" + ") || "None"} /></label>
-          <label>Output<input readOnly value={Object.entries(step.outputs).map(([name, type]) => `${name}: ${type}`).join(", ") || "Terminal"} /></label>
-          <label>Fallback node<input value={step.fallback ?? ""} disabled={immutable} placeholder="No fallback" onChange={(event) => onChange({ ...step, fallback: event.target.value || undefined })} /></label>
-          <label>Raw parameters and class mapping<textarea value={parameters} disabled={immutable} onChange={(event) => {
+          <label>{t("Input")}<input readOnly value={Object.entries(step.inputs).map(([name, source]) => `${name}: ${source.source === "image" ? "Image" : `${source.step_id}.${source.port}`}`).join(" + ") || "None"} /></label>
+          <label>{t("Output")}<input readOnly value={Object.entries(step.outputs).map(([name, type]) => `${name}: ${type}`).join(", ") || "Terminal"} /></label>
+          <label>{t("Fallback node")}<input value={step.fallback ?? ""} disabled={immutable} placeholder={t("No fallback")} onChange={(event) => onChange({ ...step, fallback: event.target.value || undefined })} /></label>
+          <label>{t("Raw parameters and class mapping")}<textarea value={parameters} disabled={immutable} onChange={(event) => {
             setParameters(event.target.value);
             try { onChange({ ...step, parameters: JSON.parse(event.target.value) as Record<string, unknown> }); } catch { /* Keep editing until JSON is valid. */ }
           }} /></label>
-          <Fact label="Kind" value={step.kind} />
-          <Fact label="Retries" value={step.retry_policy.max_attempts} />
-          <Fact label="Validators" value={step.validators.join(", ") || "None"} />
-          <Fact label="Refiners" value={step.refiners.join(", ") || "None"} />
+          <Fact label={t("Kind")} value={step.kind} />
+          <Fact label={t("Retries")} value={step.retry_policy.max_attempts} />
+          <Fact label={t("Validators")} value={step.validators.join(", ") || "None"} />
+          <Fact label={t("Refiners")} value={step.refiners.join(", ") || "None"} />
         </details>
       </aside>
     </div>
@@ -5873,11 +5778,11 @@ function PipelineArtifactInspector({
   return (
     <div className="artifact-inspector-grid">
       <div className="artifact-preview-panel">
-        <span className="eyebrow">Visual preview</span>
+        <span className="eyebrow">{t("Visual preview")}</span>
         {imageUrl ? (
           <div className="artifact-image-stage">
-            <img src={imageUrl} alt="Original Pipeline input" />
-            <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Artifact bounding boxes">
+            <img src={imageUrl} alt={t("Original Pipeline input")} />
+            <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label={t("Artifact bounding boxes")}>
               {rects.map((rect, index) => (
                 <rect
                   key={`${rect.x}-${rect.y}-${index}`}
@@ -5910,10 +5815,10 @@ function PipelineArtifactInspector({
         <span className="eyebrow">{node.operation}</span>
         <h3>{node.node_id}</h3>
         <div className="workflow-facts">
-          <Fact label="Status" value={node.status} />
-          <Fact label="Latency" value={`${node.latency_ms} ms`} />
-          <Fact label="Attempts" value={node.attempts} />
-          <Fact label="Cache" value={node.cache_hit ? "hit" : "miss"} />
+          <Fact label={t("Status")} value={node.status} />
+          <Fact label={t("Latency")} value={`${node.latency_ms} ms`} />
+          <Fact label={t("Attempts")} value={node.attempts} />
+          <Fact label={t("Cache")} value={node.cache_hit ? "hit" : "miss"} />
         </div>
         {node.error && (
           <p className="run-reason">
@@ -5921,23 +5826,22 @@ function PipelineArtifactInspector({
           </p>
         )}
         <details open>
-          <summary>Configuration</summary>
+          <summary>{t("Configuration")}</summary>
           <pre>{JSON.stringify(node.configuration, null, 2)}</pre>
         </details>
         <details>
-          <summary>Inputs · {node.inputs.length}</summary>
+          <summary>{t("Inputs ·")}{" "}{node.inputs.length}</summary>
           <pre>{JSON.stringify(node.inputs, null, 2)}</pre>
         </details>
         <details open>
-          <summary>Outputs · {node.outputs.length}</summary>
+          <summary>{t("Outputs ·")}{" "}{node.outputs.length}</summary>
           <pre>{JSON.stringify(node.outputs, null, 2)}</pre>
         </details>
         {replay && replay.replayed_from === node.node_id && (
           <div className="validation-report valid">
-            <strong>Sandbox Replay completed</strong>
-            <small>Re-executed: {replay.reexecuted_nodes.join(", ")}</small>
-            <small>
-              Preserved upstream: {replay.preserved_upstream_nodes.join(", ")}
+            <strong>{t("Sandbox Replay completed")}</strong>
+            <small>{t("Re-executed:")}{" "}{replay.reexecuted_nodes.join(", ")}</small>
+            <small>{t("Preserved upstream:")}{" "}{replay.preserved_upstream_nodes.join(", ")}
             </small>
           </div>
         )}
@@ -6598,129 +6502,129 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
   return <section className="registry-page expert-plugin-page">
     <header className="plugin-page-hero">
       <div className="plugin-page-heading">
-        <span className="eyebrow">Local model runtime</span>
-        <h2>Expert Model Plugins</h2>
+        <span className="eyebrow">{t("Local model runtime")}</span>
+        <h2>{t("Expert Model Plugins")}</h2>
         <p>Install an isolated Rust runtime, then pair it with a verified, versioned Model Bundle. Files, licenses, Contracts, and smoke-test evidence stay visible.</p>
-        <div className="plugin-trust-line" aria-label="Plugin runtime properties"><span>Isolated Rust process</span><span>Verified Model Bundles</span><span>Immutable versions</span></div>
+        <div className="plugin-trust-line" aria-label={t("Plugin runtime properties")}><span>{t("Isolated Rust process")}</span><span>{t("Verified Model Bundles")}</span><span>{t("Immutable versions")}</span></div>
       </div>
-      <dl className="plugin-registry-summary" aria-label="Plugin Registry summary">
-        <div><dt>Ready models</dt><dd>{readyModels}</dd><small>selectable now</small></div>
-        <div><dt>Finish setup</dt><dd>{setupInstallations}</dd><small>installed packages</small></div>
-        <div className={attentionInstallations ? "attention" : ""}><dt>Needs attention</dt><dd>{attentionInstallations}</dd><small>failed checks</small></div>
+      <dl className="plugin-registry-summary" aria-label={t("Plugin Registry summary")}>
+        <div><dt>{t("Ready models")}</dt><dd>{readyModels}</dd><small>{t("selectable now")}</small></div>
+        <div><dt>{t("Finish setup")}</dt><dd>{setupInstallations}</dd><small>{t("installed packages")}</small></div>
+        <div className={attentionInstallations ? "attention" : ""}><dt>{t("Needs attention")}</dt><dd>{attentionInstallations}</dd><small>{t("failed checks")}</small></div>
       </dl>
     </header>
 
-    <section className="plugin-page-guidance" aria-label="Plugin setup overview">
+    <section className="plugin-page-guidance" aria-label={t("Plugin setup overview")}>
       <article className="plugin-setup-roadmap">
-        <div><span className="eyebrow">How setup works</span><strong>From local package to selectable model</strong></div>
+        <div><span className="eyebrow">{t("How setup works")}</span><strong>{t("From local package to selectable model")}</strong></div>
         <ol>
-          <li><span>1</span><small>Install package</small></li>
-          <li><span>2</span><small>Install model</small></li>
-          <li><span>3</span><small>Smoke test</small></li>
-          <li><span>4</span><small>Use in Workflow</small></li>
+          <li><span>1</span><small>{t("Install package")}</small></li>
+          <li><span>2</span><small>{t("Install model")}</small></li>
+          <li><span>3</span><small>{t("Smoke test")}</small></li>
+          <li><span>4</span><small>{t("Use in Workflow")}</small></li>
         </ol>
       </article>
-      <article className="plugin-agent-policy" aria-label="Agent plugin permissions">
+      <article className="plugin-agent-policy" aria-label={t("Agent plugin permissions")}>
         <span className="plugin-policy-mark" aria-hidden="true">A</span>
-        <div><strong>Agent discovery is read only</strong><p>Pipeline Builder can recommend compatible Ready models. Installation, licenses, model assets, and executables always remain manual actions.</p></div>
+        <div><strong>{t("Agent discovery is read only")}</strong><p>Pipeline Builder can recommend compatible Ready models. Installation, licenses, model assets, and executables always remain manual actions.</p></div>
       </article>
     </section>
 
     <details className="plugin-install-wizard" open={!installations.length}>
-      <summary><span className="plugin-install-summary"><i aria-hidden="true">+</i><span><strong>Install plugin runtime</strong><small>Advanced setup for a local .annotplugin package. Model assets are installed separately.</small></span></span><b>Advanced</b></summary>
+      <summary><span className="plugin-install-summary"><i aria-hidden="true">+</i><span><strong>{t("Install plugin runtime")}</strong><small>Advanced setup for a local .annotplugin package. Model assets are installed separately.</small></span></span><b>{t("Advanced")}</b></summary>
       <div className="plugin-install-body">
-        <ol className="plugin-install-steps" aria-label="Installation steps">
+        <ol className="plugin-install-steps" aria-label={t("Installation steps")}>
           {['Select package', 'Verify package', 'Review permissions', 'Install runtime'].map((step, index) => <li className={verified && index < 2 ? "complete" : ""} key={step}><span>{index + 1}</span>{step}</li>)}
         </ol>
         <div className="plugin-package-picker">
-          <label htmlFor="expert-plugin-package">Plugin package</label>
-          <FilePicker id="expert-plugin-package" label="Plugin package" accept=".annotplugin" file={packageFile} chooseLabel="Choose plugin package" emptyLabel="No .annotplugin selected" onSelect={(file) => { setPackageFile(file); setVerified(undefined); setMessage(""); }} />
-          <button onClick={inspectPackage} disabled={!packageFile || Boolean(busy)}>{busy === "inspect" ? "Verifying…" : "Verify package"}</button>
+          <label htmlFor="expert-plugin-package">{t("Plugin package")}</label>
+          <FilePicker id="expert-plugin-package" label={t("Plugin package")} accept=".annotplugin" file={packageFile} chooseLabel="Choose plugin package" emptyLabel="No .annotplugin selected" onSelect={(file) => { setPackageFile(file); setVerified(undefined); setMessage(""); }} />
+          <button onClick={inspectPackage} disabled={!packageFile || Boolean(busy)}>{busy === "inspect" ? t("Verifying…") : t("Verify package")}</button>
         </div>
         {verified && <div className="plugin-review-grid">
           <section>
-            <span className="eyebrow">Package identity</span>
+            <span className="eyebrow">{t("Package identity")}</span>
             <h3>{verified.manifest.display_name} <small>v{verified.manifest.version}</small></h3>
             <p>{verified.manifest.description}</p>
             <dl className="registry-facts">
-              <div><dt>Publisher</dt><dd>{verified.manifest.publisher}</dd></div>
-              <div><dt>Package hash</dt><dd title={verified.package_sha256}>{verified.package_sha256.slice(0, 12)}…</dd></div>
-              <div><dt>Plugin API</dt><dd>{verified.manifest.plugin_api}</dd></div>
-              <div><dt>Runtime</dt><dd>Native Rust process</dd></div>
-              <div><dt>Targets</dt><dd>{verified.manifest.compatibility.targets.join(", ")}</dd></div>
-              <div><dt>Implementation</dt><dd>{verified.manifest.implementation_status.replaceAll("_", " ")}</dd></div>
-              <div><dt>Publisher signature</dt><dd>{verified.signature_trusted ? "Trusted" : verified.signature.replaceAll("_", " ")}</dd></div>
+              <div><dt>{t("Publisher")}</dt><dd>{verified.manifest.publisher}</dd></div>
+              <div><dt>{t("Package hash")}</dt><dd title={verified.package_sha256}>{verified.package_sha256.slice(0, 12)}…</dd></div>
+              <div><dt>{t("Plugin API")}</dt><dd>{verified.manifest.plugin_api}</dd></div>
+              <div><dt>{t("Runtime")}</dt><dd>{t("Native Rust process")}</dd></div>
+              <div><dt>{t("Targets")}</dt><dd>{verified.manifest.compatibility.targets.join(", ")}</dd></div>
+              <div><dt>{t("Implementation")}</dt><dd>{verified.manifest.implementation_status.replaceAll("_", " ")}</dd></div>
+              <div><dt>{t("Publisher signature")}</dt><dd>{verified.signature_trusted ? t("Trusted") : verified.signature.replaceAll("_", " ")}</dd></div>
             </dl>
           </section>
           <fieldset className="plugin-review-checks">
-            <legend>Required human review</legend>
+            <legend>{t("Required human review")}</legend>
             <div className="plugin-permission-summary">
-              <span>Network <strong>{verified.manifest.permissions.network.replaceAll("_", " ")}</strong></span>
-              <span>Provider secrets <strong>{verified.manifest.permissions.provider_secrets ? "Requested" : "Denied"}</strong></span>
-              <span>Project files <strong>{verified.manifest.permissions.project_files ? "Requested" : "Denied"}</strong></span>
-              <span>Subprocesses <strong>{verified.manifest.permissions.subprocesses ? "Requested" : "Denied"}</strong></span>
+              <span>{t("Network")}{" "}<strong>{verified.manifest.permissions.network.replaceAll("_", " ")}</strong></span>
+              <span>{t("Provider secrets")}{" "}<strong>{verified.manifest.permissions.provider_secrets ? t("Requested") : t("Denied")}</strong></span>
+              <span>{t("Project files")}{" "}<strong>{verified.manifest.permissions.project_files ? t("Requested") : t("Denied")}</strong></span>
+              <span>{t("Subprocesses")}{" "}<strong>{verified.manifest.permissions.subprocesses ? t("Requested") : t("Denied")}</strong></span>
             </div>
             <label className="checkbox-line"><input type="checkbox" checked={permissionsReviewed} onChange={(event) => setPermissionsReviewed(event.target.checked)} /><span>I reviewed the publisher, target, runtime resources, and requested permissions.</span></label>
-            <label className="checkbox-line"><input type="checkbox" checked={codeLicenseAccepted} onChange={(event) => setCodeLicenseAccepted(event.target.checked)} /><span>I accept the code license: <strong>{verified.manifest.license.code}</strong>.</span></label>
-            {verified.manifest.weights.required && <label className="checkbox-line"><input type="checkbox" checked={weightLicenseAccepted} onChange={(event) => setWeightLicenseAccepted(event.target.checked)} /><span>I accept the weight license: <strong>{verified.manifest.license.weights}</strong>.</span></label>}
+            <label className="checkbox-line"><input type="checkbox" checked={codeLicenseAccepted} onChange={(event) => setCodeLicenseAccepted(event.target.checked)} /><span>{t("I accept the code license:")}{" "}<strong>{verified.manifest.license.code}</strong>.</span></label>
+            {verified.manifest.weights.required && <label className="checkbox-line"><input type="checkbox" checked={weightLicenseAccepted} onChange={(event) => setWeightLicenseAccepted(event.target.checked)} /><span>{t("I accept the weight license:")}{" "}<strong>{verified.manifest.license.weights}</strong>.</span></label>}
             {!verified.web_installable && <p className="setup-requirement" role="status">{verified.install_guidance}</p>}
-            <button className="primary" onClick={installPackage} disabled={Boolean(busy) || !verified.web_installable || !permissionsReviewed || !codeLicenseAccepted || (verified.manifest.weights.required && !weightLicenseAccepted)} title={!verified.web_installable ? verified.install_guidance : undefined}>{busy === "install" ? "Installing…" : "Install trusted package"}</button>
+            <button className="primary" onClick={installPackage} disabled={Boolean(busy) || !verified.web_installable || !permissionsReviewed || !codeLicenseAccepted || (verified.manifest.weights.required && !weightLicenseAccepted)} title={!verified.web_installable ? verified.install_guidance : undefined}>{busy === "install" ? t("Installing…") : t("Install trusted package")}</button>
           </fieldset>
         </div>}
       </div>
     </details>
 
     <details className="plugin-install-wizard model-bundle-import">
-      <summary><span className="plugin-install-summary"><i aria-hidden="true">⇧</i><span><strong>Import .annotmodel</strong><small>Advanced local import for an already prepared data-only Model Bundle.</small></span></span><b>Advanced</b></summary>
+      <summary><span className="plugin-install-summary"><i aria-hidden="true">⇧</i><span><strong>{t("Import .annotmodel")}</strong><small>Advanced local import for an already prepared data-only Model Bundle.</small></span></span><b>{t("Advanced")}</b></summary>
       <div className="plugin-install-body">
         <div className="plugin-package-picker">
-          <label htmlFor="expert-model-bundle">Model Bundle</label>
-          <FilePicker id="expert-model-bundle" label="Model Bundle" accept=".annotmodel" file={bundleFile} chooseLabel="Choose model bundle" emptyLabel="No .annotmodel selected" onSelect={(file) => { setBundleFile(file); setVerifiedBundle(undefined); setMessage(""); }} />
-          <button onClick={inspectBundle} disabled={!bundleFile || Boolean(busy)}>{busy === "inspect-bundle" ? "Verifying…" : "Verify Bundle"}</button>
+          <label htmlFor="expert-model-bundle">{t("Model Bundle")}</label>
+          <FilePicker id="expert-model-bundle" label={t("Model Bundle")} accept=".annotmodel" file={bundleFile} chooseLabel="Choose model bundle" emptyLabel="No .annotmodel selected" onSelect={(file) => { setBundleFile(file); setVerifiedBundle(undefined); setMessage(""); }} />
+          <button onClick={inspectBundle} disabled={!bundleFile || Boolean(busy)}>{busy === "inspect-bundle" ? t("Verifying…") : t("Verify Bundle")}</button>
         </div>
         {verifiedBundle && <div className="bundle-import-review">
-          <div><span className="eyebrow">Verified package</span><h3>{verifiedBundle.manifest.display_name}</h3><p>{verifiedBundle.manifest.source.upstream_project} · {verifiedBundle.manifest.architecture} · {verifiedBundle.file_count} files</p><code>{verifiedBundle.bundle_sha256}</code></div>
-          <div><strong>{verifiedBundle.manifest.license.name}</strong><small>{verifiedBundle.manifest.license.redistribution} redistribution · {verifiedBundle.manifest.license.commercial_use} commercial use</small>{verifiedBundle.manifest.license.requires_acceptance && <label className="checkbox-line"><input type="checkbox" checked={bundleImportLicenseAccepted} onChange={(event) => setBundleImportLicenseAccepted(event.target.checked)} /><span>I accept this exact license digest.</span></label>}<button className="primary" onClick={importBundle} disabled={Boolean(busy) || !bundleImportLicenseAccepted}>{busy === "import-bundle" ? "Importing and testing…" : "Import verified Bundle"}</button></div>
+          <div><span className="eyebrow">{t("Verified package")}</span><h3>{verifiedBundle.manifest.display_name}</h3><p>{verifiedBundle.manifest.source.upstream_project} · {verifiedBundle.manifest.architecture} · {verifiedBundle.file_count} files</p><code>{verifiedBundle.bundle_sha256}</code></div>
+          <div><strong>{verifiedBundle.manifest.license.name}</strong><small>{verifiedBundle.manifest.license.redistribution} redistribution · {verifiedBundle.manifest.license.commercial_use} commercial use</small>{verifiedBundle.manifest.license.requires_acceptance && <label className="checkbox-line"><input type="checkbox" checked={bundleImportLicenseAccepted} onChange={(event) => setBundleImportLicenseAccepted(event.target.checked)} /><span>I accept this exact license digest.</span></label>}<button className="primary" onClick={importBundle} disabled={Boolean(busy) || !bundleImportLicenseAccepted}>{busy === "import-bundle" ? t("Importing and testing…") : t("Import verified Bundle")}</button></div>
         </div>}
       </div>
     </details>
 
     {setupInstallation && <div className="modal-backdrop model-setup-backdrop">
       <section ref={setupDialogRef} className="model-setup-wizard" role="dialog" aria-modal="true" aria-labelledby="model-setup-title" aria-describedby="model-setup-description">
-        <header><div><span className="eyebrow">Model Setup</span><h3 id="model-setup-title">{setupInstallation.manifest.display_name}</h3><p id="model-setup-description">Only a verified Bundle that passes the exact Rust Plugin smoke test becomes selectable.</p></div><button ref={setupCloseButtonRef} type="button" className="icon-button" aria-label="Close model setup" onClick={closeModelSetup}>×</button></header>
+        <header><div><span className="eyebrow">{t("Model Setup")}</span><h3 id="model-setup-title">{setupInstallation.manifest.display_name}</h3><p id="model-setup-description">Only a verified Bundle that passes the exact Rust Plugin smoke test becomes selectable.</p></div><button ref={setupCloseButtonRef} type="button" className="icon-button" aria-label={t("Close model setup")} onClick={closeModelSetup}>×</button></header>
         <div className="model-setup-scroll">
-          <ol className="model-setup-progress" aria-label="Model installation progress">
+          <ol className="model-setup-progress" aria-label={t("Model installation progress")}>
             {MODEL_SETUP_STEPS.map((step, index) => <li className={index < setupStep ? "complete" : index === setupStep ? "current" : ""} key={step}><span>{index < setupStep ? "✓" : index + 1}</span><small>{step}</small></li>)}
           </ol>
-          {setupStep === 0 && <div className="model-setup-content"><span className="eyebrow">Select model</span>{setupInventory?.available.length ? <div className="compatible-model-list">{setupInventory.available.map((entry) => <label className={setupEntryIdentity === catalogBundleIdentity(entry) ? "selected" : ""} key={catalogBundleIdentity(entry)}><input type="radio" name="setup-model" checked={setupEntryIdentity === catalogBundleIdentity(entry)} onChange={() => setSetupEntryIdentity(catalogBundleIdentity(entry))} /><span><strong>{entry.display_name}</strong><small>{entry.description}</small><small>{formatPluginBytes(entry.bundle_size_bytes)} · {entry.license_summary.name}</small></span><Status status={entry.fixture ? "Fixture" : "Ready to install"} /></label>)}</div> : setupInventory?.setup_blockers?.length ? <div className="model-setup-blocker" role="status"><span className="model-setup-blocker-label">Update required</span><strong>Plugin runtime update required</strong><p>{setupInventory.setup_blockers[0].message}</p><small>Model files were not downloaded again. The installed Bundle and previous Plugin version remain unchanged.</small></div> : <Empty title="No verified bundle is available for this platform" detail="The Plugin remains installed, but AnnotAgent will not suggest raw ONNX downloads or an unverified model." />}</div>}
-          {setupStep === 1 && setupEntry && <div className="model-setup-content"><span className="eyebrow">Review source</span><dl className="bundle-review-facts"><div><dt>Model</dt><dd>{setupEntry.display_name}</dd></div><div><dt>Model family</dt><dd>{setupEntry.model_family ?? "Declared by the verified Bundle"}</dd></div><div><dt>Capability</dt><dd>{setupEntry.capabilities.map((value) => value.replaceAll("_", " ")).join(", ")}</dd></div><div><dt>Publisher</dt><dd>{setupEntry.publisher.display_name}{setupEntry.publisher.verified ? " · verified" : " · unverified"}</dd></div><div><dt>Curated Catalog</dt><dd>{setupEntry.catalog_id}</dd></div><div><dt>Bundle digest</dt><dd>{setupEntry.bundle_sha256}</dd></div><div><dt>Download size</dt><dd>{formatPluginBytes(setupEntry.bundle_size_bytes)}</dd></div><div><dt>Installed size</dt><dd>{formatPluginBytes(setupEntry.installed_size_bytes ?? setupEntry.platform_requirements[0]?.minimum_disk_bytes ?? setupEntry.bundle_size_bytes)}</dd></div><div><dt>Delivery</dt><dd>{setupEntry.fixture ? "Built-in deterministic local Catalog" : setupEntry.bundle_url}</dd></div><div><dt>Release status</dt><dd>{setupEntry.fixture ? "Fixture only · not publishable" : "Real model · production eligible"}</dd></div></dl></div>}
-          {setupStep === 2 && setupEntry && <div className="model-setup-content"><span className="eyebrow">Review license</span><div className="license-review-card"><h4>{setupEntry.license_summary.name}</h4><p>Redistribution: {setupEntry.license_summary.redistribution.replaceAll("_", " ")} · Commercial use: {setupEntry.license_summary.commercial_use.replaceAll("_", " ")}</p><code>{setupEntry.license_summary.license_digest}</code>{setupEntry.license_summary.license_url && <a href={setupEntry.license_summary.license_url} target="_blank" rel="noreferrer">Read license source</a>}{setupEntry.license_summary.requires_acceptance && <label className="checkbox-line"><input type="checkbox" checked={setupLicenseAccepted} onChange={(event) => setSetupLicenseAccepted(event.target.checked)} /><span>I accept this exact model license and digest.</span></label>}</div></div>}
-          {setupStep === 3 && setupEntry && <div className="model-setup-content"><span className="eyebrow">Check compatibility</span><div className="compatibility-checks"><span className="passed"><b>✓</b><strong>Plugin</strong><small>{setupInstallation.manifest.id}@{setupInstallation.manifest.version}</small></span><span className="passed"><b>✓</b><strong>Model binding</strong><small>{setupEntry.compatible_plugins.map((item) => `${item.model_id} · ${item.required_file_roles.join(" + ")}`).join(", ")}</small></span><span className={setupEntry.platform_requirements.length ? "passed" : "blocked"}><b>{setupEntry.platform_requirements.length ? "✓" : "—"}</b><strong>Platform</strong><small>{setupEntry.platform_requirements.map((item) => item.target).join(", ") || "No supported platform"}</small></span><span className={setupInventory?.plugin_runtime_status === "incompatible" ? "blocked" : "passed"}><b>{setupInventory?.plugin_runtime_status === "incompatible" ? "—" : "✓"}</b><strong>Execution provider</strong><small>{setupEntry.platform_requirements.flatMap((item) => item.execution_providers).join(", ").toUpperCase()} · Rust {setupInventory?.plugin_runtime_status.replaceAll("_", " ")}</small></span></div></div>}
-          {setupStep === 4 && <div className="model-setup-content install-stage"><span className="eyebrow">Installation evidence</span><div className="model-install-live"><div><h4>{setupOperation?.status === "failed" ? "Setup stopped safely" : setupOperation ? MODEL_INSTALL_STAGES[setupInstallStageIndex]?.label : "Ready to retry"}</h4><p>{setupOperation?.detail ?? "Review the failure below, then retry from the verified Catalog entry."}</p></div>{setupOperation?.status === "running" && <Status status="Running" />}</div>{setupDownloadPercent !== undefined && setupOperation?.status === "running" && <div className="model-install-meter" aria-label={`Model download ${setupDownloadPercent}%`}><span style={{ width: `${setupDownloadPercent}%` }} /></div>}<ol className="model-install-stage-list" aria-label="Real model installation stages">{MODEL_INSTALL_STAGES.map((stage, index) => <li className={setupOperation?.status === "failed" && index === setupInstallStageIndex ? "failed" : index < setupInstallStageIndex || setupOperation?.status === "succeeded" ? "complete" : index === setupInstallStageIndex ? "current" : "pending"} key={stage.id}><i aria-hidden="true">{index < setupInstallStageIndex || setupOperation?.status === "succeeded" ? "✓" : index === setupInstallStageIndex && setupOperation?.status === "failed" ? "!" : index + 1}</i><span>{stage.label}</span></li>)}</ol></div>}
-          {setupStep === 5 && <div className="model-setup-content install-stage ready"><span className="eyebrow">Installation evidence</span><h4>{setupEntry?.fixture ? "Fixture Model Instance Ready" : "Real Model Instance Ready"}</h4><p>{setupEntry?.fixture ? "The Fixture passed its deterministic Rust Plugin test but remains ineligible for Published Workflows." : "The exact Bundle, real ONNX graphs, Rust Plugin, bbox-prompt sample inference, mask validation, and immutable Model Profile are verified. This model is now selectable by Workflow Drafts."}</p>{setupOperation?.model_instance_ids.length ? <code>{setupOperation.model_instance_ids.join(", ")}</code> : null}</div>}
-          {setupFailure && <div className="model-setup-error" role="alert"><strong>Setup stopped at {setupOperation ? MODEL_INSTALL_STAGES[setupInstallStageIndex]?.label : MODEL_SETUP_STEPS[setupStep]}</strong><span>{setupFailure}</span><small>{setupOperation?.suggested_action ?? "Review the selected Catalog entry and Plugin compatibility, then retry. Existing verified assets were preserved."}</small></div>}
+          {setupStep === 0 && <div className="model-setup-content"><span className="eyebrow">{t("Select model")}</span>{setupInventory?.available.length ? <div className="compatible-model-list">{setupInventory.available.map((entry) => <label className={setupEntryIdentity === catalogBundleIdentity(entry) ? "selected" : ""} key={catalogBundleIdentity(entry)}><input type="radio" name="setup-model" checked={setupEntryIdentity === catalogBundleIdentity(entry)} onChange={() => setSetupEntryIdentity(catalogBundleIdentity(entry))} /><span><strong>{entry.display_name}</strong><small>{entry.description}</small><small>{formatPluginBytes(entry.bundle_size_bytes)} · {entry.license_summary.name}</small></span><Status status={entry.fixture ? "Fixture" : "Ready to install"} /></label>)}</div> : setupInventory?.setup_blockers?.length ? <div className="model-setup-blocker" role="status"><span className="model-setup-blocker-label">{t("Update required")}</span><strong>{t("Plugin runtime update required")}</strong><p>{setupInventory.setup_blockers[0].message}</p><small>Model files were not downloaded again. The installed Bundle and previous Plugin version remain unchanged.</small></div> : <Empty title={t("No verified bundle is available for this platform")} detail="The Plugin remains installed, but AnnotAgent will not suggest raw ONNX downloads or an unverified model." />}</div>}
+          {setupStep === 1 && setupEntry && <div className="model-setup-content"><span className="eyebrow">{t("Review source")}</span><dl className="bundle-review-facts"><div><dt>{t("Model")}</dt><dd>{setupEntry.display_name}</dd></div><div><dt>{t("Model family")}</dt><dd>{setupEntry.model_family ?? t("Declared by the verified Bundle")}</dd></div><div><dt>{t("Capability")}</dt><dd>{setupEntry.capabilities.map((value) => value.replaceAll("_", " ")).join(", ")}</dd></div><div><dt>{t("Publisher")}</dt><dd>{setupEntry.publisher.display_name}{setupEntry.publisher.verified ? " · verified" : " · unverified"}</dd></div><div><dt>{t("Curated Catalog")}</dt><dd>{setupEntry.catalog_id}</dd></div><div><dt>{t("Bundle digest")}</dt><dd>{setupEntry.bundle_sha256}</dd></div><div><dt>{t("Download size")}</dt><dd>{formatPluginBytes(setupEntry.bundle_size_bytes)}</dd></div><div><dt>{t("Installed size")}</dt><dd>{formatPluginBytes(setupEntry.installed_size_bytes ?? setupEntry.platform_requirements[0]?.minimum_disk_bytes ?? setupEntry.bundle_size_bytes)}</dd></div><div><dt>{t("Delivery")}</dt><dd>{setupEntry.fixture ? "Built-in deterministic local Catalog" : setupEntry.bundle_url}</dd></div><div><dt>{t("Release status")}</dt><dd>{setupEntry.fixture ? "Fixture only · not publishable" : t("Real model · production eligible")}</dd></div></dl></div>}
+          {setupStep === 2 && setupEntry && <div className="model-setup-content"><span className="eyebrow">{t("Review license")}</span><div className="license-review-card"><h4>{setupEntry.license_summary.name}</h4><p>Redistribution: {setupEntry.license_summary.redistribution.replaceAll("_", " ")} · Commercial use: {setupEntry.license_summary.commercial_use.replaceAll("_", " ")}</p><code>{setupEntry.license_summary.license_digest}</code>{setupEntry.license_summary.license_url && <a href={setupEntry.license_summary.license_url} target="_blank" rel="noreferrer">{t("Read license source")}</a>}{setupEntry.license_summary.requires_acceptance && <label className="checkbox-line"><input type="checkbox" checked={setupLicenseAccepted} onChange={(event) => setSetupLicenseAccepted(event.target.checked)} /><span>{t("I accept this exact model license and digest.")}</span></label>}</div></div>}
+          {setupStep === 3 && setupEntry && <div className="model-setup-content"><span className="eyebrow">{t("Check compatibility")}</span><div className="compatibility-checks"><span className="passed"><b>✓</b><strong>{t("Plugin")}</strong><small>{setupInstallation.manifest.id}@{setupInstallation.manifest.version}</small></span><span className="passed"><b>✓</b><strong>{t("Model binding")}</strong><small>{setupEntry.compatible_plugins.map((item) => `${item.model_id} · ${item.required_file_roles.join(" + ")}`).join(", ")}</small></span><span className={setupEntry.platform_requirements.length ? "passed" : "blocked"}><b>{setupEntry.platform_requirements.length ? "✓" : "—"}</b><strong>{t("Platform")}</strong><small>{setupEntry.platform_requirements.map((item) => item.target).join(", ") || t("No supported platform")}</small></span><span className={setupInventory?.plugin_runtime_status === "incompatible" ? "blocked" : "passed"}><b>{setupInventory?.plugin_runtime_status === "incompatible" ? "—" : "✓"}</b><strong>{t("Execution provider")}</strong><small>{setupEntry.platform_requirements.flatMap((item) => item.execution_providers).join(", ").toUpperCase()} · Rust {setupInventory?.plugin_runtime_status.replaceAll("_", " ")}</small></span></div></div>}
+          {setupStep === 4 && <div className="model-setup-content install-stage"><span className="eyebrow">{t("Installation evidence")}</span><div className="model-install-live"><div><h4>{setupOperation?.status === "failed" ? t("Setup stopped safely") : setupOperation ? MODEL_INSTALL_STAGES[setupInstallStageIndex]?.label : t("Ready to retry")}</h4><p>{setupOperation?.detail ?? t("Review the failure below, then retry from the verified Catalog entry.")}</p></div>{setupOperation?.status === "running" && <Status status="Running" />}</div>{setupDownloadPercent !== undefined && setupOperation?.status === "running" && <div className="model-install-meter" aria-label={`Model download ${setupDownloadPercent}%`}><span style={{ width: `${setupDownloadPercent}%` }} /></div>}<ol className="model-install-stage-list" aria-label="Real model installation stages">{MODEL_INSTALL_STAGES.map((stage, index) => <li className={setupOperation?.status === "failed" && index === setupInstallStageIndex ? "failed" : index < setupInstallStageIndex || setupOperation?.status === "succeeded" ? "complete" : index === setupInstallStageIndex ? "current" : "pending"} key={stage.id}><i aria-hidden="true">{index < setupInstallStageIndex || setupOperation?.status === "succeeded" ? "✓" : index === setupInstallStageIndex && setupOperation?.status === "failed" ? "!" : index + 1}</i><span>{stage.label}</span></li>)}</ol></div>}
+          {setupStep === 5 && <div className="model-setup-content install-stage ready"><span className="eyebrow">{t("Installation evidence")}</span><h4>{setupEntry?.fixture ? "Fixture Model Instance Ready" : t("Real Model Instance Ready")}</h4><p>{setupEntry?.fixture ? "The Fixture passed its deterministic Rust Plugin test but remains ineligible for Published Workflows." : "The exact Bundle, real ONNX graphs, Rust Plugin, bbox-prompt sample inference, mask validation, and immutable Model Profile are verified. This model is now selectable by Workflow Drafts."}</p>{setupOperation?.model_instance_ids.length ? <code>{setupOperation.model_instance_ids.join(", ")}</code> : null}</div>}
+          {setupFailure && <div className="model-setup-error" role="alert"><strong>{t("Setup stopped at")}{" "}{setupOperation ? MODEL_INSTALL_STAGES[setupInstallStageIndex]?.label : MODEL_SETUP_STEPS[setupStep]}</strong><span>{setupFailure}</span><small>{setupOperation?.suggested_action ?? "Review the selected Catalog entry and Plugin compatibility, then retry. Existing verified assets were preserved."}</small></div>}
         </div>
-        <footer>{setupStep > 0 && setupStep < 4 && <button onClick={() => { setSetupStep((value) => value - 1); setSetupError(""); }} disabled={Boolean(busy)}>Back</button>}<span />{setupStep < 3 && <button className="primary" onClick={() => setSetupStep((value) => value + 1)} disabled={!setupEntry || (setupStep === 2 && setupEntry.license_summary.requires_acceptance && !setupLicenseAccepted)}>Continue</button>}{setupStep === 3 && <button className="primary" onClick={installSelectedBundle} disabled={Boolean(busy) || !setupEntry}>{busy === "install-model-bundle" ? "Starting installation…" : "Install model"}</button>}{setupStep === 5 && <button className="primary" onClick={closeModelSetup}>Done</button>}{setupFailure && setupStep === 4 && <button className="primary" onClick={() => { setSetupStep(3); setSetupOperationId(""); setSetupError(""); }}>Review and retry</button>}</footer>
+        <footer>{setupStep > 0 && setupStep < 4 && <button onClick={() => { setSetupStep((value) => value - 1); setSetupError(""); }} disabled={Boolean(busy)}>{t("Back")}</button>}<span />{setupStep < 3 && <button className="primary" onClick={() => setSetupStep((value) => value + 1)} disabled={!setupEntry || (setupStep === 2 && setupEntry.license_summary.requires_acceptance && !setupLicenseAccepted)}>{t("Continue")}</button>}{setupStep === 3 && <button className="primary" onClick={installSelectedBundle} disabled={Boolean(busy) || !setupEntry}>{busy === "install-model-bundle" ? t("Starting installation…") : t("Install model")}</button>}{setupStep === 5 && <button className="primary" onClick={closeModelSetup}>{t("Done")}</button>}{setupFailure && setupStep === 4 && <button className="primary" onClick={() => { setSetupStep(3); setSetupOperationId(""); setSetupError(""); }}>{t("Review and retry")}</button>}</footer>
       </section>
     </div>}
 
-    {legacyInstallation && legacySetup && <section className="legacy-bundle-creator" aria-label="Create local model bundle">
-      <header><div><span className="eyebrow">Legacy migration</span><h3>Create local model bundle</h3><p>AnnotAgent copies the existing files into a data-only Bundle, verifies every hash and ONNX tensor Contract, then runs the exact Rust Plugin smoke test. The originals are never deleted.</p></div><button className="icon-button" aria-label="Close local bundle creator" onClick={() => setLegacySetup(undefined)}>×</button></header>
+    {legacyInstallation && legacySetup && <section className="legacy-bundle-creator" aria-label={t("Create local model bundle")}>
+      <header><div><span className="eyebrow">{t("Legacy migration")}</span><h3>{t("Create local model bundle")}</h3><p>AnnotAgent copies the existing files into a data-only Bundle, verifies every hash and ONNX tensor Contract, then runs the exact Rust Plugin smoke test. The originals are never deleted.</p></div><button className="icon-button" aria-label="Close local bundle creator" onClick={() => setLegacySetup(undefined)}>×</button></header>
       <div className="legacy-bundle-form">
-        <fieldset><legend>Bundle identity</legend><label>Display name<input value={legacyDraft.display_name} onChange={(event) => setLegacyDraft((current) => ({ ...current, display_name: event.target.value }))} /></label><label>Bundle version<input value={legacyDraft.bundle_version} onChange={(event) => setLegacyDraft((current) => ({ ...current, bundle_version: event.target.value }))} placeholder="1.0.0" /></label><label>Model<input value={legacySetup.modelId} readOnly /></label></fieldset>
+        <fieldset><legend>Bundle identity</legend><label>{t("Display name")}<input value={legacyDraft.display_name} onChange={(event) => setLegacyDraft((current) => ({ ...current, display_name: event.target.value }))} /></label><label>Bundle version<input value={legacyDraft.bundle_version} onChange={(event) => setLegacyDraft((current) => ({ ...current, bundle_version: event.target.value }))} placeholder="1.0.0" /></label><label>{t("Model")}<input value={legacySetup.modelId} readOnly /></label></fieldset>
         <fieldset><legend>Upstream source</legend><label>Upstream project<input value={legacyDraft.upstream_project} onChange={(event) => setLegacyDraft((current) => ({ ...current, upstream_project: event.target.value }))} placeholder="Project or organization" /></label><label>Upstream model ID<input value={legacyDraft.upstream_model_id} onChange={(event) => setLegacyDraft((current) => ({ ...current, upstream_model_id: event.target.value }))} /></label><label>Upstream version<input value={legacyDraft.upstream_version} onChange={(event) => setLegacyDraft((current) => ({ ...current, upstream_version: event.target.value }))} /></label><label>Source URL<input type="url" value={legacyDraft.source_url} onChange={(event) => setLegacyDraft((current) => ({ ...current, source_url: event.target.value }))} placeholder="https://…" /></label></fieldset>
         <fieldset><legend>Export provenance</legend><label>Exporter name<input value={legacyDraft.exporter_name} onChange={(event) => setLegacyDraft((current) => ({ ...current, exporter_name: event.target.value }))} /></label><label>Exporter version<input value={legacyDraft.exporter_version} onChange={(event) => setLegacyDraft((current) => ({ ...current, exporter_version: event.target.value }))} /></label><label>ONNX opset<input type="number" min="1" max="21" value={legacyDraft.opset} onChange={(event) => setLegacyDraft((current) => ({ ...current, opset: event.target.value }))} /></label></fieldset>
-        <fieldset><legend>Model license</legend><label>License name<input value={legacyDraft.license_name} onChange={(event) => setLegacyDraft((current) => ({ ...current, license_name: event.target.value }))} /></label><label>License URL<input type="url" value={legacyDraft.license_url} onChange={(event) => setLegacyDraft((current) => ({ ...current, license_url: event.target.value }))} /></label><label>Redistribution<select value={legacyDraft.redistribution} onChange={(event) => setLegacyDraft((current) => ({ ...current, redistribution: event.target.value as typeof current.redistribution }))}><option value="allowed">Allowed</option><option value="restricted">Restricted</option><option value="unknown">Unknown</option><option value="prohibited">Prohibited</option></select></label><label>Commercial use<select value={legacyDraft.commercial_use} onChange={(event) => setLegacyDraft((current) => ({ ...current, commercial_use: event.target.value as typeof current.commercial_use }))}><option value="allowed">Allowed</option><option value="restricted">Restricted</option><option value="unknown">Unknown</option></select></label><label className="wide">Exact license text<textarea value={legacyDraft.license_text} onChange={(event) => setLegacyDraft((current) => ({ ...current, license_text: event.target.value }))} rows={7} /></label>{legacyDraft.redistribution === "prohibited" && <p className="wide">A redistribution-prohibited asset cannot be packaged as a publishable local Bundle. Keep the legacy files unchanged and resolve the license terms first.</p>}</fieldset>
+        <fieldset><legend>Model license</legend><label>License name<input value={legacyDraft.license_name} onChange={(event) => setLegacyDraft((current) => ({ ...current, license_name: event.target.value }))} /></label><label>License URL<input type="url" value={legacyDraft.license_url} onChange={(event) => setLegacyDraft((current) => ({ ...current, license_url: event.target.value }))} /></label><label>Redistribution<select value={legacyDraft.redistribution} onChange={(event) => setLegacyDraft((current) => ({ ...current, redistribution: event.target.value as typeof current.redistribution }))}><option value="allowed">Allowed</option><option value="restricted">Restricted</option><option value="unknown">{t("Unknown")}</option><option value="prohibited">Prohibited</option></select></label><label>Commercial use<select value={legacyDraft.commercial_use} onChange={(event) => setLegacyDraft((current) => ({ ...current, commercial_use: event.target.value as typeof current.commercial_use }))}><option value="allowed">Allowed</option><option value="restricted">Restricted</option><option value="unknown">{t("Unknown")}</option></select></label><label className="wide">Exact license text<textarea value={legacyDraft.license_text} onChange={(event) => setLegacyDraft((current) => ({ ...current, license_text: event.target.value }))} rows={7} /></label>{legacyDraft.redistribution === "prohibited" && <p className="wide">A redistribution-prohibited asset cannot be packaged as a publishable local Bundle. Keep the legacy files unchanged and resolve the license terms first.</p>}</fieldset>
         <fieldset><legend>ONNX Model Contract</legend><div className="wide legacy-contract-file"><label htmlFor="legacy-contract-json">Contract JSON file</label><FilePicker id="legacy-contract-json" label="Contract JSON file" accept=".json,application/json" file={legacyContractFile} chooseLabel="Choose Contract JSON" emptyLabel="No Contract JSON selected" onSelect={(file) => { setLegacyContractFile(file); if (!file) { setLegacyDraft((current) => ({ ...current, contract_document: "" })); return; } void file.text().then((contract_document) => setLegacyDraft((current) => ({ ...current, contract_document }))); }} /></div><p className="wide">The Contract must use schema version 1 and exactly declare these file roles: <code>{legacyInstallation.manifest.models.find((model) => model.id === legacySetup.modelId)?.required_file_roles.join(", ")}</code>.</p>{legacyDraft.contract_document && <pre className="wide">{legacyDraft.contract_document.slice(0, 800)}{legacyDraft.contract_document.length > 800 ? "…" : ""}</pre>}</fieldset>
       </div>
       <label className="checkbox-line legacy-license-acceptance"><input type="checkbox" checked={legacyDraft.license_accepted} onChange={(event) => setLegacyDraft((current) => ({ ...current, license_accepted: event.target.checked }))} /><span>I supplied and accept the exact license above. I understand this local migration is not publisher-verified.</span></label>
       {legacyError && <div className="model-setup-error" role="alert"><strong>Local Bundle creation stopped</strong><span>{legacyError}</span><small>The legacy model files were not changed or removed.</small></div>}
-      <footer><button onClick={() => setLegacySetup(undefined)} disabled={Boolean(busy)}>Cancel</button><button className="primary" onClick={createLegacyBundle} disabled={Boolean(busy) || legacyDraft.redistribution === "prohibited" || !legacyDraft.display_name.trim() || !legacyDraft.upstream_project.trim() || !legacyDraft.upstream_model_id.trim() || !legacyDraft.license_name.trim() || !legacyDraft.license_text.trim() || !legacyDraft.contract_document.trim() || !legacyDraft.license_accepted}>{busy === "create-legacy-bundle" ? "Hashing, packing, and testing…" : "Create and test local Bundle"}</button></footer>
+      <footer><button onClick={() => setLegacySetup(undefined)} disabled={Boolean(busy)}>{t("Cancel")}</button><button className="primary" onClick={createLegacyBundle} disabled={Boolean(busy) || legacyDraft.redistribution === "prohibited" || !legacyDraft.display_name.trim() || !legacyDraft.upstream_project.trim() || !legacyDraft.upstream_model_id.trim() || !legacyDraft.license_name.trim() || !legacyDraft.license_text.trim() || !legacyDraft.contract_document.trim() || !legacyDraft.license_accepted}>{busy === "create-legacy-bundle" ? t("Hashing, packing, and testing…") : t("Create and test local Bundle")}</button></footer>
     </section>}
 
     {message && <p className="registry-message" role="status" aria-live="polite">{message}</p>}
-    {loading && <div className="loading-banner" role="status">Loading the local Plugin Registry…</div>}
-    {!loading && !installations.length && <Empty title="No Expert Model Plugins installed" detail="Install a verified .annotplugin package above. No model becomes selectable until its real process test passes." />}
+    {loading && <div className="loading-banner" role="status">{t("Loading the local Plugin Registry…")}</div>}
+    {!loading && !installations.length && <Empty title={t("No Expert Model Plugins installed")} detail="Install a verified .annotplugin package above. No model becomes selectable until its real process test passes." />}
 
     {PLUGIN_STATUS_GROUPS.map((group) => {
       const groupItems = installations.filter((installation) => {
@@ -6728,7 +6632,7 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
       });
       if (!groupItems.length) return null;
       return <section className="plugin-status-group" key={group.title} aria-labelledby={`plugin-group-${group.title.replaceAll(" ", "-")}`}>
-        <header><div><h3 id={`plugin-group-${group.title.replaceAll(" ", "-")}`}>{group.title}</h3><p>{group.description}</p></div><span>{groupItems.length}</span></header>
+        <header><div><h3 id={`plugin-group-${group.title.replaceAll(" ", "-")}`}>{t(group.title)}</h3><p>{t(group.description)}</p></div><span>{groupItems.length}</span></header>
         <div className="plugin-card-grid">
           {groupItems.map((installation) => {
             const identity = `${installation.manifest.id}@${installation.manifest.version}`;
@@ -6744,7 +6648,7 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
               : latestInstallOperation?.status === "failed" && !workflowReadyInstances.length
                 ? { tone: "blocked", eyebrow: "Setup needs attention", title: `Stopped at ${MODEL_INSTALL_STAGES.find((stage) => stage.id === latestInstallOperation.stage)?.label ?? "model setup"}`, detail: latestInstallOperation.suggested_action ?? latestInstallOperation.error ?? "Review the structured failure and retry." }
                 : workflowReadyInstances.length
-              ? { tone: "ready", eyebrow: "Ready for Workflows", title: `${workflowReadyInstances.length} verified model${workflowReadyInstances.length === 1 ? "" : "s"} available`, detail: "Plugin, Bundle, Contract, and sample inference evidence are registered." }
+              ? { tone: "ready", eyebrow: "Ready for Workflows", title: `${workflowReadyInstances.length} verified model${workflowReadyInstances.length === 1 ? "" : t("s")} available`, detail: "Plugin, Bundle, Contract, and sample inference evidence are registered." }
               : fixtureReadyInstances.length
                 ? { tone: "setup", eyebrow: "Offline Fixture verified", title: "A real model is still required", detail: "The Rust provisioning path works, but the Fixture is not SAM, accuracy evidence, or publishable." }
               : installation.status === "unsupported_platform"
@@ -6759,37 +6663,37 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
               <div className={`plugin-next-action ${setupState.tone}`}><span>{setupState.eyebrow}</span><strong>{setupState.title}</strong><small>{setupState.detail}</small></div>
               <p>{installation.manifest.description}</p>
               <dl className="plugin-card-facts">
-                <div><dt>Capabilities</dt><dd>{installation.manifest.models.flatMap((model) => model.capabilities).map((value) => value.replaceAll("_", " ")).join(", ")}</dd></div>
-                <div><dt>Runtime</dt><dd>Rust native process</dd></div>
-                <div><dt>Runtime models</dt><dd>{installation.manifest.models.map((model) => model.display_name).join(", ")}</dd></div>
-                <div><dt>Device</dt><dd>{installation.manifest.compatibility.accelerators.join(", ") || "CPU"}</dd></div>
-                <div><dt>Installed Bundles</dt><dd>{inventory.installed.length}</dd></div>
-                <div><dt>Used by</dt><dd>{installation.references.length} Published Workflow reference{installation.references.length === 1 ? "" : "s"}</dd></div>
+                <div><dt>{t("Capabilities")}</dt><dd>{installation.manifest.models.flatMap((model) => model.capabilities).map((value) => value.replaceAll("_", " ")).join(", ")}</dd></div>
+                <div><dt>{t("Runtime")}</dt><dd>Rust native process</dd></div>
+                <div><dt>{t("Runtime models")}</dt><dd>{installation.manifest.models.map((model) => model.display_name).join(", ")}</dd></div>
+                <div><dt>{t("Device")}</dt><dd>{installation.manifest.compatibility.accelerators.join(", ") || "CPU"}</dd></div>
+                <div><dt>{t("Installed Bundles")}</dt><dd>{inventory.installed.length}</dd></div>
+                <div><dt>{t("Used by")}</dt><dd>{installation.references.length} Published Workflow reference{installation.references.length === 1 ? "" : t("s")}</dd></div>
               </dl>
               <div className="registry-card-actions">
-                {!workflowReadyInstances.length && <button className="primary" onClick={() => openModelSetup(installation)} disabled={Boolean(busy) || installation.status === "unsupported_platform"}>{latestInstallOperation?.status === "running" ? "View installation" : latestInstallOperation?.status === "failed" ? "Review failed setup" : setupBlocker ? "Review required update" : "Install compatible model"}</button>}
-                <button onClick={() => perform(`${identity}:toggle`, () => api.setExpertPluginEnabled(installation.manifest.id, installation.manifest.version, !installation.enabled), installation.enabled ? "Plugin disabled." : "Plugin enabled; test evidence is preserved.")} disabled={Boolean(busy) || installation.status === "unsupported_platform"}>{installation.enabled ? "Disable" : "Enable"}</button>
-                <button className="danger-button" onClick={() => { if (window.confirm(`Uninstall ${identity}? Installed Model Bundles remain in the shared model store.`)) void perform(`${identity}:uninstall`, () => api.uninstallExpertPlugin(installation.manifest.id, installation.manifest.version), "Plugin version uninstalled."); }} disabled={Boolean(busy) || installation.references.length > 0} title={installation.references.length ? "Published Workflow references protect this exact version" : undefined}>Uninstall</button>
+                {!workflowReadyInstances.length && <button className="primary" onClick={() => openModelSetup(installation)} disabled={Boolean(busy) || installation.status === "unsupported_platform"}>{latestInstallOperation?.status === "running" ? t("View installation") : latestInstallOperation?.status === "failed" ? t("Review failed setup") : setupBlocker ? t("Review required update") : t("Install compatible model")}</button>}
+                <button onClick={() => perform(`${identity}:toggle`, () => api.setExpertPluginEnabled(installation.manifest.id, installation.manifest.version, !installation.enabled), installation.enabled ? "Plugin disabled." : "Plugin enabled; test evidence is preserved.")} disabled={Boolean(busy) || installation.status === "unsupported_platform"}>{installation.enabled ? t("Disable") : t("Enable")}</button>
+                <button className="danger-button" onClick={() => { if (window.confirm(`Uninstall ${identity}? Installed Model Bundles remain in the shared model store.`)) void perform(`${identity}:uninstall`, () => api.uninstallExpertPlugin(installation.manifest.id, installation.manifest.version), "Plugin version uninstalled."); }} disabled={Boolean(busy) || installation.references.length > 0} title={installation.references.length ? t("Published Workflow references protect this exact version") : undefined}>{t("Uninstall")}</button>
               </div>
               <details className="registry-card-section" open>
-                <summary><span>Runtime</span><small>{inventory.plugin_runtime_status.replaceAll("_", " ")}</small></summary>
-                <dl className="plugin-detail-list"><div><dt>Process</dt><dd>Isolated native Rust</dd></div><div><dt>Protocol</dt><dd>{installation.manifest.runtime.protocol}</dd></div><div><dt>Plugin version</dt><dd>{installation.manifest.version}</dd></div><div><dt>Package SHA-256</dt><dd>{installation.package_sha256}</dd></div></dl>
+                <summary><span>{t("Runtime")}</span><small>{inventory.plugin_runtime_status.replaceAll("_", " ")}</small></summary>
+                <dl className="plugin-detail-list"><div><dt>{t("Process")}</dt><dd>Isolated native Rust</dd></div><div><dt>{t("Protocol")}</dt><dd>{installation.manifest.runtime.protocol}</dd></div><div><dt>{t("Plugin version")}</dt><dd>{installation.manifest.version}</dd></div><div><dt>Package SHA-256</dt><dd>{installation.package_sha256}</dd></div></dl>
               </details>
               <details className="registry-card-section" open={!inventory.installed.length}>
-                <summary><span>Compatible Models</span><small>{inventory.available.length} available</small></summary>
-                {inventory.available.length ? <div className="compatible-model-list compact">{inventory.available.map((entry) => { const installedInstance = pluginInstances.find((instance) => instance.model_bundle_id === entry.bundle_id && instance.model_bundle_version === entry.bundle_version); const entryOperation = installOperations.find((operation) => operation.plugin_id === installation.manifest.id && operation.plugin_version === installation.manifest.version && operation.bundle_id === entry.bundle_id && operation.bundle_version === entry.bundle_version); return <div key={catalogBundleIdentity(entry)}><span><strong>{entry.display_name}</strong><small>{entry.model_family ?? entry.bundle_id} · {entry.publisher.display_name} · {formatPluginBytes(entry.bundle_size_bytes)} · {entry.license_summary.name}</small></span><Status status={entry.fixture ? "Fixture" : installedInstance?.status === "ready" ? "Ready" : entryOperation?.status === "running" ? "Installing" : "Ready to install"} /><button onClick={() => openModelSetup(installation, entry)}>{entryOperation?.status === "running" ? "View progress" : installedInstance?.status === "ready" ? "View evidence" : entryOperation?.status === "failed" ? "Review failure" : "Install model"}</button></div>; })}</div> : setupBlocker ? <div className="bundle-empty-state warning"><strong>Plugin runtime update required</strong><p>{setupBlocker.message}</p><button onClick={() => openModelSetup(installation)}>Review required update</button></div> : <div className="bundle-empty-state"><strong>No verified bundle is available for this platform</strong><p>Unpublished SAM 2 and unverified checkpoints stay in Labs; AnnotAgent will not turn them into a selectable model.</p></div>}
+                <summary><span>{t("Compatible Models")}</span><small>{inventory.available.length}{" "}{t("available")}</small></summary>
+                {inventory.available.length ? <div className="compatible-model-list compact">{inventory.available.map((entry) => { const installedInstance = pluginInstances.find((instance) => instance.model_bundle_id === entry.bundle_id && instance.model_bundle_version === entry.bundle_version); const entryOperation = installOperations.find((operation) => operation.plugin_id === installation.manifest.id && operation.plugin_version === installation.manifest.version && operation.bundle_id === entry.bundle_id && operation.bundle_version === entry.bundle_version); return <div key={catalogBundleIdentity(entry)}><span><strong>{entry.display_name}</strong><small>{entry.model_family ?? entry.bundle_id} · {entry.publisher.display_name} · {formatPluginBytes(entry.bundle_size_bytes)} · {entry.license_summary.name}</small></span><Status status={entry.fixture ? "Fixture" : installedInstance?.status === "ready" ? "Ready" : entryOperation?.status === "running" ? "Installing" : "Ready to install"} /><button onClick={() => openModelSetup(installation, entry)}>{entryOperation?.status === "running" ? t("View progress") : installedInstance?.status === "ready" ? t("View evidence") : entryOperation?.status === "failed" ? t("Review failure") : t("Install model")}</button></div>; })}</div> : setupBlocker ? <div className="bundle-empty-state warning"><strong>{t("Plugin runtime update required")}</strong><p>{setupBlocker.message}</p><button onClick={() => openModelSetup(installation)}>{t("Review required update")}</button></div> : <div className="bundle-empty-state"><strong>{t("No verified bundle is available for this platform")}</strong><p>Unpublished SAM 2 and unverified checkpoints stay in Labs; AnnotAgent will not turn them into a selectable model.</p></div>}
               </details>
               <details className="registry-card-section">
-                <summary><span>Installed Models</span><small>{pluginInstances.length} instances</small></summary>
-                {inventory.installed.length ? <div className="installed-bundle-list">{inventory.installed.map((bundle) => { const matching = pluginInstances.filter((instance) => instance.model_bundle_id === bundle.manifest.id && instance.model_bundle_version === bundle.manifest.version); const instanceReady = matching.some((instance) => instance.status === "ready"); return <div key={bundleIdentity(bundle)}><header><span><strong>{bundle.manifest.display_name}</strong><small>{bundleIdentity(bundle)} · {bundle.manifest.variant}</small></span><Status status={bundle.manifest.fixture && instanceReady ? "Fixture" : instanceReady ? "Ready" : bundle.status.replaceAll("_", " ")} /></header><code>{bundle.bundle_sha256}</code>{bundle.manifest.fixture && <p>Offline contract test only · not selectable for Published Workflows</p>}{matching.map((instance) => <p key={instance.id}>{instance.execution_provider.toUpperCase()} · {instance.status.replaceAll("_", " ")} · profile revision {instance.model_profile_revision}</p>)}</div>; })}</div> : <div className={`bundle-empty-state${setupBlocker ? " warning" : ""}`}><strong>{setupBlocker ? "Installed model cannot bind to this Plugin version" : "No compatible model installed"}</strong><p>{setupBlocker ? "The existing Bundle is preserved. Update the immutable Plugin runtime before creating a Model Instance." : "This Plugin cannot run until a verified model is installed."}</p><button className="primary" onClick={() => openModelSetup(installation)}>{setupBlocker ? "Review required update" : "Install compatible model"}</button></div>}
+                <summary><span>{t("Installed Models")}</span><small>{pluginInstances.length} instances</small></summary>
+                {inventory.installed.length ? <div className="installed-bundle-list">{inventory.installed.map((bundle) => { const matching = pluginInstances.filter((instance) => instance.model_bundle_id === bundle.manifest.id && instance.model_bundle_version === bundle.manifest.version); const instanceReady = matching.some((instance) => instance.status === "ready"); return <div key={bundleIdentity(bundle)}><header><span><strong>{bundle.manifest.display_name}</strong><small>{bundleIdentity(bundle)} · {bundle.manifest.variant}</small></span><Status status={bundle.manifest.fixture && instanceReady ? "Fixture" : instanceReady ? "Ready" : bundle.status.replaceAll("_", " ")} /></header><code>{bundle.bundle_sha256}</code>{bundle.manifest.fixture && <p>Offline contract test only · not selectable for Published Workflows</p>}{matching.map((instance) => <p key={instance.id}>{instance.execution_provider.toUpperCase()} · {instance.status.replaceAll("_", " ")} · profile revision {instance.model_profile_revision}</p>)}</div>; })}</div> : <div className={`bundle-empty-state${setupBlocker ? " warning" : ""}`}><strong>{setupBlocker ? t("Installed model cannot bind to this Plugin version") : t("No compatible model installed")}</strong><p>{setupBlocker ? "The existing Bundle is preserved. Update the immutable Plugin runtime before creating a Model Instance." : t("This Plugin cannot run until a verified model is installed.")}</p><button className="primary" onClick={() => openModelSetup(installation)}>{setupBlocker ? t("Review required update") : t("Install compatible model")}</button></div>}
               </details>
               <details className="registry-card-section">
-                <summary><span>Model Setup</span><small>{workflowReadyInstances.length ? "Ready" : fixtureReadyInstances.length ? "Fixture only" : "Action required"}</small></summary>
-                {pluginInstances.map((instance) => <div className="model-instance-evidence" key={instance.id}><span><strong>{instance.model_bundle_id}</strong><small>{instance.contract_inspection.valid ? "ONNX Contract verified" : instance.contract_inspection.errors.join(" · ")}</small></span><Status status={instance.status.replaceAll("_", " ")} />{instance.status !== "ready" && <button onClick={() => perform(`${instance.id}:smoke`, () => api.testModelInstance(instance.id), "Fixed Bundle smoke test completed.")} disabled={Boolean(busy)}>{busy === `${instance.id}:smoke` ? "Testing…" : "Run Smoke Test"}</button>}</div>)}
-                {!pluginInstances.length && <p>{setupBlocker ? <>No verified Model Instance exists for this Plugin version. Review and install the required immutable runtime update first.</> : <>No verified Model Instance exists. Choose <strong>Install compatible model</strong> to review an available Bundle.</>}</p>}
+                <summary><span>{t("Model Setup")}</span><small>{workflowReadyInstances.length ? t("Ready") : fixtureReadyInstances.length ? "Fixture only" : t("Action required")}</small></summary>
+                {pluginInstances.map((instance) => <div className="model-instance-evidence" key={instance.id}><span><strong>{instance.model_bundle_id}</strong><small>{instance.contract_inspection.valid ? t("ONNX Contract verified") : instance.contract_inspection.errors.join(" · ")}</small></span><Status status={instance.status.replaceAll("_", " ")} />{instance.status !== "ready" && <button onClick={() => perform(`${instance.id}:smoke`, () => api.testModelInstance(instance.id), "Fixed Bundle smoke test completed.")} disabled={Boolean(busy)}>{busy === `${instance.id}:smoke` ? t("Testing…") : t("Run Smoke Test")}</button>}</div>)}
+                {!pluginInstances.length && <p>{setupBlocker ? <>No verified Model Instance exists for this Plugin version. Review and install the required immutable runtime update first.</> : <>No verified Model Instance exists. Choose <strong>{t("Install compatible model")}</strong> to review an available Bundle.</>}</p>}
               </details>
-              <details className="registry-card-section"><summary><span>References</span><small>{installation.references.length} protected</small></summary>{installation.references.length ? <ul className="plugin-reference-list">{installation.references.map((reference) => <li key={`${reference.kind}:${reference.location}`}><strong>{reference.kind.replaceAll("_", " ")}</strong><span>{reference.location}</span></li>)}</ul> : <p>No Published Workflow currently protects this Plugin version. Bundle references are tracked independently by exact digest.</p>}</details>
-              {installation.weights.length > 0 && <details className="registry-card-section legacy-provisioning"><summary><span>Legacy manual provisioning</span><small>Not recommended</small></summary><div className="legacy-model-warning"><strong>LegacyUnbundledModel</strong><p>These files predate Model Bundles. Their hashes are preserved, but they have no Bundle source, license document, Contract, or reproducible smoke-test identity and are not treated as trusted assets.</p>{installation.weights.map((weight) => <code key={`${weight.model_id}:${weight.component_id}`}>{weight.component_id} · {weight.original_filename} · {weight.checkpoint_sha256}</code>)}<p>Create a local Bundle only after supplying source, license, and a complete Model Contract. A failed conversion never removes these files.</p>{Array.from(new Set(installation.weights.map((weight) => weight.model_id))).map((modelId) => <button key={modelId} onClick={() => openLegacyBundleSetup(installation, modelId)}>Create local model bundle</button>)}</div></details>}
+              <details className="registry-card-section"><summary><span>{t("References")}</span><small>{installation.references.length}{" "}{t("protected")}</small></summary>{installation.references.length ? <ul className="plugin-reference-list">{installation.references.map((reference) => <li key={`${reference.kind}:${reference.location}`}><strong>{reference.kind.replaceAll("_", " ")}</strong><span>{reference.location}</span></li>)}</ul> : <p>No Published Workflow currently protects this Plugin version. Bundle references are tracked independently by exact digest.</p>}</details>
+              {installation.weights.length > 0 && <details className="registry-card-section legacy-provisioning"><summary><span>Legacy manual provisioning</span><small>{t("Not recommended")}</small></summary><div className="legacy-model-warning"><strong>LegacyUnbundledModel</strong><p>These files predate Model Bundles. Their hashes are preserved, but they have no Bundle source, license document, Contract, or reproducible smoke-test identity and are not treated as trusted assets.</p>{installation.weights.map((weight) => <code key={`${weight.model_id}:${weight.component_id}`}>{weight.component_id} · {weight.original_filename} · {weight.checkpoint_sha256}</code>)}<p>Create a local Bundle only after supplying source, license, and a complete Model Contract. A failed conversion never removes these files.</p>{Array.from(new Set(installation.weights.map((weight) => weight.model_id))).map((modelId) => <button key={modelId} onClick={() => openLegacyBundleSetup(installation, modelId)}>{t("Create local model bundle")}</button>)}</div></details>}
             </article>;
           })}
         </div>
@@ -6868,7 +6772,7 @@ function ProviderRegistryPage({
       .applyLegacyRegistryImport()
       .then((result) => {
         setNotice(
-          `Imported Provider and Model Profile. ${result.migration.bindings_created} Project binding${result.migration.bindings_created === 1 ? "" : "s"} created; ${result.migration.bindings_preserved} existing choice${result.migration.bindings_preserved === 1 ? " was" : "s were"} preserved.`,
+          `Imported Provider and Model Profile. ${result.migration.bindings_created} Project binding${result.migration.bindings_created === 1 ? "" : t("s")} created; ${result.migration.bindings_preserved} existing choice${result.migration.bindings_preserved === 1 ? " was" : "s were"} preserved.`,
         );
         return refresh();
       })
@@ -6879,24 +6783,24 @@ function ProviderRegistryPage({
     <section className="registry-page">
       <div className="toolbar-panel">
         <div>
-          <span className="eyebrow">Reusable connections</span>
-          <h2>Providers</h2>
-          <p>Configure each API connection once. Credentials are write-only and never returned to this page.</p>
+          <span className="eyebrow">{t("Reusable connections")}</span>
+          <h2>{t("Providers")}</h2>
+          <p>{t("Configure each API connection once. Credentials are write-only and never returned to this page.")}</p>
         </div>
         <button className="primary" onClick={() => setAdding((value) => !value)}>
-          {adding ? "Cancel" : "Add provider"}
+          {adding ? t("Cancel") : t("Add provider")}
         </button>
       </div>
       {notice && <div className="positive-empty" role="status"><strong>{notice}</strong></div>}
       {adding && (
-        <Panel title="New Provider" eyebrow="Connection profile">
+        <Panel title={t("New Provider")} eyebrow={t("Connection profile")}>
           <div className="form-grid">
-            <label>Preset<select value={presetId} onChange={(event) => choosePreset(event.target.value)}>{presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.display_name}</option>)}</select></label>
-            <label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
-            <label>Adapter<select value="open_ai_compatible" disabled><option value="open_ai_compatible">OpenAI compatible</option></select></label>
-            <label>Base URL<input type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} /></label>
+            <label>{t("Preset")}<select value={presetId} onChange={(event) => choosePreset(event.target.value)}>{presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.display_name}</option>)}</select></label>
+            <label>{t("Display name")}<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
+            <label>{t("Adapter")}<select value="open_ai_compatible" disabled><option value="open_ai_compatible">{t("OpenAI compatible")}</option></select></label>
+            <label>{t("Base URL")}<input type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} /></label>
           </div>
-          <div className="button-row"><button className="primary" disabled={busy === "create" || !displayName.trim() || !baseUrl.trim()} onClick={create}>{busy === "create" ? "Saving…" : "Save Provider"}</button></div>
+          <div className="button-row"><button className="primary" disabled={busy === "create" || !displayName.trim() || !baseUrl.trim()} onClick={create}>{busy === "create" ? t("Saving…") : t("Save Provider")}</button></div>
         </Panel>
       )}
       {providers.length ? (
@@ -6913,25 +6817,25 @@ function ProviderRegistryPage({
           ))}
         </div>
       ) : (
-        <Empty title="No Providers configured" detail="Connect an OpenAI-compatible API before asking AnnotAgent to build a Pipeline." />
+        <Empty title={t("No Providers configured")} detail={t("Connect an OpenAI-compatible API before asking AnnotAgent to build a Pipeline.")} />
       )}
       {legacyImport && !legacyImport.already_applied && (
         <details className="legacy-registry-import">
           <summary>
-            <span><strong>Legacy compatibility</strong><small>Optional import available from older workspace settings</small></span>
-            <b>Optional</b>
+            <span><strong>{t("Legacy compatibility")}</strong><small>{t("Optional import available from older workspace settings")}</small></span>
+            <b>{t("Optional")}</b>
           </summary>
           <div className="legacy-registry-import-body">
             <p>Import older compatibility settings into the Provider Registry. Current Providers continue to work if you leave this untouched.</p>
             <dl>
-              <div><dt>Provider</dt><dd>{legacyImport.provider_display_name}</dd></div>
-              <div><dt>Model Profile</dt><dd>{legacyImport.model_display_name}</dd></div>
-              <div><dt>Project bindings</dt><dd>{legacyImport.project_binding_count}</dd></div>
+              <div><dt>{t("Provider")}</dt><dd>{legacyImport.provider_display_name}</dd></div>
+              <div><dt>{t("Model Profile")}</dt><dd>{legacyImport.model_display_name}</dd></div>
+              <div><dt>{t("Project bindings")}</dt><dd>{legacyImport.project_binding_count}</dd></div>
             </dl>
             <div className="legacy-registry-import-footer">
               <small>The credential remains a {legacyImport.credential_source?.replaceAll("_", " ") ?? "non-secret configuration"} reference. No secret or Run history is moved.</small>
               <button disabled={Boolean(busy)} onClick={importLegacy}>
-                {busy === "legacy-import" ? "Importing…" : "Review and import"}
+                {busy === "legacy-import" ? t("Importing…") : t("Review and import")}
               </button>
             </div>
           </div>
@@ -7001,7 +6905,7 @@ function ProviderRegistryCard({
     void api.discoverProviderModels(provider.id)
       .then((result) => {
         setDiscovery(result);
-        setMessage(`Discovered ${result.models.length} model ID${result.models.length === 1 ? "" : "s"}.`);
+        setMessage(`Discovered ${result.models.length} model ID${result.models.length === 1 ? "" : t("s")}.`);
       })
       .catch((error: Error) => onError(error.message))
       .finally(() => setBusy(""));
@@ -7030,61 +6934,61 @@ function ProviderRegistryCard({
         <Status status={provider.health.status.replaceAll("_", " ")} />
       </header>
       <dl className="registry-facts">
-        <div><dt>Endpoint</dt><dd title={provider.base_url}>{provider.endpoint_summary}</dd></div>
-        <div><dt>Credential</dt><dd>{provider.credential_configured ? `${provider.credential_source?.replaceAll("_", " ")} configured` : "Missing"}</dd></div>
-        <div><dt>Models</dt><dd>{provider.model_count}</dd></div>
-        <div><dt>Last checked</dt><dd>{provider.health.checked_at ? new Date(provider.health.checked_at).toLocaleString() : "Never"}</dd></div>
+        <div><dt>{t("Endpoint")}</dt><dd title={provider.base_url}>{provider.endpoint_summary}</dd></div>
+        <div><dt>{t("Credential")}</dt><dd>{provider.credential_configured ? `${provider.credential_source?.replaceAll("_", " ")} configured` : t("Missing")}</dd></div>
+        <div><dt>{t("Models")}</dt><dd>{provider.model_count}</dd></div>
+        <div><dt>{t("Last checked")}</dt><dd>{provider.health.checked_at ? new Date(provider.health.checked_at).toLocaleString(localeTag()) : t("Never")}</dd></div>
       </dl>
       {provider.health.safe_message && <p className="registry-safe-message">{provider.health.safe_message}</p>}
       <div className="registry-card-actions">
-        <button disabled={Boolean(busy) || !provider.enabled} onClick={() => run("check", () => api.checkProvider(provider.id), "Connection check succeeded without a generation request.")}>{busy === "check" ? "Checking…" : "Check connection"}</button>
-        <button disabled={Boolean(busy) || !provider.enabled} onClick={discover}>{busy === "discover" ? "Discovering…" : "Discover models"}</button>
-        <button disabled={Boolean(busy)} onClick={() => run("toggle", () => api.updateProvider(provider.id, { enabled: !provider.enabled }), provider.enabled ? "Provider disabled." : "Provider enabled; run a connection check.")}>{provider.enabled ? "Disable" : "Enable"}</button>
+        <button disabled={Boolean(busy) || !provider.enabled} onClick={() => run("check", () => api.checkProvider(provider.id), "Connection check succeeded without a generation request.")}>{busy === "check" ? t("Checking…") : t("Check connection")}</button>
+        <button disabled={Boolean(busy) || !provider.enabled} onClick={discover}>{busy === "discover" ? t("Discovering…") : t("Discover models")}</button>
+        <button disabled={Boolean(busy)} onClick={() => run("toggle", () => api.updateProvider(provider.id, { enabled: !provider.enabled }), provider.enabled ? "Provider disabled." : "Provider enabled; run a connection check.")}>{provider.enabled ? t("Disable") : t("Enable")}</button>
       </div>
       <details className="registry-card-section">
-        <summary>Edit connection</summary>
+        <summary>{t("Edit connection")}</summary>
         <div className="form-grid">
-          <label>Display name<input value={editDisplayName} onChange={(event) => setEditDisplayName(event.target.value)} /></label>
-          <label>Base URL<input type="url" value={editBaseUrl} onChange={(event) => setEditBaseUrl(event.target.value)} /></label>
+          <label>{t("Display name")}<input value={editDisplayName} onChange={(event) => setEditDisplayName(event.target.value)} /></label>
+          <label>{t("Base URL")}<input type="url" value={editBaseUrl} onChange={(event) => setEditBaseUrl(event.target.value)} /></label>
         </div>
-        <div className="button-row"><button disabled={Boolean(busy) || !editDisplayName.trim() || !editBaseUrl.trim()} onClick={() => run("edit", () => api.updateProvider(provider.id, { display_name: editDisplayName, base_url: editBaseUrl }), "Provider connection updated.")}>{busy === "edit" ? "Saving…" : "Save connection"}</button></div>
+        <div className="button-row"><button disabled={Boolean(busy) || !editDisplayName.trim() || !editBaseUrl.trim()} onClick={() => run("edit", () => api.updateProvider(provider.id, { display_name: editDisplayName, base_url: editBaseUrl }), "Provider connection updated.")}>{busy === "edit" ? t("Saving…") : t("Save connection")}</button></div>
         <small>Changing an endpoint is blocked while Model Profiles reference this Provider; create a new Provider and rebind instead.</small>
       </details>
       <details className="registry-card-section">
-        <summary>{provider.credential_configured ? "Rotate or remove credential" : "Add credential"}</summary>
+        <summary>{provider.credential_configured ? t("Rotate or remove credential") : t("Add credential")}</summary>
         <>
           <div className="credential-editor">
             <div className="credential-field">
-              <label htmlFor={`${credentialFieldId}-storage`}>Storage</label>
+              <label htmlFor={`${credentialFieldId}-storage`}>{t("Storage")}</label>
               <select id={`${credentialFieldId}-storage`} aria-describedby={`${credentialFieldId}-storage-help`} value={credentialSource} onChange={(event) => setCredentialSource(event.target.value as typeof credentialSource)}>
-                <option value="workspace_file">Local workspace file</option>
-                <option value="environment_variable">Environment variable</option>
-                <option value="session_only">This server session only</option>
-                <option value="system_keyring">System credential store</option>
+                <option value="workspace_file">{t("Local workspace file")}</option>
+                <option value="environment_variable">{t("Environment variable")}</option>
+                <option value="session_only">{t("This server session only")}</option>
+                <option value="system_keyring">{t("System credential store")}</option>
               </select>
-              <p className="credential-field-help" id={`${credentialFieldId}-storage-help`}>{credentialStorageHelp}</p>
+              <p className="credential-field-help" id={`${credentialFieldId}-storage-help`}>{t(credentialStorageHelp)}</p>
             </div>
             {credentialSource === "environment_variable" ? <div className="credential-field">
-              <label htmlFor={`${credentialFieldId}-variable`}>Variable name</label>
+              <label htmlFor={`${credentialFieldId}-variable`}>{t("Variable name")}</label>
               <input id={`${credentialFieldId}-variable`} aria-describedby={`${credentialFieldId}-variable-help`} value={environmentVariable} onChange={(event) => setEnvironmentVariable(event.target.value)} placeholder="DASHSCOPE_API_KEY" />
-              <p className="credential-field-help" id={`${credentialFieldId}-variable-help`}>Enter only a variable name, such as <code>DASHSCOPE_API_KEY</code>. Do not paste the API key into this field.</p>
+              <p className="credential-field-help" id={`${credentialFieldId}-variable-help`}>{t("Enter only a variable name, such as")}{" "}<code>DASHSCOPE_API_KEY</code>{t(". Do not paste the API key into this field.")}</p>
             </div> : <div className="credential-field">
-              <label htmlFor={`${credentialFieldId}-secret`}>API key</label>
-              <input id={`${credentialFieldId}-secret`} aria-describedby={`${credentialFieldId}-secret-help`} type="password" autoComplete="new-password" value={secret} onChange={(event) => setSecret(event.target.value)} placeholder={provider.credential_configured ? "Enter a replacement key" : "Paste API key"} />
+              <label htmlFor={`${credentialFieldId}-secret`}>{t("API key")}</label>
+              <input id={`${credentialFieldId}-secret`} aria-describedby={`${credentialFieldId}-secret-help`} type="password" autoComplete="new-password" value={secret} onChange={(event) => setSecret(event.target.value)} placeholder={provider.credential_configured ? t("Enter a replacement key") : t("Paste API key")} />
               <p className="credential-field-help" id={`${credentialFieldId}-secret-help`}>For security, an existing key is never shown here. Saving replaces the current key.</p>
             </div>}
           </div>
-          <div className="credential-actions"><button className="primary" disabled={busy === "credential" || (credentialSource === "environment_variable" ? !environmentVariable.trim() : !secret.trim())} onClick={saveCredential}>{busy === "credential" ? "Saving…" : provider.credential_configured ? "Rotate credential" : "Save credential"}</button><button disabled={!provider.credential_configured || Boolean(busy)} onClick={() => run("remove-credential", () => api.deleteProviderCredential(provider.id), "Credential reference removed.")}>Remove credential</button>{provider.credential_source === "legacy_workspace_file" && <button disabled={Boolean(busy)} onClick={() => run("migrate", () => api.migrateProviderCredential(provider.id, false), "Credential copied to the system credential store. The legacy source was preserved.")}>Migrate legacy credential</button>}</div>
+          <div className="credential-actions"><button className="primary" disabled={busy === "credential" || (credentialSource === "environment_variable" ? !environmentVariable.trim() : !secret.trim())} onClick={saveCredential}>{busy === "credential" ? t("Saving…") : provider.credential_configured ? t("Rotate credential") : t("Save credential")}</button><button disabled={!provider.credential_configured || Boolean(busy)} onClick={() => run("remove-credential", () => api.deleteProviderCredential(provider.id), "Credential reference removed.")}>{t("Remove credential")}</button>{provider.credential_source === "legacy_workspace_file" && <button disabled={Boolean(busy)} onClick={() => run("migrate", () => api.migrateProviderCredential(provider.id, false), "Credential copied to the system credential store. The legacy source was preserved.")}>{t("Migrate legacy credential")}</button>}</div>
         </>
       </details>
       <details className="registry-card-section">
-        <summary>Billable model test</summary>
+        <summary>{t("Billable model test")}</summary>
         <p>This is separate from Check connection and sends a real generation request.</p>
-        {models.length ? <div className="button-row"><select aria-label="Model Profile for active probe" value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)}>{models.map((model) => <option key={model.id} value={model.id}>{model.display_name} · r{model.revision}</option>)}</select><button disabled={Boolean(busy) || !provider.enabled} onClick={probe}>{busy === "probe" ? "Testing…" : "Run billable test"}</button></div> : <button onClick={onOpenModels}>Add a Model Profile</button>}
+        {models.length ? <div className="button-row"><select aria-label={t("Model Profile for active probe")} value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)}>{models.map((model) => <option key={model.id} value={model.id}>{model.display_name} · r{model.revision}</option>)}</select><button disabled={Boolean(busy) || !provider.enabled} onClick={probe}>{busy === "probe" ? t("Testing…") : t("Run billable test")}</button></div> : <button onClick={onOpenModels}>{t("Add a Model Profile")}</button>}
       </details>
-      {discovery && <details className="registry-discovery" open><summary>Discovered model IDs · {discovery.models.length}</summary><p>{discovery.warning}</p><div className="discovered-model-list">{discovery.models.slice(0, 100).map((model) => <code key={model.remote_model_id}>{model.remote_model_id}</code>)}</div><button onClick={onOpenModels}>Create a verified Model Profile</button></details>}
+      {discovery && <details className="registry-discovery" open><summary>Discovered model IDs · {discovery.models.length}</summary><p>{discovery.warning}</p><div className="discovered-model-list">{discovery.models.slice(0, 100).map((model) => <code key={model.remote_model_id}>{model.remote_model_id}</code>)}</div><button onClick={onOpenModels}>{t("Create a verified Model Profile")}</button></details>}
       {message && <small className="registry-message" role="status">{message}</small>}
-      <details className="advanced-settings"><summary>Advanced and destructive actions</summary><div className="button-row"><button className="danger-button" disabled={Boolean(busy)} onClick={remove}>Delete Provider</button></div><small>Deletion is blocked when Models, Drafts, published Workflows, Runs, or bindings reference this Provider.</small></details>
+      <details className="advanced-settings"><summary>{t("Advanced and destructive actions")}</summary><div className="button-row"><button className="danger-button" disabled={Boolean(busy)} onClick={remove}>{t("Delete Provider")}</button></div><small>Deletion is blocked when Models, Drafts, published Workflows, Runs, or bindings reference this Provider.</small></details>
     </article>
   );
 }
@@ -7271,25 +7175,23 @@ function ModelRegistryPage({
   };
   return (
     <section className="registry-page">
-      <div className="toolbar-panel"><div><span className="eyebrow">Reusable capability contracts</span><h2>Models</h2><p>Model Profiles bind a Provider model ID to explicit modalities, protocol features, capabilities, pricing, and an immutable revision.</p></div><button className="primary" disabled={!providers.length} onClick={() => adding ? resetEditor() : setAdding(true)}>{adding ? "Cancel" : "Add model"}</button></div>
-      {!providers.length && <div className="guided-callout"><strong>Provider setup required</strong><p>Add a Provider before creating a Model Profile.</p><button onClick={onOpenProviders}>Connect a Provider</button></div>}
-      <Panel title="Default model choices" eyebrow="Reusable workspace defaults">
+      <div className="toolbar-panel"><div><span className="eyebrow">{t("Reusable capability contracts")}</span><h2>{t("Models")}</h2><p>Model Profiles bind a Provider model ID to explicit modalities, protocol features, capabilities, pricing, and an immutable revision.</p></div><button className="primary" disabled={!providers.length} onClick={() => adding ? resetEditor() : setAdding(true)}>{adding ? t("Cancel") : t("Add model")}</button></div>
+      {!providers.length && <div className="guided-callout"><strong>{t("Provider setup required")}</strong><p>{t("Add a Provider before creating a Model Profile.")}</p><button onClick={onOpenProviders}>{t("Connect a Provider")}</button></div>}
+      <Panel title={t("Default model choices")} eyebrow={t("Reusable workspace defaults")}>
         <p>
           Projects may override these choices. Published Workflows still freeze
           the final Model Profile revision.
         </p>
         <div className="registry-default-models">
-          <label>
-            Default Pipeline Builder model
-            <select
-              aria-label="Default Pipeline Builder model"
+          <label>{t("Default Pipeline Builder model")}<select
+              aria-label={t("Default Pipeline Builder model")}
               value={globalDefaults.pipeline_builder ?? ""}
               disabled={busy === "defaults"}
               onChange={(event) =>
                 saveGlobalDefault("pipeline_builder", event.target.value)
               }
             >
-              <option value="">No global default</option>
+              <option value="">{t("No global default")}</option>
               {defaultChoices.pipeline_builder.map((model) => (
                 <option key={model.id} value={model.id}>
                   {defaultOption(model)}
@@ -7298,17 +7200,15 @@ function ModelRegistryPage({
             </select>
             <small>Text · Structured Output · Tool Calls · Available</small>
           </label>
-          <label>
-            Default Vision Language model
-            <select
-              aria-label="Default Vision Language model"
+          <label>{t("Default Vision Language model")}<select
+              aria-label={t("Default Vision Language model")}
               value={globalDefaults.vision_language ?? ""}
               disabled={busy === "defaults"}
               onChange={(event) =>
                 saveGlobalDefault("vision_language", event.target.value)
               }
             >
-              <option value="">No global default</option>
+              <option value="">{t("No global default")}</option>
               {defaultChoices.vision_language.map((model) => (
                 <option key={model.id} value={model.id}>
                   {defaultOption(model)}
@@ -7317,17 +7217,15 @@ function ModelRegistryPage({
             </select>
             <small>Image · Vision Language · Available</small>
           </label>
-          <label>
-            Default Text model
-            <select
-              aria-label="Default Text model"
+          <label>{t("Default Text model")}<select
+              aria-label={t("Default Text model")}
               value={globalDefaults.text_generation ?? ""}
               disabled={busy === "defaults"}
               onChange={(event) =>
                 saveGlobalDefault("text_generation", event.target.value)
               }
             >
-              <option value="">No global default</option>
+              <option value="">{t("No global default")}</option>
               {defaultChoices.text_generation.map((model) => (
                 <option key={model.id} value={model.id}>
                   {defaultOption(model)}
@@ -7338,40 +7236,40 @@ function ModelRegistryPage({
           </label>
         </div>
       </Panel>
-      {adding && <Panel title={editingId ? "Edit Model Profile" : "New Model Profile"} eyebrow="Manual capability declaration">
+      {adding && <Panel title={editingId ? t("Edit Model Profile") : t("New Model Profile")} eyebrow={t("Manual capability declaration")}>
         <div className="registry-model-editor">
           <section className="registry-form-section">
-            <header><strong>Model identity</strong><small>Choose the connection and enter the exact model identifier exposed by that Provider.</small></header>
+            <header><strong>{t("Model identity")}</strong><small>Choose the connection and enter the exact model identifier exposed by that Provider.</small></header>
             <div className="registry-model-identity">
-              <label><span>Provider</span><select value={providerId} onChange={(event) => setProviderId(event.target.value)}>{providers.map((provider) => <option value={provider.id} key={provider.id}>{provider.display_name}</option>)}</select></label>
-              <label><span>Display name</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
-              <label><span>Remote model ID</span><input value={remoteModelId} onChange={(event) => setRemoteModelId(event.target.value)} placeholder="Exact Provider model ID" /></label>
+              <label><span>{t("Provider")}</span><select value={providerId} onChange={(event) => setProviderId(event.target.value)}>{providers.map((provider) => <option value={provider.id} key={provider.id}>{provider.display_name}</option>)}</select></label>
+              <label><span>{t("Display name")}</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
+              <label><span>{t("Remote model ID")}</span><input value={remoteModelId} onChange={(event) => setRemoteModelId(event.target.value)} placeholder={t("Exact Provider model ID")} /></label>
             </div>
           </section>
           <div className="registry-option-sections">
-            <fieldset className="registry-check-group"><legend>Input modalities</legend>{(["text", "image", "video"] as InputModality[]).map((value) => <label className="checkbox-line" key={value}><input type="checkbox" checked={modalities.includes(value)} onChange={() => toggle(value, modalities, setModalities)} /><span>{value}</span></label>)}</fieldset>
-            <fieldset className="registry-check-group"><legend>Protocol features</legend><label className="checkbox-line"><input type="checkbox" checked={toolCalls} onChange={(event) => setToolCalls(event.target.checked)} /><span>Tool calls</span></label><label className="checkbox-line"><input type="checkbox" checked={structuredOutput} onChange={(event) => setStructuredOutput(event.target.checked)} /><span>Structured output</span></label><label className="checkbox-line"><input type="checkbox" checked={jsonSchema} onChange={(event) => setJsonSchema(event.target.checked)} /><span>JSON Schema</span></label></fieldset>
-            <fieldset className="registry-check-group registry-capability-group"><legend>Task capabilities</legend>{REGISTRY_MODEL_CAPABILITIES.map((capability) => <label className="checkbox-line" key={capability.id}><input type="checkbox" checked={capabilities.includes(capability.id)} onChange={() => toggle(capability.id, capabilities, setCapabilities)} /><span>{capability.label}</span></label>)}</fieldset>
+            <fieldset className="registry-check-group"><legend>{t("Input modalities")}</legend>{(["text", "image", "video"] as InputModality[]).map((value) => <label className="checkbox-line" key={value}><input type="checkbox" checked={modalities.includes(value)} onChange={() => toggle(value, modalities, setModalities)} /><span>{value}</span></label>)}</fieldset>
+            <fieldset className="registry-check-group"><legend>{t("Protocol features")}</legend><label className="checkbox-line"><input type="checkbox" checked={toolCalls} onChange={(event) => setToolCalls(event.target.checked)} /><span>{t("Tool calls")}</span></label><label className="checkbox-line"><input type="checkbox" checked={structuredOutput} onChange={(event) => setStructuredOutput(event.target.checked)} /><span>{t("Structured output")}</span></label><label className="checkbox-line"><input type="checkbox" checked={jsonSchema} onChange={(event) => setJsonSchema(event.target.checked)} /><span>{t("JSON Schema")}</span></label></fieldset>
+            <fieldset className="registry-check-group registry-capability-group"><legend>{t("Task capabilities")}</legend>{REGISTRY_MODEL_CAPABILITIES.map((capability) => <label className="checkbox-line" key={capability.id}><input type="checkbox" checked={capabilities.includes(capability.id)} onChange={() => toggle(capability.id, capabilities, setCapabilities)} /><span>{t(capability.label)}</span></label>)}</fieldset>
           </div>
           <section className="registry-form-section">
-            <header><strong>Pricing</strong><small>Optional USD estimates used for Run previews and persisted usage summaries.</small></header>
+            <header><strong>{t("Pricing")}</strong><small>Optional USD estimates used for Run previews and persisted usage summaries.</small></header>
             <div className="registry-pricing-grid">
-              <label><span>Input / 1M tokens</span><input aria-label="Input / 1M tokens (USD)" inputMode="decimal" value={inputPrice} onChange={(event) => setInputPrice(event.target.value)} placeholder="Unknown" /><small>USD</small></label>
-              <label><span>Output / 1M tokens</span><input aria-label="Output / 1M tokens (USD)" inputMode="decimal" value={outputPrice} onChange={(event) => setOutputPrice(event.target.value)} placeholder="Unknown" /><small>USD</small></label>
-              <label><span>Per request</span><input aria-label="Per request (USD)" inputMode="decimal" value={requestPrice} onChange={(event) => setRequestPrice(event.target.value)} placeholder="Unknown" /><small>USD</small></label>
+              <label><span>{t("Input / 1M tokens")}</span><input aria-label={t("Input / 1M tokens (USD)")} inputMode="decimal" value={inputPrice} onChange={(event) => setInputPrice(event.target.value)} placeholder={t("Unknown")} /><small>USD</small></label>
+              <label><span>{t("Output / 1M tokens")}</span><input aria-label={t("Output / 1M tokens (USD)")} inputMode="decimal" value={outputPrice} onChange={(event) => setOutputPrice(event.target.value)} placeholder={t("Unknown")} /><small>USD</small></label>
+              <label><span>{t("Per request")}</span><input aria-label={t("Per request (USD)")} inputMode="decimal" value={requestPrice} onChange={(event) => setRequestPrice(event.target.value)} placeholder={t("Unknown")} /><small>USD</small></label>
             </div>
           </section>
           <footer className="registry-model-editor-footer">
             <p>Manual capabilities remain unverified until an explicit active probe succeeds.</p>
-            <button className="primary" disabled={busy === "save" || !providerId || !displayName.trim() || !remoteModelId.trim() || !modalities.length || !capabilities.length} onClick={save}>{busy === "save" ? "Saving…" : editingId ? "Save as next revision if needed" : "Save Model Profile"}</button>
+            <button className="primary" disabled={busy === "save" || !providerId || !displayName.trim() || !remoteModelId.trim() || !modalities.length || !capabilities.length} onClick={save}>{busy === "save" ? t("Saving…") : editingId ? t("Save as next revision if needed") : t("Save Model Profile")}</button>
           </footer>
         </div>
       </Panel>}
-      <div className="registry-filter-bar"><label>Provider<select value={providerFilter} onChange={(event) => setProviderFilter(event.target.value)}><option value="all">All Providers</option>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.display_name}</option>)}</select></label><label>Capability<select value={capabilityFilter} onChange={(event) => setCapabilityFilter(event.target.value)}><option value="all">All capabilities</option>{REGISTRY_MODEL_CAPABILITIES.map((capability) => <option key={capability.id} value={capability.id}>{capability.label}</option>)}</select></label><label>Health<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All statuses</option><option value="available">Available</option><option value="unverified">Unverified</option><option value="disabled">Disabled</option><option value="unavailable">Unavailable</option></select></label><label>Input modality<select value={modalityFilter} onChange={(event) => setModalityFilter(event.target.value)}><option value="all">All modalities</option><option value="text">Text</option><option value="image">Image</option><option value="video">Video</option></select></label><label>Enabled<select value={enabledFilter} onChange={(event) => setEnabledFilter(event.target.value)}><option value="all">Enabled and disabled</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></label><label>Pricing<select value={costFilter} onChange={(event) => setCostFilter(event.target.value)}><option value="all">Any pricing status</option><option value="configured">Configured</option><option value="unknown">Unknown</option></select></label></div>
+      <div className="registry-filter-bar"><label>{t("Provider")}<select value={providerFilter} onChange={(event) => setProviderFilter(event.target.value)}><option value="all">{t("All Providers")}</option>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.display_name}</option>)}</select></label><label>{t("Capability")}<select value={capabilityFilter} onChange={(event) => setCapabilityFilter(event.target.value)}><option value="all">{t("All capabilities")}</option>{REGISTRY_MODEL_CAPABILITIES.map((capability) => <option key={capability.id} value={capability.id}>{t(capability.label)}</option>)}</select></label><label>{t("Health")}<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">{t("All statuses")}</option><option value="available">{t("Available")}</option><option value="unverified">{t("Unverified")}</option><option value="disabled">{t("Disabled")}</option><option value="unavailable">{t("Unavailable")}</option></select></label><label>{t("Input modality")}<select value={modalityFilter} onChange={(event) => setModalityFilter(event.target.value)}><option value="all">{t("All modalities")}</option><option value="text">{t("Text")}</option><option value="image">{t("Image")}</option><option value="video">{t("Video")}</option></select></label><label>{t("Enabled")}<select value={enabledFilter} onChange={(event) => setEnabledFilter(event.target.value)}><option value="all">{t("Enabled and disabled")}</option><option value="enabled">{t("Enabled")}</option><option value="disabled">{t("Disabled")}</option></select></label><label>{t("Pricing")}<select value={costFilter} onChange={(event) => setCostFilter(event.target.value)}><option value="all">{t("Any pricing status")}</option><option value="configured">{t("Configured")}</option><option value="unknown">{t("Unknown")}</option></select></label></div>
       {filtered.length ? <div className="registry-card-grid">{filtered.map((model) => {
         const provider = providers.find((candidate) => candidate.id === model.provider_id);
-        return <article className="registry-model-card" key={model.id}><header><span><strong>{model.display_name}</strong><small>{provider?.display_name ?? "Missing Provider"} · revision {model.revision}</small></span><Status status={model.status} /></header><code>{model.remote_model_id}</code><div className="tag-group">{model.input_modalities.map((value) => <span key={value}>{value} input</span>)}{model.task_capabilities.map((value) => <span key={value}>{value.replaceAll("_", " ")}</span>)}</div><dl className="registry-facts"><div><dt>Protocol</dt><dd>{[model.protocol_features.tool_calls && "tools", model.protocol_features.structured_output && "structured", model.protocol_features.json_schema && "JSON Schema"].filter(Boolean).join(" · ") || "basic"}</dd></div><div><dt>Capability source</dt><dd>{model.capability_source.replaceAll("_", " ")}</dd></div><div><dt>Pricing</dt><dd>{model.pricing.source === "unknown" ? "Unknown" : `${model.pricing.currency} · ${model.pricing.source.replaceAll("_", " ")}`}</dd></div><div><dt>Binding lock</dt><dd>{model.locked ? "Locked" : "Editable"}</dd></div></dl><ModelQualityContracts modelId={model.id} onError={onError} /><div className="registry-card-actions"><button disabled={busy === model.id} onClick={() => edit(model)}>Edit</button><button disabled={busy === model.id || !provider?.enabled} onClick={() => probe(model)}>{busy === model.id ? "Working…" : "Run billable test"}</button><button disabled={busy === model.id} onClick={() => change(model, { enabled: !model.enabled })}>{model.enabled ? "Disable" : "Enable"}</button><button disabled={busy === model.id} onClick={() => change(model, { locked: !model.locked })}>{model.locked ? "Unlock" : "Lock"}</button></div><details className="advanced-settings"><summary>Revision and destructive actions</summary><pre>{JSON.stringify({ limits: model.limits, generation_defaults: model.generation_defaults, pricing: model.pricing }, null, 2)}</pre><button className="danger-button" disabled={busy === model.id} onClick={() => { if (window.confirm(`Delete ${model.display_name}? Referenced profiles cannot be deleted.`)) { setBusy(model.id); void api.deleteModelProfile(model.id).then(refresh).catch((error: Error) => onError(error.message)).finally(() => setBusy("")); } }}>Delete Model Profile</button></details></article>;
-      })}</div> : <Empty title="No matching Model Profiles" detail="Change the filters or add a manually declared model." />}
+        return <article className="registry-model-card" key={model.id}><header><span><strong>{model.display_name}</strong><small>{provider?.display_name ?? t("Missing Provider")} · revision {model.revision}</small></span><Status status={model.status} /></header><code>{model.remote_model_id}</code><div className="tag-group">{model.input_modalities.map((value) => <span key={value}>{value}{" "}{t("input")}</span>)}{model.task_capabilities.map((value) => <span key={value}>{value.replaceAll("_", " ")}</span>)}</div><dl className="registry-facts"><div><dt>{t("Protocol")}</dt><dd>{[model.protocol_features.tool_calls && "tools", model.protocol_features.structured_output && "structured", model.protocol_features.json_schema && "JSON Schema"].filter(Boolean).join(" · ") || "basic"}</dd></div><div><dt>{t("Capability source")}</dt><dd>{model.capability_source.replaceAll("_", " ")}</dd></div><div><dt>{t("Pricing")}</dt><dd>{model.pricing.source === "unknown" ? t("Unknown") : `${model.pricing.currency} · ${model.pricing.source.replaceAll("_", " ")}`}</dd></div><div><dt>{t("Binding lock")}</dt><dd>{model.locked ? t("Locked") : t("Editable")}</dd></div></dl><ModelQualityContracts modelId={model.id} onError={onError} /><div className="registry-card-actions"><button disabled={busy === model.id} onClick={() => edit(model)}>{t("Edit")}</button><button disabled={busy === model.id || !provider?.enabled} onClick={() => probe(model)}>{busy === model.id ? t("Working…") : t("Run billable test")}</button><button disabled={busy === model.id} onClick={() => change(model, { enabled: !model.enabled })}>{model.enabled ? t("Disable") : t("Enable")}</button><button disabled={busy === model.id} onClick={() => change(model, { locked: !model.locked })}>{model.locked ? t("Unlock") : t("Lock")}</button></div><details className="advanced-settings"><summary>{t("Revision and destructive actions")}</summary><pre>{JSON.stringify({ limits: model.limits, generation_defaults: model.generation_defaults, pricing: model.pricing }, null, 2)}</pre><button className="danger-button" disabled={busy === model.id} onClick={() => { if (window.confirm(`Delete ${model.display_name}? Referenced profiles cannot be deleted.`)) { setBusy(model.id); void api.deleteModelProfile(model.id).then(refresh).catch((error: Error) => onError(error.message)).finally(() => setBusy("")); } }}>{t("Delete Model Profile")}</button></details></article>;
+      })}</div> : <Empty title={t("No matching Model Profiles")} detail={t("Change the filters or add a manually declared model.")} />}
     </section>
   );
 }
@@ -7394,15 +7292,15 @@ function ModelQualityContracts({
       .finally(() => setLoading(false));
   };
   return <details className="model-quality-contracts" onToggle={(event) => event.currentTarget.open && load()}>
-    <summary><span><strong>Score and box quality</strong><small>Operation-scoped safety contract</small></span><b>{contracts?.length ?? "View"}</b></summary>
-    {loading && <p>Loading quality contracts…</p>}
+    <summary><span><strong>{t("Score and box quality")}</strong><small>{t("Operation-scoped safety contract")}</small></span><b>{contracts?.length ?? t("View")}</b></summary>
+    {loading && <p>{t("Loading quality contracts…")}</p>}
     {contracts?.map((contract) => <article key={`${contract.operation}:${contract.capability}`}>
-      <header><strong>{contract.operation.replaceAll("_", " ")}</strong><small>Model revision {contract.model_profile_revision}</small></header>
+      <header><strong>{contract.operation.replaceAll("_", " ")}</strong><small>{t("Model revision")}{" "}{contract.model_profile_revision}</small></header>
       <dl>
-        <div><dt>Geometry output</dt><dd>{geometrySemanticsLabel(contract.output_geometry)}</dd></div>
-        <div><dt>Score meaning</dt><dd>{scoreSemanticsLabel(contract.score_semantics)}</dd></div>
-        <div><dt>Automatic acceptance</dt><dd>{contract.auto_accept_eligibility === "never_from_score_alone" ? "Never from score alone" : contract.auto_accept_eligibility.replaceAll("_", " ")}</dd></div>
-        <div><dt>Evidence</dt><dd>{contract.evidence_source.replaceAll("_", " ")}</dd></div>
+        <div><dt>{t("Geometry output")}</dt><dd>{geometrySemanticsLabel(contract.output_geometry)}</dd></div>
+        <div><dt>{t("Score meaning")}</dt><dd>{scoreSemanticsLabel(contract.score_semantics)}</dd></div>
+        <div><dt>{t("Automatic acceptance")}</dt><dd>{contract.auto_accept_eligibility === "never_from_score_alone" ? t("Never from score alone") : contract.auto_accept_eligibility.replaceAll("_", " ")}</dd></div>
+        <div><dt>{t("Evidence")}</dt><dd>{contract.evidence_source.replaceAll("_", " ")}</dd></div>
       </dl>
       {contract.requires_geometry_verification && <p>Project calibration, measured refinement, or Human Review is required before box auto-acceptance.</p>}
     </article>)}
@@ -7429,7 +7327,7 @@ function VisionWorkersRegistryPage({
     setTesting(worker.id);
     void api.testModel(worker.id).then((result) => setResults((current) => ({ ...current, [worker.id]: result }))).catch((error: Error) => onError(error.message)).finally(() => setTesting(""));
   };
-  return <section className="registry-page"><div className="toolbar-panel"><div><span className="eyebrow">Read-only migration compatibility</span><h2>Legacy HTTP models</h2><p>Existing versioned HTTP Vision Protocol bindings remain inspectable. New native expert models should be installed as isolated Rust packages.</p></div><button onClick={onOpenSettings}>Open compatibility settings</button></div>{workers.length ? <div className="registry-card-grid">{workers.map((worker) => <article className="registry-model-card" key={worker.id}><header><span><strong>{worker.id}</strong><small>{worker.model} · {worker.role}</small></span><Status status={worker.health_status} /></header><code>{worker.endpoint ?? "No endpoint"}</code><div className="tag-group">{worker.capabilities?.map((capability) => <span key={capability}>{capability.replaceAll("_", " ")}</span>)}</div><div className="worker-contract-summary">{worker.score_semantics && <small>Confidence {worker.score_semantics.replaceAll("_", " ")}</small>}{worker.label_space?.length ? <small>Label space · {worker.label_space.join(" · ")}</small> : null}{worker.checkpoint_sha256 && <small>Checkpoint · {worker.checkpoint_sha256.slice(0, 12)}…</small>}{worker.architecture && <small>Architecture · {worker.architecture}</small>}{worker.cost_per_request !== undefined && <small>Estimated cost · ${worker.cost_per_request} / request</small>}</div><p>{worker.health_detail}</p><button disabled={testing === worker.id} onClick={() => test(worker)}>{testing === worker.id ? "Discovering…" : "Refresh discovery"}</button>{results[worker.id] && <div className="registry-safe-message" role="status"><strong>{results[worker.id].passed ? "Discovery passed" : `Stopped at ${results[worker.id].failed_stage ?? "discovery"}`}</strong><span>{results[worker.id].capabilities?.capabilities.join(" · ") || results[worker.id].error}</span><span>{results[worker.id].evidence?.detail}</span></div>}</article>)}</div> : <Empty title="No legacy HTTP models configured" detail="Install a native Rust Expert Model Plugin for new Workflows." />}</section>;
+  return <section className="registry-page"><div className="toolbar-panel"><div><span className="eyebrow">Read-only migration compatibility</span><h2>Legacy HTTP models</h2><p>Existing versioned HTTP Vision Protocol bindings remain inspectable. New native expert models should be installed as isolated Rust packages.</p></div><button onClick={onOpenSettings}>Open compatibility settings</button></div>{workers.length ? <div className="registry-card-grid">{workers.map((worker) => <article className="registry-model-card" key={worker.id}><header><span><strong>{worker.id}</strong><small>{worker.model} · {worker.role}</small></span><Status status={worker.health_status} /></header><code>{worker.endpoint ?? t("No endpoint")}</code><div className="tag-group">{worker.capabilities?.map((capability) => <span key={capability}>{t(capability.replaceAll("_", " "))}</span>)}</div><div className="worker-contract-summary">{worker.score_semantics && <small>{t("Confidence")}{" "}{worker.score_semantics.replaceAll("_", " ")}</small>}{worker.label_space?.length ? <small>Label space · {worker.label_space.join(" · ")}</small> : null}{worker.checkpoint_sha256 && <small>Checkpoint · {worker.checkpoint_sha256.slice(0, 12)}…</small>}{worker.architecture && <small>Architecture · {worker.architecture}</small>}{worker.cost_per_request !== undefined && <small>Estimated cost · ${worker.cost_per_request} / request</small>}</div><p>{worker.health_detail}</p><button disabled={testing === worker.id} onClick={() => test(worker)}>{testing === worker.id ? t("Discovering…") : t("Refresh discovery")}</button>{results[worker.id] && <div className="registry-safe-message" role="status"><strong>{results[worker.id].passed ? t("Discovery passed") : `Stopped at ${results[worker.id].failed_stage ?? "discovery"}`}</strong><span>{results[worker.id].capabilities?.capabilities.join(" · ") || results[worker.id].error}</span><span>{results[worker.id].evidence?.detail}</span></div>}</article>)}</div> : <Empty title="No legacy HTTP models configured" detail="Install a native Rust Expert Model Plugin for new Workflows." />}</section>;
 }
 
 function RegistryUsagePage({ onError }: { onError: (value: string) => void }) {
@@ -7443,7 +7341,7 @@ function RegistryUsagePage({ onError }: { onError: (value: string) => void }) {
     }).catch((error: Error) => onError(error.message));
   }, []);
   const totals = usage.reduce((current, record) => ({ tokens: current.tokens + (record.total_tokens ?? 0), cost: current.cost + Number(record.cost || 0) }), { tokens: 0, cost: 0 });
-  return <section className="registry-page"><div className="toolbar-panel"><div><span className="eyebrow">Recorded Registry operations</span><h2>Usage</h2><p>Active model probes are listed separately from normal Run usage because each probe requires explicit billable confirmation.</p></div></div><div className="metrics-grid"><Metric label="Active probes" value={usage.length} detail="explicitly confirmed" /><Metric label="Probe tokens" value={totals.tokens.toLocaleString()} detail="reported by Providers" /><Metric label="Estimated probe cost" value={`$${totals.cost.toFixed(6)}`} detail="configured pricing snapshots" /></div>{usage.length ? <div className="registry-usage-list">{usage.map((record) => { const model = models.find((candidate) => candidate.id === record.model_profile_id); return <article key={record.id}><span><strong>{model?.display_name ?? record.model_profile_id}</strong><small>{new Date(record.created_at).toLocaleString()} · revision {record.model_profile_revision}</small></span><span>{record.total_tokens ?? "Unknown"} tokens</span><span>{record.currency} {record.cost}</span><Status status={record.succeeded ? "succeeded" : "failed"} /></article>; })}</div> : <Empty title="No active probe usage" detail="Passive connection checks do not generate usage records." />}</section>;
+  return <section className="registry-page"><div className="toolbar-panel"><div><span className="eyebrow">Recorded Registry operations</span><h2>{t("Usage")}</h2><p>Active model probes are listed separately from normal Run usage because each probe requires explicit billable confirmation.</p></div></div><div className="metrics-grid"><Metric label="Active probes" value={usage.length} detail="explicitly confirmed" /><Metric label="Probe tokens" value={totals.tokens.toLocaleString(localeTag())} detail="reported by Providers" /><Metric label="Estimated probe cost" value={`$${totals.cost.toFixed(6)}`} detail="configured pricing snapshots" /></div>{usage.length ? <div className="registry-usage-list">{usage.map((record) => { const model = models.find((candidate) => candidate.id === record.model_profile_id); return <article key={record.id}><span><strong>{model?.display_name ?? record.model_profile_id}</strong><small>{new Date(record.created_at).toLocaleString(localeTag())} · revision {record.model_profile_revision}</small></span><span>{record.total_tokens ?? t("Unknown")}{" "}{t("tokens")}</span><span>{record.currency} {record.cost}</span><Status status={record.succeeded ? "succeeded" : "failed"} /></article>; })}</div> : <Empty title="No active probe usage" detail="Passive connection checks do not generate usage records." />}</section>;
 }
 
 function WorkflowDetail({
@@ -7459,11 +7357,11 @@ function WorkflowDetail({
       eyebrow={`${project.name} · ${workflow.status}`}
     >
       <div className="workflow-facts">
-        <Fact label="Validation" value={workflow.validation_status} />
-        <Fact label="Default" value={workflow.is_default ? "Yes" : "No"} />
-        <Fact label="Source" value={workflow.source} />
+        <Fact label={t("Validation")} value={workflow.validation_status} />
+        <Fact label={t("Default")} value={workflow.is_default ? "Yes" : "No"} />
+        <Fact label={t("Source")} value={workflow.source} />
         <Fact
-          label="Enabled Skills"
+          label={t("Enabled Skills")}
           value={
             project.enabled_skills
               .map((skill) => `${skill.id}@${skill.version}`)
@@ -7483,14 +7381,14 @@ function WorkflowDetail({
               <small>Depends on: {node.depends_on.join(", ") || "start"}</small>
               <div className="node-meta">
                 <span>Model · {node.model_binding || "unbound"}</span>
-                <span>Fallback · {node.fallback || "none"}</span>
+                <span>Fallback · {node.fallback || t("none")}</span>
                 <span>
                   Human review ·{" "}
                   {node.human_review_gate ? "gate enabled" : "not configured"}
                 </span>
               </div>
-              <TagGroup title="Validators" values={node.validators} />
-              <TagGroup title="Refiners" values={node.refiners} />
+              <TagGroup title={t("Validators")} values={node.validators} />
+              <TagGroup title={t("Refiners")} values={node.refiners} />
             </div>
           </article>
         ))}
@@ -7532,7 +7430,7 @@ function ModelsPage({
       <div className="toolbar-panel">
         <div>
           <span className="eyebrow">Provider catalog and bindings</span>
-          <h2>Models</h2>
+          <h2>{t("Models")}</h2>
           <p>
             Credentials stay in the native system credential store; Workflows refer to
             stable binding IDs.
@@ -7550,7 +7448,7 @@ function ModelsPage({
                 const bindings = catalogModels.filter((binding) => binding.availability_group === group.id);
                 if (!bindings.length) return null;
                 return <section className="model-availability-group" key={group.id} aria-labelledby={`model-group-${group.id}`}>
-                  <header><div><strong id={`model-group-${group.id}`}>{group.title}</strong><small>{group.detail}</small></div><b>{bindings.length}</b></header>
+                  <header><div><strong id={`model-group-${group.id}`}>{t(group.title)}</strong><small>{group.detail}</small></div><b>{bindings.length}</b></header>
                   {bindings.map((binding) => (
                 <article key={binding.id}>
                   <span className="catalog-monogram">AI</span>
@@ -7580,11 +7478,11 @@ function ModelsPage({
                         disabled={testingModel === binding.id}
                         title="Read health, capabilities, models, and contracts from the Worker"
                       >
-                        {testingModel === binding.id ? "Discovering…" : "Refresh discovery"}
+                        {testingModel === binding.id ? t("Discovering…") : t("Refresh discovery")}
                       </button>
                     </div>}
                     {testResults[binding.id] && <div className="worker-discovery" role="status">
-                      <strong>{testResults[binding.id].passed ? "Discovery passed" : `Stopped at ${testResults[binding.id].failed_stage ?? "discovery"}`}</strong>
+                      <strong>{testResults[binding.id].passed ? t("Discovery passed") : `Stopped at ${testResults[binding.id].failed_stage ?? "discovery"}`}</strong>
                       <small>{testResults[binding.id].capabilities?.capabilities.join(" · ") || testResults[binding.id].error}</small>
                       <small>{testResults[binding.id].evidence?.detail}</small>
                     </div>}
@@ -7619,7 +7517,7 @@ function ModelsPage({
                     <small>
                       {preset.models.length
                         ? `${preset.models.length} curated models`
-                        : "Custom model IDs"}
+                        : t("Custom model IDs")}
                     </small>
                   </span>
                 </article>
@@ -7763,39 +7661,39 @@ function PipelineManagementPanel({
   };
   return <section className="panel pipeline-management" aria-labelledby="pipeline-management-title">
     <header className="pipeline-management-header">
-      <div><span className="eyebrow">Saved work</span><h2 id="pipeline-management-title">Pipelines and Versions</h2><p>Manage display aliases and lifecycle state without changing immutable published content.</p></div>
-      <div className="button-row"><label className="checkbox-row"><input type="checkbox" checked={showArchived} onChange={(event) => { setShowArchived(event.target.checked); setSelected(new Map()); }} />Show archived</label><button onClick={onOpenTrash}>Trash</button></div>
+      <div><span className="eyebrow">{t("Saved work")}</span><h2 id="pipeline-management-title">{t("Pipelines and Versions")}</h2><p>{t("Manage display aliases and lifecycle state without changing immutable published content.")}</p></div>
+      <div className="button-row"><label className="checkbox-row"><input type="checkbox" checked={showArchived} onChange={(event) => { setShowArchived(event.target.checked); setSelected(new Map()); }} />{t("Show archived")}</label><button onClick={onOpenTrash}>{t("Trash")}</button></div>
     </header>
-    {receipt && <div className="operation-receipt" role="status"><span><strong>{receipt.action.replaceAll("_", " ")} completed</strong><small>Operation {receipt.operation_id.slice(0, 8)} is persisted.</small></span><button onClick={() => setReceipt(undefined)}>Dismiss</button></div>}
+    {receipt && <div className="operation-receipt" role="status"><span><strong>{receipt.action.replaceAll("_", " ")}{" "}{t("completed")}</strong><small>{t("Operation")}{" "}{receipt.operation_id.slice(0, 8)}{" "}{t("is persisted.")}</small></span><button onClick={() => setReceipt(undefined)}>{t("Dismiss")}</button></div>}
     <div className="pipeline-selection-toolbar">
-      <label className="checkbox-row"><input type="checkbox" aria-label="Select all Pipelines and Versions" checked={allSelected} ref={(input) => { if (input) input.indeterminate = selected.size > 0 && !allSelected; }} disabled={selectableObjects.length === 0} onChange={(event) => selectAll(event.target.checked)} />Select all</label>
-      <strong>{selected.size} item{selected.size === 1 ? "" : "s"} selected</strong>
-      {selected.size > 0 && <><button className="danger-button" onClick={() => openAction("move_to_trash", [...selected.values()])}>Move selected to Trash…</button><button onClick={() => selectAll(false)}>Clear selection</button></>}
+      <label className="checkbox-row"><input type="checkbox" aria-label={t("Select all Pipelines and Versions")} checked={allSelected} ref={(input) => { if (input) input.indeterminate = selected.size > 0 && !allSelected; }} disabled={selectableObjects.length === 0} onChange={(event) => selectAll(event.target.checked)} />{t("Select all")}</label>
+      <strong>{t("{count} items selected", { count: selected.size })}</strong>
+      {selected.size > 0 && <><button className="danger-button" onClick={() => openAction("move_to_trash", [...selected.values()])}>{t("Move selected to Trash…")}</button><button onClick={() => selectAll(false)}>{t("Clear selection")}</button></>}
     </div>
     <div className="pipeline-management-list">
       {visible.map((pipeline) => {
         const pipelineObject: ManagementObjectRef = { kind: "pipeline", id: pipeline.workflow_id, expected_revision: pipeline.lifecycle_revision };
         return <details key={pipeline.workflow_id} className="pipeline-management-item">
           <summary>
-            <input type="checkbox" aria-label={`Select Pipeline ${pipeline.display_name}`} checked={selected.has(key(pipelineObject))} onClick={(event) => event.stopPropagation()} onChange={(event) => toggle(pipelineObject, event.target.checked)} />
-            <span><strong>{pipeline.display_name}</strong><small>{pipeline.drafts.length} Draft{pipeline.drafts.length === 1 ? "" : "s"} · {pipeline.versions.length} Published Version{pipeline.versions.length === 1 ? "" : "s"}</small></span>
-            {pipeline.default_version && <span className="status status-auto-accepted">Default v{pipeline.default_version}</span>}
-            {pipeline.archived_at && <span className="status status-archived">Archived</span>}
+            <input type="checkbox" aria-label={t("Select Pipeline {name}", { name: pipeline.display_name })} checked={selected.has(key(pipelineObject))} onClick={(event) => event.stopPropagation()} onChange={(event) => toggle(pipelineObject, event.target.checked)} />
+            <span><strong>{pipeline.display_name}</strong><small>{pipeline.drafts.length}{" "}{t("Draft")}{pipeline.drafts.length === 1 ? "" : t("s")} · {pipeline.versions.length}{" "}{t("Published Version")}{pipeline.versions.length === 1 ? "" : t("s")}</small></span>
+            {pipeline.default_version && <span className="status status-auto-accepted">{t("Default v")}{pipeline.default_version}</span>}
+            {pipeline.archived_at && <span className="status status-archived">{t("Archived")}</span>}
             <span className="row-arrow" aria-hidden="true">⌄</span>
           </summary>
           <div className="pipeline-management-body">
             <div className="pipeline-parent-actions">
               <code>{pipeline.workflow_id}</code>
-              <div className="button-row"><button onClick={() => { setRenaming(pipeline); setDisplayName(pipeline.display_name); }}>Rename alias</button><button onClick={() => openAction(pipeline.archived_at ? "unarchive" : "archive", [pipelineObject])}>{pipeline.archived_at ? "Unarchive" : "Archive"}</button><button className="danger-button" onClick={() => openAction("move_to_trash", [pipelineObject])}>Delete Pipeline…</button></div>
+              <div className="button-row"><button onClick={() => { setRenaming(pipeline); setDisplayName(pipeline.display_name); }}>{t("Rename alias")}</button><button onClick={() => openAction(pipeline.archived_at ? "unarchive" : "archive", [pipelineObject])}>{pipeline.archived_at ? t("Unarchive") : t("Archive")}</button><button className="danger-button" onClick={() => openAction("move_to_trash", [pipelineObject])}>{t("Delete Pipeline…")}</button></div>
             </div>
-            <section><header><strong>Drafts</strong><span>Editable working copies</span></header>{pipeline.drafts.map((draft) => <article key={key(draft.object)}><input type="checkbox" aria-label={`Select Draft ${draft.display_name}`} checked={selected.has(key(draft.object))} onChange={(event) => toggle(draft.object, event.target.checked)} /><span><strong>{draft.display_name}</strong><small>{draft.archived_at ? "Archived" : "Editing"} · {draft.content_hash.slice(0, 10) || "not hashed"}</small></span><div className="button-row"><button onClick={() => onOpenDraft(draft.object.id)}>Open</button><button onClick={() => openAction(draft.archived_at ? "unarchive" : "archive", [draft.object])}>{draft.archived_at ? "Unarchive" : "Archive"}</button><button className="danger-button" onClick={() => openAction("move_to_trash", [draft.object])}>Delete Draft…</button></div></article>)}{pipeline.drafts.length === 0 && <small>No visible Drafts.</small>}</section>
-            <section><header><strong>Published Versions</strong><span>Immutable execution definitions</span></header>{pipeline.versions.map((version) => <article key={key(version.object)}><input type="checkbox" aria-label={`Select Published Version ${pipeline.display_name} v${version.object.version}`} checked={selected.has(key(version.object))} onChange={(event) => toggle(version.object, event.target.checked)} /><span><strong>Version {version.object.version}</strong><small title={version.content_hash}>Hash {version.content_hash.slice(0, 12)} · {version.historical_run_references} historical Run reference{version.historical_run_references === 1 ? "" : "s"}</small></span>{version.is_default && <span className="status status-auto-accepted">Default</span>}<div className="button-row"><button disabled={busy} onClick={() => cloneVersion(version.object.id, version.object.version!)}>Copy as Draft</button>{version.is_default ? <button onClick={() => openAction("clear_default", [version.object])}>Clear default</button> : <button onClick={() => openAction("set_default", [version.object])}>Set default</button>}<button onClick={() => openAction(version.archived_at ? "unarchive" : "archive", [version.object])}>{version.archived_at ? "Unarchive" : "Archive"}</button><button className="danger-button" onClick={() => openAction("move_to_trash", [version.object])}>Delete Version…</button></div></article>)}{pipeline.versions.length === 0 && <small>No visible Published Versions.</small>}</section>
+            <section><header><strong>{t("Drafts")}</strong><span>{t("Editable working copies")}</span></header>{pipeline.drafts.map((draft) => <article key={key(draft.object)}><input type="checkbox" aria-label={t("Select Draft {name}", { name: draft.display_name })} checked={selected.has(key(draft.object))} onChange={(event) => toggle(draft.object, event.target.checked)} /><span><strong>{draft.display_name}</strong><small>{draft.archived_at ? t("Archived") : t("Editing")} · {draft.content_hash.slice(0, 10) || "not hashed"}</small></span><div className="button-row"><button onClick={() => onOpenDraft(draft.object.id)}>{t("Open")}</button><button onClick={() => openAction(draft.archived_at ? "unarchive" : "archive", [draft.object])}>{draft.archived_at ? t("Unarchive") : t("Archive")}</button><button className="danger-button" onClick={() => openAction("move_to_trash", [draft.object])}>{t("Delete Draft…")}</button></div></article>)}{pipeline.drafts.length === 0 && <small>{t("No visible Drafts.")}</small>}</section>
+            <section><header><strong>{t("Published Versions")}</strong><span>{t("Immutable execution definitions")}</span></header>{pipeline.versions.map((version) => <article key={key(version.object)}><input type="checkbox" aria-label={t("Select Published Version {name} v{version}", { name: pipeline.display_name, version: version.object.version! })} checked={selected.has(key(version.object))} onChange={(event) => toggle(version.object, event.target.checked)} /><span><strong>{t("Version")}{" "}{version.object.version}</strong><small title={version.content_hash}>{t("Hash")}{" "}{version.content_hash.slice(0, 12)} · {version.historical_run_references}{" "}{t("historical Run reference")}{version.historical_run_references === 1 ? "" : t("s")}</small></span>{version.is_default && <span className="status status-auto-accepted">{t("Default")}</span>}<div className="button-row"><button disabled={busy} onClick={() => cloneVersion(version.object.id, version.object.version!)}>{t("Copy as Draft")}</button>{version.is_default ? <button onClick={() => openAction("clear_default", [version.object])}>{t("Clear default")}</button> : <button onClick={() => openAction("set_default", [version.object])}>{t("Set default")}</button>}<button onClick={() => openAction(version.archived_at ? "unarchive" : "archive", [version.object])}>{version.archived_at ? t("Unarchive") : t("Archive")}</button><button className="danger-button" onClick={() => openAction("move_to_trash", [version.object])}>{t("Delete Version…")}</button></div></article>)}{pipeline.versions.length === 0 && <small>{t("No visible Published Versions.")}</small>}</section>
           </div>
         </details>;
       })}
-      {visible.length === 0 && <Empty title="No saved Pipelines" detail={showArchived ? "Create a Draft to begin." : "Show archived Pipelines or create a new Draft."} />}
+      {visible.length === 0 && <Empty title={t("No saved Pipelines")} detail={showArchived ? t("Create a Draft to begin.") : t("Show archived Pipelines or create a new Draft.")} />}
     </div>
-    {renaming && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setRenaming(undefined)}><section className="modal pipeline-rename-dialog" role="dialog" aria-modal="true" aria-labelledby="pipeline-rename-title"><header><div><span className="eyebrow">Display alias only</span><h2 id="pipeline-rename-title">Rename Pipeline</h2></div><button onClick={() => setRenaming(undefined)}>Close</button></header><label>Pipeline display name<input autoFocus maxLength={160} value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><p>Published nodes, bindings, prompts, Versions and content hashes remain unchanged.</p><footer className="button-row"><button onClick={() => setRenaming(undefined)}>Cancel</button><button className="primary" disabled={!displayName.trim()} onClick={openRename}>Preview rename</button></footer></section></div>}
+    {renaming && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setRenaming(undefined)}><section className="modal pipeline-rename-dialog" role="dialog" aria-modal="true" aria-labelledby="pipeline-rename-title"><header><div><span className="eyebrow">{t("Display alias only")}</span><h2 id="pipeline-rename-title">{t("Rename Pipeline")}</h2></div><button onClick={() => setRenaming(undefined)}>{t("Close")}</button></header><label>{t("Pipeline display name")}<input autoFocus maxLength={160} value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><p>{t("Published nodes, bindings, prompts, Versions and content hashes remain unchanged.")}</p><footer className="button-row"><button onClick={() => setRenaming(undefined)}>{t("Cancel")}</button><button className="primary" disabled={!displayName.trim()} onClick={openRename}>{t("Preview rename")}</button></footer></section></div>}
     {dialog && <ManagementImpactDialog state={dialog} onClose={() => setDialog(undefined)} onComplete={complete} onError={onError} />}
   </section>;
 }
@@ -7838,24 +7736,17 @@ function ManagementImpactDialog({
       .catch((error: Error) => onError(error.message))
       .finally(() => setBusy(false));
   };
-  const objectCount = `${preview.objects.length} item${preview.objects.length === 1 ? "" : "s"}`;
-  const title = request.action === "purge"
-    ? `Permanently clean up ${objectCount}?`
-    : request.action === "restore"
-      ? `Restore ${objectCount}?`
-      : request.action === "archive"
-        ? `Archive ${objectCount}?`
-        : request.action === "unarchive"
-          ? `Unarchive ${objectCount}?`
-          : request.action === "rename"
-            ? "Rename Pipeline?"
-            : request.action === "set_default"
-              ? "Use this Published Version by default?"
-              : request.action === "clear_default"
-                ? "Clear the default Automation?"
-                : request.action === "cancel_and_delete"
-                  ? `Cancel and move ${objectCount} to Trash?`
-                : `Move ${objectCount} to Trash?`;
+  const titleKey = request.action === "purge"
+    ? "Permanently clean up {count} items?"
+    : request.action === "restore" ? "Restore {count} items?"
+    : request.action === "archive" ? "Archive {count} items?"
+    : request.action === "unarchive" ? "Unarchive {count} items?"
+    : request.action === "rename" ? "Rename Pipeline?"
+    : request.action === "set_default" ? "Use this Published Version by default?"
+    : request.action === "clear_default" ? "Clear the default Automation?"
+    : request.action === "cancel_and_delete" ? "Cancel and move {count} items to Trash?"
+    : "Move {count} items to Trash?";
+  const title = t(preview.objects.length === 1 ? titleKey.replace("{count} items", "{count} item") : titleKey, { count: preview.objects.length });
   const confirmLabel = request.action === "purge"
     ? "Permanently clean up"
     : request.action === "move_to_trash"
@@ -7870,35 +7761,35 @@ function ManagementImpactDialog({
   return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
     <section className="modal management-dialog" role="dialog" aria-modal="true" aria-labelledby="management-dialog-title">
       <header>
-        <div><span className="eyebrow">Project lifecycle management</span><h2 id="management-dialog-title">{title}</h2></div>
-        <button aria-label="Close management dialog" onClick={onClose}>Close</button>
+        <div><span className="eyebrow">{t("Project lifecycle management")}</span><h2 id="management-dialog-title">{title}</h2></div>
+        <button aria-label={t("Close management dialog")} onClick={onClose}>{t("Close")}</button>
       </header>
       <p className="management-summary">{preview.summary}</p>
       <dl className="management-impact-grid">
-        <div><dt>Selected</dt><dd>{preview.impact.top_level_objects}</dd></div>
-        <div><dt>Owned child Runs</dt><dd>{preview.impact.child_runs}</dd></div>
-        <div><dt>Reviews hidden</dt><dd>{preview.impact.unresolved_reviews_hidden}</dd></div>
-        <div><dt>Annotations retained</dt><dd>{preview.impact.confirmed_annotations_retained}</dd></div>
-        <div><dt>Historical references</dt><dd>{preview.impact.historical_run_references}</dd></div>
-        <div><dt>Debug rows</dt><dd>{preview.impact.debug_rows}</dd></div>
+        <div><dt>{t("Selected")}</dt><dd>{preview.impact.top_level_objects}</dd></div>
+        <div><dt>{t("Owned child Runs")}</dt><dd>{preview.impact.child_runs}</dd></div>
+        <div><dt>{t("Reviews hidden")}</dt><dd>{preview.impact.unresolved_reviews_hidden}</dd></div>
+        <div><dt>{t("Annotations retained")}</dt><dd>{preview.impact.confirmed_annotations_retained}</dd></div>
+        <div><dt>{t("Historical references")}</dt><dd>{preview.impact.historical_run_references}</dd></div>
+        <div><dt>{t("Debug rows")}</dt><dd>{preview.impact.debug_rows}</dd></div>
       </dl>
-      <aside className="management-storage-note"><strong>{request.action === "purge" ? "Cleanup estimate" : "Storage is unchanged"}</strong><span>{preview.impact.estimate_note}</span></aside>
+      <aside className="management-storage-note"><strong>{request.action === "purge" ? t("Cleanup estimate") : t("Storage is unchanged")}</strong><span>{preview.impact.estimate_note}</span></aside>
       {needsDefaultChoice && <fieldset className="management-default-choice">
-        <legend>Current Project default</legend>
-        <p>This item is the default Automation. Choose a replacement or explicitly leave this Project without a default.</p>
-        <label>Replacement Version<select value={request.replacement_default_version ? `${request.replacement_default_version.workflow_id}@${request.replacement_default_version.version}` : ""} onChange={(event) => {
+        <legend>{t("Current Project default")}</legend>
+        <p>{t("This item is the default Automation. Choose a replacement or explicitly leave this Project without a default.")}</p>
+        <label>{t("Replacement Version")}<select value={request.replacement_default_version ? `${request.replacement_default_version.workflow_id}@${request.replacement_default_version.version}` : ""} onChange={(event) => {
           const option = state.replacementOptions?.find(({ value }) => `${value.workflow_id}@${value.version}` === event.target.value);
           refreshPreview({ ...request, replacement_default_version: option?.value, clear_default: false, confirmation_token: undefined });
-        }}><option value="">Choose another Version…</option>{state.replacementOptions?.map((option) => <option key={`${option.value.workflow_id}@${option.value.version}`} value={`${option.value.workflow_id}@${option.value.version}`}>{option.label}</option>)}</select></label>
-        <button onClick={() => refreshPreview({ ...request, replacement_default_version: undefined, clear_default: true, confirmation_token: undefined })}>Clear default Automation</button>
+        }}><option value="">{t("Choose another Version…")}</option>{state.replacementOptions?.map((option) => <option key={`${option.value.workflow_id}@${option.value.version}`} value={`${option.value.workflow_id}@${option.value.version}`}>{option.label}</option>)}</select></label>
+        <button onClick={() => refreshPreview({ ...request, replacement_default_version: undefined, clear_default: true, confirmation_token: undefined })}>{t("Clear default Automation")}</button>
       </fieldset>}
       {preview.blockers.length > 0 && <div className="management-blockers" role="alert">
         {preview.blockers.map((blocker) => <article key={`${blocker.code}-${blocker.object.kind}-${blocker.object.id}-${blocker.object.version ?? 0}`}><strong>{blocker.code.replaceAll("_", " ")}</strong><span>{blocker.message}</span>{blocker.related_ids.length > 0 && <small>{blocker.related_ids.join(", ")}</small>}</article>)}
       </div>}
-      {request.action === "purge" && <label className="management-purge-confirmation">Type <strong>DELETE</strong> to confirm permanent cleanup<input value={purgeConfirmation} onChange={(event) => setPurgeConfirmation(event.target.value)} autoComplete="off" /></label>}
+      {request.action === "purge" && <label className="management-purge-confirmation">{t("Type")}{" "}<strong>DELETE</strong>{" "}{t("to confirm permanent cleanup")}<input value={purgeConfirmation} onChange={(event) => setPurgeConfirmation(event.target.value)} autoComplete="off" /></label>}
       <footer className="button-row">
-        <button onClick={onClose} disabled={busy}>Cancel</button>
-        <button className={request.action === "purge" ? "danger" : "primary"} disabled={busy || !preview.can_execute || (request.action === "purge" && purgeConfirmation !== "DELETE")} onClick={execute}>{busy ? "Working…" : confirmLabel}</button>
+        <button onClick={onClose} disabled={busy}>{t("Cancel")}</button>
+        <button className={request.action === "purge" ? "danger" : "primary"} disabled={busy || !preview.can_execute || (request.action === "purge" && purgeConfirmation !== "DELETE")} onClick={execute}>{busy ? t("Working…") : t(confirmLabel)}</button>
       </footer>
     </section>
   </div>;
@@ -7935,26 +7826,26 @@ function TrashWorkspace({
       .then((preview) => setDialog({ request, preview }))
       .catch((error: Error) => onError(error.message));
   };
-  if (!project) return <section className="page-stack"><Empty title="Project not found" detail="Trash is always scoped to a stable Project." /></section>;
+  if (!project) return <section className="page-stack"><Empty title={t("Project not found")} detail={t("Trash is always scoped to a stable Project.")} /></section>;
   return <section className="page-stack management-page">
     <ProjectBreadcrumb project={project} current="Trash" onOpenProjects={() => onNavigate("/projects")} onOpenProject={() => onNavigate(`/projects/${encodeURIComponent(project.id)}`)} />
-    <div className="toolbar-panel"><div><span className="eyebrow">Project management</span><h2>Trash</h2><p>Restore removed work or explicitly clean up eligible records. Original images, accepted annotations, exports, models, and credentials are not removed here.</p></div><button onClick={() => onNavigate(projectRunsPath(project.id))}>Back to Runs</button></div>
-    {receipt && <div className="operation-receipt" role="status"><span><strong>{receipt.action.replaceAll("_", " ")} completed</strong><small>Operation {receipt.operation_id.slice(0, 8)} · persisted on the server</small></span><button onClick={() => setReceipt(undefined)}>Dismiss</button></div>}
-    <Panel title="Removed items" eyebrow={`${items.length} recoverable item${items.length === 1 ? "" : "s"}`}>
+    <div className="toolbar-panel"><div><span className="eyebrow">{t("Project management")}</span><h2>{t("Trash")}</h2><p>Restore removed work or explicitly clean up eligible records. Original images, accepted annotations, exports, models, and credentials are not removed here.</p></div><button onClick={() => onNavigate(projectRunsPath(project.id))}>{t("Back to Runs")}</button></div>
+    {receipt && <div className="operation-receipt" role="status"><span><strong>{receipt.action.replaceAll("_", " ")}{" "}{t("completed")}</strong><small>{t("Operation")}{" "}{receipt.operation_id.slice(0, 8)} · persisted on the server</small></span><button onClick={() => setReceipt(undefined)}>{t("Dismiss")}</button></div>}
+    <Panel title={t("Removed items")} eyebrow={`${items.length} recoverable item${items.length === 1 ? "" : t("s")}`}>
       <div className="management-list-toolbar">
-        <label>Object type<select value={kind ?? "all"} onChange={(event) => onNavigate(projectTrashPath(project.id, event.target.value))}><option value="all">All objects</option><option value="run">Runs</option><option value="batch">Dataset Runs</option><option value="workflow_draft">Drafts</option><option value="workflow_version">Published Versions</option><option value="pipeline">Pipelines</option></select></label>
-        <span>{selected.size} selected</span>
-        <button disabled={selectedItems.length === 0} onClick={() => openAction("restore")}>Restore selected</button>
-        <button className="danger" disabled={selectedItems.length === 0} onClick={() => openAction("purge")}>Permanently clean up…</button>
+        <label>{t("Object type")}<select value={kind ?? "all"} onChange={(event) => onNavigate(projectTrashPath(project.id, event.target.value))}><option value="all">{t("All objects")}</option><option value="run">{t("Runs")}</option><option value="batch">{t("Dataset Runs")}</option><option value="workflow_draft">{t("Drafts")}</option><option value="workflow_version">{t("Published Versions")}</option><option value="pipeline">{t("Pipelines")}</option></select></label>
+        <span>{selected.size}{" "}{t("selected")}</span>
+        <button disabled={selectedItems.length === 0} onClick={() => openAction("restore")}>{t("Restore selected")}</button>
+        <button className="danger" disabled={selectedItems.length === 0} onClick={() => openAction("purge")}>{t("Permanently clean up…")}</button>
       </div>
       <div className="management-object-list">
         {items.map((item) => <article key={selectionKey(item)}>
           <input type="checkbox" aria-label={`Select ${item.display_name}`} checked={selected.has(selectionKey(item))} onChange={(event) => setSelected((current) => { const next = new Set(current); if (event.target.checked) next.add(selectionKey(item)); else next.delete(selectionKey(item)); return next; })} />
-          <span><strong>{item.display_name}</strong><small>{item.object.kind.replaceAll("_", " ")} · removed {new Date(item.deleted_at).toLocaleString()}</small><code>Operation {item.deletion_operation_id.slice(0, 8)}</code></span>
-          <button onClick={() => openAction("restore", [item])}>Restore</button>
-          <button className="danger-button" onClick={() => openAction("purge", [item])}>Clean up…</button>
+          <span><strong>{item.display_name}</strong><small>{item.object.kind.replaceAll("_", " ")} · removed {new Date(item.deleted_at).toLocaleString(localeTag())}</small><code>{t("Operation")}{" "}{item.deletion_operation_id.slice(0, 8)}</code></span>
+          <button onClick={() => openAction("restore", [item])}>{t("Restore")}</button>
+          <button className="danger-button" onClick={() => openAction("purge", [item])}>{t("Clean up…")}</button>
         </article>)}
-        {items.length === 0 && <Empty title="Trash is empty" detail="Items moved to Trash remain recoverable until you explicitly clean them up." />}
+        {items.length === 0 && <Empty title={t("Trash is empty")} detail="Items moved to Trash remain recoverable until you explicitly clean them up." />}
       </div>
     </Panel>
     {dialog && <ManagementImpactDialog state={dialog} onClose={() => setDialog(undefined)} onError={onError} onComplete={(nextReceipt) => { setDialog(undefined); setReceipt(nextReceipt); setSelected(new Set()); void Promise.all([load(), onRefresh()]).catch((error: Error) => onError(error.message)); }} />}
@@ -8081,9 +7972,9 @@ function RunsPage({
     );
   if (detailRoute && routeRunId && purgedRun) return <section className="page-stack management-page">
     {scopeProject && <ProjectBreadcrumb project={scopeProject} current="Deleted Run source" onOpenProjects={() => onNavigate("/projects")} onOpenProject={() => onNavigate(`/projects/${encodeURIComponent(scopeProject.id)}`)} />}
-    <button className="text-button run-back" onClick={() => onNavigate(scopeProject ? projectRunsPath(scopeProject.id) : "/runs")}>← Run history</button>
-    <div className="toolbar-panel"><div><span className="eyebrow">Retained provenance · Run {purgedRun.run_id.slice(0, 8)}</span><h2>Source Run was permanently cleaned up</h2><p>The original trace and model transcript are gone. This minimal read-only summary remains because user annotation data refers to the source.</p></div></div>
-    <Panel title="Retained source summary" eyebrow={new Date(purgedRun.purged_at).toLocaleString()}><dl className="management-impact-grid"><div><dt>Provider</dt><dd>{purgedRun.provider}</dd></div><div><dt>Model</dt><dd>{purgedRun.model}</dd></div><div><dt>Workflow</dt><dd>{purgedRun.workflow_id ? `${purgedRun.workflow_id}@v${purgedRun.workflow_version ?? "?"}` : "Legacy"}</dd></div></dl>{purgedRun.workflow_content_hash && <p><strong>Frozen content hash</strong><br /><code>{purgedRun.workflow_content_hash}</code></p>}</Panel>
+    <button className="text-button run-back" onClick={() => onNavigate(scopeProject ? projectRunsPath(scopeProject.id) : "/runs")}>{t("← Run history")}</button>
+    <div className="toolbar-panel"><div><span className="eyebrow">Retained provenance · Run {purgedRun.run_id.slice(0, 8)}</span><h2>{t("Source Run was permanently cleaned up")}</h2><p>The original trace and model transcript are gone. This minimal read-only summary remains because user annotation data refers to the source.</p></div></div>
+    <Panel title={t("Retained source summary")} eyebrow={new Date(purgedRun.purged_at).toLocaleString(localeTag())}><dl className="management-impact-grid"><div><dt>{t("Provider")}</dt><dd>{purgedRun.provider}</dd></div><div><dt>{t("Model")}</dt><dd>{purgedRun.model}</dd></div><div><dt>{t("Workflow")}</dt><dd>{purgedRun.workflow_id ? `${purgedRun.workflow_id}@v${purgedRun.workflow_version ?? "?"}` : "Legacy"}</dd></div></dl>{purgedRun.workflow_content_hash && <p><strong>{t("Frozen content hash")}</strong><br /><code>{purgedRun.workflow_content_hash}</code></p>}</Panel>
   </section>;
   const projectRuns = runsForContext(indexedRuns, scopeProject);
   const statusFilter =
@@ -8166,24 +8057,22 @@ function RunsPage({
         onOpenProjects={() => onNavigate("/projects")}
         onOpenProject={() => onNavigate(`/projects/${encodeURIComponent(scopeProject.id)}`)}
       />}
-      <div className="toolbar-panel"><div><span className="eyebrow">Immutable execution history</span><h2>Runs</h2><p>Open a Run to inspect its exact Pipeline Version, progress, image, node Artifacts, errors, usage, and Replay.</p></div>{scopeProject && <div className="button-row"><button onClick={() => onNavigate(projectTrashPath(scopeProject.id))}>Trash</button><button className="danger-button" disabled={selectedManagement.size === 0} onClick={() => openDelete()}>Delete selected ({selectedManagement.size})</button></div>}</div>
-      {usageSummary && <div className="run-lifecycle-usage" aria-label="Project Run usage"><span><small>Visible Run usage</small><strong>{usageSummary.visible_runs.total_tokens.toLocaleString()} tokens · ${usageSummary.visible_runs.cost}</strong></span><span><small>Historical actual usage</small><strong>{usageSummary.historical_total.total_tokens.toLocaleString()} tokens · ${usageSummary.historical_total.cost}</strong></span><span><small>Retained after cleanup</small><strong>{usageSummary.cleaned_up_runs.total_tokens.toLocaleString()} tokens · ${usageSummary.cleaned_up_runs.cost}</strong></span></div>}
-      {managementReceipt && <div className="operation-receipt" role="status"><span><strong>{managementReceipt.action === "restore" ? "Items restored" : "Moved to Trash"}</strong><small>Server operation {managementReceipt.operation_id.slice(0, 8)} is durable.</small></span>{undoObjects.length > 0 && <button onClick={undo}>Undo</button>}<button onClick={() => setManagementReceipt(undefined)}>Dismiss</button></div>}
-      <Panel title="Run history" eyebrow={`${visibleExecutions.length} executions visible · ${runTotal} image Runs recorded`}>
+      <div className="toolbar-panel"><div><span className="eyebrow">{t("Immutable execution history")}</span><h2>{t("Runs")}</h2><p>Open a Run to inspect its exact Pipeline Version, progress, image, node Artifacts, errors, usage, and Replay.</p></div>{scopeProject && <div className="button-row"><button onClick={() => onNavigate(projectTrashPath(scopeProject.id))}>{t("Trash")}</button><button className="danger-button" disabled={selectedManagement.size === 0} onClick={() => openDelete()}>Delete selected ({selectedManagement.size})</button></div>}</div>
+      {usageSummary && <div className="run-lifecycle-usage" aria-label={t("Project Run usage")}><span><small>{t("Visible Run usage")}</small><strong>{usageSummary.visible_runs.total_tokens.toLocaleString(localeTag())} tokens · ${usageSummary.visible_runs.cost}</strong></span><span><small>{t("Historical actual usage")}</small><strong>{usageSummary.historical_total.total_tokens.toLocaleString(localeTag())} tokens · ${usageSummary.historical_total.cost}</strong></span><span><small>{t("Retained after cleanup")}</small><strong>{usageSummary.cleaned_up_runs.total_tokens.toLocaleString(localeTag())} tokens · ${usageSummary.cleaned_up_runs.cost}</strong></span></div>}
+      {managementReceipt && <div className="operation-receipt" role="status"><span><strong>{managementReceipt.action === "restore" ? t("Items restored") : t("Moved to Trash")}</strong><small>Server operation {managementReceipt.operation_id.slice(0, 8)} is durable.</small></span>{undoObjects.length > 0 && <button onClick={undo}>{t("Undo")}</button>}<button onClick={() => setManagementReceipt(undefined)}>{t("Dismiss")}</button></div>}
+      <Panel title={t("Run history")} eyebrow={`${visibleExecutions.length} executions visible · ${runTotal} image Runs recorded`}>
         <div className="list-filters">
-          <label>Project
-            <select
-              aria-label="Project filter"
+          <label>{t("Project")}<select
+              aria-label={t("Project filter")}
               value={scopeProject?.id ?? ""}
               onChange={(event) => setListFilters(event.target.value, statusFilter)}
             >
-              <option value="">All projects</option>
+              <option value="">{t("All projects")}</option>
               {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
             </select>
           </label>
-          <label>Status
-            <select aria-label="Status filter" value={statusFilter} onChange={(event) => setListFilters(scopeProject?.id ?? "", event.target.value)}>
-              <option value="all">All statuses</option>
+          <label>{t("Status")}<select aria-label={t("Status filter")} value={statusFilter} onChange={(event) => setListFilters(scopeProject?.id ?? "", event.target.value)}>
+              <option value="all">{t("All statuses")}</option>
               {availableStatuses.map((status) => <option key={status} value={status}>{status.replaceAll("_", " ")}</option>)}
             </select>
           </label>
@@ -8192,11 +8081,11 @@ function RunsPage({
           {visibleExecutions.map((execution) => execution.kind === "batch"
             ? <BatchRunGroup key={execution.batch.id} batch={execution.batch} runs={availableRuns} project={projects.find((project) => project.id === execution.batch.project_id)} onNavigate={onNavigate} management={scopeProject ? { selected: selectedManagement.has(`batch:${execution.batch.id}:0`), onToggle: toggleManagement, onDelete: openDelete } : undefined} />
             : <RunHistoryRow key={execution.run.id} run={execution.run} projectId={projects.find((project) => project.project_id === execution.run.project_id)?.id} onNavigate={onNavigate} management={scopeProject ? { selected: selectedManagement.has(`run:${execution.run.id}:0`), onToggle: toggleManagement, onDelete: openDelete } : undefined} />)}
-          {visibleExecutions.length === 0 && <Empty title="No matching runs" detail="Change the explicit Project or status filter to see more Run history." />}
+          {visibleExecutions.length === 0 && <Empty title={t("No matching runs")} detail="Change the explicit Project or status filter to see more Run history." />}
         </div>
-        {nextRunOffset !== null && <button className="text-button" onClick={() => loadRunPage(nextRunOffset, true)}>Load older Runs</button>}
+        {nextRunOffset !== null && <button className="text-button" onClick={() => loadRunPage(nextRunOffset, true)}>{t("Load older Runs")}</button>}
       </Panel>
-      {routeRunId && !run && <Empty title="Run not found" detail="The linked Run is not available in this workspace." />}
+      {routeRunId && !run && <Empty title={t("Run not found")} detail={t("The linked Run is not available in this workspace.")} />}
       {managementDialog && <ManagementImpactDialog state={managementDialog} onClose={() => setManagementDialog(undefined)} onError={onError} onComplete={(receipt, preview) => { setManagementDialog(undefined); setManagementReceipt(receipt); setSelectedManagement(new Map()); setUndoObjects(preview.objects.map((object) => ({ ...object, expected_revision: object.expected_revision + 1 }))); void reloadManagedRuns().catch((error: Error) => onError(error.message)); }} />}
     </section>
   );
@@ -8236,18 +8125,18 @@ function BatchRunGroup({
     <summary className="batch-run-row">
       <span className="event-rail" />
       <div><strong>{project?.name ?? batch.project_id}</strong><small>Dataset Run · {workflowName}@v{workflowVersion}</small><code>{batch.progress.completed_images}/{batch.progress.total_images} images completed · Batch {batch.id.slice(0, 8)}</code></div>
-      <div className="run-usage"><span>{usage.total_tokens.toLocaleString()} tokens</span><span>${usage.cost}</span></div>
+      <div className="run-usage"><span>{usage.total_tokens.toLocaleString(localeTag())}{" "}{t("tokens")}</span><span>${usage.cost}</span></div>
       <Status status={batch.status} />
       <span className="row-arrow" aria-hidden="true">⌄</span>
     </summary>
     <div className="batch-run-children">
       <div className="batch-run-explanation"><strong>One Dataset Run</strong><span>AnnotAgent created {batch.progress.total_images} image Runs so each image keeps its own Artifacts, errors, Replay and Review history.</span></div>
-      <button className="text-button" onClick={() => onNavigate(projectBatchPath(batch.project_id, batch.id))}>Open Dataset Run detail →</button>
+      <button className="text-button" onClick={() => onNavigate(projectBatchPath(batch.project_id, batch.id))}>{t("Open Dataset Run detail →")}</button>
       {childRuns.map((run, index) => <RunHistoryRow key={run.id} run={run} projectId={project?.id} onNavigate={onNavigate} childLabel={`Image ${index + 1} of ${batch.progress.total_images}`} />)}
-      {childRuns.length === 0 && <Empty title="No image Runs recorded" detail="This Dataset Run stopped before an image Run was created." />}
+      {childRuns.length === 0 && <Empty title={t("No image Runs recorded")} detail="This Dataset Run stopped before an image Run was created." />}
     </div>
     </details>
-    {management && <details className="row-menu"><summary aria-label={`Manage Dataset Run ${batch.id.slice(0, 8)}`}>•••</summary><div><button onClick={() => onNavigate(projectBatchPath(batch.project_id, batch.id))}>View</button><button className="danger-button" onClick={() => management.onDelete([object])}>Delete…</button></div></details>}
+    {management && <details className="row-menu"><summary aria-label={`Manage Dataset Run ${batch.id.slice(0, 8)}`}>•••</summary><div><button onClick={() => onNavigate(projectBatchPath(batch.project_id, batch.id))}>{t("View")}</button><button className="danger-button" onClick={() => management.onDelete([object])}>{t("Delete…")}</button></div></details>}
   </div>;
 }
 
@@ -8292,7 +8181,7 @@ function BatchDetailWorkspace({
       onNavigate(projectBatchPath(batch.project_id, batch.id), true);
   }, [batch?.id, batch?.project_id, route.projectId]);
   if (!loaded)
-    return <div className="loading-banner" role="status">Loading Dataset Run…</div>;
+    return <div className="loading-banner" role="status">{t("Loading Dataset Run…")}</div>;
   if (!batch)
     return (
       <section className="page-stack">
@@ -8303,13 +8192,13 @@ function BatchDetailWorkspace({
           onOpenProject={owner ? () => onNavigate(`/projects/${encodeURIComponent(owner.id)}`) : undefined}
         />
         <Empty
-          title="Dataset Run not found"
+          title={t("Dataset Run not found")}
           detail="The linked Batch is not available in this workspace."
         />
       </section>
     );
   if (batch.project_id !== route.projectId)
-    return <div className="loading-banner" role="status">Opening the owning Project…</div>;
+    return <div className="loading-banner" role="status">{t("Opening the owning Project…")}</div>;
   const childRuns = batch.child_run_ids.flatMap((id) => {
     const run = runs.find((candidate) => candidate.id === id);
     return run ? [run] : [];
@@ -8358,10 +8247,8 @@ function BatchDetailWorkspace({
       <button
         className="text-button run-back"
         onClick={() => onNavigate(projectRunsPath(batch.project_id))}
-      >
-        ← Run history
-      </button>
-      {batch.in_trash && <div className="trash-state-banner" role="status"><span><strong>This Dataset Run is in Trash</strong><small>Its child results are hidden from normal Run history but remain recoverable.</small></span><button onClick={() => manageBatch("restore")}>Restore Dataset Run</button><button onClick={() => onNavigate(projectTrashPath(batch.project_id, "batch"))}>Open Trash</button></div>}
+      >{t("← Run history")}</button>
+      {batch.in_trash && <div className="trash-state-banner" role="status"><span><strong>{t("This Dataset Run is in Trash")}</strong><small>Its child results are hidden from normal Run history but remain recoverable.</small></span><button onClick={() => manageBatch("restore")}>{t("Restore Dataset Run")}</button><button onClick={() => onNavigate(projectTrashPath(batch.project_id, "batch"))}>{t("Open Trash")}</button></div>}
       <div className="toolbar-panel run-detail-header">
         <div>
           <span className="eyebrow">Dataset Run · {batch.id.slice(0, 8)}</span>
@@ -8370,29 +8257,29 @@ function BatchDetailWorkspace({
             <Status status={batch.status} />
             <span>{progress.completed_images}/{progress.total_images} images completed</span>
             <span>{batch.max_concurrency} concurrent</span>
-            <span>{usage.total_tokens.toLocaleString()} tokens</span>
+            <span>{usage.total_tokens.toLocaleString(localeTag())}{" "}{t("tokens")}</span>
             <span>${usage.cost}</span>
           </div>
         </div>
         <div className="button-row">
-          {batch.status === "running" && <button disabled={busy} onClick={() => control("pause")}>Pause</button>}
-          {batch.status === "paused" && <button disabled={busy} onClick={() => control("resume")}>Resume</button>}
-          {(batch.status === "running" || batch.status === "paused" || batch.status === "pending") && <button className="danger" disabled={busy} onClick={() => control("cancel")}>Cancel</button>}
-          {!batch.in_trash && <button className="danger-button" disabled={busy} onClick={() => manageBatch(["running", "paused", "pending", "awaiting_review"].includes(batch.status) ? "cancel_and_delete" : "move_to_trash")}>{["running", "paused", "pending", "awaiting_review"].includes(batch.status) ? "Cancel and delete…" : "Delete…"}</button>}
+          {batch.status === "running" && <button disabled={busy} onClick={() => control("pause")}>{t("Pause")}</button>}
+          {batch.status === "paused" && <button disabled={busy} onClick={() => control("resume")}>{t("Resume")}</button>}
+          {(batch.status === "running" || batch.status === "paused" || batch.status === "pending") && <button className="danger" disabled={busy} onClick={() => control("cancel")}>{t("Cancel")}</button>}
+          {!batch.in_trash && <button className="danger-button" disabled={busy} onClick={() => manageBatch(["running", "paused", "pending", "awaiting_review"].includes(batch.status) ? "cancel_and_delete" : "move_to_trash")}>{["running", "paused", "pending", "awaiting_review"].includes(batch.status) ? t("Cancel and delete…") : t("Delete…")}</button>}
         </div>
       </div>
-      <dl className="run-result-metrics" aria-label="Dataset Run progress">
-        <div><dt>Total</dt><dd>{progress.total_images}</dd><small>images</small></div>
-        <div><dt>Completed</dt><dd>{progress.completed_images}</dd><small>ready</small></div>
-        <div><dt>Running</dt><dd>{progress.running_images}</dd><small>in progress</small></div>
-        <div><dt>Review</dt><dd>{progress.review_images}</dd><small>needs attention</small></div>
-        <div><dt>Failed</dt><dd>{progress.failed_images}</dd><small>images</small></div>
-        <div><dt>Pending</dt><dd>{progress.pending_images}</dd><small>queued</small></div>
+      <dl className="run-result-metrics" aria-label={t("Dataset Run progress")}>
+        <div><dt>{t("Total")}</dt><dd>{progress.total_images}</dd><small>{t("images")}</small></div>
+        <div><dt>{t("Completed")}</dt><dd>{progress.completed_images}</dd><small>{t("ready")}</small></div>
+        <div><dt>{t("Running")}</dt><dd>{progress.running_images}</dd><small>{t("in progress")}</small></div>
+        <div><dt>{t("Review")}</dt><dd>{progress.review_images}</dd><small>{t("needs attention")}</small></div>
+        <div><dt>{t("Failed")}</dt><dd>{progress.failed_images}</dd><small>{t("images")}</small></div>
+        <div><dt>{t("Pending")}</dt><dd>{progress.pending_images}</dd><small>{t("queued")}</small></div>
       </dl>
-      <Panel title="Images" eyebrow={`${visibleImages.length} of ${progress.total_images} shown`}>
+      <Panel title={t("Images")} eyebrow={`${visibleImages.length} of ${progress.total_images} shown`}>
         <div className="batch-image-toolbar">
-          <label>Image status<select aria-label="Filter Dataset Run images" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All statuses</option>{statusOptions.map((status) => <option key={status} value={status}>{status.replaceAll("_", " ")}</option>)}</select></label>
-          <button disabled={busy} onClick={() => void load().catch((error: Error) => onError(error.message))}>Refresh</button>
+          <label>{t("Image status")}<select aria-label={t("Filter Dataset Run images")} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">{t("All statuses")}</option>{statusOptions.map((status) => <option key={status} value={status}>{status.replaceAll("_", " ")}</option>)}</select></label>
+          <button disabled={busy} onClick={() => void load().catch((error: Error) => onError(error.message))}>{t("Refresh")}</button>
         </div>
         <div className="runs-table batch-image-runs">
           {visibleImages.map((image) => {
@@ -8406,16 +8293,16 @@ function BatchDetailWorkspace({
               onClick={() => image.child_run_id && onNavigate(projectRunPath(batch.project_id, image.child_run_id, { imageId: image.image_id }))}
             >
               <span className="event-rail" />
-              <div><strong>{image.name}</strong><small>Image {image.position + 1} · {image.annotation_count} annotations · {image.review_count} reviews</small><code>{image.image_id}</code>{image.failure && <small className="run-reason">{image.failure}</small>}</div>
-              <div className="run-usage"><span>{image.usage.total_tokens.toLocaleString()} tokens</span><span>${image.usage.cost}</span></div>
+              <div><strong>{image.name}</strong><small>{t("Image")}{" "}{image.position + 1} · {image.annotation_count} annotations · {image.review_count}{" "}{t("reviews")}</small><code>{image.image_id}</code>{image.failure && <small className="run-reason">{image.failure}</small>}</div>
+              <div className="run-usage"><span>{image.usage.total_tokens.toLocaleString(localeTag())}{" "}{t("tokens")}</span><span>${image.usage.cost}</span></div>
               <Status status={image.status} />
               <span className="row-arrow" aria-hidden="true">{childRun ? "→" : "·"}</span>
             </button>;
           })}
           {visibleImages.length === 0 && (
             <Empty
-              title="No images match this status"
-              detail="Choose another status or refresh the Dataset Run."
+              title={t("No images match this status")}
+              detail={t("Choose another status or refresh the Dataset Run.")}
             />
           )}
         </div>
@@ -8447,12 +8334,12 @@ function RunHistoryRow({
     {management && <input type="checkbox" aria-label={`Select Run ${run.id.slice(0, 8)}`} checked={management.selected} onChange={(event) => management.onToggle(object, event.target.checked)} />}
     <button className={`run-row${childLabel ? " batch-child-run" : ""}`} onClick={() => onNavigate(projectId ? projectRunPath(projectId, run.id) : `/runs/${encodeURIComponent(run.id)}`)}>
     <span className="event-rail" />
-    <div><strong>{childLabel ?? run.project_name}</strong><small>{run.workflow_name}@v{run.workflow_version}</small><code>{run.model_identity} · {run.artifact_count} Artifacts</code>{run.terminal_reason && <small className="run-reason">{run.terminal_reason}</small>}</div>
-    <div className="run-usage"><span>{(run.input_tokens + run.output_tokens).toLocaleString()} tokens</span><span>${run.cost}</span></div>
+    <div><strong>{childLabel ?? run.project_name}</strong><small>{run.workflow_name}@v{run.workflow_version}</small><code>{run.model_identity} · {run.artifact_count}{" "}{t("Artifacts")}</code>{run.terminal_reason && <small className="run-reason">{run.terminal_reason}</small>}</div>
+    <div className="run-usage"><span>{(run.input_tokens + run.output_tokens).toLocaleString(localeTag())}{" "}{t("tokens")}</span><span>${run.cost}</span></div>
     <Status status={run.status} />
     <span className="row-arrow" aria-hidden="true">→</span>
     </button>
-    {management && <details className="row-menu"><summary aria-label={`Manage Run ${run.id.slice(0, 8)}`}>•••</summary><div><button onClick={() => onNavigate(projectId ? projectRunPath(projectId, run.id) : `/runs/${encodeURIComponent(run.id)}`)}>View</button><button className="danger-button" onClick={() => management.onDelete([object])}>Delete…</button></div></details>}
+    {management && <details className="row-menu"><summary aria-label={`Manage Run ${run.id.slice(0, 8)}`}>•••</summary><div><button onClick={() => onNavigate(projectId ? projectRunPath(projectId, run.id) : `/runs/${encodeURIComponent(run.id)}`)}>{t("View")}</button><button className="danger-button" onClick={() => management.onDelete([object])}>{t("Delete…")}</button></div></details>}
   </div>;
 }
 
@@ -8648,76 +8535,76 @@ function RunDetailWorkspace({
         onOpenProjects={() => onNavigate("/projects")}
         onOpenProject={project ? () => onNavigate(`/projects/${encodeURIComponent(project.id)}`) : undefined}
       />
-      <button className="text-button run-back" onClick={() => onNavigate(project ? projectRunsPath(project.id) : "/runs")}>← Run history</button>
-      {run.in_trash && project && <div className="trash-state-banner" role="status"><span><strong>This Run is in Trash</strong><small>Its unfinished Review work is hidden. Accepted annotations and source data are preserved.</small></span><button onClick={() => manageRun("restore")}>Restore Run</button><button onClick={() => onNavigate(projectTrashPath(project.id, "run"))}>Open Trash</button></div>}
-      <nav className="run-view-tabs" aria-label="Run workspace view">
-        <button className={view === "results" ? "active" : ""} aria-current={view === "results" ? "page" : undefined} onClick={() => setView("results")}>Results</button>
-        <button className={view === "debug" ? "active" : ""} aria-current={view === "debug" ? "page" : undefined} onClick={() => setView("debug")}>Debug</button>
+      <button className="text-button run-back" onClick={() => onNavigate(project ? projectRunsPath(project.id) : "/runs")}>{t("← Run history")}</button>
+      {run.in_trash && project && <div className="trash-state-banner" role="status"><span><strong>{t("This Run is in Trash")}</strong><small>Its unfinished Review work is hidden. Accepted annotations and source data are preserved.</small></span><button onClick={() => manageRun("restore")}>{t("Restore Run")}</button><button onClick={() => onNavigate(projectTrashPath(project.id, "run"))}>{t("Open Trash")}</button></div>}
+      <nav className="run-view-tabs" aria-label={t("Run workspace view")}>
+        <button className={view === "results" ? "active" : ""} aria-current={view === "results" ? "page" : undefined} onClick={() => setView("results")}>{t("Results")}</button>
+        <button className={view === "debug" ? "active" : ""} aria-current={view === "debug" ? "page" : undefined} onClick={() => setView("debug")}>{t("Debug")}</button>
       </nav>
       <div className="toolbar-panel run-detail-header">
-        {view === "results" ? <div><span className="eyebrow">{run.project_name} · {run.workflow_name}@v{run.workflow_version}</span><h2>{resultHeadline}</h2><div className="context-line"><Status status={run.status} /><span>{formatSampleDuration(resultSummary?.duration_ms ?? duration)}</span><span>${resultSummary?.usage.estimated_cost ?? run.cost}</span></div></div> : <div><span className="eyebrow">Debug · Run {run.id.slice(0, 8)}</span><h2>{run.workflow_name}@v{run.workflow_version}</h2><div className="context-line"><Status status={run.status} /><span>{nodeProgress}</span><span>{run.artifact_count} Artifacts</span><span>{(run.input_tokens + run.output_tokens).toLocaleString()} tokens</span><span>${run.cost}</span></div></div>}
+        {view === "results" ? <div><span className="eyebrow">{run.project_name} · {run.workflow_name}@v{run.workflow_version}</span><h2>{resultHeadline}</h2><div className="context-line"><Status status={run.status} /><span>{formatSampleDuration(resultSummary?.duration_ms ?? duration)}</span><span>${resultSummary?.usage.estimated_cost ?? run.cost}</span></div></div> : <div><span className="eyebrow">Debug · Run {run.id.slice(0, 8)}</span><h2>{run.workflow_name}@v{run.workflow_version}</h2><div className="context-line"><Status status={run.status} /><span>{nodeProgress}</span><span>{run.artifact_count}{" "}{t("Artifacts")}</span><span>{(run.input_tokens + run.output_tokens).toLocaleString(localeTag())}{" "}{t("tokens")}</span><span>${run.cost}</span></div></div>}
         <div className="button-row">
-          {project && <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}/build/pipeline`)}>Improve automation</button>}
-          {runReviewId && <button onClick={() => onNavigate(project ? projectReviewPath(project.id, runReviewId) : `/review/${encodeURIComponent(runReviewId)}`)}>Review {resultSummary?.needs_review_count || 1} result</button>}
-          {run.status === "running" && <button disabled={busy} onClick={() => control("pause")}>Pause</button>}
-          {run.status === "paused" && <button disabled={busy} onClick={() => control("resume")}>Resume</button>}
-          {run.controllable && <button className="danger" disabled={busy} onClick={() => control("cancel")}>Cancel</button>}
-          {!run.in_trash && project && <button className="danger-button" disabled={busy} onClick={() => manageRun(run.controllable || ["pending", "running", "paused", "awaiting_review"].includes(run.status) ? "cancel_and_delete" : "move_to_trash")}>{run.controllable || ["pending", "running", "paused", "awaiting_review"].includes(run.status) ? "Cancel and delete…" : "Delete…"}</button>}
+          {project && <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}/build/pipeline`)}>{t("Improve automation")}</button>}
+          {runReviewId && <button onClick={() => onNavigate(project ? projectReviewPath(project.id, runReviewId) : `/review/${encodeURIComponent(runReviewId)}`)}>{t("Review")}{" "}{resultSummary?.needs_review_count || 1} result</button>}
+          {run.status === "running" && <button disabled={busy} onClick={() => control("pause")}>{t("Pause")}</button>}
+          {run.status === "paused" && <button disabled={busy} onClick={() => control("resume")}>{t("Resume")}</button>}
+          {run.controllable && <button className="danger" disabled={busy} onClick={() => control("cancel")}>{t("Cancel")}</button>}
+          {!run.in_trash && project && <button className="danger-button" disabled={busy} onClick={() => manageRun(run.controllable || ["pending", "running", "paused", "awaiting_review"].includes(run.status) ? "cancel_and_delete" : "move_to_trash")}>{run.controllable || ["pending", "running", "paused", "awaiting_review"].includes(run.status) ? t("Cancel and delete…") : t("Delete…")}</button>}
         </div>
       </div>
       {view === "results" ? <>
-        <dl className="run-result-metrics" aria-label="Run result summary">
-          <div><dt>Images</dt><dd>{resultSummary?.image_count ?? 1}</dd><small>processed</small></div>
-          <div><dt>Accepted</dt><dd>{resultSummary?.ready_count ?? 0}</dd><small>{resultSummary?.result_count ?? runAnnotations.length} detections</small></div>
-          <div><dt>Needs review</dt><dd>{resultSummary?.needs_review_count ?? 0}</dd><small>human decision</small></div>
-          <div><dt>Fallbacks</dt><dd>{resultSummary?.fallback_count ?? run.fallback_nodes.length}</dd><small>open-vocabulary</small></div>
-          <div><dt>Cache hits</dt><dd>{resultSummary?.cache_hit_count ?? 0}</dd><small>model calls reused</small></div>
-          <div><dt>Failed</dt><dd>{resultSummary?.failed_count ?? 0}</dd><small>{resultSummary?.no_target_count ?? 0} no-target</small></div>
+        <dl className="run-result-metrics" aria-label={t("Run result summary")}>
+          <div><dt>{t("Images")}</dt><dd>{resultSummary?.image_count ?? 1}</dd><small>processed</small></div>
+          <div><dt>{t("Accepted")}</dt><dd>{resultSummary?.ready_count ?? 0}</dd><small>{resultSummary?.result_count ?? runAnnotations.length}{" "}{t("detections")}</small></div>
+          <div><dt>{t("Needs review")}</dt><dd>{resultSummary?.needs_review_count ?? 0}</dd><small>{t("human decision")}</small></div>
+          <div><dt>{t("Fallbacks")}</dt><dd>{resultSummary?.fallback_count ?? run.fallback_nodes.length}</dd><small>open-vocabulary</small></div>
+          <div><dt>{t("Cache hits")}</dt><dd>{resultSummary?.cache_hit_count ?? 0}</dd><small>{t("model calls reused")}</small></div>
+          <div><dt>{t("Failed")}</dt><dd>{resultSummary?.failed_count ?? 0}</dd><small>{resultSummary?.no_target_count ?? 0}{" "}{t("no-target")}</small></div>
         </dl>
         <div className="run-results-workspace">
-          <aside className="panel run-image-identity"><span className="eyebrow">Run image</span>{ownedImage ? <><img src={ownedImage.url} alt="" /><strong>{ownedImage.name}</strong><Status status={resultSummary?.image.status ?? run.status} /><code>{ownedImage.image_id}</code></> : ownedImageId ? <><strong>Project image</strong><Status status={resultSummary?.image.status ?? run.status} /><code>{ownedImageId}</code></> : <small>Resolving stable Image identity…</small>}</aside>
-          <main className="panel run-visual-workspace run-result-preview"><span className="eyebrow">Result Preview</span>{resultSummary?.labels.length ? <div className="run-result-labels" aria-label="Result labels">{resultSummary.labels.map((item) => <span key={item.label}>{item.label}<b>{item.count}</b></span>)}</div> : null}{canPreview && finalAnnotations.length > 0 ? <RunArtifactCanvas projectId={previewProjectId!} project={project} artifacts={[]} annotations={finalAnnotations} imageId={ownedImageId!} /> : resultSummary ? <Empty title={resultSummary.no_target_count ? "No target found" : resultSummary.failed_count ? "No result produced" : "No visual result"} detail={resultSummary.no_target_count ? "The automation completed successfully and found no matching target in this image." : resultSummary.failed_count ? "Open Debug to inspect the failed step and available repair action." : "This result has no committed or current Review candidate with visual geometry."} /> : <Empty title="Loading results" detail="Reading the explicit final-result projection." />}</main>
-          <aside className="panel run-needs-attention"><span className="eyebrow">Needs Attention</span>{runReviewId ? <><h3>{resultSummary?.needs_review_count || 1} result needs a decision</h3><p>The current final candidate is waiting for a human decision.</p><button className="primary" onClick={() => onNavigate(project ? projectReviewPath(project.id, runReviewId) : `/review/${encodeURIComponent(runReviewId)}`)}>Review result</button></> : resultSummary?.failed_count ? <><h3>Run needs repair</h3><p>{run.terminal_reason ?? "A Pipeline step did not produce a usable result."}</p><button className="primary" onClick={() => setView("debug")}>Open Debug</button></> : <div className="positive-empty"><strong>No results need attention</strong><span>{resultSummary?.no_target_count ? "The empty result is valid." : "All results passed the configured gates."}</span></div>}</aside>
+          <aside className="panel run-image-identity"><span className="eyebrow">{t("Run image")}</span>{ownedImage ? <><img src={ownedImage.url} alt="" /><strong>{ownedImage.name}</strong><Status status={resultSummary?.image.status ?? run.status} /><code>{ownedImage.image_id}</code></> : ownedImageId ? <><strong>{t("Project image")}</strong><Status status={resultSummary?.image.status ?? run.status} /><code>{ownedImageId}</code></> : <small>Resolving stable Image identity…</small>}</aside>
+          <main className="panel run-visual-workspace run-result-preview"><span className="eyebrow">{t("Result Preview")}</span>{resultSummary?.labels.length ? <div className="run-result-labels" aria-label={t("Result labels")}>{resultSummary.labels.map((item) => <span key={item.label}>{item.label}<b>{item.count}</b></span>)}</div> : null}{canPreview && finalAnnotations.length > 0 ? <RunArtifactCanvas projectId={previewProjectId!} project={project} artifacts={[]} annotations={finalAnnotations} imageId={ownedImageId!} /> : resultSummary ? <Empty title={resultSummary.no_target_count ? t("No target found") : resultSummary.failed_count ? t("No result produced") : t("No visual result")} detail={resultSummary.no_target_count ? t("The automation completed successfully and found no matching target in this image.") : resultSummary.failed_count ? t("Open Debug to inspect the failed step and available repair action.") : t("This result has no committed or current Review candidate with visual geometry.")} /> : <Empty title={t("Loading results")} detail="Reading the explicit final-result projection." />}</main>
+          <aside className="panel run-needs-attention"><span className="eyebrow">{t("Needs Attention")}</span>{runReviewId ? <><h3>{resultSummary?.needs_review_count || 1} result needs a decision</h3><p>The current final candidate is waiting for a human decision.</p><button className="primary" onClick={() => onNavigate(project ? projectReviewPath(project.id, runReviewId) : `/review/${encodeURIComponent(runReviewId)}`)}>{t("Review result")}</button></> : resultSummary?.failed_count ? <><h3>{t("Run needs repair")}</h3><p>{run.terminal_reason ?? t("A Pipeline step did not produce a usable result.")}</p><button className="primary" onClick={() => setView("debug")}>{t("Open Debug")}</button></> : <div className="positive-empty"><strong>{t("No results need attention")}</strong><span>{resultSummary?.no_target_count ? t("The empty result is valid.") : t("All results passed the configured gates.")}</span></div>}</aside>
         </div>
       </> : <>
-        <div className="debug-summary-strip" aria-label="Run debug summary"><span>{debugSummary?.succeeded_node_count ?? completedNodes ?? 0}/{debugSummary?.node_count ?? inspection?.nodes.length ?? 0} steps complete</span><span>{debugSummary?.failed_node_count ?? 0} failed</span><span>{debugSummary?.issues.length ?? 0} issues</span><span>{formatSampleDuration(debugSummary?.duration_ms ?? duration)}</span></div>
-        {lineageStageNodes.length > 0 && <nav className="run-lineage-stage-selector" aria-label="Artifact lineage stages">{lineageStageNodes.map(({ stage, node }) => <button key={`${stage}-${node.node_id}`} className={selectedNode?.node_id === node.node_id ? "active" : ""} aria-current={selectedNode?.node_id === node.node_id ? "step" : undefined} onClick={() => setContext({ node: node.node_id })}><strong>{stage === "search_region" ? "Search region" : stage === "prompt_coverage" ? "Prompt coverage" : stage[0].toUpperCase() + stage.slice(1)}</strong><small>{node.operation}</small></button>)}</nav>}
+        <div className="debug-summary-strip" aria-label={t("Run debug summary")}><span>{debugSummary?.succeeded_node_count ?? completedNodes ?? 0}/{debugSummary?.node_count ?? inspection?.nodes.length ?? 0}{" "}{t("steps complete")}</span><span>{debugSummary?.failed_node_count ?? 0}{" "}{t("failed")}</span><span>{debugSummary?.issues.length ?? 0}{" "}{t("issues")}</span><span>{formatSampleDuration(debugSummary?.duration_ms ?? duration)}</span></div>
+        {lineageStageNodes.length > 0 && <nav className="run-lineage-stage-selector" aria-label={t("Artifact lineage stages")}>{lineageStageNodes.map(({ stage, node }) => <button key={`${stage}-${node.node_id}`} className={selectedNode?.node_id === node.node_id ? "active" : ""} aria-current={selectedNode?.node_id === node.node_id ? "step" : undefined} onClick={() => setContext({ node: node.node_id })}><strong>{stage === "search_region" ? t("Search region") : stage === "prompt_coverage" ? t("Prompt coverage") : stage[0].toUpperCase() + stage.slice(1)}</strong><small>{node.operation}</small></button>)}</nav>}
         <div className="run-workspace">
-          <aside className="panel run-image-identity"><span className="eyebrow">Run image</span>{ownedImage ? <><img src={ownedImage.url} alt="" /><strong>{ownedImage.name}</strong><Status status={resultSummary?.image.status ?? run.status} /><code>{ownedImage.image_id}</code></> : ownedImageId ? <><strong>Project image</strong><Status status={resultSummary?.image.status ?? run.status} /><code>{ownedImageId}</code></> : <small>Resolving stable Image identity…</small>}</aside>
-          <main className="panel run-visual-workspace"><span className="eyebrow">Artifact Preview</span>{canPreview ? <RunArtifactCanvas projectId={previewProjectId!} project={project} artifacts={selectedPreviewArtifacts} annotations={finalAnnotations} imageId={ownedImageId!} /> : <Empty title="No visual Artifact" detail={run.checkpoint_present ? "Loading the persisted checkpoint and annotations." : "This Run has no visual Artifact to preview."} />}</main>
-          <aside className="panel run-node-timeline"><span className="eyebrow">Pipeline Steps</span>{inspection?.nodes.map((node, index) => <button key={node.node_id} className={node.node_id === selectedNode?.node_id ? "active" : ""} onClick={() => setContext({ node: node.node_id })}><span>{index + 1}</span><span><strong title={node.operation}>{node.operation}</strong><small title={`${node.status} · ${node.latency_ms} ms`}>{node.status} · {node.latency_ms} ms</small></span>{node.error && <i title={node.error.summary}>!</i>}</button>)}{!inspection && <small>No node trace available.</small>}</aside>
+          <aside className="panel run-image-identity"><span className="eyebrow">{t("Run image")}</span>{ownedImage ? <><img src={ownedImage.url} alt="" /><strong>{ownedImage.name}</strong><Status status={resultSummary?.image.status ?? run.status} /><code>{ownedImage.image_id}</code></> : ownedImageId ? <><strong>{t("Project image")}</strong><Status status={resultSummary?.image.status ?? run.status} /><code>{ownedImageId}</code></> : <small>Resolving stable Image identity…</small>}</aside>
+          <main className="panel run-visual-workspace"><span className="eyebrow">{t("Artifact Preview")}</span>{canPreview ? <RunArtifactCanvas projectId={previewProjectId!} project={project} artifacts={selectedPreviewArtifacts} annotations={finalAnnotations} imageId={ownedImageId!} /> : <Empty title={t("No visual Artifact")} detail={run.checkpoint_present ? t("Loading the persisted checkpoint and annotations.") : t("This Run has no visual Artifact to preview.")} />}</main>
+          <aside className="panel run-node-timeline"><span className="eyebrow">{t("Pipeline Steps")}</span>{inspection?.nodes.map((node, index) => <button key={node.node_id} className={node.node_id === selectedNode?.node_id ? "active" : ""} onClick={() => setContext({ node: node.node_id })}><span>{index + 1}</span><span><strong title={node.operation}>{node.operation}</strong><small title={`${node.status} · ${node.latency_ms} ms`}>{node.status} · {node.latency_ms} ms</small></span>{node.error && <i title={node.error.summary}>!</i>}</button>)}{!inspection && <small>{t("No node trace available.")}</small>}</aside>
         </div>
       {selectedNode && (
-        <section className="panel run-node-inspector" aria-label="Node inspector">
+        <section className="panel run-node-inspector" aria-label={t("Node inspector")}>
           <header className="run-node-inspector-header">
             <div>
-              <span className="eyebrow">Node inspector</span>
+              <span className="eyebrow">{t("Node inspector")}</span>
               <h2>{selectedNode.operation}</h2>
               <code>Node ID · {selectedNode.node_id}</code>
             </div>
-            <button disabled={busy} onClick={replayNode}>Replay from this node</button>
+            <button disabled={busy} onClick={replayNode}>{t("Replay from this node")}</button>
           </header>
-          <div className="run-node-metrics" aria-label="Node execution summary">
-            <article><span>Status</span><Status status={selectedNode.status} /></article>
-            <article><span>Duration</span><strong>{selectedNode.latency_ms.toLocaleString()} ms</strong></article>
-            <article><span>Model usage</span><strong>{selectedNode.usage.input_tokens + selectedNode.usage.output_tokens} tokens</strong><small>${selectedNode.usage.cost}</small></article>
+          <div className="run-node-metrics" aria-label={t("Node execution summary")}>
+            <article><span>{t("Status")}</span><Status status={selectedNode.status} /></article>
+            <article><span>{t("Duration")}</span><strong>{selectedNode.latency_ms.toLocaleString(localeTag())} ms</strong></article>
+            <article><span>{t("Model usage")}</span><strong>{selectedNode.usage.input_tokens + selectedNode.usage.output_tokens}{" "}{t("tokens")}</strong><small>${selectedNode.usage.cost}</small></article>
           </div>
           <section className="run-node-artifacts" aria-labelledby="node-output-artifacts">
-            <header><div><span className="eyebrow">Artifacts</span><h3 id="node-output-artifacts">Node outputs</h3></div><b>{selectedNode.outputs.length}</b></header>
-            <div className="artifact-choice" aria-label="Node output Artifacts">{selectedNode.outputs.map((artifact, index) => { const id = pipelineArtifactIdentity(artifact, index); return <button key={id} className={route.artifactId === id ? "active" : ""} onClick={() => setContext({ artifact: id })}><span>{artifact.kind.replaceAll("_", " ")}</span><code>{id.slice(0, 8)}</code></button>; })}</div>
-            {selectedNode.outputs.length === 0 && <p className="node-payload-empty">This node did not produce an Artifact.</p>}
+            <header><div><span className="eyebrow">{t("Artifacts")}</span><h3 id="node-output-artifacts">{t("Node outputs")}</h3></div><b>{selectedNode.outputs.length}</b></header>
+            <div className="artifact-choice" aria-label={t("Node output Artifacts")}>{selectedNode.outputs.map((artifact, index) => { const id = pipelineArtifactIdentity(artifact, index); return <button key={id} className={route.artifactId === id ? "active" : ""} onClick={() => setContext({ artifact: id })}><span>{artifact.kind.replaceAll("_", " ")}</span><code>{id.slice(0, 8)}</code></button>; })}</div>
+            {selectedNode.outputs.length === 0 && <p className="node-payload-empty">{t("This node did not produce an Artifact.")}</p>}
           </section>
           <EvidenceDecisionCard metadata={selectedNode.metadata ?? {}} route={selectedNode.route} />
-          {selectedNode.error && <div className="run-repair-card"><div><strong>{selectedNode.error.code}</strong><p>{selectedNode.error.summary}</p></div><div className="button-row">{selectedNode.error.retryable && <button className="primary" disabled={busy} onClick={replayNode}>Replay failed step</button>}{project && <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}/build/pipeline`)}>Fix automation</button>}</div></div>}
+          {selectedNode.error && <div className="run-repair-card"><div><strong>{selectedNode.error.code}</strong><p>{selectedNode.error.summary}</p></div><div className="button-row">{selectedNode.error.retryable && <button className="primary" disabled={busy} onClick={replayNode}>{t("Replay failed step")}</button>}{project && <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}/build/pipeline`)}>{t("Fix automation")}</button>}</div></div>}
           <div className="node-payload-sections">
-            {selectedNode.metadata?.model_asset != null && <NodePayloadSection title="Model identity" description="Immutable Plugin, Bundle, files, Contract, Model Instance, revision, and execution provider frozen by this Workflow Version" badge="Frozen" value={selectedNode.metadata.model_asset} open />}
-            <NodePayloadSection title="Input" description="Artifacts received from upstream nodes" badge={selectedNode.inputs.length} value={selectedNode.inputs} />
-            <NodePayloadSection title="Output" description="Artifacts emitted by this node" badge={selectedNode.outputs.length} value={selectedNode.outputs} open />
-            <NodePayloadSection title="Configuration" description="Resolved runtime configuration" badge="JSON" value={selectedNode.configuration} />
-            <NodePayloadSection title="Provider request" description="Recorded provider context; credentials and image bytes are redacted" badge={run.provider} value={{ provider: run.provider, model: run.model, operation: selectedNode.operation, parameters: selectedNode.configuration.parameters }} />
-            {selectedNode.error && <NodePayloadSection title="Raw error" description="Structured Runtime failure" badge={selectedNode.error.code} value={selectedNode.error} />}
+            {selectedNode.metadata?.model_asset != null && <NodePayloadSection title={t("Model identity")} description="Immutable Plugin, Bundle, files, Contract, Model Instance, revision, and execution provider frozen by this Workflow Version" badge="Frozen" value={selectedNode.metadata.model_asset} open />}
+            <NodePayloadSection title={t("Input")} description="Artifacts received from upstream nodes" badge={selectedNode.inputs.length} value={selectedNode.inputs} />
+            <NodePayloadSection title={t("Output")} description="Artifacts emitted by this node" badge={selectedNode.outputs.length} value={selectedNode.outputs} open />
+            <NodePayloadSection title={t("Configuration")} description="Resolved runtime configuration" badge="JSON" value={selectedNode.configuration} />
+            <NodePayloadSection title={t("Provider request")} description="Recorded provider context; credentials and image bytes are redacted" badge={run.provider} value={{ provider: run.provider, model: run.model, operation: selectedNode.operation, parameters: selectedNode.configuration.parameters }} />
+            {selectedNode.error && <NodePayloadSection title={t("Raw error")} description="Structured Runtime failure" badge={selectedNode.error.code} value={selectedNode.error} />}
           </div>
-          {replay?.replayed_from === selectedNode.node_id && <div className="validation-report valid"><strong>Sandbox Replay completed</strong><small>Preserved upstream: {replay.preserved_upstream_nodes.join(", ") || "None"}</small><small>Re-executed: {replay.reexecuted_nodes.join(", ")}</small></div>}
+          {replay?.replayed_from === selectedNode.node_id && <div className="validation-report valid"><strong>{t("Sandbox Replay completed")}</strong><small>{t("Preserved upstream:")}{" "}{replay.preserved_upstream_nodes.join(", ") || t("None")}</small><small>{t("Re-executed:")}{" "}{replay.reexecuted_nodes.join(", ")}</small></div>}
         </section>
       )}
       </>}
@@ -8787,10 +8674,10 @@ function EvidenceDecisionCard({
   const report = evidenceGateReport(metadata);
   if (!report) return null;
   return (
-    <section className={`evidence-decision-card decision-${report.decision}`} aria-label="Evidence decision">
+    <section className={`evidence-decision-card decision-${report.decision}`} aria-label={t("Evidence decision")}>
       <header>
-        <div><span className="eyebrow">Evidence decision</span><h3>{report.decision}</h3></div>
-        <span>{report.candidate_count} candidate{report.candidate_count === 1 ? "" : "s"}</span>
+        <div><span className="eyebrow">{t("Evidence decision")}</span><h3>{report.decision}</h3></div>
+        <span>{report.candidate_count} candidate{report.candidate_count === 1 ? "" : t("s")}</span>
       </header>
       <ul>
         {report.reasons.map((reason, index) => (
@@ -8838,7 +8725,7 @@ function NodePayloadSection({
       </summary>
       <div>
         {empty
-          ? <p className="node-payload-empty">No {title.toLowerCase()} data recorded.</p>
+          ? <p className="node-payload-empty">{t("No")}{" "}{title.toLowerCase()} data recorded.</p>
           : <pre>{JSON.stringify(value, null, 2)}</pre>}
       </div>
     </details>
@@ -9225,35 +9112,35 @@ function RunArtifactCanvas({ projectId, project, artifacts, annotations, imageId
   return (
     <div className="run-artifact-canvas" role="region" aria-label="Run result annotation viewer" onKeyDown={(event) => { if (event.target instanceof HTMLInputElement && event.target.type === "range") return; if (event.key === "ArrowRight" || event.key === "ArrowDown") { event.preventDefault(); selectOffset(1); } if (event.key === "ArrowLeft" || event.key === "ArrowUp") { event.preventDefault(); selectOffset(-1); } }}>
       <div className="preview-toggle">
-        <button className={mode === "original" ? "active" : ""} onClick={() => setMode("original")}>Original</button>
-        <button className={mode === "result" ? "active" : ""} onClick={() => setMode("result")}>Result</button>
-        <button className={mode === "compare" ? "active" : ""} onClick={() => setMode("compare")}>Compare</button>
+        <button className={mode === "original" ? "active" : ""} onClick={() => setMode("original")}>{t("Original")}</button>
+        <button className={mode === "result" ? "active" : ""} onClick={() => setMode("result")}>{t("Result")}</button>
+        <button className={mode === "compare" ? "active" : ""} onClick={() => setMode("compare")}>{t("Compare")}</button>
         <button className={mode === "crops" ? "active" : ""} disabled={!crops.length} onClick={() => setMode("crops")}>Crop ({crops.length})</button>
         <label className="preview-zoom-control">
-          <span>Zoom</span>
-          <input aria-label="Preview zoom" type="range" min="1" max="3" step="0.25" value={zoom} onChange={(event) => setZoom(Number(event.target.value))} />
+          <span>{t("Zoom")}</span>
+          <input aria-label={t("Preview zoom")} type="range" min="1" max="3" step="0.25" value={zoom} onChange={(event) => setZoom(Number(event.target.value))} />
           <output aria-live="polite">{Math.round(zoom * 100)}%</output>
         </label>
       </div>
-      {(legend.length > 0 || masks.length > 0) && <div className="bbox-legend" aria-label="Annotation color legend">{legend.map((item) => <span key={item.label}><i style={{ background: item.color }} />{item.label}</span>)}{masks.length > 0 && <span><i className="mask-overlay-swatch" />Mask overlay · {masks.length}</span>}</div>}
-      {detections.length > 0 && <ul className="canvas-annotation-list" aria-label="Run result annotations">{detections.map((item) => <li key={item.id}><button aria-pressed={item.id === selectedId} onClick={() => setSelectedId(item.id)}><i aria-hidden="true" style={{ borderColor: item.color }} /><span><strong>{item.label}</strong><small>{artifactMarkSummary(item)}</small></span></button></li>)}</ul>}
-      {selectedMark && <section className="geometry-quality-facts" aria-label="Semantic and geometry quality">
-        <article><span>{scoreSemanticsLabel(selectedMark.scoreSemantics)}</span><strong>{selectedMark.confidence === undefined ? "Not provided" : selectedMark.confidence.toFixed(2)}</strong><small>This score describes model belief, not box geometry.</small></article>
-        <article><span>Box quality</span><strong>{geometrySemanticsLabel(selectedMark.geometrySemantics)}</strong><small>A model score is not box IoU or tightness.</small></article>
-        <article className={selectedMark.calibrationStatus === "passed" || selectedMark.geometrySemantics === "human_verified" ? "verified" : "needs-check"}><span>Geometry verification</span><strong>{selectedMark.geometrySemantics === "human_verified" ? "Verified by a reviewer" : selectedMark.calibrationStatus === "passed" ? "Project calibration passed" : "Not performed"}</strong><small>{selectedMark.geometryReportId ? `Quality report ${selectedMark.geometryReportId.slice(0, 8)}` : `${(selectedMark.calibrationStatus ?? "uncalibrated").replaceAll("_", " ")} · review or measured evidence required`}</small></article>
-        {selectedMark.geometryIssues?.length ? <article className="needs-check"><span>Geometry issues</span><strong>{selectedMark.geometryIssues.map((issue) => issue.replaceAll("_", " ")).join(", ")}</strong></article> : null}
+      {(legend.length > 0 || masks.length > 0) && <div className="bbox-legend" aria-label={t("Annotation color legend")}>{legend.map((item) => <span key={item.label}><i style={{ background: item.color }} />{item.label}</span>)}{masks.length > 0 && <span><i className="mask-overlay-swatch" />Mask overlay · {masks.length}</span>}</div>}
+      {detections.length > 0 && <ul className="canvas-annotation-list" aria-label={t("Run result annotations")}>{detections.map((item) => <li key={item.id}><button aria-pressed={item.id === selectedId} onClick={() => setSelectedId(item.id)}><i aria-hidden="true" style={{ borderColor: item.color }} /><span><strong>{item.label}</strong><small>{artifactMarkSummary(item)}</small></span></button></li>)}</ul>}
+      {selectedMark && <section className="geometry-quality-facts" aria-label={t("Semantic and geometry quality")}>
+        <article><span>{scoreSemanticsLabel(selectedMark.scoreSemantics)}</span><strong>{selectedMark.confidence === undefined ? t("Not provided") : selectedMark.confidence.toFixed(2)}</strong><small>{t("This score describes model belief, not box geometry.")}</small></article>
+        <article><span>{t("Box quality")}</span><strong>{geometrySemanticsLabel(selectedMark.geometrySemantics)}</strong><small>{t("A model score is not box IoU or tightness.")}</small></article>
+        <article className={selectedMark.calibrationStatus === "passed" || selectedMark.geometrySemantics === "human_verified" ? "verified" : "needs-check"}><span>{t("Geometry verification")}</span><strong>{selectedMark.geometrySemantics === "human_verified" ? t("Verified by a reviewer") : selectedMark.calibrationStatus === "passed" ? t("Project calibration passed") : t("Not performed")}</strong><small>{selectedMark.geometryReportId ? `Quality report ${selectedMark.geometryReportId.slice(0, 8)}` : `${(selectedMark.calibrationStatus ?? "uncalibrated").replaceAll("_", " ")} · review or measured evidence required`}</small></article>
+        {selectedMark.geometryIssues?.length ? <article className="needs-check"><span>{t("Geometry issues")}</span><strong>{selectedMark.geometryIssues.map((issue) => issue.replaceAll("_", " ")).join(", ")}</strong></article> : null}
       </section>}
       {selectedMark?.evidence.length ? <section className="evidence-inspector" aria-label="Detection evidence inspector">
-        <header><span className="eyebrow">Evidence inspector</span><strong>{artifactMarkSummary(selectedMark)}</strong></header>
+        <header><span className="eyebrow">{t("Evidence inspector")}</span><strong>{artifactMarkSummary(selectedMark)}</strong></header>
         <div>{uniqueEvidence(selectedMark.evidence).map((item) => <article key={evidenceIdentity(item)}>
           <span><strong>{sourceModelLabel(item)}</strong><small>{item.source_capability.replaceAll("_", " ")}</small></span>
-          <span><strong>{item.score.value == null ? "Score not provided" : item.score.value.toFixed(2)}</strong><small>{scoreSemanticsLabel(item.score.semantics)}</small></span>
+          <span><strong>{item.score.value == null ? t("Score not provided") : item.score.value.toFixed(2)}</strong><small>{scoreSemanticsLabel(item.score.semantics)}</small></span>
           <code>[{item.bbox.map((value) => value.toFixed(3)).join(", ")}]</code>
           {(item.query_id || item.model_label) && <small>{item.query_id ? `Query · ${item.query_id}` : ""}{item.query_id && item.model_label ? " · " : ""}{item.model_label ? `Model label · ${item.model_label}` : ""}</small>}
         </article>)}</div>
       </section> : null}
-      {mode === "original" ? imageStage(false, "Original Run input") : mode === "result" ? imageStage(true, "Run result") : mode === "compare" ? <div className="run-result-compare"><section><span>Original</span>{imageStage(false, "Original Run input")}</section><section><span>Result</span>{imageStage(true, "Run result")}</section></div> : (
-        <div className="crop-preview-list enlarged">{crops.map((crop, index) => <button className={crop.parentId === selectedId ? "selected" : ""} key={crop.id} onClick={() => setSelectedId(crop.parentId ?? crop.id)}><svg style={{ transform: `scale(${zoom})` }} viewBox={`${crop.x * 100} ${crop.y * 100} ${crop.width * 100} ${crop.height * 100}`} aria-label={`Crop ${index + 1}: ${crop.label}`}><image href={imageUrl} x="0" y="0" width="100" height="100" /></svg><span><strong>{crop.label}</strong>{crop.confidence !== undefined && <small>{Math.round(crop.confidence * 100)}%</small>}<small>Parent: {crop.parentArtifact?.slice(0, 8) ?? crop.parentId ?? "Unknown"}</small><small>Source: {crop.sourceNode ?? "Unknown"}</small></span></button>)}</div>
+      {mode === "original" ? imageStage(false, "Original Run input") : mode === "result" ? imageStage(true, "Run result") : mode === "compare" ? <div className="run-result-compare"><section><span>{t("Original")}</span>{imageStage(false, "Original Run input")}</section><section><span>{t("Result")}</span>{imageStage(true, "Run result")}</section></div> : (
+        <div className="crop-preview-list enlarged">{crops.map((crop, index) => <button className={crop.parentId === selectedId ? "selected" : ""} key={crop.id} onClick={() => setSelectedId(crop.parentId ?? crop.id)}><svg style={{ transform: `scale(${zoom})` }} viewBox={`${crop.x * 100} ${crop.y * 100} ${crop.width * 100} ${crop.height * 100}`} aria-label={`Crop ${index + 1}: ${crop.label}`}><image href={imageUrl} x="0" y="0" width="100" height="100" /></svg><span><strong>{crop.label}</strong>{crop.confidence !== undefined && <small>{Math.round(crop.confidence * 100)}%</small>}<small>Parent: {crop.parentArtifact?.slice(0, 8) ?? crop.parentId ?? t("Unknown")}</small><small>{t("Source:")}{" "}{crop.sourceNode ?? t("Unknown")}</small></span></button>)}</div>
       )}
     </div>
   );
@@ -9776,14 +9663,11 @@ function ReviewPage({
   return (
     <section className={`review-layout${inspectorCollapsed ? " inspector-collapsed" : ""}`}>
       <aside className="review-queue panel">
-        <span className="eyebrow">Human attention</span>
-        <h2>
-          Review queue <b>{queueLoaded ? progress.remaining_count : "…"}</b>
+        <span className="eyebrow">{t("Human attention")}</span>
+        <h2>{t("Review queue")}{" "}<b>{queueLoaded ? progress.remaining_count : "…"}</b>
         </h2>
-        <label className="review-project-filter">
-          Project
-          <select
-            aria-label="Project filter"
+        <label className="review-project-filter">{t("Project")}<select
+            aria-label={t("Project filter")}
             value={scopedProject?.id ?? ""}
             onChange={(event) =>
               navigateFromReview(event.target.value
@@ -9791,13 +9675,13 @@ function ReviewPage({
                 : "/review")
             }
           >
-            <option value="">All projects</option>
+            <option value="">{t("All projects")}</option>
             {projects.map((candidate) => (
               <option key={candidate.id} value={candidate.id}>{candidate.name}</option>
             ))}
           </select>
         </label>
-        <div className="queue-items" aria-label="Annotations requiring review">
+        <div className="queue-items" aria-label={t("Annotations requiring review")}>
           {visibleReviews.map((review) => (
             <button
               key={review.id}
@@ -9815,9 +9699,8 @@ function ReviewPage({
                   {review.annotation.label ?? review.annotation.task_id}
                 </strong>
                 <small>
-                  {!project && `${review.project_name} · `}
-                  Image {review.image_index === undefined ? "?" : review.image_index + 1} ·{" "}
-                  {review.annotation.confidence === undefined ? "No confidence" : `${Math.round(review.annotation.confidence * 100)}%`}
+                  {!project && `${review.project_name} · `}{t("Image")}{" "}{review.image_index === undefined ? "?" : review.image_index + 1} ·{" "}
+                  {review.annotation.confidence === undefined ? t("No confidence") : `${Math.round(review.annotation.confidence * 100)}%`}
                 </small>
               </span>
             </button>
@@ -9827,37 +9710,37 @@ function ReviewPage({
           <button
             className="text-button"
             onClick={() => void refresh(nextReviewOffset, true)}
-          >Load more review items</button>
+          >{t("Load more review items")}</button>
         )}
         {visibleReviews.length === 0 && (
           <Empty
-            title="Queue is clear"
+            title={t("Queue is clear")}
             detail="Low confidence or conflicting evidence will route candidates here."
           />
         )}
       </aside>
       <div className="review-center">
-        <div className="review-progress-header" aria-label="Review progress" role="status">
+        <div className="review-progress-header" aria-label={t("Review progress")} role="status">
           <div>
-            <span className="eyebrow">Inbox progress</span>
-            <strong>{queueLoaded ? `${progress.reviewed_count} of ${progress.total_count} results reviewed` : "Loading review progress…"}</strong>
-            <small>{queueLoaded ? `${progress.remaining_count} remaining${progress.current_position ? ` · item ${progress.current_position}` : ""}` : "Reading the persisted Project queue"}</small>
+            <span className="eyebrow">{t("Inbox progress")}</span>
+            <strong>{queueLoaded ? `${progress.reviewed_count} of ${progress.total_count} results reviewed` : t("Loading review progress…")}</strong>
+            <small>{queueLoaded ? `${progress.remaining_count} remaining${progress.current_position ? ` · item ${progress.current_position}` : ""}` : t("Reading the persisted Project queue")}</small>
           </div>
-          <div className="review-progress-navigation" aria-label="Review queue navigation">
-            <button aria-label="Previous review result" disabled={!queueNavigation?.previous_review} onClick={() => moveQueueSelection(queueNavigation?.previous_review)}>←</button>
-            <button aria-label="Next review result" disabled={!queueNavigation?.next_review} onClick={() => moveQueueSelection(queueNavigation?.next_review)}>→</button>
+          <div className="review-progress-navigation" aria-label={t("Review queue navigation")}>
+            <button aria-label={t("Previous review result")} disabled={!queueNavigation?.previous_review} onClick={() => moveQueueSelection(queueNavigation?.previous_review)}>←</button>
+            <button aria-label={t("Next review result")} disabled={!queueNavigation?.next_review} onClick={() => moveQueueSelection(queueNavigation?.next_review)}>→</button>
           </div>
         </div>
-        {selected && <div className="review-edit-toolbar" aria-label="Annotation editing controls">
-          <button className={editing ? "active" : ""} aria-pressed={editing} onClick={() => { setEditing((value) => !value); setInspectorVisibility(false); }}>Edit <kbd>E</kbd></button>
+        {selected && <div className="review-edit-toolbar" aria-label={t("Annotation editing controls")}>
+          <button className={editing ? "active" : ""} aria-pressed={editing} onClick={() => { setEditing((value) => !value); setInspectorVisibility(false); }}>{t("Edit")}{" "}<kbd>E</kbd></button>
           {editing && availableShapeKinds.length > 0 && (
             <details className="review-add-menu">
-              <summary aria-label="Add annotation">
+              <summary aria-label={t("Add annotation")}>
                 <span className="review-add-icon" aria-hidden="true" />
-                <span className="review-add-label">Add</span>
+                <span className="review-add-label">{t("Add")}</span>
                 <span className="review-add-caret" aria-hidden="true" />
               </summary>
-              <div role="menu" aria-label="Annotation types">
+              <div role="menu" aria-label={t("Annotation types")}>
                 {availableShapeKinds.map((kind) => (
                   <button
                     key={kind}
@@ -9874,38 +9757,37 @@ function ReviewPage({
             </details>
           )}
           {(past.length > 0 || future.length > 0) && (
-            <div className="review-history-tools" aria-label="Edit history">
+            <div className="review-history-tools" aria-label={t("Edit history")}>
               <button
                 onClick={undo}
                 disabled={!past.length}
-                aria-label="Undo annotation edit"
-                title="Undo (⌘Z)"
+                aria-label={t("Undo annotation edit")}
+                title={t("Undo (⌘Z)")}
               ><span aria-hidden="true">↶</span></button>
               <button
                 onClick={redo}
                 disabled={!future.length}
-                aria-label="Redo annotation edit"
-                title="Redo (⇧⌘Z)"
+                aria-label={t("Redo annotation edit")}
+                title={t("Redo (⇧⌘Z)")}
               ><span aria-hidden="true">↷</span></button>
             </div>
           )}
-          <div className="review-view-controls" aria-label="Canvas view controls">
+          <div className="review-view-controls" aria-label={t("Canvas view controls")}>
             <select
-              aria-label="Canvas view"
+              aria-label={t("Canvas view")}
               value={compareMode}
               onChange={(event) => setCompareMode(event.target.value as typeof compareMode)}
             >
-              <option value="after">Result</option>
-              <option value="before">Original</option>
-              <option value="split">Compare</option>
+              <option value="after">{t("Result")}</option>
+              <option value="before">{t("Original")}</option>
+              <option value="split">{t("Compare")}</option>
             </select>
             <button
               className="details-toggle"
               onClick={() => setInspectorVisibility(!inspectorCollapsed)}
-              aria-label={inspectorCollapsed ? "Show details" : "Hide details"}
+              aria-label={inspectorCollapsed ? t("Show details") : t("Hide details")}
               aria-expanded={!inspectorCollapsed}
-            >
-              Details <span aria-hidden="true">{inspectorCollapsed ? "›" : "‹"}</span>
+            >{t("Details")}{" "}<span aria-hidden="true">{inspectorCollapsed ? "›" : "‹"}</span>
             </button>
           </div>
         </div>}
@@ -9913,7 +9795,7 @@ function ReviewPage({
           className={`review-canvas-stage${compareMode === "split" ? " review-canvas-compare" : ""}`}
         >
           {(compareMode === "before" || compareMode === "split") && (
-            <div>{compareMode === "split" && <small>Original</small>}<AnnotationCanvas
+            <div>{compareMode === "split" && <small>{t("Original")}</small>}<AnnotationCanvas
               imageUrl={images[selected?.image_index ?? 0]?.url}
               annotations={selected ? [selected.annotation] : []}
               selectedId={selected?.annotation.id}
@@ -9923,7 +9805,7 @@ function ReviewPage({
             /></div>
           )}
           {(compareMode === "after" || compareMode === "split") && (
-            <div>{compareMode === "split" && <small>Result</small>}<AnnotationCanvas
+            <div>{compareMode === "split" && <small>{t("Result")}</small>}<AnnotationCanvas
               imageUrl={images[selected?.image_index ?? 0]?.url}
               annotations={draft ? [draft] : []}
               selectedId={draft?.id}
@@ -9934,50 +9816,47 @@ function ReviewPage({
             /></div>
           )}
         </div> : queueLoaded ? <section className="review-complete panel">
-          <span className="eyebrow">Inbox complete</span>
-          <h2>{progress.total_count > 0 ? "Review complete" : "Nothing needs review"}</h2>
-          <p>{progress.total_count > 0 ? `All ${progress.total_count} queued results have a human decision.` : "Uncertain results will appear here when an Automation routes them to Human Review."}</p>
-          {(completedProject ?? scopedProject) && progress.total_count > 0 && <button className="primary" onClick={() => navigateFromReview(`/projects/${encodeURIComponent((completedProject ?? scopedProject)!.id)}/export`)}>Continue to export</button>}
+          <span className="eyebrow">{t("Inbox complete")}</span>
+          <h2>{progress.total_count > 0 ? t("Review complete") : t("Nothing needs review")}</h2>
+          <p>{progress.total_count > 0 ? `All ${progress.total_count} queued results have a human decision.` : t("Uncertain results will appear here when an Automation routes them to Human Review.")}</p>
+          {(completedProject ?? scopedProject) && progress.total_count > 0 && <button className="primary" onClick={() => navigateFromReview(`/projects/${encodeURIComponent((completedProject ?? scopedProject)!.id)}/export`)}>{t("Continue to export")}</button>}
         </section> : <section className="review-complete panel" aria-busy="true">
-          <span className="eyebrow">Review inbox</span>
-          <h2>Loading review results…</h2>
-          <p>Reading the persisted queue and human decisions.</p>
+          <span className="eyebrow">{t("Review inbox")}</span>
+          <h2>{t("Loading review results…")}</h2>
+          <p>{t("Reading the persisted queue and human decisions.")}</p>
         </section>}
         <div className="review-footer-stack">
           {rejectOpen && selected && <section className="review-reject-panel" role="dialog" aria-labelledby="reject-review-title">
             <div>
-              <span className="eyebrow">Reject result</span>
-              <h3 id="reject-review-title">Why is this result incorrect?</h3>
-              <p>A reason is required before the result leaves the Inbox.</p>
+              <span className="eyebrow">{t("Reject result")}</span>
+              <h3 id="reject-review-title">{t("Why is this result incorrect?")}</h3>
+              <p>{t("A reason is required before the result leaves the Inbox.")}</p>
             </div>
-            <label>
-              Reason
-              <select aria-label="Reject reason" value={rejectReason} onChange={(event) => setRejectReason(event.target.value)}>
-                <optgroup label="Common reasons">
-                  {GENERIC_REVIEW_REASONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            <label>{t("Reason")}<select aria-label={t("Reject reason")} value={rejectReason} onChange={(event) => setRejectReason(event.target.value)}>
+                <optgroup label={t("Common reasons")}>
+                  {GENERIC_REVIEW_REASONS.map((option) => <option key={option.value} value={option.value}>{t(option.label)}</option>)}
                 </optgroup>
-                {skillReasonOptions.length > 0 && <optgroup label="Enabled Skill reasons">
+                {skillReasonOptions.length > 0 && <optgroup label={t("Enabled Skill reasons")}>
                   {skillReasonOptions.map((option) => <option key={`${option.skillId}:${option.value}`} value={option.value}>{option.label}</option>)}
                 </optgroup>}
               </select>
             </label>
-            <label>
-              Note {rejectReason === "other" ? "(required)" : "(optional)"}
-              <textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="Add useful context for this decision" />
+            <label>{t("Note")}{" "}{rejectReason === "other" ? "(required)" : "(optional)"}
+              <textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder={t("Add useful context for this decision")} />
             </label>
             <div className="button-row">
-              <button onClick={() => setRejectOpen(false)}>Cancel</button>
-              <button className="danger" disabled={decisionBusy || (rejectReason === "other" && !note.trim())} onClick={() => void decideAndAdvance("reject", rejectReason)}>{decisionBusy ? "Rejecting…" : "Reject & next"}</button>
+              <button onClick={() => setRejectOpen(false)}>{t("Cancel")}</button>
+              <button className="danger" disabled={decisionBusy || (rejectReason === "other" && !note.trim())} onClick={() => void decideAndAdvance("reject", rejectReason)}>{decisionBusy ? t("Rejecting…") : t("Reject & next")}</button>
             </div>
           </section>}
           {draft && selected && !rejectOpen && (
-            <div className="review-action-bar" aria-label="Review decision controls">
-              <span className="review-shortcuts" aria-label="Keyboard shortcuts"><kbd>A</kbd> accept <kbd>R</kbd> reject <kbd>Space</kbd> original/result</span>
+            <div className="review-action-bar" aria-label={t("Review decision controls")}>
+              <span className="review-shortcuts" aria-label={t("Keyboard shortcuts")}><kbd>A</kbd>{" "}{t("accept")}{" "}<kbd>R</kbd>{" "}{t("reject")}{" "}<kbd>Space</kbd>{" "}{t("original/result")}</span>
               {editing && hasUnsavedAnnotationChanges && (
-                <button onClick={save}>{isNew ? "Create annotation" : "Save changes"}</button>
+                <button onClick={save}>{isNew ? t("Create annotation") : t("Save changes")}</button>
               )}
-              <button onClick={() => setRejectOpen(true)} disabled={decisionBusy}>Reject & next</button>
-              <button className="primary" disabled={decisionBusy || isNew} onClick={() => void decideAndAdvance("accept", hasUnsavedAnnotationChanges ? reason : "accepted_as_is")} aria-label="Accept and next">{decisionBusy ? "Saving decision…" : "Accept & next"}</button>
+              <button onClick={() => setRejectOpen(true)} disabled={decisionBusy}>{t("Reject & next")}</button>
+              <button className="primary" disabled={decisionBusy || isNew} onClick={() => void decideAndAdvance("accept", hasUnsavedAnnotationChanges ? reason : "accepted_as_is")} aria-label={t("Accept and next")}>{decisionBusy ? t("Saving decision…") : t("Accept & next")}</button>
             </div>
           )}
         </div>
@@ -9985,78 +9864,70 @@ function ReviewPage({
       {!inspectorCollapsed && <aside className="inspector panel review-inspector">
         <div className="review-inspector-header">
           <div>
-            <span className="eyebrow">Review details</span>
-            <h2>{draft?.label ?? "No selection"}</h2>
+            <span className="eyebrow">{t("Review details")}</span>
+            <h2>{draft?.label ?? t("No selection")}</h2>
           </div>
         </div>
         {draft && selected && (
           <>
             <div className="review-reason-summary">
-              <span className="eyebrow">Why this needs review</span>
-              <h3>{selected.review_explanation?.title ?? "Needs review"}</h3>
+              <span className="eyebrow">{t("Why this needs review")}</span>
+              <h3>{selected.review_explanation?.title ?? t("Needs review")}</h3>
               <p>{reviewReasonExplanation(selected)}</p>
               {selected.review_explanation?.details.length ? <ul>{selected.review_explanation.details.map((detail) => <li key={detail}>{detail}</li>)}</ul> : null}
             </div>
             <dl className="review-essential-facts">
-              <div><dt>{scoreSemanticsLabel(reviewScoreSemantics)}</dt><dd>{(selected.confidence ?? draft.confidence) === undefined ? "Not provided" : `${Math.round((selected.confidence ?? draft.confidence ?? 0) * 100)}%`}</dd></div>
-              <div><dt>Box quality</dt><dd>{geometrySemanticsLabel(reviewGeometrySemantics)}</dd></div>
-              <div><dt>Geometry verification</dt><dd>{reviewGeometrySemantics === "human_verified" ? "Human verified" : reviewCalibrationStatus === "passed" ? "Project calibration passed" : "Needs geometry check"}</dd></div>
-              <div><dt>Source Run</dt><dd>{selected.run_id.slice(0, 8)}</dd></div>
-              <div><dt>Automation Version</dt><dd>{selected.workflow_id ? `${selected.workflow_id}@v${selected.workflow_version}` : `v${selected.workflow_version}`}</dd></div>
-              <div><dt>Source Step</dt><dd>{selected.source_node ?? "Unknown"}</dd></div>
+              <div><dt>{scoreSemanticsLabel(reviewScoreSemantics)}</dt><dd>{(selected.confidence ?? draft.confidence) === undefined ? t("Not provided") : `${Math.round((selected.confidence ?? draft.confidence ?? 0) * 100)}%`}</dd></div>
+              <div><dt>{t("Box quality")}</dt><dd>{geometrySemanticsLabel(reviewGeometrySemantics)}</dd></div>
+              <div><dt>{t("Geometry verification")}</dt><dd>{reviewGeometrySemantics === "human_verified" ? t("Human verified") : reviewCalibrationStatus === "passed" ? t("Project calibration passed") : t("Needs geometry check")}</dd></div>
+              <div><dt>{t("Source Run")}</dt><dd>{selected.run_id.slice(0, 8)}</dd></div>
+              <div><dt>{t("Automation Version")}</dt><dd>{selected.workflow_id ? `${selected.workflow_id}@v${selected.workflow_version}` : `v${selected.workflow_version}`}</dd></div>
+              <div><dt>{t("Source Step")}</dt><dd>{selected.source_node ?? t("Unknown")}</dd></div>
             </dl>
-            {selected.detection_evidence?.length ? <section className="review-evidence" aria-label="Source model evidence">
-              <header><span className="eyebrow">Source evidence</span><strong>{uniqueEvidence(selected.detection_evidence).length} detector result{uniqueEvidence(selected.detection_evidence).length === 1 ? "" : "s"}</strong></header>
+            {selected.detection_evidence?.length ? <section className="review-evidence" aria-label={t("Source model evidence")}>
+              <header><span className="eyebrow">{t("Source evidence")}</span><strong>{uniqueEvidence(selected.detection_evidence).length} detector result{uniqueEvidence(selected.detection_evidence).length === 1 ? "" : t("s")}</strong></header>
               <div>{uniqueEvidence(selected.detection_evidence).map((evidence) => <article key={evidenceIdentity(evidence)}>
                 <span><strong>{sourceModelLabel(evidence, models)}</strong><small>{evidence.source_capability.replaceAll("_", " ")}</small></span>
-                <span><strong>{evidence.score.value == null ? "Score not provided" : evidence.score.value.toFixed(2)}</strong><small>{scoreSemanticsLabel(evidence.score.semantics)}</small></span>
+                <span><strong>{evidence.score.value == null ? t("Score not provided") : evidence.score.value.toFixed(2)}</strong><small>{scoreSemanticsLabel(evidence.score.semantics)}</small></span>
                 <code>[{evidence.bbox.map((value) => value.toFixed(3)).join(", ")}]</code>
                 <button onClick={() => useEvidenceBox(evidence)}>Use {sourceModelLabel(evidence, models)} box</button>
               </article>)}</div>
-              {uniqueEvidence(selected.detection_evidence).length > 1 && <button onClick={() => setEditing(true)}>Merge manually</button>}
+              {uniqueEvidence(selected.detection_evidence).length > 1 && <button onClick={() => setEditing(true)}>{t("Merge manually")}</button>}
             </section> : null}
-            <button onClick={() => navigateFromReview(reviewProject ? projectRunPath(reviewProject.id, selected.run_id, { nodeId: selected.source_node, artifactId: selected.source_artifact_id, view: "debug" }) : `/runs/${encodeURIComponent(selected.run_id)}`)}>Open run context</button>
-            {reviewProject && <button onClick={() => navigateFromReview(`/projects/${encodeURIComponent(reviewProject.id)}/build/pipeline`)}>Improve automation</button>}
-            {editing && <section className="review-edit-details" aria-label="Annotation edit details">
-              <div><span className="eyebrow">Manual correction</span><strong>Edit result</strong></div>
-              <label>
-                Label
-                <input value={draft.label ?? ""} onChange={(event) => edit({ ...draft, label: event.target.value })} />
+            <button onClick={() => navigateFromReview(reviewProject ? projectRunPath(reviewProject.id, selected.run_id, { nodeId: selected.source_node, artifactId: selected.source_artifact_id, view: "debug" }) : `/runs/${encodeURIComponent(selected.run_id)}`)}>{t("Open run context")}</button>
+            {reviewProject && <button onClick={() => navigateFromReview(`/projects/${encodeURIComponent(reviewProject.id)}/build/pipeline`)}>{t("Improve automation")}</button>}
+            {editing && <section className="review-edit-details" aria-label={t("Annotation edit details")}>
+              <div><span className="eyebrow">{t("Manual correction")}</span><strong>{t("Edit result")}</strong></div>
+              <label>{t("Label")}<input value={draft.label ?? ""} onChange={(event) => edit({ ...draft, label: event.target.value })} />
               </label>
-              <label>
-                Correction reason
-                <select aria-label="Correction reason" value={reason} onChange={(event) => setReason(event.target.value)}>
-                  {GENERIC_REVIEW_REASONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              <label>{t("Correction reason")}<select aria-label={t("Correction reason")} value={reason} onChange={(event) => setReason(event.target.value)}>
+                  {GENERIC_REVIEW_REASONS.map((option) => <option key={option.value} value={option.value}>{t(option.label)}</option>)}
                   {skillReasonOptions.map((option) => <option key={`${option.skillId}:${option.value}`} value={option.value}>{option.label}</option>)}
                 </select>
               </label>
-              <label>
-                Reviewer note
-                <textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="What changed, and why?" />
+              <label>{t("Reviewer note")}<textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder={t("What changed, and why?")} />
               </label>
               {hasUnsavedAnnotationChanges && <div className="correction-impact" role="status">
-                <strong>Correction impact</strong>
+                <strong>{t("Correction impact")}</strong>
                 <span>This correction will be saved as geometry-quality evidence for calibration and future Automation improvements.</span>
               </div>
               }
             </section>}
             <details className="review-execution-details">
-              <summary>Execution details</summary>
+              <summary>{t("Execution details")}</summary>
               <div className="fact-grid">
-                <Fact label="Refinement" value={selected.refinement_chain?.map((refiner) => refiner.replaceAll("_", " ")).join(" → ") || "None recorded"} />
-                <Fact label="Validation issue" value={selected.validation_issues.join(", ") || "None"} />
-                <Fact label="Task" value={draft.task_id} />
-                <Fact label="Status" value={draft.review_status} />
+                <Fact label={t("Refinement")} value={selected.refinement_chain?.map((refiner) => refiner.replaceAll("_", " ")).join(" → ") || "None recorded"} />
+                <Fact label={t("Validation issue")} value={selected.validation_issues.join(", ") || "None"} />
+                <Fact label={t("Task")} value={draft.task_id} />
+                <Fact label={t("Status")} value={draft.review_status} />
               </div>
-              {editing && <label>
-                Attributes (JSON)
-                <textarea aria-label="Annotation attributes JSON" value={attributesText} onChange={(event) => setAttributesText(event.target.value)} />
+              {editing && <label>{t("Attributes (JSON)")}<textarea aria-label="Annotation attributes JSON" value={attributesText} onChange={(event) => setAttributesText(event.target.value)} />
               </label>}
               <button
                 aria-expanded={revisionHistoryOpen}
                 aria-controls="review-revision-history"
                 onClick={openRevisionHistory}
-              >View revision history</button>
+              >{t("View revision history")}</button>
               <Trace events={events.filter((event) => event.run_id === selected.run_id)} />
             </details>
             {revisionHistoryOpen && <section
@@ -10067,20 +9938,20 @@ function ReviewPage({
               aria-labelledby="review-revision-title"
             >
               <header>
-                <span><span className="eyebrow">Audit history</span><h3 id="review-revision-title">Annotation revisions</h3></span>
-                <button aria-label="Close revision history" onClick={() => setRevisionHistoryOpen(false)}>×</button>
+                <span><span className="eyebrow">{t("Audit history")}</span><h3 id="review-revision-title">{t("Annotation revisions")}</h3></span>
+                <button aria-label={t("Close revision history")} onClick={() => setRevisionHistoryOpen(false)}>×</button>
               </header>
-              {revisionHistoryLoading ? <p role="status">Loading revisions…</p> : revisionHistory.length ? <ol>
+              {revisionHistoryLoading ? <p role="status">{t("Loading revisions…")}</p> : revisionHistory.length ? <ol>
                 {[...revisionHistory].reverse().map((revision) => <li key={revision.revision_id}>
-                  <header><strong>{revision.reason?.replaceAll("_", " ") ?? "Annotation updated"}</strong><time dateTime={revision.created_at}>{new Date(revision.created_at).toLocaleString()}</time></header>
+                  <header><strong>{revision.reason?.replaceAll("_", " ") ?? t("Annotation updated")}</strong><time dateTime={revision.created_at}>{new Date(revision.created_at).toLocaleString(localeTag())}</time></header>
                   <dl>
-                    <div><dt>Actor</dt><dd>{revision.actor}</dd></div>
-                    <div><dt>Label</dt><dd>{revision.before?.label ?? "None"} → {revision.after?.label ?? "None"}</dd></div>
-                    <div><dt>Status</dt><dd>{revision.before?.review_status?.replaceAll("_", " ") ?? "created"} → {revision.after?.review_status?.replaceAll("_", " ") ?? "deleted"}</dd></div>
-                    <div><dt>Geometry</dt><dd>{revision.before?.value.kind ?? "none"} → {revision.after?.value.kind ?? "none"}</dd></div>
+                    <div><dt>{t("Actor")}</dt><dd>{revision.actor}</dd></div>
+                    <div><dt>{t("Label")}</dt><dd>{revision.before?.label ?? t("None")} → {revision.after?.label ?? t("None")}</dd></div>
+                    <div><dt>{t("Status")}</dt><dd>{revision.before?.review_status?.replaceAll("_", " ") ?? "created"} → {revision.after?.review_status?.replaceAll("_", " ") ?? "deleted"}</dd></div>
+                    <div><dt>{t("Geometry")}</dt><dd>{revision.before?.value.kind ?? t("none")} → {revision.after?.value.kind ?? t("none")}</dd></div>
                   </dl>
                 </li>)}
-              </ol> : <p>No revisions have been recorded for this annotation.</p>}
+              </ol> : <p>{t("No revisions have been recorded for this annotation.")}</p>}
             </section>}
           </>
         )}
@@ -10107,8 +9978,8 @@ function Trace({ events }: { events: RunEvent[] }) {
   return (
     <div className="trace-panel panel">
       <div>
-        <span className="eyebrow">Visible execution events</span>
-        <h3>Agent trace</h3>
+        <span className="eyebrow">{t("Visible execution events")}</span>
+        <h3>{t("Agent trace")}</h3>
         <small>
           Original candidates, refined Artifacts, validation, and final commits
           · no hidden chain-of-thought
@@ -10128,7 +9999,7 @@ function Trace({ events }: { events: RunEvent[] }) {
               <strong>{event.kind.replaceAll("_", " ")}</strong>
               <small>
                 {summary(event) ??
-                  `${event.task_id ?? "run"} · ${new Date(event.occurred_at).toLocaleTimeString()}`}
+                  `${event.task_id ?? "run"} · ${new Date(event.occurred_at).toLocaleTimeString(localeTag())}`}
               </small>
             </div>
           </article>
@@ -10218,29 +10089,27 @@ function AgentSessionTrace({
   return (
     <div className="agent-session-trace" aria-label={`${session.kind} Agent trace`}>
       <div className="context-line">
-        <strong>Pipeline Builder</strong>
+        <strong>{t("Pipeline Builder")}</strong>
         <Status status={session.status} />
         <span>{stage}</span>
         <span>{totalCalls} tool calls</span>
-        <span>{session.usage.input_tokens + session.usage.output_tokens} tokens</span>
+        <span>{session.usage.input_tokens + session.usage.output_tokens}{" "}{t("tokens")}</span>
         <span>${session.usage.cost}</span>
         {onCancel && (
-          <button className="danger" disabled={!cancellable} onClick={onCancel}>
-            Cancel Agent
-          </button>
+          <button className="danger" disabled={!cancellable} onClick={onCancel}>{t("Cancel Agent")}</button>
         )}
       </div>
-      <div className="agent-progress" role="progressbar" aria-label="Tool budget used" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
+      <div className="agent-progress" role="progressbar" aria-label={t("Tool budget used")} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
         <span style={{ width: `${progress}%` }} />
       </div>
       {session.salvage_outcome && (
-        <section className="agent-salvage-notice" aria-label="Draft salvage result">
+        <section className="agent-salvage-notice" aria-label={t("Draft salvage result")}>
           <div>
-            <span className="eyebrow">Discovery completed</span>
+            <span className="eyebrow">{t("Discovery completed")}</span>
             <strong>
               {session.salvage_outcome === "runnable_draft_materialized"
-                ? "Best compatible plan saved as a Draft"
-                : "Best available plan saved with explicit blockers"}
+                ? t("Best compatible plan saved as a Draft")
+                : t("Best available plan saved with explicit blockers")}
             </strong>
           </div>
           <p>
@@ -10254,7 +10123,7 @@ function AgentSessionTrace({
         !session.salvage_outcome && (
           <section className="agent-plan-warning" role="alert">
             <div>
-              <span className="eyebrow">Plan discovered but not applied</span>
+              <span className="eyebrow">{t("Plan discovered but not applied")}</span>
               <strong>AnnotAgent preserved the candidates for diagnosis</strong>
             </div>
             <p>
@@ -10264,22 +10133,22 @@ function AgentSessionTrace({
           </section>
         )}
       <div className="fact-grid">
-        <Fact label="Current stage" value={stage} />
-        <Fact label="Model turns" value={session.model_turns ?? session.model_calls.length} />
-        <Fact label="Tool budget" value={`${remainingCalls} remaining · ${reservedCalls} reserved`} />
-        <Fact label="Phase calls" value={session.phase_tool_calls ?? "Not recorded"} />
-        <Fact label="Cache reuse" value={session.cache_hits ?? 0} />
-        <Fact label="Duplicates blocked" value={session.duplicate_tool_calls ?? 0} />
+        <Fact label={t("Current stage")} value={stage} />
+        <Fact label={t("Model turns")} value={session.model_turns ?? session.model_calls.length} />
+        <Fact label={t("Tool budget")} value={`${remainingCalls} remaining · ${reservedCalls} reserved`} />
+        <Fact label={t("Phase calls")} value={session.phase_tool_calls ?? "Not recorded"} />
+        <Fact label={t("Cache reuse")} value={session.cache_hits ?? 0} />
+        <Fact label={t("Duplicates blocked")} value={session.duplicate_tool_calls ?? 0} />
         <Fact
-          label="Provider"
+          label={t("Provider")}
           value={session.model_selection?.provider_display_name ?? "Not recorded"}
         />
         <Fact
-          label="Agent model"
+          label={t("Agent model")}
           value={session.model_selection?.model_display_name ?? "Offline deterministic"}
         />
         <Fact
-          label="Model choice"
+          label={t("Model choice")}
           value={
             session.model_selection
               ? `${session.model_selection.binding_source.replaceAll("_", " ")}${session.model_selection.locked ? " · locked" : ""}`
@@ -10287,29 +10156,29 @@ function AgentSessionTrace({
           }
         />
         <Fact
-          label="Validation issues"
+          label={t("Validation issues")}
           value={validation?.issues.length ?? "Not recorded"}
         />
         <Fact
-          label="Dry Run"
+          label={t("Dry Run")}
           value={dryRun ? `${dryRun.summary.image_count} image · ${dryRun.summary.failed_count} failed` : "Not run"}
         />
-        <Fact label="Stop reason" value={session.stop_reason ?? "Running"} />
+        <Fact label={t("Stop reason")} value={session.stop_reason ?? "Running"} />
         <Fact
-          label="Human action"
+          label={t("Human action")}
           value={session.pending_human_action ?? "None"}
         />
-        {session.builder_constraints && <Fact label="Priority" value={session.builder_constraints.priority.replaceAll("_", " ")} />}
-        {session.build_mode && <Fact label="Build mode" value={session.build_mode.kind.replaceAll("_", " ")} />}
+        {session.builder_constraints && <Fact label={t("Priority")} value={session.builder_constraints.priority.replaceAll("_", " ")} />}
+        {session.build_mode && <Fact label={t("Build mode")} value={session.build_mode.kind.replaceAll("_", " ")} />}
       </div>
       {!!session.plan_candidates?.length && (
-        <section className="agent-plan-candidates" aria-label="Pipeline plan candidates">
+        <section className="agent-plan-candidates" aria-label={t("Pipeline plan candidates")}>
           <div className="section-heading compact">
             <div>
-              <span className="eyebrow">Preserved plans</span>
-              <h4>{session.plan_candidates.length} candidate{session.plan_candidates.length === 1 ? "" : "s"}</h4>
+              <span className="eyebrow">{t("Preserved plans")}</span>
+              <h4>{session.plan_candidates.length} candidate{session.plan_candidates.length === 1 ? "" : t("s")}</h4>
             </div>
-            <span>{session.discovered_conversion_paths?.length ?? 0} typed path{session.discovered_conversion_paths?.length === 1 ? "" : "s"}</span>
+            <span>{session.discovered_conversion_paths?.length ?? 0} typed path{session.discovered_conversion_paths?.length === 1 ? "" : t("s")}</span>
           </div>
           <div className="agent-candidate-grid">
             {session.plan_candidates.map((candidate) => {
@@ -10319,11 +10188,11 @@ function AgentSessionTrace({
                   <div className="context-line">
                     <strong>{candidate.name}</strong>
                     <Status status={candidate.status === "materialized" ? "succeeded" : candidate.status} />
-                    {selected && <span className="candidate-selected">Selected</span>}
+                    {selected && <span className="candidate-selected">{t("Selected")}</span>}
                   </div>
-                  <p>{candidate.source.replaceAll("_", " ")} · {candidate.geometry_safety.replaceAll("_", " ")} · {candidate.model_bindings.length} model call{candidate.model_bindings.length === 1 ? "" : "s"}</p>
+                  <p>{candidate.source.replaceAll("_", " ")} · {candidate.geometry_safety.replaceAll("_", " ")} · {candidate.model_bindings.length} model call{candidate.model_bindings.length === 1 ? "" : t("s")}</p>
                   {!!candidate.node_blueprints.length && (
-                    <div className="candidate-node-chain" aria-label="Candidate node chain">
+                    <div className="candidate-node-chain" aria-label={t("Candidate node chain")}>
                       {candidate.node_blueprints.map((node, index) => (
                         <span key={`${candidate.id}-${node.id}`}>
                           {index > 0 && <b aria-hidden="true">→</b>}
@@ -10333,19 +10202,19 @@ function AgentSessionTrace({
                     </div>
                   )}
                   <div className="candidate-contracts">
-                    <span>{candidate.has_commit_path ? "Commit path" : "No Commit path"}</span>
-                    <span>{candidate.has_review_path ? "Review path" : "No Review path"}</span>
+                    <span>{candidate.has_commit_path ? t("Commit path") : t("No Commit path")}</span>
+                    <span>{candidate.has_review_path ? t("Review path") : t("No Review path")}</span>
                     <span>{candidate.sufficiency}</span>
                   </div>
                   {!!candidate.unresolved_bindings.length && (
-                    <small>{candidate.unresolved_bindings.length} unresolved binding{candidate.unresolved_bindings.length === 1 ? "" : "s"}</small>
+                    <small>{candidate.unresolved_bindings.length} unresolved binding{candidate.unresolved_bindings.length === 1 ? "" : t("s")}</small>
                   )}
                   {!!candidate.model_bindings.length && (
                     <ul className="candidate-model-list">
                       {candidate.model_bindings.map((binding) => (
                         <li key={`${candidate.id}-${binding.node_id}-${binding.capability}`}>
                           <span>{binding.capability.replaceAll("_", " ")}</span>
-                          <code>{binding.model_profile_id?.slice(0, 8) ?? "Unresolved"}</code>
+                          <code>{binding.model_profile_id?.slice(0, 8) ?? t("Unresolved")}</code>
                           <small>{binding.availability.replaceAll("_", " ")}</small>
                         </li>
                       ))}
@@ -10372,22 +10241,22 @@ function AgentSessionTrace({
         </section>
       )}
       {session.status !== "running" && (
-        <section className={`agent-outcome-card ${needsSetup ? "setup" : ""}`} aria-label="Pipeline Builder outcome">
+        <section className={`agent-outcome-card ${needsSetup ? "setup" : ""}`} aria-label={t("Pipeline Builder outcome")}>
           <div>
-            <span className="eyebrow">Outcome</span>
+            <span className="eyebrow">{t("Outcome")}</span>
             <h4>{agentOutcomeLabel(session)}</h4>
             <p>{session.next_action ?? readableErrorMessage(session.stop_reason ?? "Open the saved session for details.")}</p>
           </div>
           <div className="agent-outcome-facts">
-            {session.draft_id && <span><small>Draft</small><strong>{session.draft_id.slice(0, 8)}</strong></span>}
-            <span><small>Stop reason</small><strong>{session.builder_stop_reason?.replaceAll("_", " ") ?? session.stop_reason ?? "Completed"}</strong></span>
-            {!!session.unresolved_bindings?.length && <span><small>Unresolved</small><strong>{session.unresolved_bindings.length} model binding{session.unresolved_bindings.length === 1 ? "" : "s"}</strong></span>}
+            {session.draft_id && <span><small>{t("Draft")}</small><strong>{session.draft_id.slice(0, 8)}</strong></span>}
+            <span><small>{t("Stop reason")}</small><strong>{session.builder_stop_reason?.replaceAll("_", " ") ?? session.stop_reason ?? t("Completed")}</strong></span>
+            {!!session.unresolved_bindings?.length && <span><small>{t("Unresolved")}</small><strong>{session.unresolved_bindings.length} model binding{session.unresolved_bindings.length === 1 ? "" : t("s")}</strong></span>}
           </div>
           <div className="button-row">
-            {session.draft_id && onOpenDraft && <button className="primary" onClick={() => onOpenDraft(session.draft_id!)}>{session.outcome === "draft_ready_for_human_review" ? "Review Draft" : needsSetup ? "Open blocked Draft" : "Open Draft"}</button>}
-            {needsSetup && onConfigureProvider && <button onClick={onConfigureProvider}>Configure Provider</button>}
-            {needsSetup && onConfigureModel && <button onClick={onConfigureModel}>Configure Model</button>}
-            {retryable && onRetry && <button onClick={onRetry}>Retry from current Draft</button>}
+            {session.draft_id && onOpenDraft && <button className="primary" onClick={() => onOpenDraft(session.draft_id!)}>{session.outcome === "draft_ready_for_human_review" ? t("Review Draft") : needsSetup ? t("Open blocked Draft") : t("Open Draft")}</button>}
+            {needsSetup && onConfigureProvider && <button onClick={onConfigureProvider}>{t("Configure Provider")}</button>}
+            {needsSetup && onConfigureModel && <button onClick={onConfigureModel}>{t("Configure Model")}</button>}
+            {retryable && onRetry && <button onClick={onRetry}>{t("Retry from current Draft")}</button>}
           </div>
         </section>
       )}
@@ -10397,9 +10266,9 @@ function AgentSessionTrace({
         {session.steps.map((step) => (
           <li key={step.call_id}>
             <strong>{step.sequence}. {step.tool_name.replaceAll("_", " ")}</strong>
-            <small>{step.success ? "Completed" : "Failed"}</small>
+            <small>{step.success ? t("Completed") : t("Failed")}</small>
             <details>
-              <summary>Observable inputs and result</summary>
+              <summary>{t("Observable inputs and result")}</summary>
               <pre>{JSON.stringify({ arguments: step.arguments, result: step.result }, null, 2)}</pre>
             </details>
           </li>
@@ -10416,7 +10285,7 @@ function AgentSessionTrace({
                   {call.sequence}. {call.provider_name} · {call.remote_model_id}
                 </strong>
                 <small>
-                  {call.succeeded ? "Succeeded" : "Failed"} · {call.duration_ms} ms
+                  {call.succeeded ? t("Succeeded") : t("Failed")} · {call.duration_ms} ms
                   · {call.input_tokens + call.output_tokens} tokens · {call.currency}{" "}
                   {call.cost} · {call.retry_count} retries
                 </small>
@@ -10452,7 +10321,7 @@ function ProjectAgentActivity({
   if (!sessions.length && !memory.length) return null;
   return (
     <div className="split-grid agent-activity">
-      <Panel title="Agent activity" eyebrow="Advisor and recovery sessions">
+      <Panel title={t("Agent activity")} eyebrow={t("Advisor and recovery sessions")}>
         {sessions.length ? (
           sessions.slice(0, 5).map((session) => (
             <AgentSessionTrace
@@ -10467,10 +10336,10 @@ function ProjectAgentActivity({
             />
           ))
         ) : (
-          <Empty title="No Agent sessions" detail="Deterministic Workflow execution remains the fast path." />
+          <Empty title={t("No Agent sessions")} detail="Deterministic Workflow execution remains the fast path." />
         )}
       </Panel>
-      <Panel title="Correction Memory" eyebrow="Project-scoped structured evidence">
+      <Panel title={t("Correction Memory")} eyebrow={t("Project-scoped structured evidence")}>
         {memory.length ? (
           <div className="catalog-list">
             {memory.map((record) => (
@@ -10478,14 +10347,14 @@ function ProjectAgentActivity({
                 <span className="catalog-monogram">M</span>
                 <span>
                   <strong>{record.reason_code.replaceAll("_", " ")}</strong>
-                  <small>{record.skill_id} · {record.task_id} · {record.predicted_label ?? "any Label"}</small>
+                  <small>{record.skill_id} · {record.task_id} · {record.predicted_label ?? t("any Label")}</small>
                   <small>This evidence can raise recovery risk for the same Project, Skill, task and Label.</small>
                 </span>
               </article>
             ))}
           </div>
         ) : (
-          <Empty title="No correction evidence" detail="Human corrections will appear here after Review." />
+          <Empty title={t("No correction evidence")} detail={t("Human corrections will appear here after Review.")} />
         )}
       </Panel>
     </div>
@@ -10517,17 +10386,17 @@ function SkillsPage({ onError }: { onError: (value: string) => void }) {
         if (!items.length) return null;
         return (
           <section className="skill-group" key={group.kind}>
-            <div><span className="eyebrow">{group.detail}</span><h2>{group.title}</h2></div>
+            <div><span className="eyebrow">{group.detail}</span><h2>{t(group.title)}</h2></div>
             {items.map((skill) => (
               <Panel key={skill.id} title={`${skill.display_name} · v${skill.version}`} eyebrow={`${skill.kind} · ${skill.id}`}>
                 <p className="lede">{skill.description}</p>
                 <div className="skill-columns">
                   <TagGroup title="Provided Nodes" values={skill.nodes} />
                   <TagGroup title="Registered tools" values={skill.tools} />
-                  <TagGroup title="Capabilities" values={skill.capabilities} />
+                  <TagGroup title={t("Capabilities")} values={skill.capabilities} />
                   <TagGroup title="Capability requirements" values={skill.capability_requirements} />
-                  <TagGroup title="Validators" values={skill.validators} />
-                  <TagGroup title="Refiners" values={skill.refiners} />
+                  <TagGroup title={t("Validators")} values={skill.validators} />
+                  <TagGroup title={t("Refiners")} values={skill.refiners} />
                   <TagGroup title="Policies" values={skill.policies} />
                   <TagGroup title="Templates" values={skill.workflow_templates.map((template) => template.id)} />
                   <TagGroup title="Correction taxonomy" values={skill.correction_taxonomy} />
@@ -10773,13 +10642,13 @@ function ExpertModelSetupWizard({
     {step === 1 && <div className="wizard-step"><div className="choice-grid expert-methods" role="radiogroup" aria-label="Expert Model integration method">{([
       ["preset", "Use preset", "Start with a known capability contract"],
       ["http", "Generic HTTP Worker", "Connect any Vision Protocol v1 service"],
-    ] as const).map(([value, label, detail]) => <label className={method === value ? "selected" : ""} key={value}><input type="radio" name="expert-method" checked={method === value} onChange={() => { setMethod(value); if (value === "http") choosePreset("custom"); }} /><span><strong>{label}</strong><small>{detail}</small></span></label>)}</div>{method === "preset" && <label>Preset<select value={preset} onChange={(event) => choosePreset(event.target.value)}>{EXPERT_WORKER_PRESETS.map(([value, label, detail]) => <option key={value} value={value}>{label} — {detail}</option>)}</select></label>}</div>}
-    {step === 2 && <div className="wizard-step"><div className="form-grid"><label>Endpoint<input type="url" value={String(worker.base_url ?? "")} onChange={(event) => setField("base_url", event.target.value)} /></label><label>Timeout seconds<input type="number" min="1" value={Number(worker.timeout_seconds ?? 120)} onChange={(event) => setField("timeout_seconds", Number(event.target.value))} /></label><label>Authentication reference<input value={String(worker.authentication_reference ?? "")} onChange={(event) => setField("authentication_reference", event.target.value || null)} placeholder="env:ANNOTAGENT_SAM_TOKEN" /></label><label className="checkbox-line"><input type="checkbox" checked={Boolean(worker.allow_remote)} onChange={(event) => setField("allow_remote", event.target.checked)} /><span>Allow remote HTTPS Worker</span></label></div><div className="wizard-summary"><strong>Trust boundary</strong><span>Loopback is allowed by default. Remote endpoints require HTTPS and explicit permission. Authentication is a reference; no secret is written to Settings.</span></div></div>}
-    {step === 3 && <div className="wizard-step"><div className={`expert-test-banner ${discovery?.passed ? "passed" : "failed"}`} role="status"><strong>{discovery?.passed ? "Discovery passed" : `Discovery stopped at ${discovery?.failed_stage ?? "an unknown stage"}`}</strong><span>{discovery?.error ?? discovery?.evidence?.detail ?? "The Worker returned all required protocol resources."}</span></div><div className="expert-check-grid"><Fact label="Health" value={discovery?.health?.status ?? "Not available"} /><Fact label="Protocol" value={discovery?.evidence?.protocol_compatible ? "Compatible" : "Not verified"} /><Fact label="Models" value={discovery?.models?.models.length ?? 0} /><Fact label="Contracts" value={discovery?.evidence?.contracts_validated ? "Valid" : "Not verified"} /></div>{discovery?.capabilities && <div className="tag-group">{discovery.capabilities.capabilities.map((capability) => <span key={capability}>{capability.replaceAll("_", " ")}</span>)}</div>}<details className="advanced-settings"><summary>Raw discovery response</summary><pre>{JSON.stringify(discovery, null, 2)}</pre></details></div>}
-    {step === 4 && <div className="wizard-step"><div className="form-grid"><label>Display name<input value={String(worker.display_name ?? "")} onChange={(event) => setField("display_name", event.target.value)} /></label><label>Model ID<input value={String(worker.model_id ?? "")} onChange={(event) => setField("model_id", event.target.value)} /></label><label>Architecture<input value={String(worker.version?.architecture ?? "")} onChange={(event) => setVersion("architecture", event.target.value)} /></label><label>Version<input value={String(worker.version?.model_version ?? "")} onChange={(event) => setVersion("model_version", event.target.value)} /></label><label>Checkpoint SHA-256<input value={String(worker.version?.checkpoint_sha256 ?? "")} onChange={(event) => setVersion("checkpoint_sha256", event.target.value.trim())} placeholder="64 hexadecimal characters" /></label><label>Training dataset version<input value={String(worker.version?.training_dataset_version ?? "")} onChange={(event) => setVersion("training_dataset_version", event.target.value)} /></label><label>Label space<input value={Array.isArray(worker.label_space) ? worker.label_space.join(", ") : ""} onChange={(event) => setField("label_space", event.target.value.split(",").map((value) => value.trim()).filter(Boolean))} placeholder="football, robot" /></label><label>Checkpoint license<input value={String(worker.license?.weight_license ?? "")} onChange={(event) => setLicense("weight_license", event.target.value)} /></label></div><div className="expert-test-banner missing"><strong>Missing weights until identity is complete</strong><span>A filename is not a checkpoint identity. SAM and specialist models remain unavailable without a version, SHA-256, and concrete weight license.</span></div></div>}
-    {step === 5 && <div className="wizard-step"><div className="form-grid"><label>Project<select value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="">Choose a Project with images</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label><label>Sample image<select value={imageIndex} onChange={(event) => setImageIndex(Number(event.target.value))}>{images.map((image) => <option key={image.index} value={image.index}>{image.name}</option>)}</select></label><label>Text query<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="football" /></label></div>{projectId && images.length > 0 && <div className="expert-sample-layout"><img src={`/api/projects/${projectId}/images/${imageIndex}/content`} alt="Selected Worker sample input" /><div><button className="primary" disabled={busy === "sample"} onClick={() => void runSample()}>{busy === "sample" ? "Running sample…" : "Run sample test"}</button><small>Prompted segmentation uses a visible centered sample box. Detection Workers use the selected image and query.</small></div></div>}{sample && <div className="expert-sample-result"><div className={`expert-test-banner ${sample.passed ? "passed" : "failed"}`} role="status"><strong>{sample.passed ? "Sample conversion passed" : "Sample conversion failed"}</strong><span>{sample.error ?? sample.evidence.detail}</span></div>{sample.input?.image_url && <img src={sample.input.image_url} alt="Worker sample result source" />}<div className="expert-check-grid"><Fact label="Artifacts" value={Array.isArray(sample.converted_artifacts) ? sample.converted_artifacts.length : 0} /><Fact label="Duration" value={`${sample.duration_ms} ms`} /><Fact label="Score semantics" value={sample.score_semantics?.replaceAll("_", " ") ?? "Unknown"} /><Fact label="Geometry" value={sample.geometry_semantics?.replaceAll("_", " ") ?? "Unknown"} /></div><details className="advanced-settings"><summary>Converted Artifact and coordinates</summary><pre>{JSON.stringify({ raw_output_summary: sample.raw_output_summary, converted_artifacts: sample.converted_artifacts, coordinates: sample.coordinates, warnings: sample.warnings }, null, 2)}</pre></details></div>}</div>}
-    {step === 6 && <div className="wizard-step"><div className={`expert-test-banner ${canRegister ? "passed" : "missing"}`}><strong>{canRegister ? "Ready to register" : "Registration is blocked"}</strong><span>{canRegister ? "Health, protocol, contracts, model identity, weights, and sample conversion all have active evidence." : sample?.evidence.detail ?? "Run a successful selected-image sample after discovery and identity setup."}</span></div><div className="expert-checklist">{[["Health", readyEvidence?.health_passed], ["Protocol", readyEvidence?.protocol_compatible], ["Contracts", readyEvidence?.contracts_validated], ["Weights", readyEvidence?.weights_ready], ["Sample conversion", readyEvidence?.sample_conversion_passed]].map(([label, passed]) => <span key={String(label)} className={passed ? "complete" : "blocked"}><b>{passed ? "✓" : "—"}</b>{label}</span>)}</div></div>}
-    <div className="wizard-actions"><button disabled={Boolean(busy)} onClick={step === 1 ? onClose : () => setStep((value) => value - 1)}>{step === 1 ? "Cancel" : "Back"}</button>{step === 1 ? <button className="primary" onClick={() => setStep(2)}>Continue</button> : step === 2 ? <button className="primary" disabled={busy === "discovery" || !String(worker.base_url ?? "").trim()} onClick={() => void discover()}>{busy === "discovery" ? "Discovering…" : "Save and discover"}</button> : step === 3 ? <button className="primary" onClick={() => setStep(4)}>Configure identity</button> : step === 4 ? <button className="primary" disabled={busy === "identity"} onClick={() => void saveIdentity()}>{busy === "identity" ? "Saving…" : "Save identity and test"}</button> : step === 5 ? <button className="primary" disabled={!sample?.passed} onClick={() => setStep(6)}>Review registration</button> : <button className="primary" disabled={!canRegister || busy === "register"} onClick={() => void register()}>{busy === "register" ? "Registering…" : "Register Expert Model"}</button>}</div>
+    ] as const).map(([value, label, detail]) => <label className={method === value ? "selected" : ""} key={value}><input type="radio" name="expert-method" checked={method === value} onChange={() => { setMethod(value); if (value === "http") choosePreset("custom"); }} /><span><strong>{label}</strong><small>{detail}</small></span></label>)}</div>{method === "preset" && <label>{t("Preset")}<select value={preset} onChange={(event) => choosePreset(event.target.value)}>{EXPERT_WORKER_PRESETS.map(([value, label, detail]) => <option key={value} value={value}>{label} — {detail}</option>)}</select></label>}</div>}
+    {step === 2 && <div className="wizard-step"><div className="form-grid"><label>{t("Endpoint")}<input type="url" value={String(worker.base_url ?? "")} onChange={(event) => setField("base_url", event.target.value)} /></label><label>Timeout seconds<input type="number" min="1" value={Number(worker.timeout_seconds ?? 120)} onChange={(event) => setField("timeout_seconds", Number(event.target.value))} /></label><label>Authentication reference<input value={String(worker.authentication_reference ?? "")} onChange={(event) => setField("authentication_reference", event.target.value || null)} placeholder="env:ANNOTAGENT_SAM_TOKEN" /></label><label className="checkbox-line"><input type="checkbox" checked={Boolean(worker.allow_remote)} onChange={(event) => setField("allow_remote", event.target.checked)} /><span>Allow remote HTTPS Worker</span></label></div><div className="wizard-summary"><strong>Trust boundary</strong><span>Loopback is allowed by default. Remote endpoints require HTTPS and explicit permission. Authentication is a reference; no secret is written to Settings.</span></div></div>}
+    {step === 3 && <div className="wizard-step"><div className={`expert-test-banner ${discovery?.passed ? "passed" : "failed"}`} role="status"><strong>{discovery?.passed ? t("Discovery passed") : `Discovery stopped at ${discovery?.failed_stage ?? "an unknown stage"}`}</strong><span>{discovery?.error ?? discovery?.evidence?.detail ?? "The Worker returned all required protocol resources."}</span></div><div className="expert-check-grid"><Fact label={t("Health")} value={discovery?.health?.status ?? "Not available"} /><Fact label={t("Protocol")} value={discovery?.evidence?.protocol_compatible ? "Compatible" : "Not verified"} /><Fact label={t("Models")} value={discovery?.models?.models.length ?? 0} /><Fact label="Contracts" value={discovery?.evidence?.contracts_validated ? "Valid" : "Not verified"} /></div>{discovery?.capabilities && <div className="tag-group">{discovery.capabilities.capabilities.map((capability) => <span key={capability}>{t(capability.replaceAll("_", " "))}</span>)}</div>}<details className="advanced-settings"><summary>Raw discovery response</summary><pre>{JSON.stringify(discovery, null, 2)}</pre></details></div>}
+    {step === 4 && <div className="wizard-step"><div className="form-grid"><label>{t("Display name")}<input value={String(worker.display_name ?? "")} onChange={(event) => setField("display_name", event.target.value)} /></label><label>Model ID<input value={String(worker.model_id ?? "")} onChange={(event) => setField("model_id", event.target.value)} /></label><label>Architecture<input value={String(worker.version?.architecture ?? "")} onChange={(event) => setVersion("architecture", event.target.value)} /></label><label>{t("Version")}<input value={String(worker.version?.model_version ?? "")} onChange={(event) => setVersion("model_version", event.target.value)} /></label><label>Checkpoint SHA-256<input value={String(worker.version?.checkpoint_sha256 ?? "")} onChange={(event) => setVersion("checkpoint_sha256", event.target.value.trim())} placeholder="64 hexadecimal characters" /></label><label>Training dataset version<input value={String(worker.version?.training_dataset_version ?? "")} onChange={(event) => setVersion("training_dataset_version", event.target.value)} /></label><label>Label space<input value={Array.isArray(worker.label_space) ? worker.label_space.join(", ") : ""} onChange={(event) => setField("label_space", event.target.value.split(",").map((value) => value.trim()).filter(Boolean))} placeholder="football, robot" /></label><label>Checkpoint license<input value={String(worker.license?.weight_license ?? "")} onChange={(event) => setLicense("weight_license", event.target.value)} /></label></div><div className="expert-test-banner missing"><strong>Missing weights until identity is complete</strong><span>A filename is not a checkpoint identity. SAM and specialist models remain unavailable without a version, SHA-256, and concrete weight license.</span></div></div>}
+    {step === 5 && <div className="wizard-step"><div className="form-grid"><label>{t("Project")}<select value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="">Choose a Project with images</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label><label>Sample image<select value={imageIndex} onChange={(event) => setImageIndex(Number(event.target.value))}>{images.map((image) => <option key={image.index} value={image.index}>{image.name}</option>)}</select></label><label>Text query<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="football" /></label></div>{projectId && images.length > 0 && <div className="expert-sample-layout"><img src={`/api/projects/${projectId}/images/${imageIndex}/content`} alt="Selected Worker sample input" /><div><button className="primary" disabled={busy === "sample"} onClick={() => void runSample()}>{busy === "sample" ? t("Running sample…") : t("Run sample test")}</button><small>Prompted segmentation uses a visible centered sample box. Detection Workers use the selected image and query.</small></div></div>}{sample && <div className="expert-sample-result"><div className={`expert-test-banner ${sample.passed ? "passed" : "failed"}`} role="status"><strong>{sample.passed ? t("Sample conversion passed") : t("Sample conversion failed")}</strong><span>{sample.error ?? sample.evidence.detail}</span></div>{sample.input?.image_url && <img src={sample.input.image_url} alt="Worker sample result source" />}<div className="expert-check-grid"><Fact label={t("Artifacts")} value={Array.isArray(sample.converted_artifacts) ? sample.converted_artifacts.length : 0} /><Fact label={t("Duration")} value={`${sample.duration_ms} ms`} /><Fact label="Score semantics" value={sample.score_semantics?.replaceAll("_", " ") ?? "Unknown"} /><Fact label={t("Geometry")} value={sample.geometry_semantics?.replaceAll("_", " ") ?? "Unknown"} /></div><details className="advanced-settings"><summary>Converted Artifact and coordinates</summary><pre>{JSON.stringify({ raw_output_summary: sample.raw_output_summary, converted_artifacts: sample.converted_artifacts, coordinates: sample.coordinates, warnings: sample.warnings }, null, 2)}</pre></details></div>}</div>}
+    {step === 6 && <div className="wizard-step"><div className={`expert-test-banner ${canRegister ? "passed" : "missing"}`}><strong>{canRegister ? t("Ready to register") : t("Registration is blocked")}</strong><span>{canRegister ? "Health, protocol, contracts, model identity, weights, and sample conversion all have active evidence." : sample?.evidence.detail ?? "Run a successful selected-image sample after discovery and identity setup."}</span></div><div className="expert-checklist">{[["Health", readyEvidence?.health_passed], ["Protocol", readyEvidence?.protocol_compatible], ["Contracts", readyEvidence?.contracts_validated], ["Weights", readyEvidence?.weights_ready], ["Sample conversion", readyEvidence?.sample_conversion_passed]].map(([label, passed]) => <span key={String(label)} className={passed ? "complete" : "blocked"}><b>{passed ? "✓" : "—"}</b>{label}</span>)}</div></div>}
+    <div className="wizard-actions"><button disabled={Boolean(busy)} onClick={step === 1 ? onClose : () => setStep((value) => value - 1)}>{step === 1 ? t("Cancel") : t("Back")}</button>{step === 1 ? <button className="primary" onClick={() => setStep(2)}>{t("Continue")}</button> : step === 2 ? <button className="primary" disabled={busy === "discovery" || !String(worker.base_url ?? "").trim()} onClick={() => void discover()}>{busy === "discovery" ? t("Discovering…") : t("Save and discover")}</button> : step === 3 ? <button className="primary" onClick={() => setStep(4)}>Configure identity</button> : step === 4 ? <button className="primary" disabled={busy === "identity"} onClick={() => void saveIdentity()}>{busy === "identity" ? t("Saving…") : t("Save identity and test")}</button> : step === 5 ? <button className="primary" disabled={!sample?.passed} onClick={() => setStep(6)}>Review registration</button> : <button className="primary" disabled={!canRegister || busy === "register"} onClick={() => void register()}>{busy === "register" ? t("Registering…") : t("Register Expert Model")}</button>}</div>
   </div></div>;
 }
 
@@ -10877,18 +10746,18 @@ function SettingsPage({ view, onError }: { view: "workers" | "storage"; onError:
             <div className="worker-setting-heading">
               <span><strong>{String(worker.display_name)}</strong><small>{String(worker.model_id)}</small></span>
               <div className="worker-setting-actions">
-                <label className="checkbox-line" title={!registrationReady && !worker.enabled ? "Complete discovery, model identity, and a selected-image sample before enabling this Worker." : undefined}><input type="checkbox" checked={Boolean(worker.enabled)} disabled={!registrationReady && !worker.enabled} onChange={(event) => setDetectionWorker(index, "enabled", event.target.checked)} /><span>Enabled</span></label>
-                <button className="text-button" onClick={() => removeDetectionWorker(index)}>Remove</button>
+                <label className="checkbox-line" title={!registrationReady && !worker.enabled ? "Complete discovery, model identity, and a selected-image sample before enabling this Worker." : undefined}><input type="checkbox" checked={Boolean(worker.enabled)} disabled={!registrationReady && !worker.enabled} onChange={(event) => setDetectionWorker(index, "enabled", event.target.checked)} /><span>{t("Enabled")}</span></label>
+                <button className="text-button" onClick={() => removeDetectionWorker(index)}>{t("Remove")}</button>
               </div>
             </div>
             <div className="form-grid">
-              <label>Display name<input value={String(worker.display_name ?? "")} onChange={(event) => setDetectionWorker(index, "display_name", event.target.value)} /></label>
+              <label>{t("Display name")}<input value={String(worker.display_name ?? "")} onChange={(event) => setDetectionWorker(index, "display_name", event.target.value)} /></label>
               <label>Registry ID<input value={String(worker.id ?? "")} onChange={(event) => setDetectionWorker(index, "id", event.target.value)} /></label>
               <label>Model ID<input value={String(worker.model_id ?? "")} onChange={(event) => setDetectionWorker(index, "model_id", event.target.value)} /></label>
               <label>Worker URL<input type="url" value={String(worker.base_url ?? "")} onChange={(event) => setDetectionWorker(index, "base_url", event.target.value)} /></label>
               <label>Authentication reference<input value={String(worker.authentication_reference ?? "")} onChange={(event) => setDetectionWorker(index, "authentication_reference", event.target.value || null)} placeholder="env:ANNOTAGENT_WORKER_TOKEN" /></label>
-              <label>Capability<select value={String(worker.expected_capabilities?.[0] ?? "object_detection")} onChange={(event) => setDetectionWorker(index, "expected_capabilities", [event.target.value])}><option value="object_detection">Object detection</option><option value="open_vocabulary_detection">Open-vocabulary detection</option><option value="phrase_grounding">Phrase grounding</option><option value="prompted_segmentation">Prompted segmentation</option><option value="semantic_segmentation">Semantic segmentation</option></select></label>
-              <label>Score semantics<select value={String(worker.score_semantics ?? "unknown")} onChange={(event) => setDetectionWorker(index, "score_semantics", event.target.value)}><option value="calibrated_probability">Calibrated probability</option><option value="relative_confidence">Relative confidence</option><option value="ranking_score">Ranking score</option><option value="not_provided">Not provided</option><option value="unknown">Unknown</option></select></label>
+              <label>{t("Capability")}<select value={String(worker.expected_capabilities?.[0] ?? "object_detection")} onChange={(event) => setDetectionWorker(index, "expected_capabilities", [event.target.value])}><option value="object_detection">{t("Object detection")}</option><option value="open_vocabulary_detection">{t("Open-vocabulary detection")}</option><option value="phrase_grounding">{t("Phrase grounding")}</option><option value="prompted_segmentation">{t("Prompted segmentation")}</option><option value="semantic_segmentation">{t("Semantic segmentation")}</option></select></label>
+              <label>Score semantics<select value={String(worker.score_semantics ?? "unknown")} onChange={(event) => setDetectionWorker(index, "score_semantics", event.target.value)}><option value="calibrated_probability">Calibrated probability</option><option value="relative_confidence">Relative confidence</option><option value="ranking_score">Ranking score</option><option value="not_provided">{t("Not provided")}</option><option value="unknown">{t("Unknown")}</option></select></label>
               <label>Estimated cost / request<input inputMode="decimal" value={String(worker.cost_per_request ?? "0")} onChange={(event) => setDetectionWorker(index, "cost_per_request", event.target.value)} /></label>
               <label>Timeout seconds<input type="number" min="1" value={Number(worker.timeout_seconds ?? 120)} onChange={(event) => setDetectionWorker(index, "timeout_seconds", Number(event.target.value))} /></label>
             </div>
@@ -10920,7 +10789,7 @@ function SettingsPage({ view, onError }: { view: "workers" | "storage"; onError:
       {view === "storage" && <Panel title="Pricing & hard budgets" eyebrow="Exact decimal accounting">
         <div className="json-settings">
           <div>
-            <h3>Pricing</h3>
+            <h3>{t("Pricing")}</h3>
             {Object.entries(pricing).map(([name, value]) => (
               <label key={name}>
                 {name}
@@ -10964,7 +10833,7 @@ function SettingsPage({ view, onError }: { view: "workers" | "storage"; onError:
       <div className="settings-save" aria-live="polite">
         <span>
           {dirty
-            ? "Unsaved workspace settings"
+            ? t("Unsaved workspace settings")
             : message ||
             (settings.settings_persisted
               ? `Saved at ${settings.settings_path}`
@@ -10972,7 +10841,7 @@ function SettingsPage({ view, onError }: { view: "workers" | "storage"; onError:
         </span>
         {dirty && (
           <button className="primary" onClick={save} disabled={saving}>
-            {saving ? "Saving…" : "Save settings"}
+            {saving ? t("Saving…") : t("Save settings")}
           </button>
         )}
       </div>
@@ -11171,14 +11040,14 @@ function CreateProject({
     step === 1 && (!projectName.trim() || !labelName.trim());
   return (
     <div className="modal-backdrop">
-      <div className="modal guided-project-wizard" role="dialog" aria-modal="true" aria-label="Create Project">
+      <div className="modal guided-project-wizard" role="dialog" aria-modal="true" aria-label={t("Create Project")}>
         <header>
           <span className="eyebrow">New Project · Step {step} of 4</span>
           <h2 id="create-project-title">{
-            step === 1 ? "What do you want to annotate?" :
-            step === 2 ? "Add data" :
-            step === 3 ? "Choose a priority" :
-            "Recommended automation"
+            step === 1 ? t("What do you want to annotate?") :
+            step === 2 ? t("Add data") :
+            step === 3 ? t("Choose a priority") :
+            t("Recommended automation")
           }</h2>
           <div className="wizard-progress" aria-label={`Step ${step} of 4`}>
             {[1, 2, 3, 4].map((item) => <i key={item} className={item <= step ? "complete" : ""} />)}
@@ -11186,7 +11055,7 @@ function CreateProject({
         </header>
 
         {step === 1 && <div className="wizard-step">
-          <div className="choice-grid" role="radiogroup" aria-label="Annotation intent">
+          <div className="choice-grid" role="radiogroup" aria-label={t("Annotation intent")}>
             {([
               ["classification", "Classify images", "Assign one or more labels to each image"],
               ["detection", "Find objects", "Locate each object with a bounding box"],
@@ -11198,25 +11067,25 @@ function CreateProject({
             </label>)}
           </div>
           <div className="form-grid">
-            <label>Project name<input autoFocus value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="Football annotations" /></label>
-            <label>{intent === "classification" ? "Class name" : intent === "segmentation" ? "Region name" : "Object name"}<input value={labelName} onChange={(event) => setLabelName(event.target.value)} placeholder="Football" /></label>
-            {intent === "custom" && <label>Output<select value={customKind} onChange={(event) => setCustomKind(event.target.value)}><option value="classification">Classification</option><option value="bounding_box">Bounding boxes</option><option value="semantic_mask">Semantic masks</option><option value="polygon">Polygons</option><option value="keypoints">Keypoints</option></select></label>}
-            {intent !== "custom" && <div className="wizard-fact"><span>Output</span><strong>{kind.replaceAll("_", " ")}</strong></div>}
+            <label>{t("Project name")}<input autoFocus value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="Football annotations" /></label>
+            <label>{intent === "classification" ? t("Class name") : intent === "segmentation" ? t("Region name") : t("Object name")}<input value={labelName} onChange={(event) => setLabelName(event.target.value)} placeholder="Football" /></label>
+            {intent === "custom" && <label>{t("Output")}<select value={customKind} onChange={(event) => setCustomKind(event.target.value)}><option value="classification">{t("Classification")}</option><option value="bounding_box">{t("Bounding boxes")}</option><option value="semantic_mask">{t("Semantic masks")}</option><option value="polygon">{t("Polygons")}</option><option value="keypoints">{t("Keypoints")}</option></select></label>}
+            {intent !== "custom" && <div className="wizard-fact"><span>{t("Output")}</span><strong>{kind.replaceAll("_", " ")}</strong></div>}
           </div>
-          <details className="advanced-settings"><summary>Advanced IDs</summary><div className="form-grid">
-            <label>Workspace ID<input value={resolvedWorkspaceId} onChange={(event) => setWorkspaceId(event.target.value)} /></label>
-            <label>Task ID<input value={resolvedTaskId} onChange={(event) => setTaskId(event.target.value)} /></label>
-            <label>Label ID<input value={resolvedLabelId} onChange={(event) => setLabelId(event.target.value)} /></label>
+          <details className="advanced-settings"><summary>{t("Advanced IDs")}</summary><div className="form-grid">
+            <label>{t("Workspace ID")}<input value={resolvedWorkspaceId} onChange={(event) => setWorkspaceId(event.target.value)} /></label>
+            <label>{t("Task ID")}<input value={resolvedTaskId} onChange={(event) => setTaskId(event.target.value)} /></label>
+            <label>{t("Label ID")}<input value={resolvedLabelId} onChange={(event) => setLabelId(event.target.value)} /></label>
           </div><small>AnnotAgent generates stable IDs. Change them only for an existing integration.</small></details>
         </div>}
 
         {step === 2 && <div className="wizard-step">
           <label>Advanced server-local image path<input autoFocus value={dataSource} onChange={(event) => setDataSource(event.target.value)} placeholder="/workspace/dataset/images" /></label>
-          <div className="wizard-summary"><strong>{dataSource.trim() ? "Ready to ask the local server to scan this path" : "You can add data later"}</strong><span>This is not a browser file picker · PNG and JPEG · recursive discovery · content duplicates skipped</span><small>The path must be readable by the local AnnotAgent process. Decode errors and actual imported/duplicate counts are reported by the real import operation.</small></div>
+          <div className="wizard-summary"><strong>{dataSource.trim() ? t("Ready to ask the local server to scan this path") : t("You can add data later")}</strong><span>This is not a browser file picker · PNG and JPEG · recursive discovery · content duplicates skipped</span><small>The path must be readable by the local AnnotAgent process. Decode errors and actual imported/duplicate counts are reported by the real import operation.</small></div>
         </div>}
 
         {step === 3 && <div className="wizard-step">
-          <div className="choice-grid priority-grid" role="radiogroup" aria-label="Automation priority">
+          <div className="choice-grid priority-grid" role="radiogroup" aria-label={t("Automation priority")}>
             {([
               ["faster", "Faster", "Lower latency while keeping the same Review safeguards"],
               ["balanced", "Balanced", "Recommended trade-off for a first Project"],
@@ -11226,18 +11095,18 @@ function CreateProject({
               <span><strong>{title}</strong><small>{detail}</small></span>
             </label>)}
           </div>
-          <details className="advanced-settings"><summary>Cost, review, and local constraints</summary><div className="form-grid">
-            <label>Maximum expected cost<input value={maximumCost} onChange={(event) => setMaximumCost(event.target.value)} placeholder="Optional" /></label>
-            <label>Target human review rate (%)<input type="number" min="0" max="100" value={targetReviewRate} onChange={(event) => setTargetReviewRate(event.target.value)} /></label>
-            <div className="wizard-fact"><span>Ready detection models</span><strong>{modelRegistry.filter((model) => model.enabled && model.availability_group === "ready" && model.role === "detection").length || "None ready"}</strong></div>
-            <label className="check-row"><input type="checkbox" checked={offlineOnly} onChange={(event) => setOfflineOnly(event.target.checked)} /> Offline only</label>
+          <details className="advanced-settings"><summary>{t("Cost, review, and local constraints")}</summary><div className="form-grid">
+            <label>{t("Maximum expected cost")}<input value={maximumCost} onChange={(event) => setMaximumCost(event.target.value)} placeholder={t("Optional")} /></label>
+            <label>{t("Target human review rate (%)")}<input type="number" min="0" max="100" value={targetReviewRate} onChange={(event) => setTargetReviewRate(event.target.value)} /></label>
+            <div className="wizard-fact"><span>{t("Ready detection models")}</span><strong>{modelRegistry.filter((model) => model.enabled && model.availability_group === "ready" && model.role === "detection").length || t("None ready")}</strong></div>
+            <label className="check-row"><input type="checkbox" checked={offlineOnly} onChange={(event) => setOfflineOnly(event.target.checked)} />{" "}{t("Offline only")}</label>
           </div></details>
         </div>}
 
         {step === 4 && <div className="wizard-step">
           <div className="recommendation-card">
-            <span className="status status-auto-accepted">Recommended</span>
-            <h3>{kind === "classification" ? `Classify each image as ${labelName}` : kind === "semantic_mask" ? `Segment ${labelName} regions` : specialistModel ? "Use your trained detector first" : openVocabularyModel ? "Find candidate objects by description" : "Configure a compatible detector in Automation"}</h3>
+            <span className="status status-auto-accepted">{t("Recommended")}</span>
+            <h3>{kind === "classification" ? `Classify each image as ${labelName}` : kind === "semantic_mask" ? `Segment ${labelName} regions` : specialistModel ? t("Use your trained detector first") : openVocabularyModel ? t("Find candidate objects by description") : t("Configure a compatible detector in Automation")}</h3>
             <ol>
               {kind === "bounding_box" && specialistModel ? <>
                 <li>Use <strong>{specialistModel.model}</strong> for repeated {labelName} labeling.</li>
@@ -11253,22 +11122,22 @@ function CreateProject({
               {kind !== "bounding_box" && <li>Apply the Draft's validated confidence and Review policy.</li>}
               <li>Sample Test the exact Draft before activation.</li>
             </ol>
-            <div className="recommendation-estimate"><span><b>{priority === "faster" ? "Low" : priority === "accuracy" ? "Higher" : "Medium"}</b> latency</span><span><b>{specialistModel || openVocabularyModel || kind !== "bounding_box" ? "Low" : "Model required"}</b> setup effort</span><span><b>{boundingBoxRequiresReview ? "100" : targetReviewRate || "10"}%</b> initial target review</span></div>
+            <div className="recommendation-estimate"><span><b>{priority === "faster" ? t("Low") : priority === "accuracy" ? t("Higher") : t("Medium")}</b> latency</span><span><b>{specialistModel || openVocabularyModel || kind !== "bounding_box" ? t("Low") : t("Model required")}</b> setup effort</span><span><b>{boundingBoxRequiresReview ? "100" : targetReviewRate || "10"}%</b> initial target review</span></div>
           </div>
           <div className="inline-model-connection">
             <div><span className="eyebrow">Registry-first execution</span><strong>Bind in Automation</strong></div>
             <p>The wizard creates only the Project Schema and an editable Draft. Choose a reusable Model Profile on the Automation page, Dry Run it, then publish an immutable Workflow Version.</p>
             <small>{offlineOnly ? "Offline only is recorded as a design constraint; connect a local Vision Worker before building the Pipeline." : "Provider credentials are configured once under Settings → Providers and are never copied into the Project."}</small>
           </div>
-          <details className="advanced-settings"><summary>Generated Project definition</summary><pre>{guidedProjectYaml({ name: projectName.trim(), taskDisplayName: labelName.trim(), taskId: resolvedTaskId, labelId: resolvedLabelId, kind, priority })}</pre></details>
+          <details className="advanced-settings"><summary>{t("Generated Project definition")}</summary><pre>{guidedProjectYaml({ name: projectName.trim(), taskDisplayName: labelName.trim(), taskId: resolvedTaskId, labelId: resolvedLabelId, kind, priority })}</pre></details>
         </div>}
 
         {progress && <div className="wizard-running" role="status">{progress}</div>}
         <div className="wizard-actions">
-          <button onClick={step === 1 ? onClose : () => setStep((value) => value - 1)} disabled={busy}>{step === 1 ? "Cancel" : "Back"}</button>
-          {step < 4 ? <button className="primary" disabled={nextDisabled} onClick={() => setStep((value) => value + 1)}>Continue</button> : <>
-            <button disabled={busy} onClick={() => void finish(true)}>Customize</button>
-            <button className="primary" disabled={busy || nextDisabled} onClick={() => void finish(false)}>{busy ? "Creating…" : "Use recommendation"}</button>
+          <button onClick={step === 1 ? onClose : () => setStep((value) => value - 1)} disabled={busy}>{step === 1 ? t("Cancel") : t("Back")}</button>
+          {step < 4 ? <button className="primary" disabled={nextDisabled} onClick={() => setStep((value) => value + 1)}>{t("Continue")}</button> : <>
+            <button disabled={busy} onClick={() => void finish(true)}>{t("Customize")}</button>
+            <button className="primary" disabled={busy || nextDisabled} onClick={() => void finish(false)}>{busy ? t("Creating…") : t("Use recommendation")}</button>
           </>}
         </div>
       </div>
@@ -11416,7 +11285,7 @@ function Status({ status }: { status: string }) {
                   };
   return (
     <span className={`status status-${presentation.tone}`}>
-      {presentation.label}
+      {t(presentation.label)}
     </span>
   );
 }
@@ -11437,7 +11306,7 @@ function TagGroup({ title, values }: { title: string; values: string[] }) {
         {values.length ? (
           values.map((value) => <span key={value}>{value}</span>)
         ) : (
-          <small>None</small>
+          <small>{t("None")}</small>
         )}
       </div>
     </div>
