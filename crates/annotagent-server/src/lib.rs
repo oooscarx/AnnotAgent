@@ -771,6 +771,7 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
             "/api/workflow-sample-tests/{test_id}/samples/{image_index}/nodes/{node_id}/model-input",
             get(get_workflow_sample_model_input),
         )
+        .route("/api/workflow-sample-tests/{test_id}/images/{image_id}/feedback", get(get_sample_feedback).post(save_sample_feedback))
         .route(
             "/api/workflow-drafts/{draft_id}/publish",
             post(publish_workflow),
@@ -3820,6 +3821,7 @@ async fn dry_run_workflow(
     let mut body = json!(report);
     if let Some(object) = body.as_object_mut() {
         object.insert("sample_test_id".to_owned(), json!(sample_test.id));
+        object.insert("sample_inputs".to_owned(), json!(sample_test.inputs));
         object.insert(
             "draft_revision".to_owned(),
             json!(sample_test.draft_revision),
@@ -5071,6 +5073,117 @@ async fn import_images(
         .import_images_with_report(&project_id, &request.source)
         .map_err(ApiError::bad_request)?;
     Ok(Json(json!(report)))
+}
+
+#[derive(Deserialize)]
+struct ImageUploadQuery {
+    name: String,
+}
+
+async fn upload_project_image(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+    Query(query): Query<ImageUploadQuery>,
+    body: axum::body::Bytes,
+) -> ApiResult<Json<Value>> {
+    state
+        .application
+        .project_path(&project_id)
+        .map_err(ApiError::not_found)?;
+    let name = std::path::Path::new(&query.name);
+    if query.name.is_empty()
+        || query.name.len() > 240
+        || query.name.contains(['/', '\\'])
+        || name.file_name().and_then(|value| value.to_str()) != Some(query.name.as_str())
+    {
+        return Err(ApiError::bad_request(
+            "Choose a PNG or JPEG file with a plain filename",
+        ));
+    }
+    let extension = name
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if !["png", "jpg", "jpeg"].contains(&extension.as_str()) || body.is_empty() {
+        return Err(ApiError::bad_request(
+            "Only non-empty PNG and JPEG images are supported",
+        ));
+    }
+    // Scoped temporary staging lets the existing decoder/importer enforce formats and deduplicate.
+    let staging = tempfile::Builder::new()
+        .prefix(".image-upload-")
+        .tempdir_in(state.application.workspace())
+        .map_err(ApiError::internal)?;
+    let path = staging.path().join(name);
+    std::fs::write(&path, body).map_err(ApiError::internal)?;
+    let report = state
+        .application
+        .import_images_with_report(&project_id, &path)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!(report)))
+}
+
+async fn get_sample_feedback(
+    State(state): State<ServerState>,
+    AxumPath((test_id, image_id)): AxumPath<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    let test = state
+        .application
+        .store()
+        .get_workflow_sample_test_by_id(&test_id)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::not_found("Sample Test not found"))?;
+    if !test.inputs.iter().any(|input| input.image_id == image_id) {
+        return Err(ApiError::not_found("Image does not belong to Sample Test"));
+    }
+    let revisions = state
+        .application
+        .store()
+        .sample_feedback(&test_id, &image_id)
+        .map_err(ApiError::internal)?;
+    Ok(Json(json!({"revisions": revisions})))
+}
+
+async fn save_sample_feedback(
+    State(state): State<ServerState>,
+    AxumPath((test_id, image_id)): AxumPath<(String, String)>,
+    Json(feedback): Json<annotagent_storage::SampleFeedbackRevision>,
+) -> ApiResult<Json<Value>> {
+    if feedback.sample_test_id != test_id || feedback.image_id != image_id {
+        return Err(ApiError::bad_request(
+            "Feedback identity does not match its URL",
+        ));
+    }
+    let test = state
+        .application
+        .store()
+        .get_workflow_sample_test_by_id(&test_id)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::not_found("Sample Test not found"))?;
+    let input = test
+        .inputs
+        .iter()
+        .find(|input| input.image_id == image_id)
+        .ok_or_else(|| ApiError::not_found("Image does not belong to Sample Test"))?;
+    let stable_id = image_id.parse::<ImageId>().map_err(ApiError::bad_request)?;
+    let path = state
+        .application
+        .project_image_path(&test.project_id, stable_id)
+        .map_err(ApiError::not_found)?;
+    if annotagent_image_tools::sha256(&std::fs::read(path).map_err(ApiError::internal)?)
+        != input.content_hash
+    {
+        return Err(ApiError::bad_request(
+            "Image changed after this Sample Test; test again before editing",
+        ));
+    }
+    state
+        .application
+        .store()
+        .save_sample_feedback(&feedback)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({"revision": feedback})))
 }
 
 async fn list_images(
@@ -12353,6 +12466,29 @@ export:
         generate_synthetic_robocup(&temp.path().join("workflow-ui/images/sample.png"))
             .expect("sample image");
 
+        let upload_bytes =
+            std::fs::read(temp.path().join("workflow-ui/images/sample.png")).unwrap();
+        for (filename, bytes, expected) in [
+            ("duplicate.png", upload_bytes, StatusCode::OK),
+            ("../escape.png", vec![1, 2, 3], StatusCode::BAD_REQUEST),
+            ("not-an-image.txt", vec![1, 2, 3], StatusCode::BAD_REQUEST),
+        ] {
+            let uri = format!("/api/projects/workflow-ui/image-upload?name={filename}");
+            let headers = security_headers(&service, &axum::http::Method::POST, &uri).await;
+            let mut upload = axum::http::Request::builder()
+                .method("POST")
+                .uri(&uri)
+                .header(header::CONTENT_TYPE, "application/octet-stream")
+                .body(Body::from(bytes))
+                .unwrap();
+            upload.headers_mut().extend(headers);
+            let response = service.clone().oneshot(upload).await.unwrap();
+            assert_eq!(response.status(), expected);
+            if expected == StatusCode::OK {
+                assert_eq!(response_json(response).await["duplicates"], 1);
+            }
+        }
+
         let catalog = response_json(
             request(
                 &service,
@@ -12570,6 +12706,50 @@ export:
         let sample_test_id = restored_sample_test["sample_test"]["id"]
             .as_str()
             .expect("Sample Test id");
+        let feedback_url = format!(
+            "/api/workflow-sample-tests/{sample_test_id}/images/{}/feedback",
+            project_image.image_id
+        );
+        let feedback = json!({
+            "revision_id": "first-result-feedback", "sample_test_id": sample_test_id,
+            "image_id": project_image.image_id, "sequence": 1, "reason": "missing_target",
+            "outcome_id": null, "corrected_value": null, "note": "The ball is missing",
+            "created_at": chrono::Utc::now(),
+        });
+        for _ in 0..2 {
+            assert_eq!(
+                request(
+                    &service,
+                    axum::http::Method::POST,
+                    &feedback_url,
+                    Some(feedback.clone())
+                )
+                .await
+                .status(),
+                StatusCode::OK
+            );
+        }
+        let saved_feedback =
+            response_json(request(&service, axum::http::Method::GET, &feedback_url, None).await)
+                .await;
+        assert_eq!(saved_feedback["revisions"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            saved_feedback["revisions"][0]["note"],
+            "The ball is missing"
+        );
+        let mut cross_image = feedback.clone();
+        cross_image["image_id"] = json!(ImageId::new());
+        assert_eq!(
+            request(
+                &service,
+                axum::http::Method::POST,
+                &feedback_url,
+                Some(cross_image)
+            )
+            .await
+            .status(),
+            StatusCode::BAD_REQUEST
+        );
         let model_input_node = restored_sample_test["sample_test"]["report"]["samples"][0]["nodes"]
             .as_array()
             .and_then(|nodes| {

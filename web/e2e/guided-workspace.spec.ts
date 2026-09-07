@@ -6,7 +6,7 @@ import { expect, test } from "./fixtures";
 test.describe.configure({ mode: "serial" });
 
 const stamp = Date.now();
-const projectId = `guided-e2e-${stamp}`;
+let projectId = `guided-e2e-${stamp}`;
 const projectName = `Guided E2E ${stamp}`;
 const emptyProjectId = `guided-empty-${stamp}`;
 const agentDiffProjectId = `guided-agent-diff-${stamp}`;
@@ -183,6 +183,31 @@ export:
   expect(dryRun.ok(), dryRunBody).toBeTruthy();
   const dryRunReport = JSON.parse(dryRunBody);
   expect(dryRunReport.validation.valid, JSON.stringify(dryRunReport.validation.issues)).toBeTruthy();
+  await page.goto(`/projects/${cropProjectId}/build/test?draft=${draft.id}&test=${dryRunReport.sample_test_id}`);
+  await page.locator(".sample-result-card").first().getByRole("button", { name: /Open annotation preview for/ }).click();
+  const sampleEditor = page.getByRole("dialog").filter({ has: page.getByRole("heading", { name: "Your decision on this image" }) });
+  const box = dryRunReport.samples[0].outcomes.find((outcome: any) => outcome.value?.kind === "bounding_box");
+  expect(box).toBeTruthy();
+  await sampleEditor.getByLabel("Result to inspect", { exact: true }).selectOption(box.id);
+  const x = sampleEditor.locator(".sample-feedback-coordinates input").first();
+  const originalX = Number(await x.inputValue());
+  const correctedX = Math.max(0, originalX - 0.001);
+  await x.fill(String(correctedX));
+  await sampleEditor.getByRole("button", { name: "Undo edit", exact: true }).click();
+  expect(Number(await x.inputValue())).toBeCloseTo(originalX);
+  await x.fill(String(correctedX));
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await sampleEditor.getByRole("button", { name: "Close annotation preview" }).click();
+  await expect(sampleEditor).toBeVisible();
+  await sampleEditor.getByRole("button", { name: "Save sample feedback", exact: true }).click();
+  await expect(sampleEditor.getByRole("status")).toContainText("Sample feedback saved");
+  await page.reload();
+  await page.locator(".sample-result-card").first().getByRole("button", { name: /Open annotation preview for/ }).click();
+  await expect(sampleEditor.getByLabel("Result to inspect", { exact: true })).toHaveValue(box.id);
+  expect(Number(await x.inputValue())).toBeCloseTo(correctedX);
+  await expect(sampleEditor.getByLabel("What needs attention?", { exact: true })).toHaveValue("poor_boundary");
+  await page.screenshot({ path: resolve("../docs/execution/first-result/bbox-feedback.png") });
+  await sampleEditor.getByRole("button", { name: "Close annotation preview" }).click();
   const published = await request.post(`/api/workflow-drafts/${draft.id}/publish`);
   const publishedBody = await published.text();
   expect(published.ok(), publishedBody).toBeTruthy();
@@ -215,64 +240,29 @@ test("empty workspace stays generic and contains no RoboCup product content", as
   });
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Home" })).toBeFocused();
-  await expect(page.getByText("No projects yet")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start with images", exact: true })).toBeVisible();
   await expect(page.locator("body")).not.toContainText("RoboCup");
   await page.screenshot({ path: `${screenshots}/01-empty-workspace.png`, fullPage: true });
 });
 
-test("create and open a generic Project", async ({ page, request }, testInfo) => {
+test("create and open a generic Project", async ({ page, request }) => {
   const modelProfileId = await ensurePipelineBuilderFixture(request);
-  const imageSource = String(testInfo.config.metadata.e2eImport);
   await page.goto("/projects?new=1");
   const dialog = page.getByRole("dialog", { name: "Create Project" });
   await expect(dialog).toBeVisible();
-  const classifyIntent = dialog.getByRole("radio", { name: /Classify images/ });
-  await classifyIntent.click();
-  await classifyIntent.focus();
-  const intentPresentation = await classifyIntent.evaluate((element) => {
-    const radioStyle = getComputedStyle(element);
-    const cardStyle = getComputedStyle(element.closest("label")!);
-    return {
-      appearance: radioStyle.appearance,
-      borderRadius: radioStyle.borderRadius,
-      outline: radioStyle.outlineStyle,
-      cardShadow: cardStyle.boxShadow,
-    };
-  });
-  expect(intentPresentation).toEqual({
-    appearance: "none",
-    borderRadius: "50%",
-    outline: "none",
-    cardShadow: "none",
-  });
-  const projectNameInput = dialog.getByLabel("Project name");
-  await projectNameInput.fill(projectName);
-  await projectNameInput.focus();
-  const inputFocus = await projectNameInput.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return { outline: style.outlineStyle, borderWidth: style.borderWidth, shadow: style.boxShadow };
-  });
-  expect(inputFocus.outline).toBe("none");
-  expect(inputFocus.borderWidth).toBe("1px");
-  expect(inputFocus.shadow).not.toBe("none");
-  await dialog.getByLabel("Class name").fill("Day");
-  await dialog.getByRole("button", { name: "Continue" }).click();
-  await dialog.getByLabel("Advanced server-local image path").fill(imageSource);
-  await dialog.getByRole("button", { name: "Continue" }).click();
-  await dialog.getByText("Balanced", { exact: true }).click();
-  await dialog.getByRole("button", { name: "Continue" }).click();
-  await expect(dialog.getByText("Registry-first execution")).toBeVisible();
-  await expect(dialog.getByText("Bind in Automation")).toBeVisible();
+  await dialog.getByLabel("Choose images", { exact: true }).setInputFiles(resolve("../examples/robocup/images/synthetic-robocup.png"));
+  await dialog.getByLabel("Project name", { exact: true }).fill(projectName);
+  await dialog.getByLabel("Object name", { exact: true }).fill("Day");
+  await dialog.getByLabel("Describe your goal", { exact: true }).fill("Classify this scene as day or night.");
+  await dialog.getByLabel("What you will get", { exact: true }).selectOption("classification");
   await page.setViewportSize({ width: 1024, height: 900 });
   await page.screenshot({ path: `${screenshots}/02-guided-project-wizard.png` });
   await page.setViewportSize({ width: 720, height: 450 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
-  await dialog.getByRole("button", { name: "Use recommendation" }).click();
+  await dialog.getByRole("button", { name: "Save goal and images", exact: true }).click();
   await expect(dialog).toBeHidden();
-  await expect.poll(async () => {
-    const state = await dashboard(request);
-    return state.projects.some((project: { id: string }) => project.id === projectId);
-  }).toBeTruthy();
+  const state = await dashboard(request);
+  projectId = state.projects.find((project: { name: string }) => project.name === projectName).id;
   const bound = await request.put(`/api/projects/${projectId}/model-bindings`, {
     data: {
       bindings: [{
@@ -402,12 +392,7 @@ test("Automation Recipe previews Advisor changes and autosaves Drawer edits", as
   await expect(page.getByRole("heading", { name: "How AnnotAgent will label your data" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Models this automation will call" })).toBeVisible();
   await expect(page.getByText("Builder LLM · does not label images")).toBeVisible();
-  if (await page.getByText("Shared Stages", { exact: true }).count() === 0) {
-    await page.getByText("Start from a template", { exact: true }).click();
-    await page.getByRole("button", { name: "Create from Template" }).click();
-  }
-  await expect(page.getByText("Shared Stages", { exact: true })).toBeVisible();
-  await expect(page.getByText(/Runs once per image/).first()).toBeVisible();
+  // The first Builder call is now explicit, rather than a side effect of Project creation.
   await expect(page.locator(".pipeline-step-card > code")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Publish", exact: true })).toHaveCount(0);
 
@@ -423,6 +408,8 @@ test("Automation Recipe previews Advisor changes and autosaves Drawer edits", as
   await agentTrace.getByText(/Tool actions/).click();
   await expect(agentTrace).toContainText("validate pipeline");
   await expect(agentTrace).toContainText("dry run pipeline");
+  await agentTrace.getByRole("button", { name: "Review Draft", exact: true }).click();
+  await expect(page.getByText("Shared Stages", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Reject proposal" }).click();
   await expect(page.getByRole("heading", { name: "Proposed Changes" })).toBeHidden();
 
@@ -695,9 +682,19 @@ test("Dry Run reports real summary metrics and publishes an immutable version", 
   const previewDialog = page.getByRole("dialog", { name: imageName!, exact: true });
   await expect(previewDialog).toBeVisible();
   await expect(previewDialog.getByRole("navigation", { name: "Annotation stages" })).toContainText("Final");
-  await expect(previewDialog.locator(".sample-preview-canvas img")).toBeVisible();
+  await expect(previewDialog.locator(".sample-feedback-image svg image")).toBeVisible();
+  await previewDialog.getByLabel("What needs attention?", { exact: true }).selectOption("wrong_target");
+  await previewDialog.getByLabel("Feedback note", { exact: true }).fill("The scene needs human inspection.");
+  await previewDialog.getByRole("button", { name: "Save sample feedback", exact: true }).click();
+  await expect(previewDialog.getByRole("status")).toContainText("Sample feedback saved");
+  await page.screenshot({ path: resolve("../docs/execution/first-result/sample-feedback.png") });
   await previewDialog.getByRole("button", { name: "Close annotation preview" }).click();
   await expect(previewDialog).toBeHidden();
+  await page.reload();
+  await page.locator(".sample-result-card").first().getByRole("button", { name: /Open annotation preview for/ }).click();
+  await expect(previewDialog.getByLabel("Feedback note", { exact: true })).toHaveValue("The scene needs human inspection.");
+  await expect(previewDialog.getByLabel("What needs attention?", { exact: true })).toHaveValue("wrong_target");
+  await previewDialog.getByRole("button", { name: "Close annotation preview" }).click();
   const cardBounds = await sampleResult.boundingBox();
   const previewBounds = await sampleResult.locator(".sample-result-preview").boundingBox();
   const bodyBounds = await sampleResult.locator(".sample-result-body").boundingBox();
@@ -720,7 +717,9 @@ test("Dry Run reports real summary metrics and publishes an immutable version", 
   await page.setViewportSize({ width: 720, height: 450 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBeTruthy();
   await expect(page.getByRole("button", { name: "Activate automation", exact: true })).toBeVisible();
+  const publication = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith(`/api/workflow-drafts/${testedDraftId}/publish`));
   await page.getByRole("button", { name: "Activate automation", exact: true }).click();
+  expect((await publication).ok()).toBeTruthy();
   await expect(page.getByLabel("Current Draft")).toHaveValue(testedDraftId);
   await expect(page).toHaveURL(
     new RegExp(`build/test\\?draft=${testedDraftId}&test=[^&]+$`),
@@ -1227,16 +1226,12 @@ test("feature-truth surfaces are read-only, capability-safe, and explicit about 
 
   await page.goto("/projects?new=1");
   const dialog = page.getByRole("dialog", { name: "Create Project" });
-  await dialog.getByRole("radio", { name: /Find objects/ }).check();
+  await dialog.getByLabel("What you will get", { exact: true }).selectOption("bounding_box");
   await dialog.getByLabel("Project name").fill("Geometry-safe recommendation");
   await dialog.getByLabel("Object name").fill("ball");
-  await dialog.getByRole("button", { name: "Continue" }).click();
-  await expect(dialog.getByLabel("Advanced server-local image path")).toBeVisible();
-  await dialog.getByRole("button", { name: "Continue" }).click();
-  await dialog.getByText("Balanced", { exact: true }).click();
-  await dialog.getByRole("button", { name: "Continue" }).click();
-  await expect(dialog).toContainText("semantic or relative score is not geometry proof");
-  await expect(dialog).toContainText("100% initial target review");
+  await expect(dialog.getByLabel("Choose images", { exact: true })).toBeVisible();
+  await expect(dialog).toContainText("A confident prediction is not geometry proof");
+  await expect(dialog).toContainText("No model is called");
   await expect(dialog).not.toContainText("Automatically accept high-confidence results");
 });
 
@@ -1563,6 +1558,7 @@ test("Review behaves as a keyboard-operable decision inbox", async ({ page }) =>
   await label.fill("day corrected");
   await expect(page.getByText("This correction will be saved as geometry-quality evidence for calibration and future Automation improvements.")).toBeVisible();
   await page.screenshot({ path: `${screenshots}/09-review-inbox.png`, fullPage: true });
+  await page.screenshot({ path: resolve("../docs/execution/first-result/project-review.png") });
 
   await page.reload();
   await expect(page.getByRole("button", { name: "Accept and next" })).toBeVisible();

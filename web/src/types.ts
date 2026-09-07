@@ -796,6 +796,7 @@ export interface WorkflowSummary {
 }
 
 export interface ProjectSummary {
+  annotation_goal?: string;
   id: string;
   project_id: string;
   name: string;
@@ -1434,6 +1435,7 @@ export interface ResultProjection {
 }
 
 export interface WorkflowDryRunReport {
+  sample_inputs?: { image_id: string; content_hash: string }[];
   sample_test_id?: string;
   draft_revision?: number;
   draft_content_hash?: string;
@@ -2008,6 +2010,18 @@ export interface AnnotationRevision {
   after?: Pick<Annotation, "label" | "value" | "attributes" | "confidence" | "review_status">;
   actor: "human" | "runtime" | "import";
   reason?: string;
+  created_at: string;
+}
+
+export interface SampleFeedbackRevision {
+  revision_id: string;
+  sample_test_id: string;
+  image_id: string;
+  sequence: number;
+  reason: "correct" | "wrong_target" | "poor_boundary" | "missing_target" | "cannot_judge";
+  outcome_id?: string | null;
+  corrected_value?: AnnotationValue | null;
+  note: string;
   created_at: string;
 }
 

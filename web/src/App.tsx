@@ -5,6 +5,7 @@ import { LanguageSelector } from "./components/LanguageSelector";
 import { ApiRequestError, api, subscribeEvents } from "./api";
 import { AnnotationCanvas } from "./components/AnnotationCanvas";
 import { FirstResultEntry } from "./components/FirstResultEntry";
+import { SampleFeedbackEditor } from "./components/SampleFeedbackEditor";
 import { ImproveAutomationPanel } from "./components/GeometrySafetyPanel";
 import { NotFoundPage } from "./features/notFound/NotFoundPage";
 import {
@@ -1095,6 +1096,19 @@ function BuildData({
         <Metric label={t("Needs attention")} value={(result?.duplicates ?? 0) + (result?.corrupt.length ?? 0)} detail={`${result?.duplicates ?? 0} duplicate · ${result?.corrupt.length ?? 0} corrupt`} />
       </div>
       <Panel title={t("Import from a local path")} eyebrow={t("Advanced server-local source")}>
+        <label>{t("Choose images")}<input type="file" accept="image/png,image/jpeg" multiple disabled={busy} onChange={(event) => {
+          const files = Array.from(event.target.files ?? []);
+          if (!files.length) return;
+          setBusy(true);
+          void (async () => {
+            for (const file of files) {
+              const report = await api.uploadImage(project.id, file);
+              if (report.corrupt.length) throw new Error(report.corrupt.map((issue) => issue.message).join("; "));
+            }
+            await load(); await onRefresh();
+          })().catch((error: Error) => onError(error.message)).finally(() => setBusy(false));
+        }} /></label>
+        <p>{t("PNG or JPEG · up to 25 MB per image · uploaded to this AnnotAgent server")}</p>
         <label>{t("Server-local image file or folder path")}<input value={source} onChange={(event) => setSource(event.target.value)} placeholder="/workspace/dataset/images" />
         </label>
         <div className="button-row">
@@ -1312,7 +1326,7 @@ function BuildTestPublish({
       .then(({ sample_test: sampleTest, current }) => {
         if (generation !== sampleLoadGeneration.current) return;
         if (sampleTest && current) {
-          setReport(sampleTest.report);
+          setReport({ ...sampleTest.report, sample_inputs: sampleTest.inputs });
           setRestoredAt(sampleTest.completed_at);
           setActiveSampleTest({ draftId, id: sampleTest.id });
           if (sampleTest.id !== selectedSampleTestId)
@@ -1381,6 +1395,11 @@ function BuildTestPublish({
   const inspectedSample = report?.samples.find(
     (sample) => sample.image_index === inspectedSampleIndex,
   );
+  const sampleImage = (sample: WorkflowDryRunReport["samples"][number]) => {
+    const position = report?.samples.indexOf(sample) ?? -1;
+    const input = report?.sample_inputs?.[position];
+    return input ? images.find((item) => item.image_id === input.image_id && item.content_hash === input.content_hash) : undefined;
+  };
   const configuredRefiners = currentDraft?.nodes.filter(
     (node) =>
       node.kind === "refiner" ||
@@ -1478,11 +1497,11 @@ function BuildTestPublish({
           />
           <section className="sample-results-section" aria-labelledby="sample-results-title">
             <div className="section-heading"><div><span className="eyebrow">{t("Results Gallery")}</span><h2 id="sample-results-title">{t("What the automation found")}</h2></div><small>{summary.image_count} sandbox image{summary.image_count === 1 ? "" : t("s")}</small></div>
-            <div className="sample-results-gallery">{report.samples.map((sample) => <SampleResultCard key={`${sample.image_index}-${sample.image_name}`} sample={sample} image={images.find((item) => item.index === sample.image_index)} onInspect={() => setInspectedSampleIndex(sample.image_index)} />)}</div>
+            <div className="sample-results-gallery">{report.samples.map((sample) => <SampleResultCard key={`${sample.image_index}-${sample.image_name}`} sample={sample} image={sampleImage(sample)} onInspect={() => setInspectedSampleIndex(sample.image_index)} />)}</div>
           </section>
           <section className="sample-results-section uncertain-results" id="uncertain-results" aria-labelledby="uncertain-results-title">
             <div className="section-heading"><div><span className="eyebrow">{t("Uncertain Results")}</span><h2 id="uncertain-results-title">{t("What needs a human decision")}</h2></div><small>{uncertainSamples.length}{" "}{t("image")}{uncertainSamples.length === 1 ? "" : t("s")}</small></div>
-            {uncertainSamples.length ? <div className="sample-results-gallery">{uncertainSamples.map((sample) => <SampleResultCard key={`uncertain-${sample.image_index}-${sample.image_name}`} sample={sample} image={images.find((item) => item.index === sample.image_index)} compact onInspect={() => setInspectedSampleIndex(sample.image_index)} />)}</div> : <div className="positive-empty"><strong>{t("No uncertain results in this sample")}</strong><span>{t("The configured confidence and Review gates accepted every result.")}</span></div>}
+            {uncertainSamples.length ? <div className="sample-results-gallery">{uncertainSamples.map((sample) => <SampleResultCard key={`uncertain-${sample.image_index}-${sample.image_name}`} sample={sample} image={sampleImage(sample)} compact onInspect={() => setInspectedSampleIndex(sample.image_index)} />)}</div> : <div className="positive-empty"><strong>{t("No uncertain results in this sample")}</strong><span>{t("The configured confidence and Review gates accepted every result.")}</span></div>}
           </section>
           <section className="sample-diagnostics" aria-label={t("Sample Test diagnostics")}>
             <div className="section-heading"><div><span className="eyebrow">{t("Diagnostics")}</span><h2>{t("Inspect only when you need to troubleshoot")}</h2></div></div>
@@ -1495,7 +1514,7 @@ function BuildTestPublish({
       ) : reportLoading ? <div className="loading-banner" role="status">{t("Restoring the saved Sample Test…")}</div> : staleReport ? <Empty title={t("Sample Test is out of date")} detail={t("This Draft changed after its saved Sample Test. Test the current Draft again before activation.")} /> : <Empty title={t("No Sample Test result")} detail={t("Choose a Current Draft and test 1–10 images to see result counts, diagnostics, and trace.")} />}
       {inspectedSample && <SampleAnnotationDialog
         sample={inspectedSample}
-        image={images.find((item) => item.index === inspectedSample.image_index)}
+        image={sampleImage(inspectedSample)}
         configuredRefiners={configuredRefiners}
         sampleTestId={activeSampleTest?.draftId === draftId ? activeSampleTest.id : undefined}
         onClose={() => setInspectedSampleIndex(undefined)}
@@ -1819,7 +1838,7 @@ function SampleAnnotationDialog({
   image,
   configuredRefiners,
   sampleTestId,
-  onClose,
+  onClose: closeDialog,
 }: {
   sample: WorkflowDryRunReport["samples"][number];
   image?: ImageItem;
@@ -1827,6 +1846,10 @@ function SampleAnnotationDialog({
   sampleTestId?: string;
   onClose: () => void;
 }) {
+  const [feedbackDirty, setFeedbackDirty] = useState(false);
+  const onClose = () => {
+    if (!feedbackDirty || window.confirm(t("Discard unsaved sample feedback?"))) closeDialog();
+  };
   const stages = sample.projection?.debug_stages ?? [];
   const [selectedStage, setSelectedStage] = useState<ResultLineageStage>("final");
   const stageOrder: ResultLineageStage[] = ["coarse", "search_region", "relocalized", "prompt_coverage", "mask", "refined", "final"];
@@ -1866,9 +1889,10 @@ function SampleAnnotationDialog({
         <button type="button" onClick={onClose} aria-label={t("Close annotation preview")}>{t("Close")}</button>
       </header>
       <nav className="sample-preview-stage-tabs" aria-label={t("Annotation stages")}>
-        {availableStages.map((stage) => <button key={stage} type="button" className={selectedStage === stage ? "active" : ""} aria-pressed={selectedStage === stage} onClick={() => setSelectedStage(stage)}>{stage === "search_region" ? t("Search region") : stage === "prompt_coverage" ? t("Prompt coverage") : stage[0].toUpperCase() + stage.slice(1)}</button>)}
+        {availableStages.map((stage) => <button key={stage} type="button" className={selectedStage === stage ? "active" : ""} aria-pressed={selectedStage === stage} onClick={() => { if (stage === selectedStage || !feedbackDirty || window.confirm(t("Discard unsaved sample feedback?"))) setSelectedStage(stage); }}>{stage === "search_region" ? t("Search region") : stage === "prompt_coverage" ? t("Prompt coverage") : stage[0].toUpperCase() + stage.slice(1)}</button>)}
       </nav>
-      <div className="sample-preview-layout">
+      {selectedStage === "final" && image && sampleTestId && <SampleFeedbackEditor sample={sample} image={image} testId={sampleTestId} onDirtyChange={setFeedbackDirty} />}
+      <details open={selectedStage !== "final" || !sampleTestId}><summary>{t("Technical evidence")}</summary><div className="sample-preview-layout">
         <figure className="sample-preview-canvas" style={{ aspectRatio: `${sample.width} / ${sample.height}` }}>
           {image ? <img src={image.url} alt={sample.image_name} /> : <div className="image-placeholder">{t("Preview unavailable")}</div>}
           {boxes.map((result) => {
@@ -1895,6 +1919,7 @@ function SampleAnnotationDialog({
           </section>
         </aside>
       </div>
+      </details>
     </section>
   </div>;
 }
@@ -1984,7 +2009,7 @@ function Dashboard({
     <section className="page-stack">
       <FirstResultEntry returning={projects.length > 0} onStart={onNewProject} />
       {projects.length > 0 && <Panel title={t("Continue your work")} eyebrow={t("Recent projects")}><ProjectList projects={projects.slice(0, 5)} onSelect={onSelect} /></Panel>}
-      <details className="panel"><summary>{t("Workspace overview")}</summary>
+      <details className="workspace-overview"><summary>{t("Workspace overview")}</summary>
       <div className="metrics-grid platform-metrics">
         <Metric
           label={t("Projects")}
@@ -2347,7 +2372,7 @@ function ProjectPage({
         <div>
           <span className="eyebrow">{t("Project workspace")}</span>
           <h2>{project.name}</h2>
-          <p>{project.description || t("No Project description provided.")}</p>
+          <p>{project.annotation_goal || project.description || t("No Project description provided.")}</p>
         </div>
         <div className="project-context-facts" aria-label={t("Project status")}>
           <span><b>{project.image_count}</b>{" "}{t("Images")}</span>
@@ -10905,7 +10930,6 @@ function SettingsPage({ view, onError }: { view: "workers" | "storage"; onError:
   );
 }
 
-type GuidedIntent = "classification" | "detection" | "segmentation" | "custom";
 type GuidedPriority = "faster" | "balanced" | "accuracy";
 
 function guidedId(value: string, fallback: string): string {
@@ -10925,6 +10949,7 @@ function guidedProjectYaml({
   labelId,
   kind,
   priority,
+  goal = "",
 }: {
   name: string;
   taskDisplayName: string;
@@ -10932,6 +10957,7 @@ function guidedProjectYaml({
   labelId: string;
   kind: string;
   priority: GuidedPriority;
+  goal?: string;
 }): string {
   const parallel = priority === "faster" ? 4 : priority === "accuracy" ? 1 : 2;
   const autoAccept = priority === "faster" ? 0.82 : priority === "accuracy" ? 0.94 : 0.9;
@@ -10944,6 +10970,7 @@ function guidedProjectYaml({
   return `version: 1
 project:
   name: ${JSON.stringify(name)}
+  annotation_goal: ${JSON.stringify(goal)}
   language: en
 dataset:
   root: images
@@ -10964,241 +10991,89 @@ export:
 }
 
 function CreateProject({
-  onClose,
-  onCreated,
-  onError,
+  onClose, onCreated, onError,
 }: {
   onClose: () => void;
   onCreated: (projectId: string, customize: boolean) => void;
   onError: (value: string) => void;
 }) {
-  const [step, setStep] = useState(1);
-  const [intent, setIntent] = useState<GuidedIntent>("detection");
-  const [projectName, setProjectName] = useState("Football annotations");
-  const [labelName, setLabelName] = useState("Football");
-  const [customKind, setCustomKind] = useState("bounding_box");
-  const [workspaceId, setWorkspaceId] = useState("");
-  const [taskId, setTaskId] = useState("");
-  const [labelId, setLabelId] = useState("");
-  const [dataSource, setDataSource] = useState("");
-  const [priority, setPriority] = useState<GuidedPriority>("balanced");
-  const [maximumCost, setMaximumCost] = useState("");
-  const [targetReviewRate, setTargetReviewRate] = useState("10");
-  const [offlineOnly, setOfflineOnly] = useState(false);
-  const [modelRegistry, setModelRegistry] = useState<ModelBinding[]>([]);
+  const [projectName, setProjectName] = useState("");
+  const [labelName, setLabelName] = useState("");
+  const [goal, setGoal] = useState("");
+  const [kind, setKind] = useState("bounding_box");
+  const [files, setFiles] = useState<File[]>([]);
+  const [previews, setPreviews] = useState<string[]>([]);
+  const [modelsReady, setModelsReady] = useState<boolean>();
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
+  const identity = useRef("project-" + crypto.randomUUID());
+  const created = useRef(false);
+  const draftCreated = useRef(false);
+  const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
+    dialog.current?.showModal();
+    void api.models().then((result) => setModelsReady(result.models.some((model) => model.enabled && model.availability_group === "ready"))).catch(() => setModelsReady(false));
   }, []);
   useEffect(() => {
-    void api.models()
-      .then((value) => setModelRegistry(value.models))
-      .catch((error: Error) => onError(error.message));
-  }, []);
-  const resolvedWorkspaceId = workspaceId || guidedId(projectName, "vision-project");
-  const resolvedLabelId = labelId || guidedId(labelName, "target");
-  const resolvedTaskId = taskId || `${resolvedLabelId}-${
-    intent === "classification" ? "class" : intent === "segmentation" ? "regions" : "objects"
-  }`;
-  const kind =
-    intent === "classification"
-      ? "classification"
-      : intent === "segmentation"
-        ? "semantic_mask"
-        : intent === "detection"
-          ? "bounding_box"
-          : customKind;
-  const specialistModel = modelRegistry.find((model) =>
-    model.enabled && model.availability_group === "ready" && model.capabilities?.includes("object_detection") &&
-    (model.label_space?.length ?? 0) > 0 &&
-    model.label_space?.some((label) => label.toLowerCase() === resolvedLabelId.toLowerCase()),
-  );
-  const openVocabularyModel = modelRegistry.find((model) =>
-    model.enabled && model.availability_group === "ready" && model.capabilities?.includes("open_vocabulary_detection"),
-  );
-  const boundingBoxRequiresReview = kind === "bounding_box";
-  const finish = async (customize: boolean) => {
-    if (!projectName.trim() || !labelName.trim()) return;
+    const urls = files.map((file) => URL.createObjectURL(file));
+    setPreviews(urls);
+    return () => urls.forEach((url) => URL.revokeObjectURL(url));
+  }, [files]);
+  const close = () => {
+    if (busy) return;
+    if ((files.length || goal || projectName) && !window.confirm(t("Discard unsaved project input?"))) return;
+    onClose();
+  };
+  const finish = async () => {
+    if (busy || !projectName.trim() || !labelName.trim() || !files.length) return;
     setBusy(true);
-    setProgress("Creating the Project…");
     try {
-      await api.createProject(
-        resolvedWorkspaceId,
-        guidedProjectYaml({
-          name: projectName.trim(),
-          taskDisplayName: labelName.trim(),
-          taskId: resolvedTaskId,
-          labelId: resolvedLabelId,
-          kind,
-          priority,
-        }),
-      );
-      const warnings: string[] = [];
-      if (dataSource.trim()) {
-        setProgress("Importing images…");
-        try {
-          const report = await api.importImages(resolvedWorkspaceId, dataSource.trim());
-          setProgress(`Imported ${report.imported}; skipped ${report.duplicates} duplicates.`);
-        } catch (error) {
-          warnings.push(`Images were not imported: ${(error as Error).message}`);
-        }
+      const labelId = guidedId(labelName, "target");
+      if (!created.current) {
+        setProgress(t("Saving your goal…"));
+        await api.createProject(identity.current, guidedProjectYaml({
+          name: projectName.trim(), taskDisplayName: labelName.trim(),
+          taskId: labelId + "-task", labelId, kind, priority: "balanced", goal: goal.trim(),
+        }));
+        created.current = true;
       }
-      setProgress("Preparing the recommended Automation Draft…");
-      try {
-        const [compatible, defaults] = await Promise.all([
-          api.compatibleModelProfiles({
-            input_modalities: ["text"],
-            capabilities: ["text_generation"],
-            tool_calls: true,
-            structured_output: true,
-          }),
-          api.agentModelBindings(),
-        ]);
-        const agentModel = compatible.models.find(
-          (model) => model.id === defaults.pipeline_builder,
-        ) ?? compatible.models[0];
-        if (!agentModel) {
-          throw new Error(
-            "Configure an Available text-generation Model Profile with Tool calls and Structured output before requesting a recommendation.",
-          );
-        }
-        await api.suggestWorkflow(
-          resolvedWorkspaceId,
-          "llm",
-          { task_id: resolvedTaskId, label: resolvedLabelId },
-          {
-            max_cost_per_image: maximumCost.trim() || undefined,
-            max_latency_ms: priority === "faster" ? 1_000 : priority === "accuracy" ? 10_000 : 4_000,
-            minimum_accuracy: priority === "faster" ? 0.75 : priority === "accuracy" ? 0.92 : 0.85,
-            require_review_gate: boundingBoxRequiresReview || Number(targetReviewRate) > 0,
-          },
-          DEFAULT_PIPELINE_BUILDER_CONSTRAINTS,
-          agentModel.id,
-        );
-      } catch (error) {
-        warnings.push(`The Project was created, but its recommendation needs attention: ${(error as Error).message}`);
+      for (const [index, file] of files.entries()) {
+        setProgress(t("Uploading image {current} of {total}", { current: index + 1, total: files.length }));
+        const result = await api.uploadImage(identity.current, file);
+        if (result.corrupt.length) throw new Error(result.corrupt.map((issue) => issue.name + ": " + issue.message).join("; "));
       }
-      onCreated(resolvedWorkspaceId, customize);
-      if (warnings.length) onError(warnings.join(" "));
+      if (!draftCreated.current) {
+        await api.createWorkflowDraft(identity.current);
+        draftCreated.current = true;
+      }
+      onCreated(identity.current, false);
     } catch (error) {
       onError((error as Error).message);
-    } finally {
-      setBusy(false);
-      setProgress("");
-    }
+      setProgress(t("Your saved Project and imported images are retained. Retry resumes importing; matching image content is skipped."));
+    } finally { setBusy(false); }
   };
-  const nextDisabled =
-    step === 1 && (!projectName.trim() || !labelName.trim());
-  return (
-    <div className="modal-backdrop">
-      <div className="modal guided-project-wizard" role="dialog" aria-modal="true" aria-label={t("Create Project")}>
-        <header>
-          <span className="eyebrow">New Project · Step {step} of 4</span>
-          <h2 id="create-project-title">{
-            step === 1 ? t("What do you want to annotate?") :
-            step === 2 ? t("Add data") :
-            step === 3 ? t("Choose a priority") :
-            t("Recommended automation")
-          }</h2>
-          <div className="wizard-progress" aria-label={`Step ${step} of 4`}>
-            {[1, 2, 3, 4].map((item) => <i key={item} className={item <= step ? "complete" : ""} />)}
-          </div>
-        </header>
-
-        {step === 1 && <div className="wizard-step">
-          <div className="choice-grid" role="radiogroup" aria-label={t("Annotation intent")}>
-            {([
-              ["classification", "Classify images", "Assign one or more labels to each image"],
-              ["detection", "Find objects", "Locate each object with a bounding box"],
-              ["segmentation", "Segment regions", "Trace regions with semantic masks"],
-              ["custom", "Custom", "Choose an annotation output explicitly"],
-            ] as const).map(([value, title, detail]) => <label key={value} className={intent === value ? "selected" : ""}>
-              <input type="radio" name="intent" value={value} checked={intent === value} onChange={() => setIntent(value)} />
-              <span><strong>{title}</strong><small>{detail}</small></span>
-            </label>)}
-          </div>
-          <div className="form-grid">
-            <label>{t("Project name")}<input autoFocus value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="Football annotations" /></label>
-            <label>{intent === "classification" ? t("Class name") : intent === "segmentation" ? t("Region name") : t("Object name")}<input value={labelName} onChange={(event) => setLabelName(event.target.value)} placeholder="Football" /></label>
-            {intent === "custom" && <label>{t("Output")}<select value={customKind} onChange={(event) => setCustomKind(event.target.value)}><option value="classification">{t("Classification")}</option><option value="bounding_box">{t("Bounding boxes")}</option><option value="semantic_mask">{t("Semantic masks")}</option><option value="polygon">{t("Polygons")}</option><option value="keypoints">{t("Keypoints")}</option></select></label>}
-            {intent !== "custom" && <div className="wizard-fact"><span>{t("Output")}</span><strong>{kind.replaceAll("_", " ")}</strong></div>}
-          </div>
-          <details className="advanced-settings"><summary>{t("Advanced IDs")}</summary><div className="form-grid">
-            <label>{t("Workspace ID")}<input value={resolvedWorkspaceId} onChange={(event) => setWorkspaceId(event.target.value)} /></label>
-            <label>{t("Task ID")}<input value={resolvedTaskId} onChange={(event) => setTaskId(event.target.value)} /></label>
-            <label>{t("Label ID")}<input value={resolvedLabelId} onChange={(event) => setLabelId(event.target.value)} /></label>
-          </div><small>AnnotAgent generates stable IDs. Change them only for an existing integration.</small></details>
-        </div>}
-
-        {step === 2 && <div className="wizard-step">
-          <label>Advanced server-local image path<input autoFocus value={dataSource} onChange={(event) => setDataSource(event.target.value)} placeholder="/workspace/dataset/images" /></label>
-          <div className="wizard-summary"><strong>{dataSource.trim() ? t("Ready to ask the local server to scan this path") : t("You can add data later")}</strong><span>This is not a browser file picker · PNG and JPEG · recursive discovery · content duplicates skipped</span><small>The path must be readable by the local AnnotAgent process. Decode errors and actual imported/duplicate counts are reported by the real import operation.</small></div>
-        </div>}
-
-        {step === 3 && <div className="wizard-step">
-          <div className="choice-grid priority-grid" role="radiogroup" aria-label={t("Automation priority")}>
-            {([
-              ["faster", "Faster", "Lower latency while keeping the same Review safeguards"],
-              ["balanced", "Balanced", "Recommended trade-off for a first Project"],
-              ["accuracy", "Higher accuracy", "More conservative automatic acceptance"],
-            ] as const).map(([value, title, detail]) => <label key={value} className={priority === value ? "selected" : ""}>
-              <input type="radio" name="priority" value={value} checked={priority === value} onChange={() => setPriority(value)} />
-              <span><strong>{title}</strong><small>{detail}</small></span>
-            </label>)}
-          </div>
-          <details className="advanced-settings"><summary>{t("Cost, review, and local constraints")}</summary><div className="form-grid">
-            <label>{t("Maximum expected cost")}<input value={maximumCost} onChange={(event) => setMaximumCost(event.target.value)} placeholder={t("Optional")} /></label>
-            <label>{t("Target human review rate (%)")}<input type="number" min="0" max="100" value={targetReviewRate} onChange={(event) => setTargetReviewRate(event.target.value)} /></label>
-            <div className="wizard-fact"><span>{t("Ready detection models")}</span><strong>{modelRegistry.filter((model) => model.enabled && model.availability_group === "ready" && model.role === "detection").length || t("None ready")}</strong></div>
-            <label className="check-row"><input type="checkbox" checked={offlineOnly} onChange={(event) => setOfflineOnly(event.target.checked)} />{" "}{t("Offline only")}</label>
-          </div></details>
-        </div>}
-
-        {step === 4 && <div className="wizard-step">
-          <div className="recommendation-card">
-            <span className="status status-auto-accepted">{t("Recommended")}</span>
-            <h3>{kind === "classification" ? `Classify each image as ${labelName}` : kind === "semantic_mask" ? `Segment ${labelName} regions` : specialistModel ? t("Use your trained detector first") : openVocabularyModel ? t("Find candidate objects by description") : t("Configure a compatible detector in Automation")}</h3>
-            <ol>
-              {kind === "bounding_box" && specialistModel ? <>
-                <li>Use <strong>{specialistModel.model}</strong> for repeated {labelName} labeling.</li>
-                <li>{openVocabularyModel ? <>Ask <strong>{openVocabularyModel.model}</strong> only when the specialist result is uncertain.</> : "Route uncertain detector results to Review until an open-vocabulary fallback is configured."}</li>
-              </> : kind === "bounding_box" && openVocabularyModel ? <>
-                <li>Use <strong>{openVocabularyModel.model}</strong> to propose coarse {labelName} candidate boxes from a text description.</li>
-                <li>Require Human Review until this exact model and node have Project geometry calibration evidence.</li>
-              </> : kind === "bounding_box" ? <>
-                <li>No Ready detector currently satisfies this Project's bounding-box operation.</li>
-                <li>Choose a compatible Model Profile or install a verified Expert Model before Sample Test.</li>
-              </> : <li>Bind a compatible <strong>Registry Model Profile</strong> in Automation before publishing.</li>}
-              {kind === "bounding_box" && <li>Keep detector output as editable candidates and route every initial box to Review; a semantic or relative score is not geometry proof.</li>}
-              {kind !== "bounding_box" && <li>Apply the Draft's validated confidence and Review policy.</li>}
-              <li>Sample Test the exact Draft before activation.</li>
-            </ol>
-            <div className="recommendation-estimate"><span><b>{priority === "faster" ? t("Low") : priority === "accuracy" ? t("Higher") : t("Medium")}</b> latency</span><span><b>{specialistModel || openVocabularyModel || kind !== "bounding_box" ? t("Low") : t("Model required")}</b> setup effort</span><span><b>{boundingBoxRequiresReview ? "100" : targetReviewRate || "10"}%</b> initial target review</span></div>
-          </div>
-          <div className="inline-model-connection">
-            <div><span className="eyebrow">Registry-first execution</span><strong>Bind in Automation</strong></div>
-            <p>The wizard creates only the Project Schema and an editable Draft. Choose a reusable Model Profile on the Automation page, Dry Run it, then publish an immutable Workflow Version.</p>
-            <small>{offlineOnly ? "Offline only is recorded as a design constraint; connect a local Vision Worker before building the Pipeline." : "Provider credentials are configured once under Settings → Providers and are never copied into the Project."}</small>
-          </div>
-          <details className="advanced-settings"><summary>{t("Generated Project definition")}</summary><pre>{guidedProjectYaml({ name: projectName.trim(), taskDisplayName: labelName.trim(), taskId: resolvedTaskId, labelId: resolvedLabelId, kind, priority })}</pre></details>
-        </div>}
-
-        {progress && <div className="wizard-running" role="status">{progress}</div>}
-        <div className="wizard-actions">
-          <button onClick={step === 1 ? onClose : () => setStep((value) => value - 1)} disabled={busy}>{step === 1 ? t("Cancel") : t("Back")}</button>
-          {step < 4 ? <button className="primary" disabled={nextDisabled} onClick={() => setStep((value) => value + 1)}>{t("Continue")}</button> : <>
-            <button disabled={busy} onClick={() => void finish(true)}>{t("Customize")}</button>
-            <button className="primary" disabled={busy || nextDisabled} onClick={() => void finish(false)}>{busy ? t("Creating…") : t("Use recommendation")}</button>
-          </>}
-        </div>
-      </div>
+  return <dialog ref={dialog} className="first-result-example" aria-label={t("Create Project")} onCancel={(event) => { event.preventDefault(); close(); }}>
+    <header className="first-result-example-header"><div><span>{t("Define your goal")}</span><h2>{t("Images and your goal")}</h2></div><button onClick={close} disabled={busy}>{t("Cancel")}</button></header>
+    <div className="first-result-example-grid">
+      <section className="first-result-input-images">
+        <label>{t("Choose images")}<input type="file" accept="image/png,image/jpeg" multiple disabled={busy || created.current} onChange={(event) => setFiles(Array.from(event.target.files ?? []))} /></label>
+        <small>{t("PNG or JPEG · up to 25 MB per image · uploaded to this AnnotAgent server")}</small>
+        <div className="first-result-thumbnails">{files.map((file, index) => <figure key={index}><img src={previews[index]} alt={file.name} /><figcaption>{file.name}</figcaption></figure>)}</div>
+      </section>
+      <section className="first-result-decision">
+        <label>{t("Project name")}<input value={projectName} disabled={busy || created.current} onChange={(event) => setProjectName(event.target.value)} /></label>
+        <label>{t("Describe your goal")}<textarea value={goal} disabled={busy || created.current} maxLength={4000} onChange={(event) => setGoal(event.target.value)} placeholder={t("Find cups, but not bottles.")} /></label>
+        <button disabled={busy || created.current} onClick={() => { setGoal(t("Find cups, but not bottles.")); setLabelName(t("Cup")); }}>{t("Try a goal example")}</button>
+        <label>{t("Object name")}<input value={labelName} disabled={busy || created.current} onChange={(event) => setLabelName(event.target.value)} /></label>
+        <label>{t("What you will get")}<select aria-label={t("What you will get")} value={kind} disabled={busy || created.current} onChange={(event) => setKind(event.target.value)}><option value="bounding_box">{t("Find objects")}</option><option value="classification">{t("Classify images")}</option><option value="semantic_mask">{t("Segment regions")}</option></select></label>
+        <p>{t("Saving defines the label and an editable Draft. No model is called; the goal is not automatically parsed.")}</p>
+        {kind === "bounding_box" && <p>{t("A confident prediction is not geometry proof. Initial boxes still require the Project's review and calibration policy.")}</p>}
+        {modelsReady === false && <p role="status">{t("No Ready model is configured. You can save your images and goal now; connect a compatible model before testing.")}</p>}
+        <button className="primary" disabled={busy || !files.length || !projectName.trim() || !labelName.trim()} onClick={() => void finish()}>{t("Save goal and images")}</button>
+        {progress && <p role="status">{progress}</p>}
+      </section>
     </div>
-  );
+  </dialog>;
 }
 
 function Panel({

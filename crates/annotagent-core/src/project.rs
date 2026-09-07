@@ -188,6 +188,9 @@ fn valid_identifier(value: &str) -> bool {
 #[serde(deny_unknown_fields)]
 pub struct ProjectDescriptor {
     pub name: String,
+    /// User-authored annotation intent; saved without requiring language-model parsing.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub annotation_goal: String,
     /// Legacy single-Skill binding. New projects use `enabled_skills`.
     #[serde(default)]
     pub skill: String,
@@ -448,6 +451,24 @@ impl TaskGraph {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn annotation_goal_preserves_legacy_serialization_and_round_trips() {
+        let mut project: super::ProjectDescriptor =
+            serde_json::from_value(serde_json::json!({"name": "Legacy Project"})).unwrap();
+        assert!(project.annotation_goal.is_empty());
+        assert!(
+            serde_json::to_value(&project)
+                .unwrap()
+                .get("annotation_goal")
+                .is_none()
+        );
+        project.annotation_goal = "Find cups, not bottles".into();
+        let saved = serde_json::to_value(&project).unwrap();
+        assert_eq!(
+            serde_json::from_value::<super::ProjectDescriptor>(saved).unwrap(),
+            project
+        );
+    }
     use super::*;
 
     fn task(id: &str, dependencies: &[&str]) -> TaskConfig {

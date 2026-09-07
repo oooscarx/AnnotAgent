@@ -2,7 +2,9 @@
 
 mod batch;
 mod management;
+mod sample_feedback;
 mod summary;
+pub use sample_feedback::{SampleFeedbackReason, SampleFeedbackRevision};
 
 pub use batch::{BatchClaimResult, BatchImageListSummary};
 pub use management::{BatchLifecycleMetadata, ManagementScope};
@@ -537,6 +539,8 @@ impl SqliteStore {
                 )?;
                 transaction.commit()?;
             }
+            connection.execute_batch(include_str!("../../../migrations/0020_sample_feedback.sql"))?;
+            connection.execute("INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (20, ?1, ?2)", params!["sample_feedback", Utc::now().to_rfc3339()])?;
             Ok(())
         })
     }

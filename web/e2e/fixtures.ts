@@ -2,6 +2,7 @@ import {
   expect,
   test as base,
   type APIRequestContext,
+  type APIResponse,
 } from "@playwright/test";
 
 type RequestOptions = Parameters<APIRequestContext["post"]>[1];
@@ -29,6 +30,18 @@ function privilegedAction(method: string, path: string): string | undefined {
 }
 
 function protectedRequestContext(request: APIRequestContext): APIRequestContext {
+  // The full suite can exceed the real local API's 120 mutations/minute guard.
+  // Retry only that pre-execution rejection, never Provider errors or executed model actions.
+  const withinLocalRateLimit = async (send: () => Promise<APIResponse>) => {
+    const deadline = Date.now() + 45_000;
+    while (true) {
+      const response = await send();
+      if (response.status() !== 429 || Date.now() >= deadline) return response;
+      const body = await response.json().catch(() => ({}));
+      if (body.code !== "mutation_rate_limited") return response;
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }
+  };
   let session: Promise<string> | undefined;
   const csrfToken = () => {
     session ??= request.get("/api/session").then(async (response) => {
@@ -47,10 +60,10 @@ function protectedRequestContext(request: APIRequestContext): APIRequestContext 
     };
     const action = privilegedAction(method, path);
     if (action) {
-      const confirmation = await request.post("/api/session/privileged-confirmation", {
+      const confirmation = await withinLocalRateLimit(() => request.post("/api/session/privileged-confirmation", {
         headers: { "x-annotagent-csrf": csrf },
         data: { action, confirmed: true },
-      });
+      }));
       if (!confirmation.ok()) {
         throw new Error(`privileged confirmation failed: ${await confirmation.text()}`);
       }
@@ -58,7 +71,7 @@ function protectedRequestContext(request: APIRequestContext): APIRequestContext 
       if (!payload.confirmation_token) throw new Error("privileged confirmation omitted its token");
       headers["x-annotagent-privileged-confirmation"] = payload.confirmation_token;
     }
-    return request.fetch(path, { ...options, method, headers });
+    return withinLocalRateLimit(() => request.fetch(path, { ...options, method, headers }));
   };
   return new Proxy(request, {
     get(target, property, receiver) {

@@ -3680,6 +3680,7 @@ pub struct ProjectSummary {
     pub project_id: String,
     pub name: String,
     pub description: Option<String>,
+    pub annotation_goal: String,
     pub dataset: ProjectDatasetSummary,
     pub annotation_schema: Vec<AnnotationTaskSummary>,
     pub enabled_skills: Vec<EnabledSkill>,
@@ -9162,6 +9163,7 @@ impl LocalApplication {
             project_id: project_id.to_owned(),
             name: project.project.name.clone(),
             description: None,
+            annotation_goal: project.project.annotation_goal.clone(),
             dataset: ProjectDatasetSummary {
                 root: project.dataset.root.to_string_lossy().into_owned(),
                 include: project.dataset.include.clone(),

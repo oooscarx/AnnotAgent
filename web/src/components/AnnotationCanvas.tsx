@@ -13,6 +13,7 @@ interface Props {
   onSelect: (id: string) => void;
   onChange: (annotation: Annotation) => void;
   onEditStart?: () => void;
+  readOnly?: boolean;
 }
 
 const DEFAULT_WIDTH = 1000;
@@ -28,6 +29,7 @@ export function AnnotationCanvas({
   onSelect,
   onChange,
   onEditStart,
+  readOnly = false,
 }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [canvasSize, setCanvasSize] = useState<[number, number]>([
@@ -52,7 +54,7 @@ export function AnnotationCanvas({
     () => annotations.find((annotation) => annotation.id === selectedId),
     [annotations, selectedId],
   );
-  const editingHint = !selected
+  const editingHint = readOnly ? "Read-only geometry · you can still zoom and select results" : !selected
     ? "Select an annotation to edit it"
     : selected.value.kind === "bounding_box"
       ? "Drag the box to move it · drag a corner handle to resize"
@@ -147,7 +149,7 @@ export function AnnotationCanvas({
   };
 
   const addVertex = (event: React.MouseEvent<SVGSVGElement>) => {
-    if (!selected || event.detail !== 2) return;
+    if (readOnly || !selected || event.detail !== 2) return;
     onEditStart?.();
     const point = localPoint(event as unknown as React.PointerEvent<SVGSVGElement>);
     const value = structuredClone(selected.value);
@@ -160,6 +162,7 @@ export function AnnotationCanvas({
   };
 
   const deleteVertex = (annotation: Annotation, ring: number, index: number) => {
+    if (readOnly) return;
     const value = structuredClone(annotation.value);
     if (value.kind === "polyline" && value.points.length > 2) value.points.splice(index, 1);
     else if (value.kind === "polygon" && value.rings[ring]?.length > 3)
@@ -255,8 +258,10 @@ export function AnnotationCanvas({
               canvasHeight={height}
               visual={annotationVisual(annotation, visualContext)}
               selected={annotation.id === selectedId}
+              readOnly={readOnly}
               onSelect={() => onSelect(annotation.id)}
               onVertex={(ring, index, event) => {
+                if (readOnly) return;
                 event.stopPropagation();
                 onSelect(annotation.id);
                 onEditStart?.();
@@ -264,7 +269,7 @@ export function AnnotationCanvas({
               }}
               onDeleteVertex={(ring, index) => deleteVertex(annotation, ring, index)}
               onBbox={(event) => {
-                if (annotation.value.kind !== "bounding_box") return;
+                if (readOnly || annotation.value.kind !== "bounding_box") return;
                 event.stopPropagation();
                 onSelect(annotation.id);
                 onEditStart?.();
@@ -276,7 +281,7 @@ export function AnnotationCanvas({
                 });
               }}
               onBboxResize={(corner, event) => {
-                if (annotation.value.kind !== "bounding_box") return;
+                if (readOnly || annotation.value.kind !== "bounding_box") return;
                 event.stopPropagation();
                 onSelect(annotation.id);
                 onEditStart?.();
@@ -302,6 +307,7 @@ function AnnotationShape({
   canvasHeight,
   visual,
   selected,
+  readOnly,
   onSelect,
   onVertex,
   onDeleteVertex,
@@ -313,6 +319,7 @@ function AnnotationShape({
   canvasHeight: number;
   visual: ReturnType<typeof annotationVisual>;
   selected: boolean;
+  readOnly: boolean;
   onSelect: () => void;
   onVertex: (ring: number, index: number, event: React.PointerEvent) => void;
   onDeleteVertex: (ring: number, index: number) => void;
@@ -327,7 +334,7 @@ function AnnotationShape({
   const strokeDasharray = !selected && visual.pattern === "dashed-box" ? "12 8" : undefined;
   const fill = visual.pattern === "diagonal-fill" ? `url(#aa-diagonal-${visual.slot})` : color;
   const label = `${annotation.label ?? annotation.task_id} ${annotation.confidence ? `${Math.round(annotation.confidence * 100)}%` : ""}`;
-  const vertices = (points: Point[], ring = 0) =>
+  const vertices = (points: Point[], ring = 0) => readOnly ? [] :
     points.map(([x, y], index) => (
       <circle
         key={`${ring}-${index}`}
@@ -369,7 +376,7 @@ function AnnotationShape({
           onPointerDown={onBbox}
         />
         <ShapeLabel x={x * canvasWidth} y={y * canvasHeight} text={label} color={color} />
-        {selected &&
+        {selected && !readOnly &&
           ([
             ["nw", x, y],
             ["ne", x + width, y],

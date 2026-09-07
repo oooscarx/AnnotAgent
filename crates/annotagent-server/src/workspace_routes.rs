@@ -24,7 +24,7 @@ use super::{
     patch_annotation, pause_batch, pause_run, preview_project_management, project_review_revisions,
     put_project_geometry_policy, reject_project_review_and_next, reject_review_and_next,
     remove_image, replay_run_from_node, resume_batch, resume_run, review_decision, run_events,
-    set_project_skills, start_batch, start_run,
+    set_project_skills, start_batch, start_run, upload_project_image,
 };
 
 pub(super) fn routes() -> Router<ServerState> {
@@ -65,6 +65,11 @@ pub(super) fn routes() -> Router<ServerState> {
             post(import_annotations),
         )
         .route("/api/projects/{project_id}/images", get(list_images))
+        .route(
+            "/api/projects/{project_id}/image-upload",
+            post(upload_project_image)
+                .layer(axum::extract::DefaultBodyLimit::max(25 * 1024 * 1024)),
+        )
         .route(
             "/api/projects/{project_id}/images/{index}",
             delete(remove_image),

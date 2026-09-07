@@ -2455,6 +2455,7 @@ mod tests {
             version: 1,
             project: ProjectDescriptor {
                 name: "generic".to_owned(),
+                annotation_goal: String::new(),
                 skill: String::new(),
                 skill_version: String::new(),
                 enabled_skills: vec![EnabledSkillConfig {

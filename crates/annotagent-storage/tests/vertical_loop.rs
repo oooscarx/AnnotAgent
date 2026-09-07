@@ -200,6 +200,7 @@ fn project() -> ProjectSchema {
         version: 1,
         project: ProjectDescriptor {
             name: "Vertical loop".to_owned(),
+            annotation_goal: String::new(),
             skill: "bbox_fixture".to_owned(),
             skill_version: "1".to_owned(),
             enabled_skills: Vec::new(),

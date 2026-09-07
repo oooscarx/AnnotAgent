@@ -594,6 +594,9 @@ export const api = {
     request<{ removed: string }>(`/api/projects/${projectId}/images/${imageId}?expected_content_hash=${encodeURIComponent(expectedContentHash)}`, {
       method: "DELETE",
     }),
+  uploadImage: (projectId: string, file: File) => upload<{ imported: number; duplicates: number; corrupt: { name: string; message: string }[] }>(`/api/projects/${encodeURIComponent(projectId)}/image-upload?name=${encodeURIComponent(file.name)}`, file),
+  sampleFeedback: (testId: string, imageId: string) => request<{ revisions: import("./types").SampleFeedbackRevision[] }>(`/api/workflow-sample-tests/${encodeURIComponent(testId)}/images/${encodeURIComponent(imageId)}/feedback`),
+  saveSampleFeedback: (revision: import("./types").SampleFeedbackRevision) => request<{ revision: import("./types").SampleFeedbackRevision }>(`/api/workflow-sample-tests/${encodeURIComponent(revision.sample_test_id)}/images/${encodeURIComponent(revision.image_id)}/feedback`, { method: "POST", body: JSON.stringify(revision) }),
   startRun: (
     projectId: string,
     workflow: { workflow_id: string; version: number },

@@ -7,7 +7,7 @@ test("Chinese selection persists across refresh and synchronizes without losing 
   await expect(page.getByRole("heading", { name: "首页", exact: true })).toBeVisible();
   await page.reload();
   await expect(page.getByLabel("Language / 语言", { exact: true })).toHaveValue("zh-CN");
-  await page.getByRole("button", { name: "新建项目", exact: true }).click();
+  await page.getByRole("button", { name: "选择图片开始", exact: true }).click();
   await page.getByLabel("项目名称", { exact: true }).fill("Unsaved 中文 project");
   const formUrl = page.url();
   const secondTab = await context.newPage();

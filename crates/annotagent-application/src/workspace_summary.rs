@@ -122,7 +122,8 @@ impl LocalApplication {
             .as_ref()
             .map(|version| &version.draft)
             .or(editable_draft);
-        let has_automation = automation.is_some();
+        // Saving a goal creates an empty working Draft, not a broken executable plan.
+        let has_automation = automation.is_some_and(|draft| !draft.nodes.is_empty());
         let automation_valid = if published.is_some() {
             true
         } else if let Some(draft) = editable_draft {
