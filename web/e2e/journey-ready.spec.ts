@@ -4,6 +4,20 @@ import { expect, test } from "./fixtures";
 
 test("ready fixture journey plans without image calls then authorizes a bounded sandbox test", async ({ page, request }, testInfo) => {
   test.setTimeout(120_000);
+  // This long acceptance path shares the isolated server's real 120-write/minute
+  // guard with preceding cases. Pace only its proven pre-execution rejection;
+  // do not retry provider failures, network errors or possibly executed actions.
+  await page.route("**/api/**", async (route) => {
+    if (["GET", "HEAD", "OPTIONS"].includes(route.request().method())) return route.fallback();
+    const deadline = Date.now() + 45_000;
+    while (true) {
+      const response = await route.fetch();
+      if (response.status() !== 429 || Date.now() >= deadline) return route.fulfill({ response });
+      const body = await response.json().catch(() => ({}));
+      if (body.code !== "mutation_rate_limited") return route.fulfill({ response });
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }
+  });
   const provider = await (await request.post("/api/providers", { data: { display_name: "Journey TEST fixture", adapter: "open_ai_compatible", base_url: "http://127.0.0.1:8796/openai/v1" } })).json();
   expect((await request.post(`/api/providers/${provider.id}/credential`, { data: { source: "workspace_file", secret: "guided-e2e-protocol-fixture" } })).ok()).toBeTruthy();
   const model = await (await request.post("/api/model-profiles", { data: {
@@ -110,6 +124,28 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   await expect(page).toHaveURL(/\/task\/revise\?/);
   const copyId = new URL(page.url()).searchParams.get("draft")!;
   expect(copyId).not.toBe(draftId);
+  const revisionUrl = page.url();
+  await page.route("**/api/agent-model-bindings", async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...await response.json(), pipeline_builder: "missing-fixture-planner" } });
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "Connect planning model", exact: true }).click();
+  await expect(page).toHaveURL(/return=revise/);
+  await page.reload();
+  const setupUrl = page.url();
+  const wrongSampleSetup = new URL(setupUrl); wrongSampleSetup.searchParams.set("test", "not-the-original-sample");
+  await page.goto(wrongSampleSetup.toString());
+  await expect(page.getByRole("alert")).toContainText("This revision does not belong to the selected sample");
+  await expect(page.getByRole("button", { name: "Use connection and return", exact: true })).toBeDisabled();
+  await page.goto(setupUrl);
+  await page.getByRole("button", { name: "Back to sample adjustment", exact: true }).first().click();
+  await expect(page).toHaveURL(revisionUrl);
+  await page.getByRole("button", { name: "Connect planning model", exact: true }).click();
+  await page.getByRole("radio", { name: /^Journey TEST model / }).check();
+  await page.getByRole("button", { name: "Use connection and return", exact: true }).click();
+  await expect(page).toHaveURL(revisionUrl);
+  await page.unroute("**/api/agent-model-bindings");
   await page.reload();
   await expect(page.getByRole("region", { name: "Revision authorization", exact: true })).toBeVisible();
   const preRevisionSessions = await (await request.get(`/api/projects/${projectId}/agent-sessions`)).json();

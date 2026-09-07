@@ -6,8 +6,10 @@ import type { ModelBindingRole, ModelCapability, ProjectSummary, ProviderProfile
 import { journeyConnectionReady, journeyModelMatches, journeyVisionCapabilities, type JourneyConnectionPurpose } from "../journeyConnections";
 
 // Presentation over the existing Registry. Credentials never enter URL/storage here.
-export function JourneyModel({ project, purpose = "planning", onNavigate }: {
-  project: ProjectSummary; purpose?: JourneyConnectionPurpose; onNavigate: (path: string) => void;
+export function JourneyModel({ project, purpose = "planning", revisionReturn, onNavigate }: {
+  project: ProjectSummary; purpose?: JourneyConnectionPurpose;
+  revisionReturn?: { draftId: string; sampleTestId: string; imageId?: string };
+  onNavigate: (path: string) => void;
 }) {
   const [models, setModels] = useState<RegistryModelProfile[]>([]);
   const [providers, setProviders] = useState<ProviderProfile[]>([]);
@@ -24,11 +26,17 @@ export function JourneyModel({ project, purpose = "planning", onNavigate }: {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [kind, setKind] = useState("bounding_box");
+  const [returnReady, setReturnReady] = useState(!revisionReturn);
   const pending = useRef(false);
   const active = useRef(true);
   const savedSetupKey = `annotagent.connection-setup:${project.id}:${purpose}`;
   const saveSetup = (providerId: string, modelId = "") => { try { localStorage.setItem(savedSetupKey, JSON.stringify({ providerId, modelId })); } catch { /* Registry records still persist server-side. */ } };
   async function reload() {
+    if (revisionReturn) {
+      const evidence = await api.samplePlanEvidence(project.id, revisionReturn.draftId);
+      if (evidence.project_id !== project.id || evidence.sample_test_id !== revisionReturn.sampleTestId) throw new Error(t("This revision does not belong to the selected sample."));
+      if (active.current) setReturnReady(true);
+    }
     const [registry, services, goal] = await Promise.all([api.modelProfiles(), api.providers(), api.projectGoal(project.id)]);
     if (!active.current) return;
     setKind(goal.kind ?? "bounding_box");
@@ -59,7 +67,7 @@ export function JourneyModel({ project, purpose = "planning", onNavigate }: {
   });
   const chosen = options.find((model) => model.id === selected);
   const ready = !!chosen && journeyConnectionReady(chosen, providers);
-  const leave = () => onNavigate(projectJourneyPath(project.id, "goal"));
+  const leave = () => onNavigate(revisionReturn ? projectJourneyPath(project.id, "revise", revisionReturn) : projectJourneyPath(project.id, "goal"));
   async function perform(action: () => Promise<void>) {
     if (pending.current) return;
     pending.current = true; setBusy(true); setError("");
@@ -67,8 +75,12 @@ export function JourneyModel({ project, purpose = "planning", onNavigate }: {
     finally { pending.current = false; if (active.current) setBusy(false); }
   }
   async function connect() {
-    if (!declared || !endpoint.trim() || !remoteModel.trim() || (!providerId && !secret)) return;
+    if (!returnReady || !declared || !endpoint.trim() || !remoteModel.trim() || (!providerId && !secret)) return;
     await perform(async () => {
+      if (revisionReturn) {
+        const evidence = await api.samplePlanEvidence(project.id, revisionReturn.draftId);
+        if (evidence.project_id !== project.id || evidence.sample_test_id !== revisionReturn.sampleTestId) throw new Error(t("This revision does not belong to the selected sample."));
+      }
       // Retain successful substeps on error. Existing Registry entries are also recoverable
       // from the configured-model list after refresh; never silently remove partial setup.
       let id = providerId;
@@ -97,10 +109,15 @@ export function JourneyModel({ project, purpose = "planning", onNavigate }: {
     });
   }
   async function useModel() {
-    if (!chosen || !ready) return;
+    if (!returnReady || !chosen || !ready) return;
     await perform(async () => {
+      if (revisionReturn) {
+        const evidence = await api.samplePlanEvidence(project.id, revisionReturn.draftId);
+        if (evidence.project_id !== project.id || evidence.sample_test_id !== revisionReturn.sampleTestId) throw new Error(t("This revision does not belong to the selected sample."));
+      }
       // Revalidate immediately before saving and preserve unrelated/locked bindings.
-      const [registry, services, existing] = await Promise.all([api.modelProfiles(), api.providers(), api.projectModelBindings(project.id)]);
+      const [registry, services, existing, currentGoal] = await Promise.all([api.modelProfiles(), api.providers(), api.projectModelBindings(project.id), api.projectGoal(project.id)]);
+      if ((currentGoal.kind ?? "bounding_box") !== kind) throw new Error(t("The annotation goal changed during setup. Return to the saved task and check its required connection again."));
       const current = registry.models.find((model) => model.id === chosen.id && journeyModelMatches(model, purpose, kind) && journeyConnectionReady(model, services.providers));
       if (!current) throw new Error(t("This model is no longer available. Choose another connection."));
       const role: ModelBindingRole = purpose === "planning" ? "pipeline_builder" : kind === "classification" ? "classification" : kind === "semantic_mask" ? "segmentation" : "detection";
@@ -118,14 +135,14 @@ export function JourneyModel({ project, purpose = "planning", onNavigate }: {
     {!loaded && !error && <p role="status">{t("Checking configured connections…")}</p>}
     {!connecting ? <>
       {options.length > 0 ? <fieldset className="journey-output-types" disabled={busy}><legend>{t(purpose === "planning" ? "Choose a configured planning model" : "Choose a compatible image model")}</legend>{options.map((model) => <label key={model.id}><input type="radio" name="planning-connection" checked={selected === model.id} onChange={() => { setSelected(model.id); setProbeConsent(false); }} /><span><strong>{model.display_name}</strong><small>{providerFor(model)?.base_url} · {t(model.status === "available" ? "Available" : "Connection needs verification")}</small></span></label>)}</fieldset> : loaded && <p>{t(purpose === "planning" ? "No configured planning connection is available yet." : "No compatible image connection is available yet.")}</p>}
-      <button disabled={busy} onClick={() => setConnecting(true)}>{t("Connect a model service")}</button>
+      <button disabled={busy || !returnReady} onClick={() => setConnecting(true)}>{t("Connect a model service")}</button>
       {providerId && <button disabled={busy} onClick={() => {
         setProviderId(""); setCreatedModel(""); setSelected(""); setEndpoint(""); setRemoteModel(""); setSecret(""); setDeclared(false); setProbeConsent(false); setConnecting(true);
         try { localStorage.removeItem(savedSetupKey); } catch { /* Existing Registry records are deliberately retained. */ }
       }}>{t("Connect another service without deleting the saved connection")}</button>}
       <p className="journey-notice">{t(purpose === "planning" ? "Local vision models do not replace a planning language model. This step does not install a model or download weights." : "A prompted boundary refiner alone cannot find objects. This connection step does not install weights; local plugin provisioning remains in Project management.")}</p>
       {chosen && !ready && <section className="journey-consent" aria-label={t("Connection verification")}><h3>{t("Verify this connection")}</h3><p>{chosen.remote_model_id} · {providerFor(chosen)?.base_url}</p><p>{t("Sends a short text probe, not your images. The service may charge; cost is unknown. Saving the connection alone does not verify it.")}</p><label><input type="checkbox" checked={probeConsent} onChange={(event) => setProbeConsent(event.target.checked)} disabled={busy} />{t("Allow the text verification request")}</label><button disabled={busy || !probeConsent} onClick={() => void perform(async () => { await api.activeProbe(chosen.provider_id, chosen.id); await reload(); setProbeConsent(false); })}>{t("Verify connection")}</button></section>}
-      <footer className="journey-actions"><button onClick={leave}>{t("Back to saved goal")}</button><button className="primary" disabled={busy || !ready} onClick={() => void useModel()}>{t("Use connection and return")}</button></footer>
+      <footer className="journey-actions"><button onClick={leave}>{t(revisionReturn ? "Back to sample adjustment" : "Back to saved goal")}</button><button className="primary" disabled={busy || !ready || !returnReady} onClick={() => void useModel()}>{t("Use connection and return")}</button></footer>
     </> : <>
       <p>{t(purpose === "planning" ? "Connect an OpenAI-compatible text service that supports tool calls and structured responses. Capabilities remain user-declared until checked." : "Connect an OpenAI-compatible image service for the selected output type. A text-only model cannot process your images. Capabilities remain user-declared.")}</p>
       <p>{t("The text probe checks connectivity, not tool accuracy. Connection details are not saved until Save connection; reloading clears an unsaved key.")}</p>

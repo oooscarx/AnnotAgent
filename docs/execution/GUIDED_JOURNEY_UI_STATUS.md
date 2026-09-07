@@ -501,3 +501,44 @@ is unchecked and model-request count unchanged. Original parent Draft remains
 unchanged. The extended journey passed; typecheck and 89 unit tests passed.
 Screenshot: `guided-journey/sample-outdated.png`, synthetic Fixture only. Final
 full-suite and broader multi-tab freshness checks remain for the final regression.
+
+M4b commit: `5d51128`.
+
+### M2/M4 follow-up — missing planner returns to sample revision
+
+The ordinary revision error now offers a task-specific connection action, not
+instructions to find a model in Project management. Model setup carries only a
+typed `return=revise` with same-Project Draft/Test/Image IDs; arbitrary return
+URLs and incomplete return contexts are dropped by the route parser. Header and
+footer Back return to that exact revision. Existing Provider/model creation,
+private workspace credential storage and atomic binding selection are reused.
+No model call starts on returning or refreshing.
+
+Setup validates the saved revision lineage on load and before connection/binding
+writes. A mismatched or deleted test/copy cannot silently select another task.
+Saving a binding rechecks the current goal output kind and compatible model.
+The returned revision reloads service state and awaits separate planning consent.
+The guided scene still does not show the full Provider or Plugin management UI.
+
+Targeted two-path E2E passed: missing-model first-use and sample feedback/revision.
+Additional final regression includes cancellation + refresh, selecting an existing
+planner + return, mismatched Sample ID blocking binding, and no implicit planning
+session/image call. Web typecheck and 90 unit tests pass. Full E2E rerun pending
+completion below. All mutations remain in isolated fixture workspaces.
+
+Final Rust checks on this tree: fmt, strict all-feature Clippy, all-feature build
+and **510 tests passed / 5 ignored** (explicit real-model weight requirements).
+The first complete browser run was **61 passed / 1 failed**: the long journey's
+explicit lost-POST retry reached the real server's 120-mutations/minute guard
+after preceding suite cases. Failure evidence showed `mutation_rate_limited`,
+not a Provider error or failed revision. The long fixture path now paces only
+that exact pre-execution 429 rejection, matching the existing API-test helper;
+network errors and possibly executed/model failures are never retried. Product
+security limits and product retry behavior are unchanged. Full rerun follows.
+
+Final full rerun: **62/62 E2E passed** (1.7 minutes), **90/90 Web unit tests**,
+typecheck and production build passed. The long journey completed under the
+unchanged write-rate protection, including its explicit lost-request retry.
+Outstanding scope is still task-native provisioning/execution compatibility,
+wider sample corrections, freshness/late-request audit and final cross-screen
+accessibility evidence. This is not a completion claim for the entire goal.

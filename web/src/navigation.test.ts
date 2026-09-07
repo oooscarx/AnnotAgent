@@ -12,6 +12,13 @@ import {
 } from "./navigation";
 
 describe("guided workspace routing", () => {
+  it("accepts only a typed same-project revision return for model setup", () => {
+    const path = projectJourneyPath("project", "model", { returnScene: "revise", draftId: "draft", sampleTestId: "test", imageId: "image" });
+    const url = new URL(path, "http://localhost");
+    expect(parseWorkspaceRoute(url.pathname, url.search)).toMatchObject({ canonicalPath: path, returnScene: "revise", draftId: "draft", sampleTestId: "test", imageId: "image" });
+    expect(parseWorkspaceRoute(url.pathname, "?return=https://example.com&draft=draft&test=test").canonicalPath).not.toContain("return");
+    expect(parseWorkspaceRoute(url.pathname, "?return=revise&draft=draft").canonicalPath).not.toContain("return");
+  });
   it("keeps selected Run results and original display through canonical owner resolution", () => {
     const path = projectRunPath("project", "run", { imageId: "image", annotationId: "candidate", canvasView: "original" });
     expect(parseWorkspaceRoute("/runs/run", "?project_id=project&image=image&annotation=candidate&display=original")).toMatchObject({ canonicalPath: path, annotationId: "candidate", canvasView: "original" });

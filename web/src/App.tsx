@@ -680,7 +680,7 @@ export function App() {
             setNavigationGuard(undefined); await refresh(); navigate(projectJourneyPath(id, "goal"));
           }} />
           : route.scene === "goal" ? <JourneyGoal key={route.projectId} project={selectedProject} sessionId={route.agentSessionId} onNavigate={navigate} onRefresh={refresh} onNavigationGuardChange={setNavigationGuard} />
-          : route.scene === "model" ? <JourneyModel key={`${route.projectId}:${route.modelPurpose ?? "planning"}`} project={selectedProject} purpose={route.modelPurpose ?? "planning"} onNavigate={navigate} />
+          : route.scene === "model" ? <JourneyModel key={`${route.projectId}:${route.modelPurpose ?? "planning"}:${route.returnScene ?? "goal"}:${route.draftId ?? ""}:${route.sampleTestId ?? ""}`} project={selectedProject} purpose={route.modelPurpose ?? "planning"} revisionReturn={route.returnScene === "revise" && route.draftId && route.sampleTestId ? { draftId: route.draftId, sampleTestId: route.sampleTestId, imageId: route.imageId } : undefined} onNavigate={navigate} />
           : route.scene === "confirm" ? <JourneyConfirm key={route.projectId} projectId={route.projectId} draftId={route.draftId} testId={route.sampleTestId} imageId={route.imageId} operationId={route.processingOperationId} onNavigate={navigate} />
           : route.scene === "revise" ? <JourneyRevision key={`${route.projectId}:${route.draftId}`} projectId={route.projectId} draftId={route.draftId} testId={route.sampleTestId} imageId={route.imageId} onNavigate={navigate} />
           : <BuildTestPublish key={route.projectId} project={selectedProject} guided selectedDraftId={route.draftId} selectedSampleTestId={route.sampleTestId} selectedSampleImageId={route.imageId}

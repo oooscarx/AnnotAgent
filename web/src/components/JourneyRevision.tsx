@@ -73,12 +73,12 @@ export function JourneyRevision({ projectId, draftId, testId, imageId, onNavigat
       <p>{t("Your goal, saved feedback, sample outcome summaries and model catalog will be sent to this planning service. Up to 16 turns and a $1 reported-usage budget. Actual cost may be unknown. No image calls, publication or dataset processing are authorized here.")}</p>
       <label className="checkbox-row"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} />{t("I authorize this feedback and planning scope")}</label>
     </section>}
-    {!running && !ready && evidence && !model && <p role="alert">{t("The planning connection is unavailable. Your feedback and original sample remain saved. Return to the project to reconnect it before continuing this revision.")}</p>}
+    {!running && !ready && evidence && !model && <p role="alert">{t("The planning connection is unavailable. Your feedback and original sample remain saved. Connect a model and return to this same adjustment; no planning starts automatically.")}</p>}
     {ready && <p>{t("This is a proposed change, not verified improvement. Review the image-test scope next; no extra image test has started.")}</p>}
     <footer className="journey-actions">
       <button onClick={() => onNavigate(originalPath)}>{t(running ? "Return to original sample; revision continues" : "Keep original plan")}</button>
       {session?.status === "running" && <button onClick={() => void api.cancelAgentSession(session.id).then((value) => { if (active.current) setSession(value.session); }).catch((error: Error) => setError(error.message))}>{t("Stop planning")}</button>}
-      {ready ? <button className="primary" onClick={() => onNavigate(projectJourneyPath(projectId, "samples", { draftId, sampleView: "authorize" }))}>{t("Review revised sample scope")}</button> : !running && <button className="primary" disabled={!evidence || !model || !consent} onClick={() => void revise()}>{t("Authorize plan adjustment")}</button>}
+      {ready ? <button className="primary" onClick={() => onNavigate(projectJourneyPath(projectId, "samples", { draftId, sampleView: "authorize" }))}>{t("Review revised sample scope")}</button> : !running && (evidence && !model ? <button className="primary" onClick={() => onNavigate(projectJourneyPath(projectId, "model", { returnScene: "revise", draftId, sampleTestId: testId, imageId }))}>{t("Connect planning model")}</button> : <button className="primary" disabled={!evidence || !model || !consent} onClick={() => void revise()}>{t("Authorize plan adjustment")}</button>)}
     </footer>
     {error && <p role="alert">{error}</p>}
   </section>;
