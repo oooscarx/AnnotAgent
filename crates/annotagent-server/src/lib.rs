@@ -3984,6 +3984,33 @@ fn guided_sample_fingerprint(
     ))
 }
 
+// Snapshot classic sample execution without representing it as bounded Journey
+// authorization. The processing confirmation path must not accept this seal.
+fn execution_sample_seal(
+    state: &ServerState,
+    draft: &WorkflowDraft,
+    models: &[ModelProfileSnapshot],
+    image_ids: &[String],
+) -> ApiResult<Value> {
+    let mut seal = guided_sample_seal(state, draft, models)?;
+    let images = state
+        .application
+        .list_project_image_summaries(&draft.project_id)
+        .map_err(ApiError::bad_request)?;
+    let selected =
+        image_ids
+            .iter()
+            .map(|id| {
+                images.iter().find(|image| image.image_id.to_string() == *id)
+            .map(|image| json!({"image_id":image.image_id,"content_hash":image.content_hash}))
+            .ok_or_else(|| ApiError::bad_request("A selected sample image is no longer available"))
+            })
+            .collect::<ApiResult<Vec<_>>>()?;
+    seal["images"] = json!(selected);
+    seal["scope_kind"] = json!("sample_execution_v1");
+    Ok(seal)
+}
+
 async fn preview_workflow_samples(
     State(state): State<ServerState>,
     AxumPath(draft_id): AxumPath<String>,
@@ -4072,6 +4099,25 @@ async fn dry_run_workflow(
         resolve_runtime_model_profiles(&state, &model_profiles, workflow_uses_model(&draft))
             .await?;
     let image_indices = payload.map_or_else(Vec::new, |Json(value)| value.image_indices);
+    let images = state
+        .application
+        .list_project_image_summaries(&draft.project_id)
+        .map_err(ApiError::bad_request)?;
+    let selected = if image_indices.is_empty() {
+        (0..images.len().min(3)).collect::<Vec<_>>()
+    } else {
+        image_indices.iter().copied().take(10).collect()
+    };
+    let image_ids = selected
+        .iter()
+        .map(|index| {
+            images
+                .get(*index)
+                .map(|image| image.image_id.to_string())
+                .ok_or_else(|| ApiError::bad_request("Sample image index is outside this Project"))
+        })
+        .collect::<ApiResult<Vec<_>>>()?;
+    let scope_seal = execution_sample_seal(&state, &draft, &model_profiles, &image_ids)?;
     let (report, sample_test) = state
         .application
         .dry_run_workflow_samples_with_provider_record(
@@ -4083,6 +4129,11 @@ async fn dry_run_workflow(
         )
         .await
         .map_err(ApiError::bad_request)?;
+    state
+        .application
+        .store()
+        .save_sample_scope_seal(&sample_test.id, &scope_seal)
+        .map_err(ApiError::internal)?;
     let mut body = json!(report);
     if let Some(object) = body.as_object_mut() {
         object.insert("sample_test_id".to_owned(), json!(sample_test.id));
@@ -4162,7 +4213,18 @@ async fn get_workflow_sample_test(
                 .application
                 .resolved_workflow_draft_model_profiles(&draft_id)
                 .ok()
-                .and_then(|(resolved, models)| guided_sample_seal(&state, &resolved, &models).ok())
+                .and_then(|(resolved, models)| {
+                    if sealed["scope_kind"] == "sample_execution_v1" {
+                        let ids = record
+                            .inputs
+                            .iter()
+                            .map(|input| input.image_id.clone())
+                            .collect::<Vec<_>>();
+                        execution_sample_seal(&state, &resolved, &models, &ids).ok()
+                    } else {
+                        guided_sample_seal(&state, &resolved, &models).ok()
+                    }
+                })
                 .is_some_and(|actual| actual == sealed);
         } else if draft.nodes.iter().any(|node| {
             node.model_binding
@@ -4273,6 +4335,25 @@ async fn publish_workflow(
         ));
     }
     reject_unresolved_registry_model_nodes(&draft)?;
+    if draft.status != annotagent_core::WorkflowDraftStatus::Published
+        && draft.nodes.iter().any(|node| {
+            node.model_binding
+                .as_deref()
+                .is_some_and(plugin_model_selection)
+        })
+    {
+        let Json(sample) = get_workflow_sample_test(
+            State(state.clone()),
+            AxumPath(draft_id.clone()),
+            Query(WorkflowSampleTestQuery::default()),
+        )
+        .await?;
+        if sample["current"] != true {
+            return Err(ApiError::bad_request(
+                "The native-model sample scope is unverified or stale. Saved results remain viewable, but cannot authorize publication.",
+            ));
+        }
+    }
     let version = match state.application.publish_workflow(&draft_id, &settings) {
         Ok(version) => version,
         Err(error)
@@ -13093,6 +13174,28 @@ export:
         assert_eq!(dry_run["validation"]["valid"], json!(true));
         assert_eq!(dry_run["sandbox"], json!(true));
         assert_eq!(dry_run["samples"][0]["image_name"], json!("sample.png"));
+        let saved_id = dry_run["sample_test_id"].as_str().expect("sample identity");
+        let seal = application
+            .store()
+            .sample_scope_seal(saved_id)
+            .expect("saved execution scope")
+            .expect("classic endpoint saves scope");
+        assert_eq!(seal["scope_kind"], "sample_execution_v1");
+        assert_eq!(seal["images"].as_array().unwrap().len(), 1);
+        let restored = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("/api/workflow-drafts/{draft_id}/sample-test?test_id={saved_id}"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            restored["current"], true,
+            "new classic samples restore without charging again"
+        );
 
         // Seed one immutable, digest-backed model-input observation so this HTTP journey also
         // verifies the preview endpoint independently of the test-only workflow's mock planner.

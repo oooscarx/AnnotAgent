@@ -1,5 +1,12 @@
 # Guided Journey UI — execution record
 
+## Scoped sample restoration repair (2026-09-08)
+
+- Classic sample POST now captures selected-image, schema, Registry and native model scope before execution and stores the seal against the saved sample identity. Execution-only seals are explicitly distinct from bounded Journey authorization; processing confirmation is not weakened.
+- GET compares the matching execution scope. Old unsealed native evidence stays unverified; results remain available read-only. UI no longer discards stale reports or misleadingly claims the Draft necessarily changed; activation is disabled and native publication also checks current sample scope. No historical snapshots were fabricated.
+- Verification: server all-feature tests 34/34; strict Clippy; fmt; Web typecheck, 93 unit tests and production build; all-feature CLI build. HTTP regression verifies classic sample scope persistence and read-only restoration with no repeat inference. Browser verified the real saved sample 77f9b52e restores 1 image / 2 review candidates / 0 failures and disabled activation. No new live model execution.
+- Follow-up visual diagnosis (read-only): retained coarse boxes are about 42x26 and 22x19 px; existing dataset labels are about 29x24 and 10x8 px. SAM produced still larger 74x46 and 72x22 boxes, rejected as refiner_drift. No final accepted annotations; no quality improvement claimed.
+
 ## Scoped resume: Builder Draft to sample test (2026-09-08)
 
 - User resumed only the blocked sample-test transition; broader Journey development remains paused.

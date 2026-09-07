@@ -1373,7 +1373,7 @@ function BuildTestPublish({
     )
       .then(({ sample_test: sampleTest, current }) => {
         if (generation !== sampleLoadGeneration.current) return;
-        if (sampleTest && (current || guided)) {
+        if (sampleTest) {
           setReport({ ...sampleTest.report, sample_inputs: sampleTest.inputs });
           setStaleReport(!current);
           setRestoredAt(sampleTest.completed_at);
@@ -1417,7 +1417,7 @@ function BuildTestPublish({
       .finally(() => { testPending.current = false; setBusy(false); });
   };
   const publish = () => {
-    if (!draftId || !report?.validation.valid || drafts.find((draft) => draft.id === draftId)?.status === "published") return;
+    if (!draftId || staleReport || !report?.validation.valid || drafts.find((draft) => draft.id === draftId)?.status === "published") return;
     setBusy(true);
     void api.publishWorkflow(draftId)
       .then((version) => {
@@ -1506,8 +1506,9 @@ function BuildTestPublish({
     const image = sampleImage(inspectedSample);
     const savedAnnotations: Annotation[] = image && inspectedSample.projection ? inspectedSample.outcomes.flatMap((outcome) => outcome.value ? [{ id: outcome.id, image_id: image.image_id, task_id: "sample", label: outcome.label, value: outcome.value, attributes: {}, source: "saved sample", review_status: "needs_review" as const, provenance: {}, created_at: "" }] : []) : [];
     return <section className="journey-scene journey-results">
-      <div className="journey-intro"><h2>{t("Sample Test is out of date")}</h2><p role="alert">{t("The plan, images or model connection changed after this sample. Saved results remain visible for reference, but cannot authorize processing. Review the current sample scope before testing again.")}</p></div>
+      <div className="journey-intro"><h2>{t("Sample Test is out of date")}</h2><p role="alert">{t("Sample scope cannot be verified. The plan, images or models may have changed, or this older test lacks a model snapshot. Saved results are read-only and cannot authorize activation.")}</p></div>
       <p>{inspectedSample.image_name} · {t("Sandbox sample")} · {inspectedPosition + 1}/{report?.samples.length}</p>
+      <button onClick={() => setInspectedSampleIndex(undefined)}>{t("View all sample images")}</button>
       {image ? <AnnotationCanvas key={image.image_id} compactList imageUrl={image.url} annotations={savedAnnotations} readOnly onSelect={() => undefined} onChange={() => undefined} /> : <p>{t("The original image is unavailable. No substitute result is shown.")}</p>}
       <footer className="journey-actions"><button disabled={inspectedPosition <= 0} onClick={() => setInspectedSampleIndex(report!.samples[inspectedPosition - 1].image_index)}>{t("Previous image")}</button><button disabled={inspectedPosition + 1 >= (report?.samples.length ?? 0)} onClick={() => setInspectedSampleIndex(report!.samples[inspectedPosition + 1].image_index)}>{t("Next image")}</button>{guided && <button className="primary" onClick={() => onSampleOperation?.(undefined)}>{t("Review new sample scope")}</button>}</footer>
     </section>;
@@ -1529,7 +1530,8 @@ function BuildTestPublish({
       <div className="toolbar-panel sample-test-toolbar">
         <div className="sample-test-toolbar-copy"><span className="eyebrow">{t("Step 4 · Test & Activate")}</span><h2>{t("Test samples, then activate automation")}</h2><p>A Sample Test executes up to 10 available Project images in a sandbox and never writes formal annotations. Activation publishes the tested Draft as an immutable Version.</p></div>
         <button className="sample-test-back" onClick={() => onNavigate("pipeline", draftId)}>{t("← Edit Automation")}</button>
-        {draftControls}
+      {draftControls}
+      {staleReport && <p role="alert">{t("Sample scope cannot be verified. The plan, images or models may have changed, or this older test lacks a model snapshot. Saved results are read-only and cannot authorize activation.")}</p>}
       </div>
       {!report && <ol className="activation-lifecycle" aria-label={t("Automation activation lifecycle")}>
         <li className={draftId ? "complete" : "current"}><span>1</span><strong>{draftId ? t("Unpublished changes") : t("Choose a Draft")}</strong></li>
@@ -1541,7 +1543,7 @@ function BuildTestPublish({
         <>
           <section className={`sample-test-hero ${report.validation.valid ? "ready" : "blocked"}`} aria-label={t("Dry Run result summary")}>
             <div className="sample-test-hero-copy">
-              <span className="eyebrow">{isActivated ? t("Activated evidence") : report.validation.valid ? t("Ready to activate") : t("Automation needs changes")}</span>
+              <span className="eyebrow">{staleReport ? t("Sample Test is out of date") : isActivated ? t("Activated evidence") : report.validation.valid ? t("Ready to activate") : t("Automation needs changes")}</span>
               <h2>{t("Sample test complete")}</h2>
               <p>AnnotAgent tested real Project images in a sandbox. No formal Annotations were written.</p>
             </div>
@@ -1560,8 +1562,8 @@ function BuildTestPublish({
             </div>
             {isActivated ? <div className="activation-success" role="status"><span><strong>{t("Automation activated")}</strong><small>{t("This saved Sample Test belongs to the immutable active Version.")}</small></span><button className="primary" disabled={!publishedWorkflow || startingRun || Boolean(project.active_batch || project.active_run)} onClick={startFullRun}>{startingRun ? t("Starting…") : project.active_batch || project.active_run ? t("Run already active") : t("Start full Run")}</button></div> : <>
               <div className="button-row">
-                {!report.validation.valid || summary.failed_count > 0 ? <button className="primary" onClick={() => onNavigate("pipeline", draftId)}>{t("Fix automation")}</button> : summary.needs_review_count > 0 ? <button className="primary" onClick={() => document.getElementById("uncertain-results")?.scrollIntoView({ behavior: "smooth", block: "start" })}>{t("Inspect uncertain samples")}</button> : <button className="primary" onClick={publish} disabled={busy || Boolean(activated)}>{busy ? t("Activating…") : t("Activate automation")}</button>}
-                {report.validation.valid && summary.needs_review_count > 0 && <button onClick={publish} disabled={busy || Boolean(activated)}>{busy ? t("Activating…") : t("Activate with Review gate")}</button>}
+                {!report.validation.valid || summary.failed_count > 0 ? <button className="primary" onClick={() => onNavigate("pipeline", draftId)}>{t("Fix automation")}</button> : summary.needs_review_count > 0 ? <button className="primary" onClick={() => document.getElementById("uncertain-results")?.scrollIntoView({ behavior: "smooth", block: "start" })}>{t("Inspect uncertain samples")}</button> : <button className="primary" onClick={publish} disabled={busy || staleReport || Boolean(activated)}>{busy ? t("Activating…") : t("Activate automation")}</button>}
+                {report.validation.valid && summary.needs_review_count > 0 && <button onClick={publish} disabled={busy || staleReport || Boolean(activated)}>{busy ? t("Activating…") : t("Activate with Review gate")}</button>}
               </div>
               {activated && <div className="activation-success" role="status"><span><strong>{t("Automation activated")}</strong><small>{t("Immutable Version v")}{activated.version}{" "}{t("is ready for the full Dataset Run.")}</small></span><button className="primary" disabled={startingRun || Boolean(project.active_batch || project.active_run)} onClick={startFullRun}>{startingRun ? t("Starting…") : project.active_batch || project.active_run ? t("Run already active") : t("Start full Run")}</button></div>}
             </>}

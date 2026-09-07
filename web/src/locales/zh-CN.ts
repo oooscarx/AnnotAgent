@@ -1,5 +1,6 @@
 /** English source messages are stable keys; untranslated technical copy falls back to English. */
 export const zhCN: Record<string, string> = {
+  "Sample scope cannot be verified. The plan, images or models may have changed, or this older test lacks a model snapshot. Saved results are read-only and cannot authorize activation.": "无法核验本次样例的执行范围：方案、图片或模型可能已变化，也可能是旧测试缺少模型快照。已保存结果可只读查看，但不能据此启用方案。",
   "Run results": "运行结果",
   "Processing this image": "正在处理这张图片",
   "Check this image’s results": "检查这张图片的结果",
