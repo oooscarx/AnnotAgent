@@ -7273,6 +7273,7 @@ impl LocalApplication {
             project_schema_writes: Mutex::new(()),
         };
         application.reconcile_legacy_project_ownership()?;
+        application.recover_conversation_corrections()?;
         Ok(application)
     }
 

@@ -1,6 +1,6 @@
 //! Durable human correction checkpoint, reusing Sandbox feedback and its validation.
 use crate::{SampleFeedbackRevision, SqliteStore, StorageError};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -98,6 +98,19 @@ mod tests {
             .answer_conversation_human_request(&owner, input.id, &answer)
             .unwrap();
         assert_eq!(answered.status, ConversationHumanRequestStatus::Answered);
+        let event = store
+            .pending_conversation_resumes(&owner, input.conversation_id, input.task_id)
+            .unwrap()
+            .remove(0);
+        assert!(
+            store
+                .complete_conversation_plan_resume(&owner, &event, "unrelated-draft")
+                .is_err()
+        );
+        assert_eq!(
+            store.conversation_human_request(&owner, input.id).unwrap(),
+            answered
+        );
         assert_eq!(
             store
                 .answer_conversation_human_request(&owner, input.id, &answer)
@@ -372,6 +385,8 @@ pub struct ConversationHumanRequest {
     pub input: ConversationHumanRequestInput,
     pub status: ConversationHumanRequestStatus,
     pub answer: Option<SampleFeedbackRevision>,
+    pub resume_draft_id: Option<String>,
+    pub resume_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -411,7 +426,17 @@ fn read(
     )?;
     let input: ConversationHumanRequestInput = serde_json::from_str(&input)?;
     owned(db, project, input.task_id, input.conversation_id)?;
+    let result: Option<(Option<String>, Option<String>)> = db
+        .query_row(
+            "SELECT draft_id,error FROM conversation_resume_results WHERE request_id=?1",
+            [id.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let (resume_draft_id, resume_error) = result.unwrap_or_default();
     Ok(ConversationHumanRequest {
+        resume_draft_id,
+        resume_error,
         input,
         status: serde_json::from_value(serde_json::Value::String(status))?,
         answer: answer
@@ -575,12 +600,67 @@ impl SqliteStore {
         project: &str,
         event: &ConversationResumeEvent,
     ) -> Result<(), StorageError> {
+        self.acknowledge_conversation_resume_with(project, event, |_| Ok(()))
+    }
+
+    pub fn complete_conversation_plan_resume(
+        &self,
+        project: &str,
+        event: &ConversationResumeEvent,
+        draft_id: &str,
+    ) -> Result<(), StorageError> {
+        self.acknowledge_conversation_resume_with(project,event, |tx| {
+            let request=read(tx,project,event.request_id)?;
+            let valid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM sample_plan_revisions WHERE draft_id=?1 AND sample_test_id=?2 AND json_array_length(feedback_json)=1 AND json_extract(feedback_json,'$[0].revision_id')=?3)",params![draft_id,request.input.sample_test_id,event.feedback_revision_id],|row|row.get(0))?;
+            if draft_id!=event.checkpoint_ref.to_string() || !valid { return Err(invalid("Resume Draft does not carry this checkpoint's exact feedback")); }
+            tx.execute("INSERT INTO conversation_resume_results(request_id,draft_id,error) VALUES(?1,?2,NULL) ON CONFLICT(request_id) DO UPDATE SET draft_id=excluded.draft_id,error=NULL",params![event.request_id.to_string(),draft_id])?;
+            Ok(())
+        })
+    }
+
+    pub fn record_conversation_resume_failure(
+        &self,
+        project: &str,
+        id: Uuid,
+        error: &str,
+    ) -> Result<(), StorageError> {
+        self.with_connection(|db|{
+            let tx=db.unchecked_transaction()?;let request=read(&tx,project,id)?;
+            // A competing delivery may already have committed success. Its immutable
+            // result wins over this late failure and the caller can restore it.
+            if request.status==ConversationHumanRequestStatus::Applied {return Ok(());}
+            if request.status!=ConversationHumanRequestStatus::Answered {return Err(invalid("Only an answered request can record a continuation failure"));}
+            let bounded:String=error.chars().take(1600).collect();
+            tx.execute("INSERT INTO conversation_resume_results(request_id,draft_id,error) VALUES(?1,NULL,?2) ON CONFLICT(request_id) DO UPDATE SET error=excluded.error WHERE draft_id IS NULL",params![id.to_string(),bounded])?;
+            tx.commit()?;Ok(())
+        })
+    }
+
+    /// Startup retries only delivery interrupted before any terminal attempt result.
+    /// Failed preconditions require explicit retry, not a background retry loop.
+    pub fn undelivered_conversation_corrections(
+        &self,
+    ) -> Result<Vec<(String, String, ConversationHumanRequestInput)>, StorageError> {
+        self.with_connection(|db|{
+            let mut statement=db.prepare("SELECT s.project_id,c.project_id,h.request_json FROM conversation_human_requests h JOIN conversation_tasks t ON t.id=h.task_id JOIN project_conversations c ON c.id=t.conversation_id JOIN conversation_resume_outbox o ON o.request_id=h.id JOIN sample_operations s ON s.id=json_extract(h.request_json,'$.sample_test_id') LEFT JOIN conversation_resume_results r ON r.request_id=h.id WHERE h.status='answered' AND o.applied_at IS NULL AND r.request_id IS NULL ORDER BY h.created_at,h.id")?;
+            let rows=statement.query_map([],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?)))?;
+            rows.map(|row|{let (project,owner,input)=row?;Ok((project,owner,serde_json::from_str(&input)?))}).collect()
+        })
+    }
+
+    fn acknowledge_conversation_resume_with(
+        &self,
+        project: &str,
+        event: &ConversationResumeEvent,
+        after_write: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<(), StorageError>,
+    ) -> Result<(), StorageError> {
         self.with_connection(|db| {
             let tx=db.unchecked_transaction()?; let request=read(&tx,project,event.request_id)?;
             if request.input.task_id!=event.task_id || request.input.resume_checkpoint_ref!=event.checkpoint_ref || request.answer.as_ref().map(|answer|&answer.revision_id)!=Some(&event.feedback_revision_id) { return Err(invalid("Resume event does not match the saved answer")); }
             if !matches!(request.status,ConversationHumanRequestStatus::Answered|ConversationHumanRequestStatus::Applied) { return Err(invalid("Human answer is not ready to apply")); }
             tx.execute("UPDATE conversation_resume_outbox SET applied_at=COALESCE(applied_at,?2) WHERE request_id=?1",params![event.request_id.to_string(),chrono::Utc::now().to_rfc3339()])?;
             tx.execute("UPDATE conversation_human_requests SET status='applied' WHERE id=?1",[event.request_id.to_string()])?;
+            after_write(&tx)?;
             tx.commit()?; Ok(())
         })
     }

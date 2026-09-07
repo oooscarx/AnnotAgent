@@ -53,6 +53,49 @@ fn validate_subject(
 }
 
 impl LocalApplication {
+    pub(crate) fn recover_conversation_corrections(&self) -> Result<()> {
+        for (project, owner, input) in self.store.undelivered_conversation_corrections()? {
+            if let Err(error) = self.resume_conversation_correction(
+                &project,
+                input.conversation_id,
+                input.task_id,
+                input.id,
+            ) {
+                self.store.record_conversation_resume_failure(
+                    &owner,
+                    input.id,
+                    &error.to_string(),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn continue_conversation_correction(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+    ) -> Result<ConversationHumanRequest> {
+        let request = self
+            .conversation_human_requests(project, conversation, task)?
+            .into_iter()
+            .find(|request| request.input.id == id)
+            .context("Human request not found in this task")?;
+        let owner = self.conversation_project_identity(project)?;
+        if request.status == annotagent_storage::ConversationHumanRequestStatus::Applied {
+            return Ok(request);
+        }
+        if request.status != annotagent_storage::ConversationHumanRequestStatus::Answered {
+            bail!("Save a human answer before continuing");
+        }
+        if let Err(error) = self.resume_conversation_correction(project, conversation, task, id) {
+            self.store
+                .record_conversation_resume_failure(&owner, id, &error.to_string())?;
+        }
+        Ok(self.store.conversation_human_request(&owner, id)?)
+    }
     /// Deterministic continuation of a saved correction: prepare an editable copy with
     /// exactly that answer's evidence, then acknowledge delivery. No model/Publish/Run.
     pub fn resume_conversation_correction(
@@ -97,7 +140,8 @@ impl LocalApplication {
             &copy_id,
             &answer.revision_id,
         )?;
-        self.store.acknowledge_conversation_resume(&owner, &event)?;
+        self.store
+            .complete_conversation_plan_resume(&owner, &event, &draft.id)?;
         Ok(draft)
     }
     pub fn cancel_conversation_human_request(
@@ -410,6 +454,24 @@ mod tests {
         );
         drop(app);
         let app = LocalApplication::new(temporary.path()).unwrap();
+        let recovered = app
+            .store
+            .conversation_human_request(&owner, input.id)
+            .unwrap();
+        assert_eq!(
+            recovered.status,
+            annotagent_storage::ConversationHumanRequestStatus::Applied
+        );
+        assert_eq!(recovered.resume_draft_id.as_deref(), Some(copy.id.as_str()));
+        app.store
+            .record_conversation_resume_failure(&owner, input.id, "TEST late competing failure")
+            .unwrap();
+        assert_eq!(
+            app.store
+                .conversation_human_request(&owner, input.id)
+                .unwrap(),
+            recovered
+        );
         let resumed = app
             .resume_conversation_correction(project, conversation, task.id, input.id)
             .unwrap();
@@ -434,6 +496,52 @@ mod tests {
                 .conversation_call_history(&owner, task.id)
                 .unwrap()
                 .is_empty()
+        );
+        let mut next = input.clone();
+        next.id = Uuid::new_v4();
+        next.resume_checkpoint_ref = Uuid::new_v4();
+        next.expected_feedback_sequence = later.sequence;
+        app.create_conversation_human_request(project, &next)
+            .unwrap();
+        let mut next_answer = later.clone();
+        next_answer.revision_id = Uuid::new_v4().to_string();
+        next_answer.sequence += 1;
+        app.answer_conversation_human_request(
+            project,
+            conversation,
+            task.id,
+            next.id,
+            &next_answer,
+        )
+        .unwrap();
+        std::fs::write(&path, b"TEST changed before resume").unwrap();
+        let failed = app
+            .continue_conversation_correction(project, conversation, task.id, next.id)
+            .unwrap();
+        assert!(failed.resume_error.is_some());
+        assert!(failed.resume_draft_id.is_none());
+        assert!(
+            app.store
+                .undelivered_conversation_corrections()
+                .unwrap()
+                .is_empty()
+        );
+        drop(app);
+        let app = LocalApplication::new(temporary.path()).unwrap();
+        assert_eq!(
+            app.store
+                .conversation_human_request(&owner, next.id)
+                .unwrap(),
+            failed
+        );
+        std::fs::write(&path, &original).unwrap();
+        let retried = app
+            .continue_conversation_correction(project, conversation, task.id, next.id)
+            .unwrap();
+        assert!(retried.resume_error.is_none());
+        assert_eq!(
+            retried.resume_draft_id,
+            Some(next.resume_checkpoint_ref.to_string())
         );
     }
 }

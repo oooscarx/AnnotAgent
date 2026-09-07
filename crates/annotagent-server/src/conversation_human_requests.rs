@@ -60,6 +60,21 @@ pub(super) async fn answer(
     state
         .application
         .answer_conversation_human_request(&project, conversation, task, id, &input.answer)
+        .map_err(ApiError::bad_request)?;
+    state
+        .application
+        .continue_conversation_correction(&project, conversation, task, id)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
+pub(super) async fn resume(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task, id)): AxumPath<(String, Uuid, Uuid, Uuid)>,
+) -> ApiResult<Json<ConversationHumanRequest>> {
+    state
+        .application
+        .continue_conversation_correction(&project, conversation, task, id)
         .map(Json)
         .map_err(ApiError::bad_request)
 }

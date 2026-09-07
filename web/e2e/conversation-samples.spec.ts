@@ -127,7 +127,7 @@ test(`conversation ${kind} authorizes HTTP fixture samples and restores editable
   if(kind==="bbox")await expect(page.getByRole("spinbutton",{name:"width",exact:true})).toHaveValue("0.12");
   else await expect(page.getByLabel("Correct label",{exact:true})).toHaveValue("室内");
   await page.getByRole("button",{name:"Submit correction",exact:true}).click();
-  await expect(page.getByText("Correction saved. Task continuation is pending; no new model call was started.",{exact:true})).toBeVisible();
+  await expect(page.getByText("Correction saved and revision Draft prepared. No model was called; the plan has not been rebuilt or tested.",{exact:true})).toBeVisible();
   expect(answer.outcome_id).toBe(human.outcome_id);
   expect(answer.sequence).toBe(previous.sequence+1);
   expect((await request.post(`${humanRoot}/${human.id}/answer`,{data:{answer}})).ok()).toBe(true);
@@ -137,6 +137,12 @@ test(`conversation ${kind} authorizes HTTP fixture samples and restores editable
   const restored=await (await request.get(humanRoot)).json();
   expect(restored).toHaveLength(1);
   expect(restored[0].answer.revision_id).toBe(answer.revision_id);
+  expect(restored[0].status).toBe("applied");
+  expect(restored[0].resume_draft_id).toBe(human.resume_checkpoint_ref);
+  expect((await request.post(`${humanRoot}/${human.id}/resume`)).ok()).toBe(true);
+  const evidence=await (await request.get(`/api/projects/${project}/sample-plan-copies/${human.resume_checkpoint_ref}`)).json();
+  expect(evidence.feedback).toHaveLength(1);
+  expect(evidence.feedback[0].revision_id).toBe(answer.revision_id);
   const cancelRequest={...human,id:randomUUID(),expected_feedback_sequence:answer.sequence};
   expect((await request.post(humanRoot,{data:cancelRequest})).ok()).toBe(true);
   const cancelled=await request.post(`${humanRoot}/${cancelRequest.id}/cancel`);

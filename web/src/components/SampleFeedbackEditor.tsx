@@ -200,6 +200,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
       {navigation}
       {before && <button disabled={busy || dirty} onClick={() => onKeepOriginal(before.draftId, before.testId, image.image_id)}>{t("Keep original plan")}</button>}
       <span>{t(selected ? "This decision applies only to the selected result." : "This decision applies to this sample image only.")}</span>
+      {humanSubmission && <p>Submitting saves this Sandbox correction and prepares a separate revision Draft. It does not call a model or change the tested plan.</p>}
       <button className={onAdopt ? undefined : "primary"} disabled={!loaded || busy || showBefore || !sample.projection} onClick={() => void save(!humanSubmission)}>{humanSubmission ? "Submit correction" : t(selected ? "Confirm selected result" : onConfirmed ? "Confirm sample and next" : "Confirm this sample")}</button>
       {onAdopt && <button className="primary" disabled={!loaded || busy || dirty || showBefore || !sample.projection || freshness.status !== "current"} onClick={onAdopt}>{t("Continue with this plan")}</button>}
       {saved && <span role="status">{t("Sample feedback saved")}</span>}

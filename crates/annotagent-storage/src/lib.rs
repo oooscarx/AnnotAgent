@@ -588,6 +588,8 @@ impl SqliteStore {
             transaction.execute_batch(include_str!("../../../migrations/0029_conversation_authorization_revisions.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0030_conversation_builder_operations.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0031_conversation_human_requests.sql"))?;
+            transaction.execute_batch(include_str!("../../../migrations/0032_conversation_resume_results.sql"))?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (32, ?1, ?2)", params!["conversation_resume_results", Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (31, ?1, ?2)", params!["conversation_human_requests", Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (30, ?1, ?2)", params!["conversation_builder_operations", Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (29, ?1, ?2)", params!["conversation_authorization_revisions", Utc::now().to_rfc3339()])?;

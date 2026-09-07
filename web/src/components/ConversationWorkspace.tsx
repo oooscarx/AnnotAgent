@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { api } from "../api";
-import { projectWorkPath } from "../navigation";
+import { projectWorkPath, projectBuildPath } from "../navigation";
 import type { ConversationMessage, ConversationMessageInput, ImageItem, ProjectSummary } from "../types";
 import "./conversation-workspace.css";
 import { ConversationSchemaCard } from "./ConversationSchemaCard";
@@ -38,6 +38,10 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   async function cancelRequest(value:HumanRequest){
     if(value.input.id===humanRequestId && sampleDirty.current && !window.confirm("Discard unsaved correction and cancel this request?"))return;
     try{updateRequest(await api.cancelHumanRequest(project.id,value));}catch(error){setError((error as Error).message);}
+  }
+  async function retryContinuation(value:HumanRequest){
+    if(sampleDirty.current){setError("Save or undo the current correction before retrying continuation.");return;}
+    try{updateRequest(await api.resumeHumanRequest(project.id,value));}catch(error){setError((error as Error).message);}
   }
   async function openRequest(value:HumanRequest){
     const ticket=++sampleNavigation.current;
@@ -140,7 +144,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
       <section className="conversation-panel" aria-label="Project conversation">
         <h2>What would you like to annotate?</h2>
         <p className="muted">Describe your goal before or after uploading images.</p>
-        <p className="conversation-development-note">Workspace integration in progress: authorized label proposals, Pipeline Drafts and sample tests share saved server state. Dataset processing and human-request continuation are not connected here yet.</p>
+        <p className="conversation-development-note">Workspace integration in progress: label proposals, Pipeline Drafts, sample tests and human corrections share saved server state. Dataset processing and model-based repair are not connected here yet.</p>
         <ol className="conversation-messages" aria-label="Saved messages">
           {messages.map((message) => <li key={message.input.id}><p>{message.input.text}</p>{message.input.image && <button onClick={() => {
             const reference = message.input.image;
@@ -149,7 +153,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
             openImage(image.image_id);
           }}>Referenced image · {images.find((image) => image.image_id === message.input.image?.image_id)?.name ?? message.input.image.image_id}</button>}<small>Saved · {message.sequence}</small></li>)}
         </ol>
-        {conversation && <section aria-label="Human requests"><h3>Requests for your help</h3><button onClick={()=>{if(sampleDirty.current){setError("Save or undo this correction before refreshing requests.");return;}setRequestRefresh(value=>value+1);}}>Refresh requests</button>{requests.map(value=><article key={value.input.id} className="conversation-consent"><p>{value.input.question}</p><p>{value.status==="answered" ? "Correction saved · awaiting task continuation" : value.status}</p><button onClick={()=>void openRequest(value)}>Open requested result</button>{value.status==="pending" && <button onClick={()=>void cancelRequest(value)}>Cancel request</button>}</article>)}</section>}
+        {conversation && <section aria-label="Human requests"><h3>Requests for your help</h3><button onClick={()=>{if(sampleDirty.current){setError("Save or undo this correction before refreshing requests.");return;}setRequestRefresh(value=>value+1);}}>Refresh requests</button>{requests.map(value=><article key={value.input.id} className="conversation-consent"><p>{value.input.question}</p><p>{value.resume_draft_id ? "Revision Draft prepared · not rebuilt or tested" : value.status==="answered" ? "Correction saved · awaiting task continuation" : value.status}</p>{value.resume_error && <p role="alert">Correction saved, but Draft preparation failed: {value.resume_error}</p>}<button onClick={()=>void openRequest(value)}>Open requested result</button>{value.status==="answered" && <button onClick={()=>void retryContinuation(value)}>Retry Draft preparation</button>}{value.resume_draft_id && <button onClick={()=>onNavigate(projectBuildPath(project.id,"pipeline",{draftId:value.resume_draft_id!}))}>Inspect revision Draft</button>}{value.status==="pending" && <button onClick={()=>void cancelRequest(value)}>Cancel request</button>}</article>)}</section>}
         {conversation && messages[0] && <ConversationSchemaCard key={`${conversation}:${messages[0].input.id}`} project={project.id} conversation={conversation} message={messages[0].input.id} onDirtyChange={schemaDirtyChange} onSample={(draft,test,image)=>void openSample(draft,test,image)} />}
         <form onSubmit={(event) => { event.preventDefault(); void send(); }} className="conversation-composer">
           <label htmlFor="conversation-message">Your message</label>

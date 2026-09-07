@@ -899,3 +899,38 @@ restart/mutation, paid call, push or remote change occurred.
 
 Final resume-service regression: Application all-features **97 passed / 1 billable
 ignored**; workspace rustfmt and diff checks passed.
+
+### Automatic local continuation, durable failures and explicit retry (M2 increment)
+
+Migration 32 records the prepared Draft ID or bounded failure reason. Successful
+outbox acknowledgment and result reference now commit in the same SQLite transaction;
+the result must carry the checkpoint's exact feedback revision. A late competing
+delivery failure cannot replace success. Request GET includes these saved fields.
+
+The human-answer POST first saves the correction, then invokes the existing local
+resume service. Startup delivers previously interrupted, unanswered-delivery outbox
+items once; attempts with saved failure reasons require an explicit task-scoped
+`/:request/resume` POST, not repeated background retries. This performs only the
+authorized local copy/context preparation—no model, Publish or Run. Startup failure
+records retain the stable owner even when the Project is no longer available.
+
+UI explains the local Draft preparation before submission and reports either the
+prepared revision or a saved correction plus failure reason and retry action. It does
+not claim the copied plan was rebuilt, tested or improved. An explicit advanced
+inspection button targets the existing Pipeline page; same-workspace Builder repair
+remains pending. GET/refresh never performs continuation.
+
+Evidence: Application test verifies automatic startup completion of the copy/ack crash
+gap, persistent failure after pixels change, no repeat attempt across restart, and
+successful explicit retry after restoring pixels. Storage rejects acknowledgment
+against unrelated Draft evidence with full transaction rollback. Both HTTP/browser
+paths now assert Applied + exact Draft ID, one frozen feedback item, repeat resume
+idempotency and unchanged model ledger. Latest isolated run **2/2** in
+`/tmp/annotagent-guided-e2e-93186`, 38.3s total. Application all-features **97 passed /
+1 billable ignored**, Storage **51 unit + 16 integration**, Server **36/36**, Web
+**107/107** and typecheck passed. Production retains its chunk-size warning.
+
+No Live quality, real-user usability or complete LLM repair claim is made. Human
+request generation, automatic UI notification, request kinds beyond existing sample
+correction, bounded model repair, processing/Review/export and remaining M4 checks
+are unfinished. No real workspace restart/mutation, paid calls, push or remote change.
