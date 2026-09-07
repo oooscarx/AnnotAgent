@@ -1,5 +1,7 @@
 /** English source messages are stable keys; untranslated technical copy falls back to English. */
 export const zhCN: Record<string, string> = {
+  "Vertex {index}: arrows move, Shift moves faster, Delete removes": "顶点 {index}：方向键移动，Shift 加速，Delete 删除",
+  "Keypoint {name}: arrows move, Shift moves faster, Delete removes": "关键点 {name}：方向键移动，Shift 加速，Delete 删除",
   "Keyboard box editing": "键盘调整标注框",
   "Move box with arrow keys": "方向键移动框",
   "Resize box with arrow keys": "方向键调整大小",

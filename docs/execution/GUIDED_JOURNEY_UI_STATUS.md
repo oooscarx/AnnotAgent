@@ -945,3 +945,24 @@ in a fresh isolated workspace. Actual capture `guided-journey/keyboard-box-390.p
 was inspected for visible focused controls, wrapping and unchanged image pixels.
 The previous full Rust/Web-browser regression predates this canvas increment;
 it is not reported as a fresh full-suite pass for these changes.
+
+### Point editing and read-only transition safety (2026-09-08)
+
+Selected polygon/polyline/polygon-mask vertices and named keypoints now support
+local arrow-key movement with measured original-image pixel deltas. Composition
+and OS-modified keys remain ignored. Delete keeps the existing minimum cardinality
+and attempts to focus the next surviving handle; local keys do not leak into queue
+navigation. These controls work within the sample dialog as well as page canvases.
+The parent edit callbacks preserve existing undo/save boundaries.
+
+A code audit also found pointermove could mutate geometry after pointerdown if a
+pending save changed the canvas to read-only. Geometry movement now checks the
+current readOnly prop on every event; pan remains allowed. Read-only keypoints
+have no interactive role/tab stop and polygon edit handles are absent.
+
+104 Web tests and production/typecheck passed, including the final keypoint
+deletion handler. The existing bundle-size warning remains. Coverage includes pure pixel movement/clamping and rendered
+editable/read-only handles. The earlier bbox browser case is a regression only:
+it does not prove vertex deletion focus or all-shape keyboard persistence. Those
+browser cases remain pending, along with the consolidated final requirement audit.
+The bbox browser regression passed 1/1 before the final keypoint-only addition.

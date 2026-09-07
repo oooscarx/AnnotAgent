@@ -1,5 +1,13 @@
 import type { Annotation } from "./types";
 
+export function keyboardPoint(point: [number, number], key: string, step: number, width: number, height: number): [number, number] | undefined {
+  if (![...point, step, width, height].every(Number.isFinite) || width <= 0 || height <= 0 || step <= 0) return;
+  const direction: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+  const delta = direction[key];
+  if (!delta) return;
+  return [Math.max(0, Math.min(1, point[0] + delta[0] * step / width)), Math.max(0, Math.min(1, point[1] + delta[1] * step / height))];
+}
+
 /** Keyboard deltas are original-image pixels, independent of canvas zoom. */
 export function keyboardBox(rect: [number, number, number, number], key: string, resize: boolean, step: number, width: number, height: number): Annotation["value"] | undefined {
   if (![width, height, step, ...rect].every(Number.isFinite) || width <= 0 || height <= 0 || step <= 0) return;

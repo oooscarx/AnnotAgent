@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { annotationColor, annotationVisual } from "../annotationVisuals";
 import type { AnnotationVisualContext } from "../annotationVisuals";
 import { zoomAroundPoint } from "../canvasViewport";
-import { keyboardBox } from "../bboxKeyboard";
+import { keyboardBox, keyboardPoint } from "../bboxKeyboard";
 import type { Annotation, Point } from "../types";
 
 interface Props {
@@ -98,6 +98,7 @@ export function AnnotationCanvas({
   };
 
   const moveVertex = (annotation: Annotation, ring: number, index: number, point: Point) => {
+    if (readOnly) return;
     const value = structuredClone(annotation.value);
     if (value.kind === "polyline") value.points[index] = point;
     if (value.kind === "polygon") value.rings[ring][index] = point;
@@ -110,6 +111,9 @@ export function AnnotationCanvas({
 
   const onPointerMove = (event: React.PointerEvent<SVGSVGElement>) => {
     if (!drag) return;
+    // A save can make the canvas read-only between pointerdown and pointerup.
+    // Selection/zoom remain available, but an old drag cannot mutate its draft.
+    if (readOnly && drag.type !== "pan") return;
     const point = localPoint(event);
     if (drag.type === "vertex") {
       const annotation = annotations.find((item) => item.id === drag.id);
@@ -277,6 +281,14 @@ export function AnnotationCanvas({
               visual={annotationVisual(annotation, visualContext)}
               selected={annotation.id === selectedId}
               readOnly={readOnly}
+              onKeyboardVertex={(ring, index, point, event) => {
+                if (readOnly || !imageUrl || measuredImageUrl !== imageUrl || !workspaceShortcutAllowed(event.nativeEvent, false, false) || event.metaKey || event.ctrlKey || event.altKey) return;
+                const next = keyboardPoint(point, event.key, event.shiftKey ? 10 : 1, width, height);
+                if (!next) return;
+                event.preventDefault(); event.stopPropagation();
+                if (next[0] === point[0] && next[1] === point[1]) return;
+                onEditStart?.(); moveVertex(annotation, ring, index, next);
+              }}
               onSelect={() => onSelect(annotation.id)}
               onVertex={(ring, index, event) => {
                 if (readOnly) return;
@@ -329,6 +341,7 @@ function AnnotationShape({
   onSelect,
   onVertex,
   onDeleteVertex,
+  onKeyboardVertex,
   onBbox,
   onBboxResize,
 }: {
@@ -341,6 +354,7 @@ function AnnotationShape({
   onSelect: () => void;
   onVertex: (ring: number, index: number, event: React.PointerEvent) => void;
   onDeleteVertex: (ring: number, index: number) => void;
+  onKeyboardVertex: (ring: number, index: number, point: Point, event: React.KeyboardEvent<SVGCircleElement>) => void;
   onBbox: (event: React.PointerEvent) => void;
   onBboxResize: (
     corner: "nw" | "ne" | "sw" | "se",
@@ -365,13 +379,20 @@ function AnnotationShape({
         className="annotation-control"
         role="button"
         tabIndex={selected ? 0 : -1}
-        aria-label={`Vertex ${index + 1}; drag to move, Delete to remove`}
+        aria-label={t("Vertex {index}: arrows move, Shift moves faster, Delete removes", { index: index + 1 })}
         onPointerDown={(event) => onVertex(ring, index, event)}
         onKeyDown={(event) => {
-          if (!workspaceShortcutAllowed(event.nativeEvent, false, Boolean(document.querySelector('dialog[open], [role="dialog"]')))) return;
+          if (!workspaceShortcutAllowed(event.nativeEvent, false, false) || event.metaKey || event.ctrlKey || event.altKey) return;
           if (event.key === "Delete" || event.key === "Backspace") {
-            event.preventDefault();
+            event.preventDefault(); event.stopPropagation();
+            const group = event.currentTarget.parentElement;
             onDeleteVertex(ring, index);
+            requestAnimationFrame(() => {
+              const handles = group?.querySelectorAll<SVGCircleElement>('circle[role="button"]');
+              handles?.[Math.min(index, handles.length - 1)]?.focus();
+            });
+          } else {
+            onKeyboardVertex(ring, index, [x, y], event);
           }
         }}
       />
@@ -463,7 +484,21 @@ function AnnotationShape({
       <g className={selected ? "annotation-shape selected" : "annotation-shape"} onClick={onSelect}>
         {annotation.value.points.map((keypoint, index) => (
           <g key={keypoint.name}>
-            <circle cx={keypoint.point[0] * canvasWidth} cy={keypoint.point[1] * canvasHeight} r={selected ? 10 : 7} fill={color} className="aa-annotation-shape" onPointerDown={(event) => onVertex(0, index, event)} />
+            <circle cx={keypoint.point[0] * canvasWidth} cy={keypoint.point[1] * canvasHeight} r={selected ? 10 : 7} fill={color} className="aa-annotation-shape" onPointerDown={(event) => onVertex(0, index, event)}
+              role={readOnly ? undefined : "button"} tabIndex={!readOnly && selected ? 0 : undefined}
+              aria-label={t("Keypoint {name}: arrows move, Shift moves faster, Delete removes", { name: keypoint.name })}
+              onKeyDown={(event) => {
+                if (readOnly || !workspaceShortcutAllowed(event.nativeEvent, false, false) || event.metaKey || event.ctrlKey || event.altKey) return;
+                if (event.key === "Delete" || event.key === "Backspace") {
+                  event.preventDefault(); event.stopPropagation();
+                  const group = event.currentTarget.closest(".annotation-shape");
+                  onDeleteVertex(0, index);
+                  requestAnimationFrame(() => {
+                    const handles = group?.querySelectorAll<SVGCircleElement>('circle[role="button"]');
+                    handles?.[Math.min(index, handles.length - 1)]?.focus();
+                  });
+                } else onKeyboardVertex(0, index, keypoint.point, event);
+              }} />
             <ShapeLabel x={keypoint.point[0] * canvasWidth} y={keypoint.point[1] * canvasHeight} text={keypoint.name} color={color} />
           </g>
         ))}
