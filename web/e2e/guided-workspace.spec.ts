@@ -1,4 +1,4 @@
-import { type APIRequestContext, type Page } from "@playwright/test";
+import { type APIRequestContext, type Page, type Route } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { expect, test } from "./fixtures";
@@ -210,6 +210,12 @@ export:
   expect(Number(await x.inputValue())).toBeCloseTo(correctedX);
   await expect(sampleEditor.getByLabel("What needs attention?", { exact: true })).toHaveValue("poor_boundary");
   await page.screenshot({ path: resolve("../docs/execution/first-result/bbox-feedback.png") });
+  for (const [width, height] of [[1440, 900], [1280, 720], [1024, 768], [390, 844]]) {
+    await page.setViewportSize({ width, height });
+    await page.locator(".focus-header").scrollIntoViewIfNeeded();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await page.screenshot({ path: `../docs/execution/focus-workspace/sample-${width}.png`, fullPage: true });
+  }
   await sampleEditor.getByRole("button", { name: "Close annotation preview" }).click();
   const published = await request.post(`/api/workflow-drafts/${draft.id}/publish`);
   const publishedBody = await published.text();
@@ -959,6 +965,10 @@ test("Review to Run to Review navigation is bidirectional", async ({ page, reque
   await expect(page.getByRole("button", { name: "Save changes" })).toHaveCount(0);
   await expect(page.locator(".review-add-menu")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Box", exact: true })).toHaveCount(0);
+  await expect(page.locator(".review-queue")).toHaveCount(0);
+  await expect(page.locator(".review-inspector")).toHaveCount(0);
+  await page.screenshot({ path: "../docs/execution/focus-workspace/review-focused.png", fullPage: true });
+  await page.getByRole("button", { name: "Show details" }).click();
   const widthWithInspector = await page.locator(".review-center").evaluate((element) => element.getBoundingClientRect().width);
   await page.getByRole("button", { name: "Hide details" }).click();
   const widthWithoutInspector = await page.locator(".review-center").evaluate((element) => element.getBoundingClientRect().width);
@@ -1102,6 +1112,7 @@ test("Review workspace has tablet and mobile layouts without horizontal overflow
 
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator(".review-layout")).toHaveCSS("display", "flex");
+  await page.getByRole("button", { name: "Show review queue", exact: true }).click();
   await expect(page.locator(".review-queue .queue-items")).toHaveCSS("display", "flex");
   await expect(page.locator(".review-action-bar")).toHaveCSS("position", "static");
   await expect(page.getByRole("heading", { name: "Review", level: 1 })).toHaveCSS("outline-style", "none");
@@ -1489,6 +1500,21 @@ export:
   await expect(page.getByText("Cache hits")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
 
+  const emptyProjection = (route: Route) => route.fulfill({ json: {
+    run_id: mixedRunId, project_id: mixedProjectId, status: "completed", image_count: 1,
+    result_count: 0, ready_count: 0, needs_review_count: 0, no_target_count: 1, failed_count: 0,
+    fallback_count: 0, cache_hit_count: 0, duration_ms: 42,
+    image: { image_id: mixedImageId, status: "no_target", annotation_count: 0, review_count: 0 },
+    projection: { committed_annotation_ids: [], review_candidate_ids: [], no_target_image_ids: [mixedImageId], failed_image_ids: [] },
+    usage: { input_tokens: 0, output_tokens: 0, estimated_cost: "0" }, image_index: 0, labels: [],
+  } });
+  await page.route(`**/api/runs/${mixedRunId}/result-summary`, emptyProjection);
+  await page.reload();
+  await expect(page.locator(".run-result-preview .artifact-image-stage > img")).toBeVisible();
+  await expect(page.locator(".run-result-preview svg g")).toHaveCount(0);
+  await expect(page.getByText("No final target was returned. Inspect the original image for possible missed objects.")).toBeVisible();
+  await page.unroute(`**/api/runs/${mixedRunId}/result-summary`, emptyProjection);
+
   const debugUrl = `/runs/${mixedRunId}?view=debug&image=${mixedImageId}&node=match`;
   await page.goto(debugUrl);
   await expect(page.getByText("2 models agree · IoU 0.78", { exact: true }).first()).toBeVisible();
@@ -1502,6 +1528,7 @@ export:
   await expect(page.getByLabel("Evidence decision")).toContainText("Detector boxes disagree");
 
   await page.goto(`/review/${mixedReviewId}?project_id=${mixedProjectId}`);
+  await page.getByRole("button", { name: "Show details" }).click();
   await expect(page.getByText("RF-DETR and LocateAnything disagree on the object's location.")).toBeVisible();
   await expect(page.getByLabel("Source model evidence")).toContainText("2 detector results");
   await page.getByRole("button", { name: "Use RF-DETR box" }).click();
@@ -1524,6 +1551,7 @@ export:
   await expect(revisionHistory).toContainText("candidate created");
   await expect(revisionHistory).toContainText("football → ball");
   await page.getByRole("button", { name: "Close revision history" }).click();
+  await page.getByRole("button", { name: "Show review queue", exact: true }).click();
 
   page.once("dialog", async (dialog) => {
     expect(dialog.type()).toBe("confirm");
@@ -1531,13 +1559,17 @@ export:
   });
   await page.locator(".queue-items > button").filter({ hasText: "goal" }).click();
   await expect(page).toHaveURL(new RegExp(`/projects/${mixedProjectId}/review/${mixedReviewId}$`));
+  await page.getByRole("button", { name: "Show details" }).click();
+  await page.getByText("Execution details", { exact: true }).click();
   await expect(page.getByLabel("Annotation attributes JSON")).toContainText("locate-anything-v1");
 
+  await page.getByRole("button", { name: "Show review queue", exact: true }).click();
   page.once("dialog", async (dialog) => dialog.accept());
   await page.locator(".queue-items > button").filter({ hasText: "goal" }).click();
   await expect(page).toHaveURL(new RegExp(`/projects/${mixedProjectId}/review/${secondReviewId}$`));
   await page.getByRole("button", { name: "Edit E" }).click();
   await expect(page.getByLabel("Reviewer note")).toHaveValue("");
+  await page.getByText("Execution details", { exact: true }).click();
   await expect(page.getByLabel("Annotation attributes JSON")).toContainText("second-review");
   await expect(page.getByLabel("Annotation attributes JSON")).not.toContainText("locate-anything-v1");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
@@ -1567,10 +1599,11 @@ test("Review behaves as a keyboard-operable decision inbox", async ({ page }) =>
   await expect(page.getByText("Why this needs review", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Accept and next" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Reject & next" })).toBeVisible();
-  await expect(page.locator(".review-execution-details")).not.toHaveAttribute("open", "");
+  await expect(page.locator(".review-inspector")).toHaveCount(0);
 
   await page.keyboard.press("E");
   await expect(page.getByLabel("Annotation edit details")).toBeVisible();
+  await expect(page.locator(".review-execution-details")).not.toHaveAttribute("open", "");
   const label = page.getByLabel("Label", { exact: true });
   await label.fill("day corrected");
   await expect(page.getByText("This correction will be saved as geometry-quality evidence for calibration and future Automation improvements.")).toBeVisible();

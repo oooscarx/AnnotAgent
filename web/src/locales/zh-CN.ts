@@ -1594,5 +1594,16 @@ export const zhCN: Record<string, string> = {
   "This Draft has unsaved changes. Leave without saving?": "此草稿有尚未保存的修改。仍要离开吗？",
   "Execution details and budget": "执行详情与调用预算",
   "Save failed": "保存失败",
-  "Edit plan and advanced configuration": "编辑方案与高级配置"
+  "Edit plan and advanced configuration": "编辑方案与高级配置",
+  "No final annotation was produced. Inspect the image and failure details.": "未产出最终标注。请检查原图与失败详情。",
+  "No final target was returned. Inspect the original image for possible missed objects.": "没有返回最终目标。请检查原图是否存在漏检。",
+  "No target returned is not proof that the image contains no target.": "没有返回目标不代表图片中不存在目标。",
+  "The source image is unavailable. No other image was substituted.": "源图片不可用，未替换成其他图片。",
+  "Show review queue": "查看审核队列",
+  "Hide review queue": "收起审核队列",
+  "Current decision applies to this object, not every object in the image.": "当前决定仅针对这个对象，不是确认整张图片的所有对象。",
+  "Annotation list": "标注列表",
+  "Confirm selected result": "确认选中结果",
+  "This decision applies only to the selected result.": "仅确认选中的结果，不会自动进入下一张。",
+  "This decision applies to this sample image only.": "本次决定仅适用于当前样例图片。"
 };

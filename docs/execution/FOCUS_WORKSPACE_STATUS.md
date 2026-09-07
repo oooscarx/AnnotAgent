@@ -112,3 +112,32 @@ operation is inferred by entering, refreshing or leaving either screen.
 M2 checkpoint verification: **60/60 E2E passed**, TypeScript and production build passed;
 `/tmp/annotagent-focus-m2-verified.log`. Includes unchanged security, deletion/restore,
 publication, same-project navigation, slow poll and dual-tab conflict regressions.
+
+## M3 checkpoint: full-width results and continuous object review
+
+M2 checkpoint commit: `1c7c4b1`. Run Results gives the image full width; source identity is
+a compact row and the actionable Review/repair prompt follows the canvas. Pause/Resume,
+Cancel, history and deletion/Trash controls are retained. Zero final candidates no longer
+hide an available source image; a fixture regression proves that intermediate annotations
+are not substituted and no-target is not described as proof of absence.
+
+Review detail opens with queue and Inspector collapsed. Opening either auxiliary region
+closes the other. Risk and object-level decision scope remain at the canvas; source evidence,
+editable labels, attributes and revision history stay in the existing Inspector. The original
+view has no overlays. Image lookup uses stable annotation Image ID, never index-zero fallback.
+Box manipulation can begin directly, preserving the existing undo/save boundary. Compact
+annotation-list controls retain the keyboard alternative. Missing confidence is not rendered
+as 0%. Sample confirmation explicitly distinguishes a selected result from the whole image;
+confirming one result no longer advances past other objects in the sample.
+
+The existing Review → source Run → Review and export/download paths are reused, not copied.
+Exports and lifecycle CRUD retain their server-owned rules. Publication and dataset start
+are **still separate existing operations**. The requested durable exact-revision/test/scope
+approval + idempotent publish/start receipt is not implemented; do not describe this checkpoint
+as completing that boundary. The current sample feedback contract still cannot add missing
+objects or relabel candidates. Run candidate selection across Results/Debug is not yet URL-persisted.
+
+M3 checkpoint verification: **60/60 E2E passed** (`/tmp/annotagent-focus-m3-done.log`),
+typecheck and production build passed. Includes zero-target source-image inspection,
+queue/Inspector alternation without losing edits, scoped Review round trip, management and
+export. `review-focused.png` and `sample-{1440,1280,1024,390}.png` are current fixture captures.

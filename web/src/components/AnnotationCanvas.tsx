@@ -14,6 +14,7 @@ interface Props {
   onChange: (annotation: Annotation) => void;
   onEditStart?: () => void;
   readOnly?: boolean;
+  compactList?: boolean;
 }
 
 const DEFAULT_WIDTH = 1000;
@@ -30,8 +31,10 @@ export function AnnotationCanvas({
   onChange,
   onEditStart,
   readOnly = false,
+  compactList = false,
 }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const [listOpen, setListOpen] = useState(!compactList);
   const [canvasSize, setCanvasSize] = useState<[number, number]>([
     DEFAULT_WIDTH,
     DEFAULT_HEIGHT,
@@ -190,14 +193,15 @@ export function AnnotationCanvas({
           <button aria-label={t("Zoom in")} title={t("Zoom in")} onClick={() => applyZoom(zoom + 0.1)}>+</button>
         </div>
         <button className="canvas-fit-button" aria-label={t("Fit image")} title={t("Fit image")} onClick={() => { setZoom(1); setPan([0, 0]); }}>{t("Fit")}</button>
+        {compactList && <button aria-expanded={listOpen} onClick={() => setListOpen(!listOpen)}>{t("Annotation list")} · {annotations.length}</button>}
       </div>
-      <ul className="canvas-annotation-list" aria-label={t("Annotations on canvas")}>
+      {listOpen && <ul className="canvas-annotation-list" aria-label={t("Annotations on canvas")}>
         {annotations.map((annotation) => {
           const visual = annotationVisual(annotation, visualContext);
-          return <li key={annotation.id}><button aria-pressed={annotation.id === selectedId} onClick={() => onSelect(annotation.id)}><i aria-hidden="true" style={{ borderColor: annotationColor(visual.slot) }} /><span><strong>{annotation.label ?? annotation.task_id}</strong><small>{annotation.value.kind.replaceAll("_", " ")} · {Math.round((annotation.confidence ?? 0) * 100)}%</small></span></button></li>;
+          return <li key={annotation.id}><button aria-pressed={annotation.id === selectedId} onClick={() => onSelect(annotation.id)}><i aria-hidden="true" style={{ borderColor: annotationColor(visual.slot) }} /><span><strong>{annotation.label ?? annotation.task_id}</strong><small>{annotation.value.kind.replaceAll("_", " ")} · {annotation.confidence == null ? t("Score not provided") : `${Math.round(annotation.confidence * 100)}%`}</small></span></button></li>;
         })}
         {annotations.length === 0 && <li className="canvas-annotation-empty">{t("No annotations selected")}</li>}
-      </ul>
+      </ul>}
       {imageUrl && (
         <img
           className="canvas-dimension-probe"

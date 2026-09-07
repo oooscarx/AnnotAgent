@@ -8274,7 +8274,7 @@ function RunDetailWorkspace({
     : [];
   const previewProjectId = inspection?.project_id ?? annotationInspection?.project_id ?? project?.id;
   const canPreview = Boolean(
-    previewProjectId && ownedImageId && (inspection || runAnnotations.length),
+    previewProjectId && ownedImageId && (ownedImage || inspection || runAnnotations.length),
   );
   const setContext = (context: { node?: string; artifact?: string }) => {
     onNavigate(
@@ -8373,8 +8373,10 @@ function RunDetailWorkspace({
         </dl>
         <div className="run-results-workspace">
           <aside className="panel run-image-identity"><span className="eyebrow">{t("Run image")}</span>{ownedImage ? <><img src={ownedImage.url} alt="" /><strong>{ownedImage.name}</strong><Status status={resultSummary?.image.status ?? run.status} /><code>{ownedImage.image_id}</code></> : ownedImageId ? <><strong>{t("Project image")}</strong><Status status={resultSummary?.image.status ?? run.status} /><code>{ownedImageId}</code></> : <small>Resolving stable Image identity…</small>}</aside>
-          <main className="panel run-visual-workspace run-result-preview"><span className="eyebrow">{t("Result Preview")}</span>{resultSummary?.labels.length ? <div className="run-result-labels" aria-label={t("Result labels")}>{resultSummary.labels.map((item) => <span key={item.label}>{item.label}<b>{item.count}</b></span>)}</div> : null}{canPreview && finalAnnotations.length > 0 ? <RunArtifactCanvas projectId={previewProjectId!} project={project} artifacts={[]} annotations={finalAnnotations} imageId={ownedImageId!} /> : resultSummary ? <Empty title={resultSummary.no_target_count ? t("No target found") : resultSummary.failed_count ? t("No result produced") : t("No visual result")} detail={resultSummary.no_target_count ? t("The automation completed successfully and found no matching target in this image.") : resultSummary.failed_count ? t("Open Debug to inspect the failed step and available repair action.") : t("This result has no committed or current Review candidate with visual geometry.")} /> : <Empty title={t("Loading results")} detail="Reading the explicit final-result projection." />}</main>
-          <aside className="panel run-needs-attention"><span className="eyebrow">{t("Needs Attention")}</span>{runReviewId ? <><h3>{resultSummary?.needs_review_count || 1} result needs a decision</h3><p>The current final candidate is waiting for a human decision.</p><button className="primary" onClick={() => onNavigate(project ? projectReviewPath(project.id, runReviewId) : `/review/${encodeURIComponent(runReviewId)}`)}>{t("Review result")}</button></> : resultSummary?.failed_count ? <><h3>{t("Run needs repair")}</h3><p>{run.terminal_reason ?? t("A Pipeline step did not produce a usable result.")}</p><button className="primary" onClick={() => setView("debug")}>{t("Open Debug")}</button></> : <div className="positive-empty"><strong>{t("No results need attention")}</strong><span>{resultSummary?.no_target_count ? t("The empty result is valid.") : t("All results passed the configured gates.")}</span></div>}</aside>
+          <main className="panel run-visual-workspace run-result-preview"><span className="eyebrow">{t("Result Preview")}</span>{resultSummary?.labels.length ? <div className="run-result-labels" aria-label={t("Result labels")}>{resultSummary.labels.map((item) => <span key={item.label}>{item.label}<b>{item.count}</b></span>)}</div> : null}
+            {canPreview ? <>{!finalAnnotations.length && <p className="sample-risk-notice" role="status">{t(resultSummary?.failed_count ? "No final annotation was produced. Inspect the image and failure details." : "No final target was returned. Inspect the original image for possible missed objects.")}</p>}<RunArtifactCanvas projectId={previewProjectId!} project={project} artifacts={[]} annotations={finalAnnotations} imageId={ownedImageId!} /></> : <Empty title={t("No visual result")} detail={t("The source image is unavailable. No other image was substituted.")} />}
+          </main>
+          <aside className="panel run-needs-attention"><span className="eyebrow">{t("Needs Attention")}</span>{runReviewId ? <><h3>{resultSummary?.needs_review_count || 1} result needs a decision</h3><p>The current final candidate is waiting for a human decision.</p><button className="primary" onClick={() => onNavigate(project ? projectReviewPath(project.id, runReviewId) : `/review/${encodeURIComponent(runReviewId)}`)}>{t("Review result")}</button></> : resultSummary?.failed_count ? <><h3>{t("Run needs repair")}</h3><p>{run.terminal_reason ?? t("A Pipeline step did not produce a usable result.")}</p><button className="primary" onClick={() => setView("debug")}>{t("Open Debug")}</button></> : <div className="positive-empty"><strong>{t("No results need attention")}</strong><span>{resultSummary?.no_target_count ? t("No target returned is not proof that the image contains no target.") : t("All results passed the configured gates.")}</span></div>}</aside>
         </div>
       </> : <>
         <div className="debug-summary-strip" aria-label={t("Run debug summary")}><span>{debugSummary?.succeeded_node_count ?? completedNodes ?? 0}/{debugSummary?.node_count ?? inspection?.nodes.length ?? 0}{" "}{t("steps complete")}</span><span>{debugSummary?.failed_node_count ?? 0}{" "}{t("failed")}</span><span>{debugSummary?.issues.length ?? 0}{" "}{t("issues")}</span><span>{formatSampleDuration(debugSummary?.duration_ms ?? duration)}</span></div>
@@ -9016,8 +9018,9 @@ function ReviewPage({
   const [completedProject, setCompletedProject] = useState<ProjectSummary>();
   const [compareMode, setCompareMode] = useState<"after" | "before" | "split">("after");
   const [inspectorCollapsed, setInspectorCollapsed] = useState(() =>
-    window.localStorage.getItem("annotagent.reviewInspectorCollapsed") === "true",
+    !route.reviewItemId || window.localStorage.getItem("annotagent.reviewInspectorCollapsed") !== "false",
   );
+  const [queueOpen, setQueueOpen] = useState(!route.reviewItemId);
   const [attributesText, setAttributesText] = useState("{}");
   const [reason, setReason] = useState("");
   const [skillReasonOptions, setSkillReasonOptions] = useState<
@@ -9449,6 +9452,7 @@ function ReviewPage({
   } as const;
   const setInspectorVisibility = (collapsed: boolean) => {
     setInspectorCollapsed(collapsed);
+    if (!collapsed) setQueueOpen(false);
     window.localStorage.setItem(
       "annotagent.reviewInspectorCollapsed",
       String(collapsed),
@@ -9471,8 +9475,8 @@ function ReviewPage({
     ? selected.annotation.provenance.geometry_calibration_status
     : reviewGeometrySemantics === "human_verified" ? "passed" : "uncalibrated";
   return (
-    <section className={`review-layout${inspectorCollapsed ? " inspector-collapsed" : ""}`}>
-      <aside className="review-queue panel">
+    <section className={`review-layout${inspectorCollapsed ? " inspector-collapsed" : ""}${!queueOpen ? " queue-collapsed" : ""}`}>
+      {queueOpen && <aside className="review-queue panel">
         <span className="eyebrow">{t("Human attention")}</span>
         <h2>{t("Review queue")}{" "}<b>{queueLoaded ? progress.remaining_count : "…"}</b>
         </h2>
@@ -9528,7 +9532,7 @@ function ReviewPage({
             detail="Low confidence or conflicting evidence will route candidates here."
           />
         )}
-      </aside>
+      </aside>}
       <div className="review-center">
         <div className="review-progress-header" aria-label={t("Review progress")} role="status">
           <div>
@@ -9537,6 +9541,7 @@ function ReviewPage({
             <small>{queueLoaded ? `${progress.remaining_count} remaining${progress.current_position ? ` · item ${progress.current_position}` : ""}` : t("Reading the persisted Project queue")}</small>
           </div>
           <div className="review-progress-navigation" aria-label={t("Review queue navigation")}>
+            <button aria-expanded={queueOpen} onClick={() => { setQueueOpen(!queueOpen); if (!queueOpen) setInspectorVisibility(true); }}>{t(queueOpen ? "Hide review queue" : "Show review queue")}</button>
             <button aria-label={t("Previous review result")} disabled={!queueNavigation?.previous_review} onClick={() => moveQueueSelection(queueNavigation?.previous_review)}>←</button>
             <button aria-label={t("Next review result")} disabled={!queueNavigation?.next_review} onClick={() => moveQueueSelection(queueNavigation?.next_review)}>→</button>
           </div>
@@ -9601,13 +9606,16 @@ function ReviewPage({
             </button>
           </div>
         </div>}
+        {selected && <div className="review-canvas-risk"><strong>{t("Why this needs review")}</strong><p>{reviewReasonExplanation(selected)}</p><small>{t("Current decision applies to this object, not every object in the image.")}</small></div>}
         {selected ? <div
           className={`review-canvas-stage${compareMode === "split" ? " review-canvas-compare" : ""}`}
         >
           {(compareMode === "before" || compareMode === "split") && (
             <div>{compareMode === "split" && <small>{t("Original")}</small>}<AnnotationCanvas
-              imageUrl={images[selected?.image_index ?? 0]?.url}
-              annotations={selected ? [selected.annotation] : []}
+              compactList
+              imageUrl={images.find((image) => image.image_id === selected.annotation.image_id)?.url}
+              annotations={[]}
+              readOnly
               selectedId={selected?.annotation.id}
               visualContext={visualContext}
               onSelect={() => undefined}
@@ -9616,13 +9624,14 @@ function ReviewPage({
           )}
           {(compareMode === "after" || compareMode === "split") && (
             <div>{compareMode === "split" && <small>{t("Result")}</small>}<AnnotationCanvas
-              imageUrl={images[selected?.image_index ?? 0]?.url}
+              compactList
+              imageUrl={images.find((image) => image.image_id === selected.annotation.image_id)?.url}
               annotations={draft ? [draft] : []}
               selectedId={draft?.id}
               visualContext={visualContext}
               onSelect={() => undefined}
-              onEditStart={editing ? beginEdit : undefined}
-              onChange={editing ? setDraft : () => undefined}
+              onEditStart={() => { setEditing(true); setReason((value) => value || "shifted"); beginEdit(); }}
+              onChange={setDraft}
             /></div>
           )}
         </div> : queueLoaded ? <section className="review-complete panel">
@@ -9681,9 +9690,8 @@ function ReviewPage({
         {draft && selected && (
           <>
             <div className="review-reason-summary">
-              <span className="eyebrow">{t("Why this needs review")}</span>
+              <span className="eyebrow">{t("Review details")}</span>
               <h3>{selected.review_explanation?.title ?? t("Needs review")}</h3>
-              <p>{reviewReasonExplanation(selected)}</p>
               {selected.review_explanation?.details.length ? <ul>{selected.review_explanation.details.map((detail) => <li key={detail}>{detail}</li>)}</ul> : null}
             </div>
             <dl className="review-essential-facts">

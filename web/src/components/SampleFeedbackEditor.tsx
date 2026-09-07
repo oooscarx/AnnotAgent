@@ -75,14 +75,14 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
     try {
       const value = await api.saveSampleFeedback(revision);
       setRevisions((items) => [...items, value.revision]); setDirty(false); setSaved(true); setHistory([]);
-      if (confirm) { setReason("correct"); onDirtyChange(false); onConfirmed?.(); }
+      if (confirm) { setReason("correct"); onDirtyChange(false); if (!selected) onConfirmed?.(); }
     } catch (error) { setError((error as Error).message); }
     finally { setBusy(false); }
   };
   return <div className="sample-feedback-workspace">
     <section className="sample-feedback-image">
       <div className="button-row"><button aria-pressed={showOriginal} onClick={() => setShowOriginal(true)}>{t("Original image")}</button><button aria-pressed={!showOriginal} onClick={() => setShowOriginal(false)}>{t("Current candidates")}</button></div>
-      <AnnotationCanvas imageUrl={image.url} annotations={showOriginal ? [] : annotations} selectedId={selected} readOnly={!loaded || busy || selectedAnnotation?.value.kind !== "bounding_box"} onSelect={(id) => {
+      <AnnotationCanvas compactList imageUrl={image.url} annotations={showOriginal ? [] : annotations} selectedId={selected} readOnly={!loaded || busy || selectedAnnotation?.value.kind !== "bounding_box"} onSelect={(id) => {
         if (dirty && selected !== id) { setError(t("Save or undo this correction before selecting another result.")); return; }
         setSelected(id);
       }} onEditStart={() => setHistory((items) => [...items, annotations])} onChange={edit} />
@@ -106,6 +106,6 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
       {reason !== "correct" && <p>{t("This records a quality issue, not a promised improvement. Review the existing Pipeline or correct the result manually; a new model test requires separate authorization.")}</p>}
       </div>
     </details>
-    <div className="sample-confirm-action"><button className="primary" disabled={!loaded || busy} onClick={() => void save(true)}>{t(onConfirmed ? "Confirm sample and next" : "Confirm this sample")}</button>{saved && <span role="status">{t("Sample feedback saved")}</span>}{error && <p role="alert">{error}</p>}</div>
+    <div className="sample-confirm-action"><span>{t(selected ? "This decision applies only to the selected result." : "This decision applies to this sample image only.")}</span><button className="primary" disabled={!loaded || busy} onClick={() => void save(true)}>{t(selected ? "Confirm selected result" : onConfirmed ? "Confirm sample and next" : "Confirm this sample")}</button>{saved && <span role="status">{t("Sample feedback saved")}</span>}{error && <p role="alert">{error}</p>}</div>
   </div>;
 }
