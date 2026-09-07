@@ -49,6 +49,18 @@ fn require_owner(
 }
 
 impl SqliteStore {
+    pub fn conversation_message(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        id: Uuid,
+    ) -> Result<Option<ConversationMessage>, StorageError> {
+        self.with_connection(|db| {
+            require_owner(db, project, conversation)?;
+            let row: Option<(i64,String)> = db.query_row("SELECT sequence,input_json FROM conversation_messages WHERE conversation_id=?1 AND message_id=?2", params![conversation.to_string(),id.to_string()], |row| Ok((row.get(0)?,row.get(1)?))).optional()?;
+            row.map(|(sequence,input)| Ok(ConversationMessage { conversation_id: conversation, sequence, input: serde_json::from_str(&input)? })).transpose()
+        })
+    }
     /// Read-only discovery; opening a workspace must not create a conversation.
     pub fn project_conversation(&self, project: &str) -> Result<Option<Uuid>, StorageError> {
         self.with_connection(|db| {

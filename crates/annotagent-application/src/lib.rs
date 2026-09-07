@@ -3,7 +3,7 @@
 mod conversation_schema;
 mod guidance;
 pub use conversation_schema::{
-    ConversationOutputKind, ConversationSchemaAttempt, ConversationSchemaDecision,
+    ConversationOutputKind, ConversationSchemaAttempt, ConversationSchemaDecision, ConversationSchemaExecution,
     parse_conversation_schema_response, propose_conversation_schema,
 };
 mod management;

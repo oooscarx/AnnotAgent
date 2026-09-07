@@ -202,6 +202,40 @@ No new frontend behavior or screenshots, no paid calls, no user workspace mutati
 M3: structured Human Requests, sandbox versus formal answer transactions, revision
 conflict handling, durable resume event/outbox and no extra "I am done" chat step.
 
+### Durable call allowance and Schema execution (M2, continued)
+
+Added migration 26: one immutable explicit call grant per task and one immutable
+request-hash receipt per logical Provider call. Ownership resolves through task →
+conversation → stable Project identity. New reservations atomically check scope,
+expiry, revocation and total prior reservations; failed/unknown requests are not
+refunded. Repeating a grant cannot enlarge/reset it or undo revocation. Reusing a
+call key returns its receipt, including `reserved` after an interrupted observation;
+it does not grant another execution. Terminal evidence cannot be overwritten.
+
+Application Schema execution now consumes this ledger before calling the existing
+Provider, records complete response/decision evidence, and returns persisted receipts
+on duplicate execution or restart. Project/schema changes block new execution.
+Provider failures conservatively record `in_doubt`, not a zero-cost success or an
+automatic retry. Receipt reads remain possible independently of inference.
+
+Scope limits: this ledger currently enforces **logical Provider call counts**, not
+a monetary hard cap or transport-level exactly-once guarantee. HTTP admission must
+resolve the Registry binding and derive its complete model/data scope hash server-
+side; it is not wired yet. Existing OpenAI-compatible adapters can retry transport
+requests internally, so this task path must disable those retries or charge each
+attempt before enabling live execution. Builder/Sample adapters must still join
+the same task allowance. Explicit scope/budget extensions are not implemented and
+are rejected; no silent grant replacement. Reserved-after-crash is intentionally
+not automatically rescheduled. Outbox-driven Human Requests remain separate work.
+
+Validation: storage ledger test covers unapproved/foreign/changed requests, crash
+reopen, duplicate and immutable settlement, exhaustion, revocation and no reset.
+Application Schema tests **4/4 passed**, including zero calls without grant, one
+call with grant, duplicate+restart returning the saved response, exhausted new
+call rejection and no Project Schema mutation. Storage/Application strict all-
+feature/all-target Clippy passed. All tests use TEST fixtures, not Live Providers.
+No frontend changes/screenshots or restart of the real user workspace.
+
 M4: exact publication/Batch cards, Review/export and management returns, reconnect,
 performance, split-pane keyboard/narrow layout, full regressions and two golden paths.
 

@@ -12,6 +12,89 @@ use std::collections::{BTreeMap, BTreeSet};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+pub struct ConversationSchemaExecution {
+    pub conversation_id: Uuid,
+    pub task_id: Uuid,
+    pub call_id: Uuid,
+    pub remote_model: String,
+    pub scope_hash: String,
+}
+
+impl crate::LocalApplication {
+    /// Caller resolves the approved Registry binding and its complete scope digest.
+    /// A receipt is not a schema acceptance, publish permission or human annotation.
+    pub async fn execute_conversation_schema(
+        &self,
+        project_id: &str,
+        execution: &ConversationSchemaExecution,
+        provider: &dyn VisionModelProvider,
+        cancellation: CancellationToken,
+    ) -> Result<annotagent_storage::ConversationCallReceipt> {
+        use annotagent_storage::{ConversationCallAdmission, ConversationCallStatus};
+        let owner = self.conversation_project_identity(project_id)?;
+        let task = self
+            .conversation_tasks(project_id, execution.conversation_id)?
+            .into_iter()
+            .find(|task| task.input.id == execution.task_id)
+            .ok_or_else(|| anyhow::anyhow!("task does not belong to this conversation"))?;
+        let source = self
+            .store
+            .conversation_message(
+                &owner,
+                execution.conversation_id,
+                task.input.source_message_id,
+            )?
+            .ok_or_else(|| anyhow::anyhow!("saved task goal not found"))?;
+        let path = self.project_path(project_id)?;
+        let yaml = std::fs::read(&path)?;
+        if annotagent_image_tools::sha256(&yaml) != task.input.schema_revision {
+            bail!("Schema changed after task admission; no new request was sent");
+        }
+        let schema = annotagent_core::ProjectSchema::from_yaml(std::str::from_utf8(&yaml)?)
+            .map_err(|error| anyhow::anyhow!(error))?;
+        let request_hash = annotagent_image_tools::sha256(&serde_json::to_vec(&json!({
+            "contract":"conversation-schema-v1", "task":task.input, "message":source,
+            "remote_model":execution.remote_model, "schema":schema,
+        }))?);
+        match self.store.reserve_conversation_call(
+            &owner,
+            execution.task_id,
+            execution.call_id,
+            &execution.scope_hash,
+            &request_hash,
+        )? {
+            ConversationCallAdmission::Existing(receipt) => return Ok(receipt),
+            ConversationCallAdmission::Admitted => {}
+        }
+        let attempt = propose_conversation_schema(
+            provider,
+            &execution.remote_model,
+            &source.input.text,
+            &schema.tasks,
+            cancellation,
+        )
+        .await;
+        let (status, evidence) = match attempt {
+            Ok(attempt) => (
+                ConversationCallStatus::Completed,
+                serde_json::to_value(attempt)?,
+            ),
+            // The provider may have received the request. Never silently reissue it.
+            Err(_) => (
+                ConversationCallStatus::InDoubt,
+                json!({"error":"Schema request did not return a complete response. Remote completion and cost are unknown; no automatic retry was scheduled."}),
+            ),
+        };
+        Ok(self.store.finish_conversation_call(
+            &owner,
+            execution.task_id,
+            execution.call_id,
+            status,
+            evidence,
+        )?)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConversationOutputKind {
@@ -332,5 +415,131 @@ mod tests {
         let mut extra = response.clone();
         extra.tool_calls.push(response.tool_calls[0].clone());
         assert!(parse_conversation_schema_response(&extra).is_err());
+    }
+
+    #[tokio::test]
+    async fn authorized_schema_call_is_persisted_and_duplicate_execution_only_reads_receipt() {
+        use annotagent_storage::{
+            BeginConversationTask, ConversationCallGrant, ConversationCallStatus,
+            ConversationMessageInput,
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let app = crate::LocalApplication::new(temp.path()).unwrap();
+        let yaml = "version: 1\nproject:\n  name: TEST schema admission\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n";
+        app.create_project("schema-test", yaml).unwrap();
+        let conversation = app.create_project_conversation("schema-test").unwrap();
+        let message = ConversationMessageInput {
+            id: Uuid::new_v4(),
+            text: "Find cups, not bottles".into(),
+            image: None,
+        };
+        app.append_project_conversation_message("schema-test", conversation, &message)
+            .unwrap();
+        let task = Uuid::new_v4();
+        let revision = app.project_goal("schema-test").unwrap()["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        app.begin_conversation_task(
+            "schema-test",
+            conversation,
+            &BeginConversationTask {
+                id: task,
+                source_message_id: message.id,
+                schema_revision: revision,
+            },
+        )
+        .unwrap();
+        let execution = ConversationSchemaExecution {
+            conversation_id: conversation,
+            task_id: task,
+            call_id: Uuid::new_v4(),
+            remote_model: "TEST model".into(),
+            scope_hash: "a".repeat(64),
+        };
+        let provider = provider(draft("bounding_box", &["cup"]));
+        assert!(
+            app.execute_conversation_schema(
+                "schema-test",
+                &execution,
+                &provider,
+                CancellationToken::default()
+            )
+            .await
+            .is_err()
+        );
+        assert!(provider.requests.lock().unwrap().is_empty());
+        let owner = app.conversation_project_identity("schema-test").unwrap();
+        app.store
+            .authorize_conversation_calls(
+                &owner,
+                &ConversationCallGrant {
+                    id: Uuid::new_v4(),
+                    task_id: task,
+                    scope_hash: execution.scope_hash.clone(),
+                    maximum_calls: 1,
+                    expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+                },
+            )
+            .unwrap();
+        let receipt = app
+            .execute_conversation_schema(
+                "schema-test",
+                &execution,
+                &provider,
+                CancellationToken::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(receipt.status, ConversationCallStatus::Completed);
+        assert_eq!(provider.requests.lock().unwrap().len(), 1);
+        assert_eq!(
+            app.execute_conversation_schema(
+                "schema-test",
+                &execution,
+                &provider,
+                CancellationToken::default()
+            )
+            .await
+            .unwrap(),
+            receipt
+        );
+        let reopened = crate::LocalApplication::new(temp.path()).unwrap();
+        assert_eq!(
+            reopened
+                .execute_conversation_schema(
+                    "schema-test",
+                    &execution,
+                    &provider,
+                    CancellationToken::default()
+                )
+                .await
+                .unwrap(),
+            receipt
+        );
+        assert_eq!(provider.requests.lock().unwrap().len(), 1);
+        assert!(
+            reopened
+                .get_project("schema-test")
+                .unwrap()
+                .annotation_schema
+                .is_empty()
+        );
+        let different_call = ConversationSchemaExecution {
+            call_id: Uuid::new_v4(),
+            ..execution
+        };
+        assert!(
+            reopened
+                .execute_conversation_schema(
+                    "schema-test",
+                    &different_call,
+                    &provider,
+                    CancellationToken::default()
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(provider.requests.lock().unwrap().len(), 1);
     }
 }
