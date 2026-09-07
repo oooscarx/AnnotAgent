@@ -58,6 +58,10 @@ impl<T> SummaryPage<T> {
 #[derive(Debug, Clone)]
 pub struct StoredRunSummary {
     pub run: HistoryRun,
+    pub lifecycle_revision: u64,
+    pub archived_at: Option<String>,
+    pub deleted_at: Option<String>,
+    pub deletion_operation_id: Option<String>,
     pub image_id: Option<ImageId>,
     pub image_count: usize,
     pub batch_id: Option<BatchId>,
@@ -87,6 +91,11 @@ pub struct StoredBatchSummary {
     pub batch: BatchRecord,
     pub progress: BatchProgress,
     pub child_run_ids: Vec<RunId>,
+    pub deleted_child_runs: usize,
+    pub lifecycle_revision: u64,
+    pub archived_at: Option<String>,
+    pub deleted_at: Option<String>,
+    pub deletion_operation_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -131,7 +140,7 @@ impl SqliteStore {
             let select = "SELECT id, project_id, project_name, skill_id, provider, model, status,
                                  project_schema_json, workflow_snapshot_json, terminal_reason,
                                  created_at, updated_at
-                          FROM runs WHERE project_id = ?1";
+                          FROM runs WHERE project_id = ?1 AND deleted_at IS NULL";
             let active_sql = format!(
                 "{select} AND status IN ('pending', 'running', 'paused', 'awaiting_review')
                  ORDER BY updated_at DESC, id DESC LIMIT 1"
@@ -167,7 +176,11 @@ impl SqliteStore {
         self.with_connection(|connection| {
             connection
                 .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM annotations WHERE run_id = ?1 AND review_status = 'needs_review')",
+                    "SELECT EXISTS(
+                        SELECT 1 FROM annotations a JOIN runs r ON r.id = a.run_id
+                        WHERE a.run_id = ?1 AND a.review_status = 'needs_review'
+                          AND r.deleted_at IS NULL
+                    )",
                     [run_id.to_string()],
                     |row| row.get(0),
                 )
@@ -186,6 +199,7 @@ impl SqliteStore {
                     "SELECT EXISTS(
                         SELECT 1 FROM runs
                         WHERE project_id = ?1
+                          AND deleted_at IS NULL
                           AND status IN ('completed', 'completed_with_review', 'partial')
                           AND json_extract(workflow_snapshot_json, '$.selected_workflow.workflow_id') = ?2
                           AND json_extract(workflow_snapshot_json, '$.selected_workflow.version') = ?3
@@ -198,6 +212,7 @@ impl SqliteStore {
                     "SELECT EXISTS(
                         SELECT 1 FROM runs
                         WHERE project_id = ?1
+                          AND deleted_at IS NULL
                           AND status IN ('completed', 'completed_with_review', 'partial')
                     )",
                     [project_id.to_string()],
@@ -216,7 +231,10 @@ impl SqliteStore {
         request: PageRequest,
     ) -> Result<SummaryPage<StoredBatchSummary>, StorageError> {
         self.with_connection(|connection| {
-            let filter = project_id.map_or("", |_| "WHERE b.project_id = ?1");
+            let filter = project_id.map_or(
+                "WHERE b.deleted_at IS NULL",
+                |_| "WHERE b.project_id = ?1 AND b.deleted_at IS NULL",
+            );
             let sql = format!(
                 "SELECT b.id, b.project_id, b.project_path, b.provider, b.status,
                         b.max_concurrency, b.workflow_version, b.workflow_snapshot_json,
@@ -230,7 +248,14 @@ impl SqliteStore {
                         (SELECT COUNT(*) FROM batch_images bi WHERE bi.batch_id = b.id AND bi.status = 'failed'),
                         (SELECT COUNT(*) FROM batch_images bi WHERE bi.batch_id = b.id AND bi.status = 'awaiting_review'),
                         (SELECT COUNT(*) FROM batch_images bi WHERE bi.batch_id = b.id AND bi.status = 'cancelled'),
-                        (SELECT GROUP_CONCAT(child_run_id, ',') FROM batch_images bi WHERE bi.batch_id = b.id AND child_run_id IS NOT NULL)
+                        (SELECT GROUP_CONCAT(bi.child_run_id, ',')
+                         FROM batch_images bi JOIN runs child ON child.id = bi.child_run_id
+                         WHERE bi.batch_id = b.id AND child.deleted_at IS NULL),
+                        b.lifecycle_revision, b.archived_at, b.deleted_at,
+                        b.deletion_operation_id,
+                        (SELECT COUNT(*)
+                         FROM batch_images bi JOIN runs child ON child.id = bi.child_run_id
+                         WHERE bi.batch_id = b.id AND child.deleted_at IS NOT NULL)
                  FROM dataset_batches b {filter}
                  ORDER BY b.updated_at DESC, b.id DESC
                  LIMIT ?{limit_parameter} OFFSET ?{offset_parameter}",
@@ -259,14 +284,17 @@ impl SqliteStore {
             };
             let total = if let Some(project_id) = project_id {
                 connection.query_row(
-                    "SELECT COUNT(*) FROM dataset_batches WHERE project_id = ?1",
+                    "SELECT COUNT(*) FROM dataset_batches
+                     WHERE project_id = ?1 AND deleted_at IS NULL",
                     [project_id],
                     |row| row.get::<_, i64>(0),
                 )?
             } else {
-                connection.query_row("SELECT COUNT(*) FROM dataset_batches", [], |row| {
-                    row.get::<_, i64>(0)
-                })?
+                connection.query_row(
+                    "SELECT COUNT(*) FROM dataset_batches WHERE deleted_at IS NULL",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?
             };
             Ok(SummaryPage::new(items, i64_to_usize(total), request))
         })
@@ -280,7 +308,10 @@ impl SqliteStore {
         request: PageRequest,
     ) -> Result<SummaryPage<StoredRunSummary>, StorageError> {
         self.with_connection(|connection| {
-            let filter = project_id.map_or("", |_| "WHERE r.project_id = ?1");
+            let filter = project_id.map_or(
+                "WHERE r.deleted_at IS NULL",
+                |_| "WHERE r.project_id = ?1 AND r.deleted_at IS NULL",
+            );
             let sql = format!(
                 "SELECT r.id, r.project_id, r.project_name, r.skill_id, r.provider, r.model,
                         r.status, r.project_schema_json, r.workflow_snapshot_json,
@@ -306,7 +337,9 @@ impl SqliteStore {
                              THEN 1 ELSE 0 END,
                         (SELECT COUNT(*) FROM annotations a WHERE a.run_id = r.id AND a.review_status IN ('auto_accepted', 'human_accepted', 'needs_review')),
                         (SELECT COUNT(*) FROM annotations a WHERE a.run_id = r.id AND a.review_status IN ('auto_accepted', 'human_accepted')),
-                        (SELECT COUNT(*) FROM annotations a WHERE a.run_id = r.id AND a.review_status = 'needs_review')
+                        (SELECT COUNT(*) FROM annotations a WHERE a.run_id = r.id AND a.review_status = 'needs_review'),
+                        r.lifecycle_revision, r.archived_at, r.deleted_at,
+                        r.deletion_operation_id
                  FROM runs r {filter}
                  ORDER BY r.updated_at DESC, r.id DESC
                  LIMIT ?{limit_parameter} OFFSET ?{offset_parameter}",
@@ -336,12 +369,16 @@ impl SqliteStore {
             };
             let total = if let Some(project_id) = project_id {
                 connection.query_row(
-                    "SELECT COUNT(*) FROM runs WHERE project_id = ?1",
+                    "SELECT COUNT(*) FROM runs WHERE project_id = ?1 AND deleted_at IS NULL",
                     [project_id.to_string()],
                     |row| row.get::<_, i64>(0),
                 )?
             } else {
-                connection.query_row("SELECT COUNT(*) FROM runs", [], |row| row.get::<_, i64>(0))?
+                connection.query_row(
+                    "SELECT COUNT(*) FROM runs WHERE deleted_at IS NULL",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?
             };
             Ok(SummaryPage::new(items, i64_to_usize(total), request))
         })
@@ -383,7 +420,9 @@ impl SqliteStore {
                                  THEN 1 ELSE 0 END,
                             (SELECT COUNT(*) FROM annotations a WHERE a.run_id = r.id AND a.review_status IN ('auto_accepted', 'human_accepted', 'needs_review')),
                             (SELECT COUNT(*) FROM annotations a WHERE a.run_id = r.id AND a.review_status IN ('auto_accepted', 'human_accepted')),
-                            (SELECT COUNT(*) FROM annotations a WHERE a.run_id = r.id AND a.review_status = 'needs_review')
+                            (SELECT COUNT(*) FROM annotations a WHERE a.run_id = r.id AND a.review_status = 'needs_review'),
+                            r.lifecycle_revision, r.archived_at, r.deleted_at,
+                            r.deletion_operation_id
                      FROM runs r WHERE r.id = ?1",
                     [run_id.to_string()],
                     stored_run_summary_from_row,
@@ -402,8 +441,11 @@ impl SqliteStore {
     ) -> Result<SummaryPage<StoredReviewSummary>, StorageError> {
         self.with_connection(|connection| {
             let filter = project_id.map_or(
-                "a.review_status = 'needs_review'",
-                |_| "a.review_status = 'needs_review' AND r.project_id = ?1",
+                "a.review_status = 'needs_review' AND r.deleted_at IS NULL",
+                |_| {
+                    "a.review_status = 'needs_review' AND r.project_id = ?1
+                     AND r.deleted_at IS NULL"
+                },
             );
             let sql = format!(
                 "SELECT r.id, r.project_id, r.project_name, r.skill_id, r.provider, r.model,
@@ -481,6 +523,7 @@ impl SqliteStore {
                  FROM annotations a
                  JOIN runs r ON r.id = a.run_id
                  WHERE a.review_status = 'needs_review' AND r.id = ?1
+                   AND r.deleted_at IS NULL
                  ORDER BY a.created_at, a.id
                  LIMIT ?2 OFFSET ?3",
             )?;
@@ -495,7 +538,9 @@ impl SqliteStore {
                 )?
                 .collect::<Result<Vec<_>, _>>()?;
             let total = connection.query_row(
-                "SELECT COUNT(*) FROM annotations WHERE run_id = ?1 AND review_status = 'needs_review'",
+                "SELECT COUNT(*) FROM annotations a JOIN runs r ON r.id = a.run_id
+                 WHERE a.run_id = ?1 AND a.review_status = 'needs_review'
+                   AND r.deleted_at IS NULL",
                 [run_id.to_string()],
                 |row| row.get::<_, i64>(0),
             )?;
@@ -508,7 +553,10 @@ impl SqliteStore {
         project_id: Option<ProjectId>,
     ) -> Result<ReviewCountSummary, StorageError> {
         self.with_connection(|connection| {
-            let filter = project_id.map_or("", |_| "WHERE r.project_id = ?1");
+            let filter = project_id.map_or(
+                "WHERE r.deleted_at IS NULL",
+                |_| "WHERE r.project_id = ?1 AND r.deleted_at IS NULL",
+            );
             let sql = format!(
                 "SELECT
                     COALESCE(SUM(CASE WHEN a.review_status IN ('human_accepted', 'rejected') THEN 1 ELSE 0 END), 0),
@@ -574,6 +622,11 @@ fn stored_batch_summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<St
             cancelled_images: i64_to_u64(row.get(22)?),
         },
         child_run_ids,
+        lifecycle_revision: i64_to_u64(row.get(24)?),
+        archived_at: row.get(25)?,
+        deleted_at: row.get(26)?,
+        deletion_operation_id: row.get(27)?,
+        deleted_child_runs: i64_to_usize(row.get(28)?),
     })
 }
 
@@ -608,6 +661,10 @@ fn stored_run_summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Stor
     validation_issue_codes.dedup();
     Ok(StoredRunSummary {
         run,
+        lifecycle_revision: i64_to_u64(row.get(28)?),
+        archived_at: row.get(29)?,
+        deleted_at: row.get(30)?,
+        deletion_operation_id: row.get(31)?,
         image_id,
         image_count: i64_to_usize(row.get(13)?),
         batch_id,
@@ -661,13 +718,15 @@ fn review_count_query(
     let count = if let Some(project_id) = project_id {
         connection.query_row(
             "SELECT COUNT(*) FROM annotations a JOIN runs r ON r.id = a.run_id
-             WHERE a.review_status = ?1 AND r.project_id = ?2",
+             WHERE a.review_status = ?1 AND r.project_id = ?2
+               AND r.deleted_at IS NULL",
             params![review_status, project_id.to_string()],
             |row| row.get::<_, i64>(0),
         )?
     } else {
         connection.query_row(
-            "SELECT COUNT(*) FROM annotations WHERE review_status = ?1",
+            "SELECT COUNT(*) FROM annotations a JOIN runs r ON r.id = a.run_id
+             WHERE a.review_status = ?1 AND r.deleted_at IS NULL",
             [review_status],
             |row| row.get::<_, i64>(0),
         )?

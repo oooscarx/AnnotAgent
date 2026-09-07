@@ -1,6 +1,7 @@
 //! Shared application service used by CLI/TUI and HTTP frontends.
 
 mod guidance;
+mod management;
 mod published_run;
 mod result_projection;
 mod workspace_summary;

@@ -1,9 +1,11 @@
 //! `SQLite` persistence for projects, auditable runs, revisions, and correction memory.
 
 mod batch;
+mod management;
 mod summary;
 
 pub use batch::{BatchClaimResult, BatchImageListSummary};
+pub use management::ManagementScope;
 pub use summary::{
     PageRequest, ProjectExecutionHead, ReviewCountSummary, StoredBatchSummary, StoredReviewSummary,
     StoredRunSummary, SummaryPage,
@@ -62,6 +64,8 @@ const WORKFLOW_REVISION_INTEGRITY_MIGRATION: &str =
     include_str!("../../../migrations/0016_workflow_revision_integrity.sql");
 const BOUNDED_WORKSPACE_SUMMARIES_MIGRATION: &str =
     include_str!("../../../migrations/0017_bounded_workspace_summaries.sql");
+const RUN_PIPELINE_MANAGEMENT_MIGRATION: &str =
+    include_str!("../../../migrations/0018_run_pipeline_management.sql");
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -101,6 +105,8 @@ pub enum StorageError {
     UnsupportedHistoryVersion(u32),
     #[error("invalid stored enum value: {0}")]
     InvalidEnum(String),
+    #[error("{code}: {message}")]
+    Management { code: String, message: String },
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -498,6 +504,20 @@ impl SqliteStore {
                 transaction.execute(
                     "INSERT INTO schema_migrations(version, name, applied_at) VALUES (17, ?1, ?2)",
                     params!["bounded_workspace_summaries", Utc::now().to_rfc3339()],
+                )?;
+                transaction.commit()?;
+            }
+            let has_run_pipeline_management = connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 18)",
+                [],
+                |row| row.get::<_, bool>(0),
+            )?;
+            if !has_run_pipeline_management {
+                let transaction = connection.unchecked_transaction()?;
+                transaction.execute_batch(RUN_PIPELINE_MANAGEMENT_MIGRATION)?;
+                transaction.execute(
+                    "INSERT INTO schema_migrations(version, name, applied_at) VALUES (18, ?1, ?2)",
+                    params!["run_pipeline_management", Utc::now().to_rfc3339()],
                 )?;
                 transaction.commit()?;
             }
@@ -1765,7 +1785,9 @@ impl SqliteStore {
         let review_status = enum_string(ReviewStatus::NeedsReview)?;
         self.with_connection(|connection| {
             let count = connection.query_row(
-                "SELECT COUNT(*) FROM annotations WHERE review_status = ?1",
+                "SELECT COUNT(*) FROM annotations a LEFT JOIN runs r ON r.id = a.run_id
+                 WHERE a.review_status = ?1
+                   AND (r.id IS NULL OR r.deleted_at IS NULL)",
                 [review_status],
                 |row| row.get::<_, i64>(0),
             )?;
@@ -1927,7 +1949,7 @@ impl SqliteStore {
             let mut statement = connection.prepare(
                 "SELECT id, project_id, project_name, skill_id, provider, model, status,
                         project_schema_json, workflow_snapshot_json, terminal_reason, created_at, updated_at
-                 FROM runs ORDER BY created_at DESC",
+                 FROM runs WHERE deleted_at IS NULL ORDER BY created_at DESC",
             )?;
             statement
                 .query_map([], history_run_from_row)?

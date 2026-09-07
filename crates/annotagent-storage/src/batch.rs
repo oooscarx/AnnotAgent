@@ -127,9 +127,11 @@ impl SqliteStore {
             let sql = if active_only {
                 "SELECT * FROM dataset_batches
                  WHERE status IN ('pending', 'running', 'paused', 'awaiting_review')
+                   AND deleted_at IS NULL
                  ORDER BY created_at"
             } else {
-                "SELECT * FROM dataset_batches ORDER BY created_at DESC"
+                "SELECT * FROM dataset_batches
+                 WHERE deleted_at IS NULL ORDER BY created_at DESC"
             };
             let mut statement = connection.prepare(sql)?;
             statement
@@ -148,6 +150,7 @@ impl SqliteStore {
                 .query_row(
                     "SELECT * FROM dataset_batches
                      WHERE project_id = ?1
+                       AND deleted_at IS NULL
                        AND status IN ('pending', 'running', 'paused', 'awaiting_review')
                      ORDER BY updated_at DESC, id DESC LIMIT 1",
                     [project_id],

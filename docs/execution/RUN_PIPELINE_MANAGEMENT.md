@@ -67,7 +67,47 @@ must not rely on it for soft deletion or provenance cleanup. No API accepts a fi
 
 ## Verification log
 
-Commands and results will be appended per milestone. No paid Provider is used.
+No paid Provider is used.
+
+### M1 — Run and Dataset Run lifecycle foundation
+
+- Added migration 0018 with independent lifecycle revisions, trash metadata, operation receipts,
+  exact operation membership, explicit workflow defaults, Pipeline parent metadata, entity leases,
+  compact usage ledger, and provenance tombstone tables.
+- Added typed, bounded management requests, impact previews, structured blockers, confirmation
+  tokens, idempotent receipts, Trash entries, and purge-report contracts in Core.
+- Added transactional Run and Dataset Run trash/restore. Project ownership, lifecycle revision,
+  active status, durable active-Run markers, Batch leases, and active children are rechecked at
+  execution. Parent/child selections are deduplicated. Batch restore revives only child Runs moved
+  by the same Batch operation.
+- Normal Run, Dataset Run, active-execution, and Review queries exclude trashed records. Direct Run
+  lookup remains available for a Trash-aware deep link. Accepted annotations and correction
+  evidence are counted as retained and are not mutated by soft deletion.
+- Added one Project-scoped HTTP action family for preview, execute, Trash listing, and durable
+  receipt lookup. Existing local-session/CSRF middleware protects these write routes; no Agent tool
+  exposes them.
+
+Verification:
+
+```text
+cargo test -p annotagent-storage --lib
+24 passed (before the Batch membership regression was added)
+
+cargo test -p annotagent-storage management --lib
+3 passed
+
+cargo check -p annotagent-application
+passed
+
+cargo check -p annotagent-server
+passed
+
+cargo test -p annotagent-server management_http_preview --lib
+1 passed
+```
+
+M1 intentionally does not yet expose permanent cleanup or Pipeline lifecycle actions. Those typed
+actions return explicit unsupported blockers until their later milestones are committed.
 
 ## Known baseline limitations
 

@@ -11,18 +11,19 @@ use axum::{
 use super::{
     ServerState, accept_project_review_and_next, accept_review_and_next, add_project_label,
     add_project_task, annotation_revisions, cancel_batch, cancel_run, create_annotation,
-    create_project_geometry_calibration, export_dataset, get_batch, get_export_readiness,
-    get_next_project_review, get_next_review, get_project, get_project_geometry_policy,
-    get_project_guidance, get_project_readiness, get_project_review, get_project_summary,
-    get_review, get_run, get_run_debug_summary, get_run_geometry_quality, get_run_result_summary,
-    get_workflow_catalog, image_content, import_annotations, import_images,
-    inspect_run_pipeline_artifacts, list_batches, list_images, list_project_agent_sessions,
-    list_project_correction_memory, list_project_geometry_calibrations,
-    list_project_geometry_corrections, list_project_reviews, list_reviews, list_run_annotations,
-    list_run_reviews, list_run_summaries, patch_annotation, pause_batch, pause_run,
-    project_review_revisions, put_project_geometry_policy, reject_project_review_and_next,
-    reject_review_and_next, remove_image, replay_run_from_node, resume_batch, resume_run,
-    review_decision, run_events, set_project_skills, start_batch, start_run,
+    create_project_geometry_calibration, execute_project_management, export_dataset, get_batch,
+    get_export_readiness, get_next_project_review, get_next_review, get_project,
+    get_project_geometry_policy, get_project_guidance, get_project_management_operation,
+    get_project_readiness, get_project_review, get_project_summary, get_review, get_run,
+    get_run_debug_summary, get_run_geometry_quality, get_run_result_summary, get_workflow_catalog,
+    image_content, import_annotations, import_images, inspect_run_pipeline_artifacts, list_batches,
+    list_images, list_project_agent_sessions, list_project_correction_memory,
+    list_project_geometry_calibrations, list_project_geometry_corrections, list_project_reviews,
+    list_project_trash, list_reviews, list_run_annotations, list_run_reviews, list_run_summaries,
+    patch_annotation, pause_batch, pause_run, preview_project_management, project_review_revisions,
+    put_project_geometry_policy, reject_project_review_and_next, reject_review_and_next,
+    remove_image, replay_run_from_node, resume_batch, resume_run, review_decision, run_events,
+    set_project_skills, start_batch, start_run,
 };
 
 pub(super) fn routes() -> Router<ServerState> {
@@ -92,6 +93,19 @@ pub(super) fn routes() -> Router<ServerState> {
             get(image_content),
         )
         .route("/api/projects/{project_id}/runs", post(start_run))
+        .route(
+            "/api/projects/{project_id}/management/preview",
+            post(preview_project_management),
+        )
+        .route(
+            "/api/projects/{project_id}/management/actions",
+            post(execute_project_management),
+        )
+        .route(
+            "/api/projects/{project_id}/management/operations/{operation_id}",
+            get(get_project_management_operation),
+        )
+        .route("/api/projects/{project_id}/trash", get(list_project_trash))
         .route("/api/projects/{project_id}/batches", post(start_batch))
         .route("/api/batches", get(list_batches))
         .route("/api/batches/{batch_id}", get(get_batch))

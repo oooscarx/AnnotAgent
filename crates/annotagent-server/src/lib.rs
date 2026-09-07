@@ -29,9 +29,10 @@ use annotagent_core::{
     ExpertModelManifest, GenerationDefaults, GeometryAutoAcceptPolicy, GeometryCalibrationId,
     GeometryCalibrationThresholds, GeometryCorrectionInput, GeometryCorrectionReason,
     GeometryQualitySummary, GeometrySemantics, GeometrySnapshot, GlobalModelDefaults,
-    ImageArtifact, ImageId, InputModality, LabelId, ModelAvailability, ModelBindingId,
-    ModelBindingMatch, ModelBindingRole, ModelCapability, ModelCapabilityQualityContract,
-    ModelInputTrace, ModelLimits, ModelPricing, ModelProfile, ModelProfileId, ModelProfileSnapshot,
+    ImageArtifact, ImageId, InputModality, LabelId, ManagementObjectKind, ManagementPreview,
+    ManagementReceipt, ManagementRequest, ModelAvailability, ModelBindingId, ModelBindingMatch,
+    ModelBindingRole, ModelCapability, ModelCapabilityQualityContract, ModelInputTrace,
+    ModelLimits, ModelPricing, ModelProfile, ModelProfileId, ModelProfileSnapshot,
     ModelProfileStatus, ModelRequirements, NodeId, NormalizedRect, PipelineArtifact,
     PipelineBuilderConstraints, PipelineImprovementId, PipelineImprovementPolicy,
     PipelineInferenceRequest, PipelineModelBackend, ProjectGeometryPolicy, ProjectId,
@@ -40,9 +41,10 @@ use annotagent_core::{
     ProviderId, ProviderProfile, PublishedWorkflowVersion, RequiredGeometryQuality, ReviewStatus,
     RunEvent, RunEventKind, RunEventPayload, RunId, RunStatus, ScoreSemantics, SecretScope,
     SecretStore, SecretStoreError, SecretValue, SmallObjectLocalizationSupport, TaskId, TaskKind,
-    VisionCapability, VisionInferenceRequest, VisionModelBackend, VisionModelHealthStatus,
-    WorkflowConstraints, WorkflowDraft, WorkflowNodeKind, build_geometry_correction_evidence,
-    check_model_compatibility, effective_model_quality_contracts,
+    TrashEntry, VisionCapability, VisionInferenceRequest, VisionModelBackend,
+    VisionModelHealthStatus, WorkflowConstraints, WorkflowDraft, WorkflowNodeKind,
+    build_geometry_correction_evidence, check_model_compatibility,
+    effective_model_quality_contracts,
 };
 use annotagent_image_tools::{
     load_image, materialize_model_input, model_image_bytes, to_model_image,
@@ -75,8 +77,8 @@ use annotagent_provider::{
 };
 use annotagent_runtime::RuntimeStore;
 use annotagent_storage::{
-    HistoryRun, PageRequest, ProviderProbeUsage, RegistryReference, StoredReviewSummary,
-    StoredRunSummary, SummaryPage,
+    HistoryRun, PageRequest, ProviderProbeUsage, RegistryReference, StorageError,
+    StoredReviewSummary, StoredRunSummary, SummaryPage,
 };
 use anyhow::{Context, anyhow};
 use axum::{
@@ -471,6 +473,28 @@ impl ApiError {
         }
     }
 
+    fn management(error: anyhow::Error) -> Self {
+        if let Some(StorageError::Management { code, message }) =
+            error.downcast_ref::<StorageError>()
+        {
+            let status = match code.as_str() {
+                "foreign_project_object" | "entity_purged" => StatusCode::NOT_FOUND,
+                "invalid_management_request" | "confirmation_required" => StatusCode::BAD_REQUEST,
+                _ => StatusCode::CONFLICT,
+            };
+            return Self {
+                status,
+                body: json!({
+                    "code": code,
+                    "error": message,
+                    "status": status.as_u16(),
+                    "suggested_action": management_suggested_action(code),
+                }),
+            };
+        }
+        Self::internal(error)
+    }
+
     fn provider(error: &ProviderErrorDetails) -> Self {
         let status = match error.code {
             annotagent_core::ProviderErrorCode::MissingCredential
@@ -523,6 +547,20 @@ impl ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         (self.status, Json(self.body)).into_response()
+    }
+}
+
+fn management_suggested_action(code: &str) -> &'static str {
+    match code {
+        "run_active" | "batch_active" => {
+            "Cancel the active execution, wait for it to reach a terminal state, then preview again."
+        }
+        "revision_conflict" => "Reload the latest state and preview the operation again.",
+        "entity_in_trash" => "Open Project Trash to restore or permanently clean up this item.",
+        "entity_not_in_trash" => "Reload Project Trash before retrying this restore action.",
+        "confirmation_required" => "Preview the impact and confirm the returned token.",
+        "foreign_project_object" => "Use the Project that owns every selected item.",
+        _ => "Review the operation blockers, then preview the action again.",
     }
 }
 
@@ -2901,6 +2939,11 @@ struct RunSummary {
     checkpoint_present: bool,
     review_suspended: bool,
     terminal_reason: Option<String>,
+    lifecycle_revision: u64,
+    archived_at: Option<String>,
+    deleted_at: Option<String>,
+    deletion_operation_id: Option<String>,
+    in_trash: bool,
     created_at: String,
     updated_at: String,
 }
@@ -3125,9 +3168,77 @@ fn run_summary(
         checkpoint_present,
         review_suspended: stored.review_suspended,
         terminal_reason,
+        lifecycle_revision: stored.lifecycle_revision,
+        archived_at: stored.archived_at,
+        in_trash: stored.deleted_at.is_some(),
+        deleted_at: stored.deleted_at,
+        deletion_operation_id: stored.deletion_operation_id,
         created_at: run.created_at,
         updated_at: run.updated_at,
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct TrashQuery {
+    kind: Option<ManagementObjectKind>,
+}
+
+async fn preview_project_management(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+    Json(mut request): Json<ManagementRequest>,
+) -> ApiResult<Json<ManagementPreview>> {
+    if request.project_id != project_id {
+        return Err(ApiError::bad_request(
+            "request project_id must match the Project route",
+        ));
+    }
+    request.confirmation_token = None;
+    state
+        .application
+        .preview_management(&request)
+        .map(Json)
+        .map_err(ApiError::management)
+}
+
+async fn execute_project_management(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+    Json(request): Json<ManagementRequest>,
+) -> ApiResult<(StatusCode, Json<ManagementReceipt>)> {
+    if request.project_id != project_id {
+        return Err(ApiError::bad_request(
+            "request project_id must match the Project route",
+        ));
+    }
+    let receipt = state
+        .application
+        .execute_management(&request)
+        .map_err(ApiError::management)?;
+    Ok((StatusCode::OK, Json(receipt)))
+}
+
+async fn list_project_trash(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+    Query(query): Query<TrashQuery>,
+) -> ApiResult<Json<Value>> {
+    let entries: Vec<TrashEntry> = state
+        .application
+        .list_trash(&project_id, query.kind)
+        .map_err(ApiError::management)?;
+    Ok(Json(json!({"items": entries})))
+}
+
+async fn get_project_management_operation(
+    State(state): State<ServerState>,
+    AxumPath((project_id, operation_id)): AxumPath<(String, String)>,
+) -> ApiResult<Json<ManagementReceipt>> {
+    state
+        .application
+        .management_operation(&project_id, &operation_id)
+        .map(Json)
+        .map_err(ApiError::management)
 }
 
 fn project_route_ids(state: &ServerState) -> ApiResult<BTreeMap<ProjectId, String>> {
@@ -5321,6 +5432,21 @@ fn batch_overview_value(summary: annotagent_storage::StoredBatchSummary) -> ApiR
     if let Value::Object(fields) = &mut value {
         fields.insert("progress".to_owned(), json!(summary.progress));
         fields.insert("child_run_ids".to_owned(), json!(summary.child_run_ids));
+        fields.insert(
+            "deleted_child_runs".to_owned(),
+            json!(summary.deleted_child_runs),
+        );
+        fields.insert(
+            "lifecycle_revision".to_owned(),
+            json!(summary.lifecycle_revision),
+        );
+        fields.insert("archived_at".to_owned(), json!(summary.archived_at));
+        fields.insert("in_trash".to_owned(), json!(summary.deleted_at.is_some()));
+        fields.insert("deleted_at".to_owned(), json!(summary.deleted_at));
+        fields.insert(
+            "deletion_operation_id".to_owned(),
+            json!(summary.deletion_operation_id),
+        );
         fields.insert("images".to_owned(), json!([]));
     }
     Ok(value)
@@ -11691,6 +11817,191 @@ export:
             json!("project_binding:project-a@1")
         );
         assert_eq!(project_b["model_bindings"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn management_http_preview_trash_restore_and_active_protection_are_project_scoped() {
+        let temp = tempfile::tempdir().expect("temp");
+        let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
+        let yaml = r"
+version: 1
+project:
+  name: Management fixture
+  language: en
+dataset:
+  root: images
+runtime: {}
+tasks: []
+review:
+  auto_accept_confidence: 0.9
+  force_review_below: 0.5
+export:
+  formats: [native]
+";
+        application
+            .create_project("manage-a", yaml)
+            .expect("Project A");
+        application
+            .create_project("manage-b", yaml)
+            .expect("Project B");
+        let scope_a = application
+            .stable_project_scope_id("manage-a")
+            .expect("scope A");
+        let store = application.store();
+        let terminal_id = RunId::new();
+        annotagent_runtime::RuntimeStore::create_run(
+            store.as_ref(),
+            &RunRecord {
+                id: terminal_id,
+                project_id: scope_a,
+                project_name: "Management fixture".to_owned(),
+                skill_id: "test".to_owned(),
+                provider: "offline".to_owned(),
+                model: "fixture".to_owned(),
+                status: RunStatus::Completed,
+                project_schema_json: yaml.to_owned(),
+                workflow_snapshot_json: None,
+            },
+        )
+        .await
+        .expect("terminal Run");
+        annotagent_runtime::RuntimeStore::set_run_status(
+            store.as_ref(),
+            terminal_id,
+            RunStatus::Completed,
+            None,
+        )
+        .await
+        .expect("terminal status");
+        let active_id = RunId::new();
+        annotagent_runtime::RuntimeStore::create_run(
+            store.as_ref(),
+            &RunRecord {
+                id: active_id,
+                project_id: scope_a,
+                project_name: "Management fixture".to_owned(),
+                skill_id: "test".to_owned(),
+                provider: "offline".to_owned(),
+                model: "fixture".to_owned(),
+                status: RunStatus::Running,
+                project_schema_json: yaml.to_owned(),
+                workflow_snapshot_json: None,
+            },
+        )
+        .await
+        .expect("active Run");
+
+        let service = router(
+            test_state(application, Arc::new(InMemorySecretStore::default())).await,
+            None,
+        );
+        let base_request = |run_id: RunId, key: &str| {
+            json!({
+                "project_id": "manage-a",
+                "objects": [{
+                    "kind": "run",
+                    "id": run_id,
+                    "expected_revision": 1
+                }],
+                "action": "move_to_trash",
+                "idempotency_key": key
+            })
+        };
+        let active = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/projects/manage-a/management/preview",
+                Some(base_request(active_id, "active-preview")),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(active["can_execute"], json!(false));
+        assert_eq!(active["blockers"][0]["code"], json!("run_active"));
+
+        let mut deletion = base_request(terminal_id, "delete-terminal");
+        let preview = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/projects/manage-a/management/preview",
+                Some(deletion.clone()),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(preview["can_execute"], json!(true));
+        deletion["confirmation_token"] = preview["confirmation_token"].clone();
+        let response = request(
+            &service,
+            axum::http::Method::POST,
+            "/api/projects/manage-a/management/actions",
+            Some(deletion.clone()),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let receipt = response_json(response).await;
+        let repeated = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/projects/manage-a/management/actions",
+                Some(deletion),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(receipt["operation_id"], repeated["operation_id"]);
+
+        let runs = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/runs?project_id=manage-a",
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(runs["page"]["total"], json!(1));
+        let trash = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/projects/manage-a/trash?kind=run",
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(trash["items"].as_array().map(Vec::len), Some(1));
+        let trashed = trash["items"][0]["object"].clone();
+        let mut restore = json!({
+            "project_id": "manage-a",
+            "objects": [trashed],
+            "action": "restore",
+            "idempotency_key": "restore-terminal"
+        });
+        let preview = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/projects/manage-a/management/preview",
+                Some(restore.clone()),
+            )
+            .await,
+        )
+        .await;
+        restore["confirmation_token"] = preview["confirmation_token"].clone();
+        let response = request(
+            &service,
+            axum::http::Method::POST,
+            "/api/projects/manage-a/management/actions",
+            Some(restore),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]
