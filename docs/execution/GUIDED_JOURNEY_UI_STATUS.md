@@ -896,3 +896,25 @@ The prior comparison commit omitted a JSX closing expression from its selected
 hunks; follow-up commit `f87986b` includes it without rewriting commit history.
 Full current-tree regression and the requirement-by-requirement final audit
 remain pending; this checkpoint does not claim the whole Journey is finished.
+
+Human-addition increment: `724d8f5`. Current-tree Rust fmt, strict workspace
+all-target/all-feature Clippy, all-feature tests and workspace build passed on
+2026-09-08. Explicit live-provider/real-weight tests remain ignored, not claimed
+as inference validation. Web typecheck and 96 unit tests passed; the full browser
+suite passed 63/63 in 1.9 minutes on `/tmp/annotagent-guided-e2e-50552`, separate
+from port 8787. Production build passed with the existing bundle-size warning.
+Non-target screenshots were restored to the pre-run snapshot; the two new manual
+addition captures are the scoped visual evidence. No push or remote changes.
+
+Final-audit findings to resolve next (not covered by green test names):
+- `AnnotationCanvas` provides keyboard selection and vertex deletion, but bbox
+  movement/resizing currently depends on pointer handlers. Its annotation list
+  selects objects rather than offering equivalent keyboard geometry editing.
+  Existing keyboard E2E checks do not prove keyboard-only correction; add the
+  missing interaction and a regression using the shared canvas.
+- The named 200-percent test uses 640 CSS-pixel reflow, not native browser zoom.
+  Keep this distinction explicit; native zoom, OS IME/screen reader and real-person
+  usability are unexecuted and cannot be inferred from synthetic event checks.
+- The whole specification still needs a consolidated requirement-to-current-code
+  and browser-evidence audit. Earlier chronological limitations above are not a
+  current completion matrix, and the goal remains active.
