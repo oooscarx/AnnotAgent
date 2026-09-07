@@ -121,7 +121,38 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   await expect(page.getByText("Sample feedback saved", { exact: true })).toBeVisible();
   await page.reload();
   await expect(page.getByLabel("Correct label", { exact: true })).toHaveValue("night, indoor");
+  await page.getByRole("button", { name: /^Annotation list/ }).click();
+  await expect(page.locator(".canvas-annotation-list button").first()).toContainText("Score not provided");
+  await expect(page.locator(".canvas-annotation-list button").first()).toContainText("Human sample correction");
+  await page.getByRole("button", { name: /^Annotation list/ }).click();
   expect(await (await request.get(`/api/projects/${projectId}/export-readiness`)).json()).toEqual(annotations);
+  await page.getByRole("button", { name: "Add missing target", exact: true }).click();
+  await page.getByLabel("Correct label", { exact: true }).fill("missed-category");
+  await expect(page.getByText(/^Human sample example, not a model prediction/)).toBeVisible();
+  const feedbackRequests: unknown[] = [];
+  page.on("request", (req) => { if (req.method() === "POST" && /\/workflow-sample-tests\/.*\/feedback$/.test(req.url())) feedbackRequests.push(req.postDataJSON()); });
+  await page.route("**/api/workflow-sample-tests/*/images/*/feedback", async (route) => {
+    const saved = await route.fetch(); expect(saved.ok()).toBe(true);
+    await route.abort("failed"); // Save happened; only its response was lost.
+  }, { times: 1 });
+  await page.getByRole("button", { name: "Save sample feedback", exact: true }).click();
+  await expect(page.locator(".sample-confirm-action [role=alert]")).toBeVisible();
+  await expect(page.getByLabel("Correct label", { exact: true })).toHaveValue("missed-category");
+  await page.getByRole("button", { name: "Save sample feedback", exact: true }).click();
+  await expect(page.getByText("Sample feedback saved", { exact: true })).toBeVisible();
+  expect(feedbackRequests).toHaveLength(2);
+  expect(feedbackRequests[1]).toEqual(feedbackRequests[0]);
+  await expect(page.getByLabel("What needs attention?", { exact: true })).toHaveValue("missing_target");
+  await page.reload();
+  await expect(page.getByLabel("Correct label", { exact: true })).toHaveValue("missed-category");
+  await page.getByLabel("Correct label", { exact: true }).fill("corrected-missing-category");
+  await page.getByRole("button", { name: "Save sample feedback", exact: true }).click();
+  await expect(page.getByText("Sample feedback saved", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel("Correct label", { exact: true })).toHaveValue("corrected-missing-category");
+  await expect(page.getByRole("button", { name: /^Annotation list · 2$/ })).toBeVisible();
+  expect(await (await request.get(`/api/projects/${projectId}/export-readiness`)).json()).toEqual(annotations);
+  await page.screenshot({ path: "../docs/execution/guided-journey/sample-human-example.png", fullPage: true, animations: "disabled" });
   await page.getByText("Result needs attention", { exact: true }).click();
   await page.getByLabel("Result to inspect", { exact: true }).selectOption("");
   await page.getByLabel("What needs attention?", { exact: true }).selectOption("cannot_judge");
@@ -153,7 +184,8 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   await page.getByRole("button", { name: "Connect planning model", exact: true }).click();
   await page.getByRole("radio", { name: /^Journey TEST model / }).check();
   await page.getByRole("button", { name: "Use connection and return", exact: true }).click();
-  await expect(page).toHaveURL(revisionUrl);
+  // The suite-only pacing adapter may wait up to 45 seconds on the real guard.
+  await expect(page).toHaveURL(revisionUrl, { timeout: 55_000 });
   await page.unroute("**/api/agent-model-bindings");
   await page.reload();
   await expect(page.getByRole("region", { name: "Revision authorization", exact: true })).toBeVisible();

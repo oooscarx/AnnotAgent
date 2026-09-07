@@ -202,7 +202,7 @@ export function AnnotationCanvas({
       {listOpen && <ul className="canvas-annotation-list" aria-label={t("Annotations on canvas")}>
         {annotations.map((annotation) => {
           const visual = annotationVisual(annotation, visualContext);
-          return <li key={annotation.id}><button aria-pressed={annotation.id === selectedId} onClick={() => onSelect(annotation.id)}><i aria-hidden="true" style={{ borderColor: annotationColor(visual.slot) }} /><span><strong>{annotation.label ?? annotation.task_id}</strong><small>{annotation.value.kind.replaceAll("_", " ")} · {annotation.confidence == null ? t("Score not provided") : `${Math.round(annotation.confidence * 100)}%`}</small></span></button></li>;
+          return <li key={annotation.id}><button aria-pressed={annotation.id === selectedId} onClick={() => onSelect(annotation.id)}><i aria-hidden="true" style={{ borderColor: annotationColor(visual.slot) }} /><span><strong>{annotation.label ?? annotation.task_id}</strong><small>{annotation.value.kind.replaceAll("_", " ")} · {annotation.confidence == null ? t("Score not provided") : `${Math.round(annotation.confidence * 100)}%`}</small>{typeof annotation.provenance.addition_id === "string" ? <small>{t("Human sample example")}</small> : annotation.provenance.human_corrected === true && <small>{t("Human sample correction")}</small>}</span></button></li>;
         })}
         {annotations.length === 0 && <li className="canvas-annotation-empty">{t("No annotations selected")}</li>}
       </ul>}

@@ -74,9 +74,12 @@ test("Provider Registry configures an OpenAI-compatible fixture, Model Profile, 
   const defaultBuilder = page.getByLabel("Default Pipeline Builder model", {
     exact: true,
   });
+  const savedDefault = page.waitForResponse((response) => response.request().method() === "PUT" && response.url().endsWith("/api/agent-model-bindings"));
   await defaultBuilder.selectOption({
     label: "E2E Pipeline Builder via E2E OpenAI fixture",
   });
+  expect((await savedDefault).ok()).toBeTruthy();
+  await expect(defaultBuilder).toBeEnabled();
   const selectedDefault = await defaultBuilder.inputValue();
   await page.reload();
   await expect(

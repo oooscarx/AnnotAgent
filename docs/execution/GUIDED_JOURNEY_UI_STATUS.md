@@ -562,3 +562,57 @@ Clippy, Web typecheck and 90 Web unit tests pass. Extended isolated journey E2E
 passed (1/1): multi-label correction saves/reloads while formal export readiness
 remains byte-equivalent. Missing-target additions still need their own stable
 human subject reference and are the next implementation item, not claimed here.
+
+Typed correction commit: `4a9f2c6`.
+
+### Missing-target feedback — image-owned human subjects
+
+Sample feedback can now carry a separate `addition_id` UUID under its immutable
+Sample Test and stable image. It cannot also claim a model outcome ID. A first
+addition must be explicitly marked missing-target and include a label and valid
+typed value; later revisions retain that same subject/output type. Existing
+feedback records deserialize unchanged. No formal annotation is created and the
+original prediction/report is unchanged. Builder evidence explicitly separates
+these human examples from model outcomes and groups repeated revisions by ID.
+
+The sample canvas offers Add missing target for supported saved goals: image
+classification, boxes, polygon and polygon-encoded masks. The initial manual
+geometry appears only after the user's add action, is marked human-authored, and
+can be adjusted before saving. Raster masks are not falsely advertised as having
+editable vertices. Feedback restores additions and later edits without duplicate
+subjects. A lost save response reuses the same revision request; the save-success
+path clears dirty state only after acknowledgement. Navigation dirty guards remain.
+
+Verification in progress: five storage feedback tests include stable additions,
+retry identity, original-report preservation, wrong-image and output-type rejection.
+Full Rust fmt/Clippy/build and **512 passed / 5 ignored**; Web typecheck and 90
+unit tests pass. The isolated journey checks label changes, addition + re-edit,
+unchanged formal export readiness and save-committed/response-lost retry. The first
+full E2E run exposed the test pacing adapter's 45-second permitted rate-limit wait
+outlasting a 10-second assertion; its binding-return assertion now covers that
+known test-only window. Product limits are unchanged. Final suite result follows.
+
+The next full run completed the extended journey but exposed an older Registry
+test race: the controlled default-model select updates only after the server save,
+while the test read its old value immediately and then reloaded the correctly
+saved new value. The test now awaits the actual PUT response and enabled control
+before capturing the expected value. No Provider persistence behavior or security
+guard was relaxed. The third final run includes this correction and the explicit
+human-source label in the canvas annotation list.
+
+Full rerun: **62/62 E2E passed**. Visual inspection of the real fixture page led
+to a compact-width Add missing target button. A subsequent evidence audit removed
+the original model confidence from human-edited sample labels/geometry: that score
+belongs to the unmodified prediction, not the user's correction. Restored edits
+are explicitly marked Human sample correction; additions have their own Human
+sample example marker and no model score. The final targeted journey asserts this
+distinction. Screenshot: `guided-journey/sample-human-example.png` (synthetic
+protocol fixture, not an accuracy demonstration). Wider native-model integration
+and the remaining final accessibility/freshness audit are still open.
+
+Final focused check after the display/evidence refinements: journey **1/1 passed**,
+Web typecheck/build passed, and 90 unit tests passed. It verifies persisted
+missing-target reason matches the server response immediately, stable addition ID
+across edits/reloads, identical revision body after a lost successful response,
+no inherited model score on corrections, and unchanged formal export readiness.
+Full suite evidence above remains 62/62 before these narrowly retested changes.

@@ -2023,6 +2023,7 @@ export interface SampleFeedbackRevision {
   outcome_id?: string | null;
   corrected_value?: AnnotationValue | null;
   corrected_label?: string | null;
+  addition_id?: string | null;
   note: string;
   created_at: string;
 }

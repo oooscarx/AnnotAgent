@@ -62,6 +62,7 @@ mod tests {
             reason: SampleFeedbackReason::PoorBoundary,
             outcome_id: Some("final-1".into()),
             corrected_label: None,
+            addition_id: None,
             corrected_value: Some(
                 serde_json::from_value(
                     serde_json::json!({"kind": "bounding_box", "rect": [0.51, 0.52, 0.08, 0.09]}),
@@ -216,6 +217,45 @@ mod tests {
     }
 
     #[test]
+    fn missing_sample_subject_has_stable_identity_and_never_changes_prediction() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let mut feedback = fixture(&store);
+        let prediction = store.get_workflow_sample_test_by_id("test-1").unwrap();
+        feedback.outcome_id = None;
+        feedback.corrected_label = Some("missed ball".into());
+        feedback.addition_id = Some(uuid::Uuid::new_v4().to_string());
+        assert!(store.save_sample_feedback(&feedback).is_err());
+        feedback.reason = SampleFeedbackReason::MissingTarget;
+        store.save_sample_feedback(&feedback).unwrap();
+        store.save_sample_feedback(&feedback).unwrap();
+        feedback.sequence = 2;
+        feedback.revision_id = "edit-addition".into();
+        feedback.reason = SampleFeedbackReason::PoorBoundary;
+        feedback.corrected_label = Some("ball".into());
+        store.save_sample_feedback(&feedback).unwrap();
+        let revisions = store.sample_feedback("test-1", "stable-image-1").unwrap();
+        assert_eq!(revisions.len(), 2);
+        assert_eq!(revisions[0].addition_id, revisions[1].addition_id);
+        assert_eq!(
+            store.get_workflow_sample_test_by_id("test-1").unwrap(),
+            prediction
+        );
+        feedback.sequence = 3;
+        feedback.revision_id = "bad-addition".into();
+        feedback.outcome_id = Some("final-1".into());
+        assert!(store.save_sample_feedback(&feedback).is_err());
+        feedback.outcome_id = None;
+        feedback.image_id = "wrong-image".into();
+        assert!(store.save_sample_feedback(&feedback).is_err());
+        feedback.image_id = "stable-image-1".into();
+        feedback.corrected_value = Some(
+            serde_json::from_value(serde_json::json!({"kind":"classification","labels":["ball"]}))
+                .unwrap(),
+        );
+        assert!(store.save_sample_feedback(&feedback).is_err());
+    }
+
+    #[test]
     fn sample_feedback_accepts_typed_label_and_polygon_edits_not_type_changes() {
         for (original, correction) in [
             (
@@ -278,6 +318,9 @@ pub struct SampleFeedbackRevision {
     pub corrected_value: Option<annotagent_core::VisionArtifactValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub corrected_label: Option<String>,
+    /// Stable human-authored subject under this Sample Test image, never a model outcome.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub addition_id: Option<String>,
     pub note: String,
     pub created_at: DateTime<Utc>,
 }
@@ -414,7 +457,53 @@ impl SqliteStore {
                 "A corrected label must contain 1–256 bytes".into(),
             ));
         }
-        if let Some(id) = &feedback.outcome_id {
+        if let Some(value) = &feedback.corrected_value {
+            value.validate().map_err(|error| {
+                StorageError::InvalidEnum(format!("Invalid sample correction: {error}"))
+            })?;
+            if let annotagent_core::VisionArtifactValue::BoundingBox { rect } = value
+                && (rect.width() <= 0.0 || rect.height() <= 0.0)
+            {
+                return Err(StorageError::InvalidEnum(
+                    "Corrected box must have positive dimensions".into(),
+                ));
+            }
+            if let annotagent_core::VisionArtifactValue::Classification { labels } = value
+                && labels
+                    .iter()
+                    .any(|label| label.as_str().trim().is_empty() || label.as_str().len() > 256)
+            {
+                return Err(StorageError::InvalidEnum(
+                    "Classification labels must contain 1–256 bytes".into(),
+                ));
+            }
+        }
+        if let Some(addition_id) = &feedback.addition_id {
+            if uuid::Uuid::parse_str(addition_id).is_err()
+                || feedback.outcome_id.is_some()
+                || feedback.corrected_value.is_none()
+                || feedback.corrected_label.is_none()
+            {
+                return Err(StorageError::InvalidEnum("A missing-target example requires its own UUID, label and value, not a model outcome".into()));
+            }
+            let previous = self.sample_feedback(&feedback.sample_test_id, &feedback.image_id)?;
+            if let Some(original) = previous
+                .iter()
+                .find(|item| item.addition_id.as_ref() == Some(addition_id))
+            {
+                if std::mem::discriminant(original.corrected_value.as_ref().unwrap())
+                    != std::mem::discriminant(feedback.corrected_value.as_ref().unwrap())
+                {
+                    return Err(StorageError::InvalidEnum(
+                        "A human sample subject must retain its output type".into(),
+                    ));
+                }
+            } else if feedback.reason != SampleFeedbackReason::MissingTarget {
+                return Err(StorageError::InvalidEnum(
+                    "A new human sample subject must be marked as a missing target".into(),
+                ));
+            }
+        } else if let Some(id) = &feedback.outcome_id {
             let original = sample
                 .outcomes
                 .iter()
@@ -428,16 +517,6 @@ impl SqliteStore {
                 }) {
                     return Err(StorageError::InvalidEnum(
                         "A sample correction must retain its original output type".into(),
-                    ));
-                }
-                value.validate().map_err(|error| {
-                    StorageError::InvalidEnum(format!("Invalid sample correction: {error}"))
-                })?;
-                if let annotagent_core::VisionArtifactValue::BoundingBox { rect } = value
-                    && (rect.width() <= 0.0 || rect.height() <= 0.0)
-                {
-                    return Err(StorageError::InvalidEnum(
-                        "Corrected box must have positive dimensions".into(),
                     ));
                 }
             }

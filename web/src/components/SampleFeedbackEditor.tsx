@@ -40,11 +40,15 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
   const [showOriginal, setShowOriginal] = useState(false);
   const [before, setBefore] = useState<{annotations: Annotation[]; draftId:string; testId:string}>();
   const [showBefore, setShowBefore] = useState(false);
+  const [goal, setGoal] = useState<Awaited<ReturnType<typeof api.projectGoal>>>();
   const mounted = useRef(true);
   const copyKey = useRef(crypto.randomUUID());
   const copying = useRef(false);
+  const saving = useRef(false);
+  const pendingFeedback = useRef<SampleFeedbackRevision | undefined>(undefined);
   useEffect(() => {
     let current = true; mounted.current = true;
+    void api.projectGoal(projectId).then((value) => { if (current) setGoal(value); }).catch((error: Error) => { if (current) setError(error.message); });
     void api.samplePlanEvidence(projectId, draftId).then(async (evidence) => {
       const { sample_test: baseline } = await api.workflowSampleTest(evidence.baseline_draft_id, undefined, evidence.sample_test_id);
       if (!current) return;
@@ -59,6 +63,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
   const [hint, setHint] = useState(true);
   const [attentionOpen, setAttentionOpen] = useState(false);
   const selectedAnnotation = annotations.find((item) => item.id === selected);
+  const selectedMaskIsRaster = selectedAnnotation && (selectedAnnotation.value.kind === "semantic_mask" || selectedAnnotation.value.kind === "instance_mask") && selectedAnnotation.value.mask.encoding !== "polygon";
   useEffect(() => {
     let current = true;
     void api.sampleFeedback(testId, image.image_id).then(({ revisions: values }) => {
@@ -66,11 +71,18 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
       setRevisions(values);
       const restored = original.map((annotation) => {
         const changes = values.filter((value) => value.outcome_id === annotation.id);
-        return changes.reduce((item, change) => ({ ...item, value: change.corrected_value ?? item.value, label: change.corrected_label ?? item.label }), annotation);
+        return changes.reduce((item, change) => change.corrected_value || change.corrected_label ? ({ ...item, value: change.corrected_value ?? item.value, label: change.corrected_label ?? item.label, confidence: undefined, source: "human sample feedback", provenance: { ...item.provenance, human_corrected: true } }) : item, annotation);
       });
+      for (const change of values) {
+        if (!change.addition_id || !change.corrected_value || !change.corrected_label) continue;
+        const id = `human-sample:${change.addition_id}`;
+        const existing = restored.findIndex((item) => item.id === id);
+        const addition: Annotation = { id, image_id: image.image_id, task_id: "sample", label: change.corrected_label, value: change.corrected_value, attributes: {}, source: "human sample feedback", review_status: "needs_review", provenance: { addition_id: change.addition_id, sample_test_id: testId }, created_at: change.created_at };
+        if (existing >= 0) restored[existing] = addition; else restored.push(addition);
+      }
       setAnnotations(restored);
       const last = values.at(-1);
-      if (last) { setReason(last.reason); setNote(last.note); setSelected(last.outcome_id ?? undefined); setSaved(true); }
+      if (last) { setReason(last.reason); setNote(last.note); setSelected(last.addition_id ? `human-sample:${last.addition_id}` : last.outcome_id ?? undefined); setSaved(true); }
       setLoaded(true);
     }).catch((error: Error) => { if (current) setError(error.message); });
     return () => { current = false; };
@@ -84,38 +96,61 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
   }, [dirty]);
   const edit = (annotation: Annotation) => {
     if (!loaded || busy || showOriginal || showBefore || annotation.id !== selected) return;
-    setAnnotations((items) => items.map((item) => item.id === annotation.id ? annotation : item));
+    setAnnotations((items) => items.map((item) => item.id === annotation.id ? { ...annotation, confidence: undefined, source: "human sample feedback", provenance: { ...annotation.provenance, human_corrected: true } } : item));
     setDirty(true); setSaved(false); setReason("poor_boundary"); setAttentionOpen(true);
   };
   const save = async (confirm = false) => {
-    if (busy || !loaded || showBefore) return;
+    if (busy || saving.current || !loaded || showBefore) return;
+    saving.current = true;
     setBusy(true); setError("");
-    const revision: SampleFeedbackRevision = {
+    const additionId = typeof selectedAnnotation?.provenance.addition_id === "string" ? selectedAnnotation.provenance.addition_id : undefined;
+    const newAddition = additionId && !revisions.some((revision) => revision.addition_id === additionId);
+    let revision: SampleFeedbackRevision = {
       revision_id: crypto.randomUUID(), sample_test_id: testId, image_id: image.image_id,
-      sequence: (revisions.at(-1)?.sequence ?? 0) + 1, reason: confirm ? "correct" : reason, note,
-      outcome_id: !confirm && reason === "missing_target" ? null : selected,
-      corrected_value: (confirm || reason !== "missing_target") ? selectedAnnotation?.value : null,
-      corrected_label: (confirm || reason !== "missing_target") ? selectedAnnotation?.label : null,
+      sequence: (revisions.at(-1)?.sequence ?? 0) + 1, reason: newAddition ? "missing_target" : confirm ? "correct" : reason, note,
+      addition_id: additionId,
+      outcome_id: additionId || (!confirm && reason === "missing_target") ? null : selected,
+      corrected_value: (additionId || confirm || reason !== "missing_target") ? selectedAnnotation?.value : null,
+      corrected_label: (additionId || confirm || reason !== "missing_target") ? selectedAnnotation?.label : null,
       created_at: new Date().toISOString(),
     };
+    const payload = (value: SampleFeedbackRevision) => JSON.stringify({ ...value, revision_id: "", created_at: "" });
+    if (pendingFeedback.current && payload(pendingFeedback.current) === payload(revision)) revision = pendingFeedback.current;
+    pendingFeedback.current = revision;
     try {
       const value = await api.saveSampleFeedback(revision);
+      pendingFeedback.current = undefined;
       if (!mounted.current) return;
-      setRevisions((items) => [...items, value.revision]); setDirty(false); setSaved(true); setHistory([]);
-      if (confirm) { setReason("correct"); onDirtyChange(false); if (!selected) onConfirmed?.(); }
+      setRevisions((items) => [...items, value.revision]); setReason(value.revision.reason); setDirty(false); setSaved(true); setHistory([]);
+      if (confirm) { onDirtyChange(false); if (!selected) onConfirmed?.(); }
     } catch (error) { if (mounted.current) setError((error as Error).message); }
-    finally { if (mounted.current) setBusy(false); }
+    finally { saving.current = false; if (mounted.current) setBusy(false); }
+  };
+  const addMissing = () => {
+    if (!loaded || busy || dirty || !goal) return;
+    const label = goal.labels?.[0] ?? "";
+    const value: Annotation["value"] | undefined = goal.kind === "classification" ? { kind: "classification", labels: label ? [label] : [] }
+      : goal.kind === "bounding_box" ? { kind: "bounding_box", rect: [0.4, 0.4, 0.2, 0.2] }
+      : goal.kind === "semantic_mask" || goal.kind === "instance_mask" ? { kind: goal.kind, mask: { encoding: "polygon", rings: [[[0.4, 0.4], [0.6, 0.4], [0.6, 0.6], [0.4, 0.6]]] } }
+      : goal.kind === "polygon" ? { kind: "polygon", rings: [[[0.4, 0.4], [0.6, 0.4], [0.6, 0.6], [0.4, 0.6]]] } : undefined;
+    if (!value) return;
+    const additionId = crypto.randomUUID();
+    const added: Annotation = { id: `human-sample:${additionId}`, image_id: image.image_id, task_id: "sample", label, value, attributes: {}, source: "human sample feedback", review_status: "needs_review", provenance: { addition_id: additionId, sample_test_id: testId }, created_at: "" };
+    setHistory((items) => [...items, annotations]); setAnnotations((items) => [...items, added]); setSelected(added.id);
+    setDirty(true); setSaved(false); setReason("missing_target"); setAttentionOpen(true); setShowBefore(false); setShowOriginal(false);
   };
   return <div className="sample-feedback-workspace">
     <section className="sample-feedback-image">
       <div className="button-row"><button aria-pressed={showOriginal} onClick={() => { setShowOriginal(true); setShowBefore(false); }}>{t("Original image")}</button>{before && <button aria-pressed={showBefore} onClick={() => { setShowOriginal(false); setShowBefore(true); }}>{t("Before adjustment")}</button>}<button aria-pressed={!showOriginal && !showBefore} onClick={() => { setShowOriginal(false); setShowBefore(false); }}>{t("Current candidates")}</button></div>
       {before && <p>{t("Compare two saved tests of this same image. A proposed change is not proof of improved accuracy.")}</p>}
-      <AnnotationCanvas compactList imageUrl={image.url} annotations={showOriginal ? [] : showBefore ? before?.annotations ?? [] : annotations} selectedId={showBefore ? undefined : selected} readOnly={!loaded || busy || showOriginal || showBefore} onSelect={(id) => {
+      <AnnotationCanvas compactList imageUrl={image.url} annotations={showOriginal ? [] : showBefore ? before?.annotations ?? [] : annotations} selectedId={showBefore ? undefined : selected} readOnly={!loaded || busy || showOriginal || showBefore || Boolean(selectedMaskIsRaster)} onSelect={(id) => {
         if (showBefore) return;
         if (dirty && selected !== id) { setError(t("Save or undo this correction before selecting another result.")); return; }
         setSelected(id);
       }} onEditStart={() => setHistory((items) => [...items, annotations])} onChange={edit} />
     </section>
+    {goal && ["classification", "bounding_box", "polygon", "semantic_mask", "instance_mask"].includes(goal.kind ?? "") && <button className="sample-add-missing" disabled={!loaded || busy || dirty || showBefore} onClick={addMissing}>{t("Add missing target")}</button>}
+    {typeof selectedAnnotation?.provenance.addition_id === "string" && <p className="sample-risk-notice">{t("Human sample example, not a model prediction. Adjust its label and boundary before saving. It never becomes a formal annotation automatically.")}</p>}
     {selectedAnnotation && !showOriginal && !showBefore && <label className="sample-feedback-label">{t("Correct label")}<input aria-label={t("Correct label")} value={selectedAnnotation.label} disabled={!loaded || busy} maxLength={256} onChange={(event) => {
       const label = event.target.value;
       setHistory((items) => [...items, annotations]);

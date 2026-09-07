@@ -38,6 +38,7 @@ code, pre { font-family: var(--aa-font-mono); }
 .skip-link { position: fixed; z-index: 100; top: 8px; left: 8px; transform: translateY(-150%); clip-path: inset(50%); padding: 9px 12px; border-radius: var(--aa-radius-md); background: var(--aa-primary); color: white; }
 .skip-link:focus { transform: translateY(0); clip-path: none; }
 .sample-feedback-label { display: grid; gap: 8px; max-width: 32rem; margin-block: 16px; }
+.sample-add-missing { justify-self: start; }
 
 .app-shell { display: grid; grid-template-columns: var(--aa-sidebar-width, 15rem) minmax(0, 1fr); min-height: 100vh; }
 .app-shell.focus-layout { display: block; }
