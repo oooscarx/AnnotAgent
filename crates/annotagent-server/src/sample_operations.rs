@@ -185,6 +185,7 @@ pub(super) async fn start_operation(
             let control = SampleExecutionControl {
                 id: id.clone(),
                 cancellation,
+                conversation_calls: None,
                 check_scope: Some(Arc::new(move || {
                     let (draft, models) = scope_state
                         .application

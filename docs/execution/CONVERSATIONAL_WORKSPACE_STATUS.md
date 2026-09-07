@@ -593,3 +593,26 @@ all-targets/all-features Clippy passed. Existing sample allowance tests passed.
 No browser changes or new screenshots this increment; no Live inference, real-user
 usability validation, push or remote modification. Sample canvas, human requests/outbox
 and the processing/review/export conversation flow remain incomplete.
+
+### Compose sample and conversation allowances in the existing Runtime (M2)
+
+`SampleExecutionControl` now accepts a server-owned optional conversation accounting
+context. The existing executable sample sandbox passes it to PublishedWorkflowRuntime,
+which applies one composed allowance to existing and late-created model adapters.
+Both the per-test ceiling and cumulative task ledger apply; starting a new sample does
+not replenish task spend. The application rejects a foreign Project accounting context,
+missing frozen-scope callback and unmetered legacy fallback before execution.
+The ordinary HTTP sample route still supplies no conversation context: connecting its
+exact scope/consent/recovery contract to conversation tasks remains next work, not done.
+
+New adapter regression verifies the local ceiling survives late adapter construction
+and a second sample cannot reset cumulative spend. A separate isolated application
+classification test uses the existing sandbox, produces one terminal candidate, keeps
+formal committed annotations empty and does not publish. Its built-in mock classifier
+does not invoke any model adapter, so the expected model-call count is correctly zero;
+it is not claimed as metered HTTP/Live inference evidence. The latter still needs an
+HTTP-fixture integration after the consent route is connected.
+
+Verification: Application all-features **93 passed, 1 billable smoke ignored**;
+Application/server all-targets/all-features Clippy passed. No browser or Live run in
+this increment; user data and unrelated dirty screenshots preserved, no push.

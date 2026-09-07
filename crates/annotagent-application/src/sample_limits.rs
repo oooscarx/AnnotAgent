@@ -21,8 +21,18 @@ enum CallAllowance {
         annotagent_core::BatchId,
     ),
     Conversation(crate::conversation_vision_calls::ConversationVisionCalls),
+    BoundedConversation {
+        local: SampleCalls,
+        calls: crate::conversation_vision_calls::ConversationVisionCalls,
+    },
 }
 impl SampleCalls {
+    pub(crate) fn bounded_conversation(limit: u64, calls: crate::ConversationVisionCalls) -> Self {
+        Self(Arc::new(CallAllowance::BoundedConversation {
+            local: Self::new(limit),
+            calls,
+        }))
+    }
     pub(crate) fn conversation(
         calls: crate::conversation_vision_calls::ConversationVisionCalls,
     ) -> Self {
@@ -38,11 +48,16 @@ impl SampleCalls {
                 "Sample cancelled before model admission".into(),
             ));
         }
-        if let CallAllowance::Conversation(calls) = self.0.as_ref() {
-            calls.begin(request).map(Some)
-        } else {
-            self.reserve()?;
-            Ok(None)
+        match self.0.as_ref() {
+            CallAllowance::Conversation(calls) => calls.begin(request).map(Some),
+            CallAllowance::BoundedConversation { local, calls } => {
+                local.reserve()?;
+                calls.begin(request).map(Some)
+            }
+            _ => {
+                self.reserve()?;
+                Ok(None)
+            }
         }
     }
     pub(crate) fn pipeline(
@@ -65,7 +80,7 @@ impl SampleCalls {
     }
     fn reserve(&self) -> CoreResult<()> {
         let remaining = match self.0.as_ref() {
-            CallAllowance::Conversation(_) => {
+            CallAllowance::Conversation(_) | CallAllowance::BoundedConversation { .. } => {
                 return Err(CoreError::Validation(
                     "Conversation calls require a frozen request receipt".into(),
                 ));

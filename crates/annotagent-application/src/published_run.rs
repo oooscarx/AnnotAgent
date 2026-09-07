@@ -116,8 +116,15 @@ struct ModelExecution {
 }
 
 impl PublishedWorkflowRuntime {
-    pub(crate) fn with_sample_request_limit(mut self, limit: u64) -> Self {
-        let calls = crate::sample_limits::SampleCalls::new(limit);
+    pub(crate) fn with_sample_request_limit(
+        mut self,
+        limit: u64,
+        conversation: Option<crate::ConversationVisionCalls>,
+    ) -> Self {
+        let calls = conversation.map_or_else(
+            || crate::sample_limits::SampleCalls::new(limit),
+            |calls| crate::sample_limits::SampleCalls::bounded_conversation(limit, calls),
+        );
         self.apply_request_allowance(&calls);
         self
     }

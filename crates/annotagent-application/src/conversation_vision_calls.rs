@@ -49,6 +49,12 @@ impl crate::LocalApplication {
 }
 
 impl ConversationVisionCalls {
+    pub(crate) fn require_owner(&self, owner: &str) -> anyhow::Result<()> {
+        if self.project != owner {
+            anyhow::bail!("Sample budget does not belong to this Project");
+        }
+        Ok(())
+    }
     pub fn pipeline(&self, inner: Arc<dyn PipelineModelBackend>) -> Arc<dyn PipelineModelBackend> {
         crate::sample_limits::SampleCalls::conversation(self.clone()).pipeline(inner)
     }
@@ -290,5 +296,49 @@ mod tests {
                 .used_calls,
             1
         );
+    }
+
+    #[tokio::test]
+    async fn per_test_limit_and_task_limit_both_apply_to_late_native_adapters() {
+        let calls = setup(Arc::new(SqliteStore::open_in_memory().unwrap()));
+        assert!(calls.require_owner("foreign").is_err());
+        calls.require_owner(&calls.project).unwrap();
+        let count = Arc::new(AtomicU64::new(0));
+        let allowance = crate::sample_limits::SampleCalls::bounded_conversation(1, calls.clone());
+        let first = allowance.pipeline(Arc::new(Counter(count.clone())));
+        first
+            .infer_pipeline(request(), CancellationToken::new())
+            .await
+            .unwrap();
+        // Runtime constructs some native adapters only after input Artifacts exist.
+        let late = allowance.clone().pipeline(Arc::new(Counter(count.clone())));
+        assert!(
+            late.infer_pipeline(request(), CancellationToken::new())
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            calls
+                .store
+                .conversation_call_budget(&calls.project, calls.task)
+                .unwrap()
+                .unwrap()
+                .used_calls,
+            1
+        );
+        // A new sample may reset its local ceiling, never the cumulative task spend.
+        let next = crate::sample_limits::SampleCalls::bounded_conversation(10, calls.clone())
+            .pipeline(Arc::new(Counter(count.clone())));
+        for _ in 0..2 {
+            next.infer_pipeline(request(), CancellationToken::new())
+                .await
+                .unwrap();
+        }
+        assert!(
+            next.infer_pipeline(request(), CancellationToken::new())
+                .await
+                .is_err()
+        );
+        assert_eq!(count.load(Ordering::SeqCst), 3);
     }
 }

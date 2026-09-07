@@ -7051,6 +7051,8 @@ pub struct SampleExecutionControl {
     pub id: String,
     pub cancellation: CancellationToken,
     pub check_scope: Option<Arc<dyn Fn() -> Result<()> + Send + Sync>>,
+    /// Server-owned accounting context, never deserialized from a browser request.
+    pub conversation_calls: Option<ConversationVisionCalls>,
 }
 
 impl Default for SampleExecutionControl {
@@ -7059,6 +7061,7 @@ impl Default for SampleExecutionControl {
             id: uuid::Uuid::new_v4().to_string(),
             cancellation: CancellationToken::new(),
             check_scope: None,
+            conversation_calls: None,
         }
     }
 }
@@ -16372,6 +16375,23 @@ impl LocalApplication {
         control: SampleExecutionControl,
     ) -> Result<(WorkflowDryRunReport, WorkflowSampleTest)> {
         let draft = self.store.get_workflow_draft(draft_id)?;
+        if let Some(calls) = &control.conversation_calls {
+            calls.require_owner(&self.conversation_project_identity(&draft.project_id)?)?;
+            if draft.label_pipeline.is_none()
+                && !draft.nodes.iter().any(|node| {
+                    node.model_binding
+                        .as_deref()
+                        .is_some_and(plugin_model_selection)
+                })
+            {
+                bail!(
+                    "Conversation samples require the executable Pipeline sandbox; legacy fallback is not metered"
+                );
+            }
+            if control.check_scope.is_none() {
+                bail!("Conversation samples require an explicit frozen-scope check");
+            }
+        }
         let scope = self.management_scope(&draft.project_id)?;
         let object = annotagent_core::ManagementObjectRef {
             kind: annotagent_core::ManagementObjectKind::WorkflowDraft,
@@ -16754,7 +16774,10 @@ impl LocalApplication {
             self.plugin_registry.clone(),
             self.model_bundle_registry.clone(),
         )?
-        .with_sample_request_limit(settings.budget.max_requests.unwrap_or(500));
+        .with_sample_request_limit(
+            settings.budget.max_requests.unwrap_or(500),
+            runtime_provider.control.conversation_calls.clone(),
+        );
         let project = Arc::new(project);
         let project_root = project_path
             .parent()
@@ -22292,6 +22315,125 @@ export:
     }
 
     #[tokio::test]
+    async fn conversation_sample_runtime_preserves_scope_and_offline_terminal_results() {
+        let temporary = tempfile::tempdir().unwrap();
+        let app = LocalApplication::new(temporary.path()).unwrap();
+        let project = "TEST-conversation-sample";
+        app.create_project(project, GENERIC_CLASSIFICATION_PROJECT)
+            .unwrap();
+        generate_synthetic_robocup(&temporary.path().join(project).join("images/sample.png"))
+            .unwrap();
+        let settings = load_settings(None).unwrap();
+        let draft = app
+            .suggest_label_pipeline(
+                project,
+                &settings,
+                "scene",
+                "day",
+                &WorkflowConstraints::default(),
+            )
+            .unwrap()
+            .draft;
+        let conversation = app.create_project_conversation(project).unwrap();
+        let message = annotagent_storage::ConversationMessageInput {
+            id: uuid::Uuid::new_v4(),
+            text: "TEST offline classification".into(),
+            image: None,
+        };
+        app.append_project_conversation_message(project, conversation, &message)
+            .unwrap();
+        let task = uuid::Uuid::new_v4();
+        app.begin_conversation_task(
+            project,
+            conversation,
+            &annotagent_storage::BeginConversationTask {
+                id: task,
+                source_message_id: message.id,
+                schema_revision: app.project_goal(project).unwrap()["revision"]
+                    .as_str()
+                    .unwrap()
+                    .into(),
+            },
+        )
+        .unwrap();
+        let owner = app.conversation_project_identity(project).unwrap();
+        let scope = "a".repeat(64);
+        app.store
+            .authorize_conversation_calls(
+                &owner,
+                &annotagent_storage::ConversationCallGrant {
+                    id: uuid::Uuid::new_v4(),
+                    task_id: task,
+                    scope_hash: scope.clone(),
+                    maximum_calls: 3,
+                    expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+                },
+            )
+            .unwrap();
+        let calls = app
+            .conversation_vision_calls(project, conversation, task, &scope)
+            .unwrap();
+        let control = SampleExecutionControl {
+            conversation_calls: Some(calls.clone()),
+            ..SampleExecutionControl::default()
+        };
+        assert!(
+            app.dry_run_workflow_samples_controlled(
+                &draft.id,
+                &settings,
+                &[0],
+                "mock",
+                None,
+                control
+            )
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("frozen-scope")
+        );
+        let control = SampleExecutionControl {
+            conversation_calls: Some(calls),
+            check_scope: Some(Arc::new(|| Ok(()))),
+            ..SampleExecutionControl::default()
+        };
+        let sample_id = control.id.clone();
+        let (report, sample) = app
+            .dry_run_workflow_samples_controlled(&draft.id, &settings, &[0], "mock", None, control)
+            .await
+            .unwrap();
+        assert!(report.validation.valid);
+        assert_eq!(sample.id, sample_id);
+        assert!(
+            report.samples[0]
+                .nodes
+                .iter()
+                .any(|node| node.node_id == "scene.day.classifier" && node.status == "succeeded"),
+            "{:#?}",
+            report.samples
+        );
+        assert_eq!(report.samples[0].projection.final_candidates.len(), 1);
+        assert!(
+            report.samples[0]
+                .projection
+                .committed_annotations
+                .is_empty()
+        );
+        assert_eq!(
+            app.store
+                .conversation_call_budget(&owner, task)
+                .unwrap()
+                .unwrap()
+                .used_calls,
+            0,
+            "The built-in mock classification does not invoke a model adapter; do not invent a billed call"
+        );
+        assert_ne!(
+            app.store.get_workflow_draft(&draft.id).unwrap().status,
+            WorkflowDraftStatus::Published
+        );
+    }
+
+    #[tokio::test]
     async fn generic_object_detection_template_maps_classes_and_executes_offline() {
         let temporary = tempfile::tempdir().expect("temporary workspace");
         let application = LocalApplication::new(temporary.path()).expect("application");
@@ -27119,6 +27261,7 @@ export:
             id: id.clone(),
             cancellation,
             check_scope: Some(Arc::new(|| panic!("a stopped task must not execute"))),
+            conversation_calls: None,
         };
         let result = application
             .dry_run_workflow_samples_controlled(&draft.id, &settings, &[0], "mock", None, control)
