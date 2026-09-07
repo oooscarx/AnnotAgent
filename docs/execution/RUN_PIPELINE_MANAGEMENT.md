@@ -36,6 +36,8 @@ tests.
 The only existing unconditional cascade is Batch to `batch_images` and `batch_events`. Management
 must not rely on it for soft deletion or provenance cleanup. No API accepts a filesystem path.
 
+M0 commit: `6fb27dd docs(management): record run and pipeline lifecycle baseline`
+
 ## Rules
 
 - Normal Delete means move to Project-scoped trash. It does not claim to free disk space.
@@ -52,7 +54,7 @@ must not rely on it for soft deletion or provenance cleanup. No API accepts a fi
   fail atomically. A changed revision/lease invalidates the complete confirmed operation.
 - Destructive lifecycle actions are not exposed to the LLM Tool Catalog.
 
-## Planned milestones
+## Milestones
 
 1. M1 — lifecycle schema, typed requests/previews/receipts, Run/Batch trash and restore, active and
    Project ownership protection, storage/application tests.
@@ -109,6 +111,8 @@ cargo test -p annotagent-server management_http_preview --lib
 M1 intentionally does not yet expose permanent cleanup or Pipeline lifecycle actions. Those typed
 actions return explicit unsupported blockers until their later milestones are committed.
 
+Commit: `4dc9b7c feat(management): add run and batch trash lifecycle`
+
 ### M2 — Pipeline identity, defaults, archive, alias, and lifecycle
 
 - Added a Draft lifecycle revision that is separate from authoring revision and content hash.
@@ -149,11 +153,174 @@ cargo test -p annotagent-application workflow_alpha_editor_journey_is_persistent
 1 passed
 ```
 
-## Known baseline limitations
+Commit: `ff22cac feat(management): manage pipeline lifecycle and defaults`
 
-- No management endpoint or Trash view exists.
-- Run and Batch lifecycle metadata does not exist.
-- Workflow lifecycle and display aliases are coupled to authoring JSON/status.
-- The newest Published Version is silently treated as Project default.
-- No durable cleanup operation, provenance tombstone, compact usage ledger, or reference-aware file
-  GC exists.
+### M3 — Permanent cleanup, cancellation handoff, provenance, and usage
+
+- Explicit cleanup now deletes eligible Run traces, events, model messages/calls, tool calls,
+  validation rows, unresolved Review candidates, unreferenced SQL Artifacts, and the Run record in
+  one lifecycle transaction. It is not another soft-delete flag.
+- Accepted annotations, human revisions, correction evidence, original Project images, exports,
+  model/plugin assets, credentials, and referenced geometry Artifacts remain. A compact source
+  tombstone preserves Run identity, frozen Workflow identity/hash, provider/model identity, dates,
+  and the retained annotation count without keeping prompts, source image bytes, or full responses.
+- Historical token/cost totals move once into an idempotent compact ledger before Run usage detail
+  is removed. The API reports visible-Run usage, cleaned-source usage, and actual historical total
+  separately.
+- Project export and annotation lookup include retained accepted annotations whose source Run has
+  been cleaned. A missing Run deep link can resolve to the read-only retained provenance endpoint.
+- Dataset cleanup removes only children carried by that Batch's deletion operation. Individually
+  removed children are protected. Pipeline cleanup likewise blocks if independently removed child
+  Drafts/Versions would otherwise become unreachable.
+- `cancel_and_delete` persists a `waiting_for_cancellation` receipt, uses the existing Run/Batch
+  cancel path, then rechecks terminal state, current lifecycle revision, child state, in-process
+  control state, and unexpired lease before moving anything to Trash. Timeout/failure stores a
+  failed receipt and leaves all selected entities undeleted.
+- Batch lifecycle checks distinguish a live worker lease from an expired stored lease.
+
+Verification:
+
+```text
+cargo test -p annotagent-storage management --lib
+7 passed
+
+cargo test -p annotagent-server management_http_preview_trash_restore_and_active_protection_are_project_scoped --lib
+1 passed
+
+cargo check -p annotagent-application -p annotagent-server
+passed
+```
+
+Commit: `6953a6e feat(management): preserve provenance during permanent cleanup`
+
+### M4 — Project-scoped GUI management
+
+- Project Runs adds explicit selection, row menus, Batch-aware grouping, bulk Move to Trash,
+  impact preview, durable receipt display, and Undo backed by the Restore API. Selection clears
+  when the Project or filter changes.
+- Run and Dataset Run detail pages expose Delete or Cancel and Delete according to real lifecycle
+  state. A trashed deep link renders its state and Restore action instead of failing or silently
+  selecting another entity.
+- Project Automation now includes a compact Pipelines and Versions manager. Users can select
+  parents, Drafts, or Published Versions; rename a parent display alias; archive/unarchive; copy an
+  immutable Version as a new Draft; set/clear the Project default; or move a specific Draft,
+  Version, or whole Pipeline to Trash. Dirty current Drafts are guarded before deletion.
+- The Project Trash route supports type filters, deletion timestamps, operation membership,
+  single/bulk Restore, and explicit permanent cleanup. Cleanup requires a second typed `DELETE`
+  confirmation and reports rows/files reclaimed versus protected data.
+- Default replacement or explicit clearing is selected inside the lifecycle confirmation dialog;
+  AnnotAgent never guesses the newest Version. Restore never reinstates a default.
+- Run history distinguishes visible usage from historical actual usage. Permanently cleaned Run
+  deep links render the retained source summary rather than a generic server error.
+- Completed lifecycle writes invalidate Runs, Review, Project, Draft, and Inspector caches. A
+  same-origin browser notification synchronizes open AnnotAgent tabs; every tab then reloads
+  server truth instead of restoring a local React-only record.
+- The Trash route remains under the Project shell and Back/Forward/deep links preserve Project
+  scope.
+
+Verification:
+
+```text
+npm --prefix web run typecheck
+passed
+
+npm --prefix web test
+13 files / 64 tests passed
+
+npm --prefix web run build
+passed (Vite reports the existing >500 kB chunk-size advisory)
+```
+
+Commit: `4d39522 feat(web): add project lifecycle management workspace`
+
+### M5 — TUI confirmation and isolated acceptance coverage
+
+- TUI `/trash [kind]` reads Project Trash through `LocalApplication`.
+- `/manage <action> <kind> <id> [version] [--clear-default]` resolves the current lifecycle
+  revision and prints the same impact/blockers as the GUI. It makes no mutation until `/confirm`;
+  `/discard` clears the pending request. Cleanup output distinguishes SQL rows, files/bytes, and
+  retained annotation/usage reasons.
+- The TUI test creates a temporary Project/database, verifies that preview changes nothing, then
+  confirms the soft delete and observes the durable Trash entry.
+- The Playwright acceptance flow uses only its `/tmp/annotagent-guided-e2e-*` workspace. It deletes
+  a terminal Run, reloads Trash, restores it, uses the bulk selection path, cleans it permanently,
+  verifies accepted-annotation export readiness did not change, and opens the retained provenance
+  deep link. No model call is required for lifecycle mutation.
+
+Final acceptance verification:
+
+```text
+cargo fmt --all --check
+passed
+
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+passed
+
+cargo test --workspace --all-features
+passed (billable Provider smoke tests and legal-weight/sample-image integrations remain explicit opt-in ignores)
+
+cargo build --workspace --all-features
+passed
+
+npm --prefix web run typecheck
+passed
+
+npm --prefix web test
+13 files / 64 tests passed
+
+npm --prefix web run build
+passed (Vite reports the existing >500 kB chunk-size advisory)
+
+npm --prefix web run test:e2e
+46 passed
+```
+
+The final browser pass also verified that cleanup cannot be invoked without the privileged
+confirmation path and that a retained `needs_review` candidate is not promoted to an accepted
+export merely because human revision evidence remains. Both findings were fixed before the passing
+46-test run.
+
+Commit: `006a2d8 feat(tui): add confirmed lifecycle management commands`
+
+Hardening commits:
+
+- `3d82803 fix(management): enforce confirmed cleanup semantics`
+- `8f41ef9 refactor(management): name batch lifecycle metadata`
+
+## User workflow
+
+In a Project, open **Runs**. Use a row's `•••` menu for one Run/Dataset Run, or select up to 100
+explicit rows and choose **Delete selected**. Review the impact dialog; a terminal execution can be
+moved to Trash, while an active execution must be opened and handled with **Cancel and delete**.
+After a successful soft delete, **Undo** performs a real server Restore.
+
+Open **Build → Automation** and scroll to **Pipelines and Versions**. Expand a Pipeline to manage
+its editable Draft and immutable Published Versions independently. Whole-Pipeline deletion includes
+only its currently visible children; a child removed by another operation keeps its own lifecycle.
+Archiving merely removes work from normal selectors. If the target is the current default, choose a
+replacement Version or **Clear default Automation** in the preview dialog.
+
+Use **Trash** from Runs or Pipelines and Versions. Restore keeps stable IDs and never reruns work.
+**Permanently clean up** is available only in Trash, requires typing `DELETE`, and removes eligible
+history/debug detail. It does not delete accepted annotations, human edits, original images,
+exports, models, plugins, weights, credentials, or shared/referenced Artifacts. The report is the
+source of truth for what was actually reclaimed and retained.
+
+## Known limitations
+
+- The current Runtime stores Run debug Artifacts in SQLite and does not own a separate per-Run blob
+  directory. Therefore cleanup can reclaim SQL detail but normally reports zero files/bytes; it
+  deliberately does not infer paths from serialized provider/tool output. SQLite file size is not
+  claimed to shrink until ordinary database maintenance compacts free pages.
+- There is no automatic Trash expiry. Cleanup is always an explicit user action.
+- Cross-Project bulk management is not exposed in the first GUI; each operation is scoped to one
+  stable Project and at most 100 explicit top-level IDs.
+- A cancellation receipt is restart-safe and can be queried/retried with the same idempotency key,
+  but no general background-job platform was added. The synchronous local API waits up to ten
+  seconds; an unfinished cancellation remains undeleted and reports failure.
+- Same-origin open GUI tabs are invalidated immediately after GUI lifecycle actions. Lifecycle
+  changes made exclusively through TUI/API are observed on the next server refresh/reconnect; the
+  Run SSE protocol was not overloaded with fake Pipeline events.
+- Existing Workflow storage uses Draft ID as its `workflow_id`; Copy as Draft intentionally creates
+  a new editable Pipeline identity. Published content and historical execution snapshots remain
+  immutable.
