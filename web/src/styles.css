@@ -770,6 +770,9 @@ button[aria-disabled="true"] { cursor: not-allowed; opacity: .55; }
 .canvas-annotation-list button[aria-pressed="true"] { background: var(--aa-primary-soft); border-color: var(--aa-primary); }
 .canvas-annotation-list i { width: 14px; height: 14px; flex: 0 0 auto; border: 3px solid; border-radius: 3px; }
 .canvas-annotation-list strong, .canvas-annotation-list small { display: block; white-space: nowrap; }
+.canvas-keyboard-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; }
+.canvas-keyboard-tools small { flex-basis: 100%; color: var(--aa-text-muted); }
+.canvas-keyboard-tools button { white-space: normal; }
 .canvas-annotation-list strong { font-size: 10px; }
 .canvas-annotation-list small, .canvas-annotation-empty { color: var(--aa-text-muted); font-size: 9px; }
 .canvas-annotation-empty { padding-block: 7px; }

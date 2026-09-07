@@ -910,11 +910,38 @@ Final-audit findings to resolve next (not covered by green test names):
 - `AnnotationCanvas` provides keyboard selection and vertex deletion, but bbox
   movement/resizing currently depends on pointer handlers. Its annotation list
   selects objects rather than offering equivalent keyboard geometry editing.
-  Existing keyboard E2E checks do not prove keyboard-only correction; add the
-  missing interaction and a regression using the shared canvas.
+  Existing keyboard E2E checks did not prove keyboard-only correction; the bbox
+  increment below addresses movement/resizing. Other shape editors still need
+  equivalent keyboard correction coverage in the final audit.
 - The named 200-percent test uses 640 CSS-pixel reflow, not native browser zoom.
   Keep this distinction explicit; native zoom, OS IME/screen reader and real-person
   usability are unexecuted and cannot be inferred from synthetic event checks.
 - The whole specification still needs a consolidated requirement-to-current-code
   and browser-evidence audit. Earlier chronological limitations above are not a
   current completion matrix, and the goal remains active.
+
+### Shared canvas keyboard bbox correction (2026-09-08)
+
+The selected editable bbox now exposes two compact native buttons: focus Move
+or Resize and use arrows (one original-image pixel; Shift uses ten). Resize holds
+the top-left corner fixed. Deltas are independent of zoom and clamp to image
+bounds with positive dimensions. Pixel controls wait for actual image dimensions,
+never use the loading placeholder size. Read-only canvases do not render them.
+This updates the same Annotation through existing edit/history callbacks; it
+does not save, accept, create a Run or call a model. Explicit local controls work
+inside the sample dialog while composition/modifier input is ignored and handled
+arrows do not bubble to Review queue shortcuts.
+
+The browser regression uses the explicitly labeled offline example with the real
+shared canvas, not a live prediction: move, resize, Tab focus, Shift, zoom-invariant
+pixel changes, both IME guards and 390px overflow. It observes zero API mutations.
+Unit checks cover pixel deltas, minimum size, image bounds and invalid input.
+This is keyboard bbox editing evidence, not native IME/screen-reader or full
+keyboard-only Journey usability evidence. Wider final audit remains open.
+
+Verification: 100 Web unit tests passed; production build (including typecheck)
+passed with the existing bundle-size warning; focused browser test passed 1/1
+in a fresh isolated workspace. Actual capture `guided-journey/keyboard-box-390.png`
+was inspected for visible focused controls, wrapping and unchanged image pixels.
+The previous full Rust/Web-browser regression predates this canvas increment;
+it is not reported as a fresh full-suite pass for these changes.

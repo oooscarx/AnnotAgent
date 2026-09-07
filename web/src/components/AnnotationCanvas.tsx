@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { annotationColor, annotationVisual } from "../annotationVisuals";
 import type { AnnotationVisualContext } from "../annotationVisuals";
 import { zoomAroundPoint } from "../canvasViewport";
+import { keyboardBox } from "../bboxKeyboard";
 import type { Annotation, Point } from "../types";
 
 interface Props {
@@ -36,6 +37,7 @@ export function AnnotationCanvas({
 }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [listOpen, setListOpen] = useState(!compactList);
+  const [measuredImageUrl, setMeasuredImageUrl] = useState<string>();
   const [canvasSize, setCanvasSize] = useState<[number, number]>([
     DEFAULT_WIDTH,
     DEFAULT_HEIGHT,
@@ -198,6 +200,19 @@ export function AnnotationCanvas({
         <button className="canvas-fit-button" aria-label={t("Fit image")} title={t("Fit image")} onClick={() => { setZoom(1); setPan([0, 0]); }}>{t("Fit")}</button>
         {compactList && <button aria-expanded={listOpen} onClick={() => setListOpen(!listOpen)}>{t("Annotation list")} · {annotations.length}</button>}
       </div>
+      {!readOnly && imageUrl && measuredImageUrl === imageUrl && selected?.value.kind === "bounding_box" && <div className="canvas-keyboard-tools" role="group" aria-label={t("Keyboard box editing")}>
+        {[false, true].map((resize) => <button key={String(resize)} onKeyDown={(event) => {
+          // These explicit local controls also work in the sample dialog. Do not
+          // bubble arrow keys into Review queue navigation or consume IME input.
+          if (!workspaceShortcutAllowed(event.nativeEvent, false, false) || event.metaKey || event.ctrlKey || event.altKey || selected.value.kind !== "bounding_box") return;
+          const value = keyboardBox(selected.value.rect, event.key, resize, event.shiftKey ? 10 : 1, width, height);
+          if (!value) return;
+          event.preventDefault(); event.stopPropagation();
+          if (JSON.stringify(value) === JSON.stringify(selected.value)) return;
+          onEditStart?.(); onChange({ ...selected, value });
+        }}>{t(resize ? "Resize box with arrow keys" : "Move box with arrow keys")}</button>)}
+        <small>{t("Focus a control, then use arrow keys: 1 image pixel, or Shift for 10. Resize keeps the top-left corner fixed.")}</small>
+      </div>}
       {annotations.some((annotation) => annotation.value.kind === "classification") && <div className="canvas-classification-results" aria-label={t("Image classification results")}>{annotations.filter((annotation) => annotation.value.kind === "classification").map((annotation) => <span key={annotation.id}>{annotation.label ?? annotation.task_id}</span>)}</div>}
       {listOpen && <ul className="canvas-annotation-list" aria-label={t("Annotations on canvas")}>
         {annotations.map((annotation) => {
@@ -214,8 +229,10 @@ export function AnnotationCanvas({
           aria-hidden="true"
           onLoad={(event) => {
             const { naturalWidth, naturalHeight } = event.currentTarget;
-            if (naturalWidth > 0 && naturalHeight > 0)
+            if (naturalWidth > 0 && naturalHeight > 0) {
               setCanvasSize([naturalWidth, naturalHeight]);
+              setMeasuredImageUrl(imageUrl);
+            }
           }}
         />
       )}

@@ -1,0 +1,34 @@
+import { expect, test } from "./fixtures";
+
+test("shared box canvas supports keyboard pixel edits inside a dialog without inference", async ({ page }) => {
+  const mutations: string[] = [];
+  page.on("request", request => { if (request.url().includes("/api/") && !["GET", "HEAD"].includes(request.method())) mutations.push(request.url()); });
+  await page.goto("/projects");
+  await page.getByText("Input and output examples", { exact: true }).click();
+  await page.getByRole("button", { name: "Explore an example", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Offline annotation example" });
+  await dialog.getByRole("button", { name: "See a sample", exact: true }).click();
+  await dialog.getByRole("button", { name: /Ball.*bounding box/ }).click();
+  const box = dialog.locator("rect.aa-annotation-shape");
+  const initialX = Number(await box.getAttribute("x"));
+  const initialWidth = Number(await box.getAttribute("width"));
+  const move = dialog.getByRole("button", { name: "Move box with arrow keys", exact: true });
+  await move.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(async () => Number(await box.getAttribute("x"))).toBeCloseTo(initialX + 1, 5);
+  await move.dispatchEvent("keydown", { key: "ArrowRight", isComposing: true, bubbles: true });
+  await move.dispatchEvent("keydown", { key: "ArrowRight", keyCode: 229, bubbles: true });
+  await expect.poll(async () => Number(await box.getAttribute("x"))).toBeCloseTo(initialX + 1, 5);
+  await dialog.getByRole("button", { name: "Zoom in", exact: true }).click();
+  await move.focus();
+  await page.keyboard.press("Shift+ArrowRight");
+  await expect.poll(async () => Number(await box.getAttribute("x"))).toBeCloseTo(initialX + 11, 5);
+  await page.keyboard.press("Tab");
+  await expect(dialog.getByRole("button", { name: "Resize box with arrow keys", exact: true })).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(async () => Number(await box.getAttribute("width"))).toBeCloseTo(initialWidth + 1, 5);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: "../docs/execution/guided-journey/keyboard-box-390.png", fullPage: true, animations: "disabled" });
+  expect(mutations).toEqual([]);
+});

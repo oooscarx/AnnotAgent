@@ -1,5 +1,9 @@
 /** English source messages are stable keys; untranslated technical copy falls back to English. */
 export const zhCN: Record<string, string> = {
+  "Keyboard box editing": "键盘调整标注框",
+  "Move box with arrow keys": "方向键移动框",
+  "Resize box with arrow keys": "方向键调整大小",
+  "Focus a control, then use arrow keys: 1 image pixel, or Shift for 10. Resize keeps the top-left corner fixed.": "聚焦按钮后按方向键：每次移动原图 1 像素，按住 Shift 则为 10 像素。调整大小时左上角保持不动。",
   "Compare all geometry": "全部框对比",
   "Whole-image VLM": "整图 VLM 粗框",
   "Local VLM": "局部 VLM 框",
