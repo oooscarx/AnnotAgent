@@ -235,3 +235,34 @@ production build passed. Logs: `/tmp/annotagent-focus-release-e2e.log`,
 this checkpoint does not claim to solve bundle splitting. The live 8787 health endpoint is
 OK and its HTML references the same asset hash as the tested `web/dist/index.html`; no
 real-workspace server restart was required and no live model was called for verification.
+
+## Final checkpoint verification and local history
+
+Re-ran the requested Rust commands after the final code changes:
+
+- `cargo fmt --all --check`: passed.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: passed.
+- `cargo test --workspace --all-features`: **500 passed, 0 failed, 5 ignored**.
+- `cargo build --workspace --all-features`: passed.
+- `npm --prefix web run typecheck`, `test`, `build`, `test:e2e`: passed (77 unit, 60 browser).
+- `git diff --check`: passed. `diff -qr` confirms the original screenshot directory exactly
+  matches the pre-task backup, including the user's 14 pre-existing uncommitted PNG changes.
+
+Final Rust logs: `/tmp/annotagent-focus-final-{clippy,rust,build}.log`. The five skips are the
+explicitly opt-in billable Provider smoke and real PIDNet, RF-DETR, SAM, YOLOX weight tests.
+They were not reclassified as passed. No native 200% zoom, real screen-reader, OS IME or
+real-person usability session was performed. All screenshots remain automated fixture evidence.
+
+| Stage checkpoint | Local commit |
+| --- | --- |
+| M0 baseline / red contract | `a4e36f9` |
+| M1 focused same-data preparation/sample | `a6a68f2` |
+| M2 progressive setup and save protection | `1c7c4b1` |
+| M3 image-first results and object Review | `953e69e` |
+| M4 recovery, keyboard and responsive evidence | `a64df07` |
+
+Branch remains `main`. At M4 it is nine commits ahead of origin (four pre-existing + five
+stage commits); this final record is a separate local documentation commit. No push, remote
+change, reset/rebase/amend or destructive checkout was executed. Existing GitHub `origin`
+and Tsinghua `tsinghua` remotes are unchanged. The **open rows in the acceptance matrix remain
+open**; this is a tested implementation checkpoint, not full Focus Workspace release approval.
