@@ -9201,6 +9201,43 @@ impl LocalApplication {
         )?))
     }
 
+    /// Resolve ownership through the canonical Project directory, never a client UUID.
+    fn conversation_project_identity(&self, project_id: &str) -> Result<String> {
+        let path = self.project_path(project_id)?;
+        load_project_schema_with_registry(&path, &self.skills)?;
+        Ok(stable_project_id(path.parent().unwrap_or(&self.workspace)).to_string())
+    }
+
+    pub fn create_project_conversation(&self, project_id: &str) -> Result<uuid::Uuid> {
+        let owner = self.conversation_project_identity(project_id)?;
+        Ok(self.store.create_conversation(&owner)?)
+    }
+
+    pub fn append_project_conversation_message(
+        &self,
+        project_id: &str,
+        conversation_id: uuid::Uuid,
+        input: &annotagent_storage::ConversationMessageInput,
+    ) -> Result<annotagent_storage::ConversationMessage> {
+        let owner = self.conversation_project_identity(project_id)?;
+        Ok(self
+            .store
+            .append_conversation_message(&owner, conversation_id, input)?)
+    }
+
+    pub fn project_conversation_messages(
+        &self,
+        project_id: &str,
+        conversation_id: uuid::Uuid,
+        after: i64,
+        limit: u32,
+    ) -> Result<Vec<annotagent_storage::ConversationMessage>> {
+        let owner = self.conversation_project_identity(project_id)?;
+        Ok(self
+            .store
+            .conversation_messages(&owner, conversation_id, after, limit)?)
+    }
+
     pub fn project_goal(&self, project_id: &str) -> Result<serde_json::Value> {
         let yaml = std::fs::read(self.project_path(project_id)?)?;
         let project = ProjectSchema::from_yaml(std::str::from_utf8(&yaml)?)
@@ -26662,6 +26699,57 @@ export:
         invalid.value = AnnotationValue::Classification { labels: vec![] };
         assert!(app.create_human_annotation(run_id, invalid).await.is_err());
         assert_eq!(app.store().list_annotations(run_id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn conversation_commands_resolve_owner_and_restore_without_execution() {
+        let temporary = tempfile::tempdir().unwrap();
+        let app = LocalApplication::new(temporary.path()).unwrap();
+        let yaml = "version: 1\nproject:\n  name: TEST conversation\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n";
+        app.create_project("conversation-a", yaml).unwrap();
+        app.create_project("conversation-b", yaml).unwrap();
+        assert!(app.create_project_conversation("missing").is_err());
+        assert!(app.create_project_conversation("../outside").is_err());
+        let id = app.create_project_conversation("conversation-a").unwrap();
+        assert_eq!(
+            id,
+            app.create_project_conversation("conversation-a").unwrap()
+        );
+        let input = annotagent_storage::ConversationMessageInput {
+            id: uuid::Uuid::new_v4(),
+            text: "Find cups, not bottles".into(),
+            image: None,
+        };
+        let saved = app
+            .append_project_conversation_message("conversation-a", id, &input)
+            .unwrap();
+        assert_eq!(
+            saved,
+            app.append_project_conversation_message("conversation-a", id, &input)
+                .unwrap()
+        );
+        assert!(
+            app.append_project_conversation_message("conversation-b", id, &input)
+                .is_err()
+        );
+        assert!(
+            app.project_conversation_messages("conversation-b", id, 0, 10)
+                .is_err()
+        );
+        let restarted = LocalApplication::new(temporary.path()).unwrap();
+        assert_eq!(
+            restarted
+                .project_conversation_messages("conversation-a", id, 0, 10)
+                .unwrap(),
+            vec![saved]
+        );
+        assert!(
+            restarted
+                .get_project("conversation-a")
+                .unwrap()
+                .annotation_schema
+                .is_empty()
+        );
     }
 
     #[test]

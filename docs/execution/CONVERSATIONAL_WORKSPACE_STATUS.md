@@ -77,11 +77,32 @@ now disables animations for capture rather than misrepresenting faded text as th
 settled design. The focused model test passed 1/1, 24.1s; its settled capture was
 inspected and replaced the initial faded baseline image.
 
+## Application and HTTP journal integration (M1 foundation, continued)
+
+Explicit long-running Conversational Workspace goal is now active; no token budget
+was requested. Added Project-owned create/append/page use cases and existing-router
+HTTP endpoints. Ownership uses `project_path` canonical containment + schema load
+and the same stable directory-derived Project UUID as images/Runs. No legacy
+catalog join, mutable display-name matching or client-provided owner is involved.
+
+`POST /api/projects/:project/conversations` explicitly creates/reuses the main
+conversation; `GET/POST .../:conversation/messages` reads/appends the journal.
+GET never creates it. Existing global session/CSRF, same-origin and body limits
+cover these routes. Messages grant no execution authorization, change no Schema
+and call no model. The UI and coordinator are not connected yet.
+
+Validation: targeted Application ownership/restart/idempotency test **1/1 passed**;
+targeted HTTP authentication/ownership/idempotency/unknown-field test **1/1 passed**;
+server check, Application+Server all-target/all-feature strict Clippy and fmt passed.
+The first HTTP test expected 403 for a request without a session; actual existing
+security correctly returned 401. Corrected the test, not the security middleware.
+Only temporary workspaces were used. No paid inference or user server restart.
+
 ## Remaining stages and limits
 
 M0 is not fully closed: Human Request transactional answer/resume failure tests
 and task-authorization admission tests still need to be added at their real service
-boundaries. The journal is not yet exposed through Application/HTTP or a chat UI.
+boundaries. The journal is exposed through Application/HTTP, but not a chat UI.
 
 M1: wire existing Project resolver, messages and typed Task/reference context to
 the real two-pane workspace, upload and existing terminal results. Do not redirect

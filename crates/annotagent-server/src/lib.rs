@@ -1,5 +1,6 @@
 //! Thin HTTP/SSE adapter over the shared application service.
 
+mod conversations;
 mod processing_operations;
 mod sample_operations;
 mod security;
@@ -12962,6 +12963,97 @@ export:
                 .expect("historical immutable Version")
                 .content_hash,
             "immutable-http-hash"
+        );
+    }
+
+    #[tokio::test]
+    async fn conversation_http_journal_is_owned_idempotent_and_csrf_protected() {
+        use axum::http::Method;
+        let temp = tempfile::tempdir().unwrap();
+        let application = Arc::new(LocalApplication::new(temp.path()).unwrap());
+        let yaml = "version: 1\nproject:\n  name: TEST conversation\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n";
+        application.create_project("chat-a", yaml).unwrap();
+        application.create_project("chat-b", yaml).unwrap();
+        let service = router(
+            test_state(
+                application.clone(),
+                Arc::new(InMemorySecretStore::default()),
+            )
+            .await,
+            None,
+        );
+        let base = "/api/projects/chat-a/conversations";
+        let response = service
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method(Method::POST)
+                    .uri(base)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let (status, created) = call_json(&service, Method::POST, base, json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            call_json(&service, Method::POST, base, json!({})).await.1,
+            created
+        );
+        let id = created["conversation_id"].as_str().unwrap();
+        let messages = format!("{base}/{id}/messages");
+        assert_eq!(
+            call_json(&service, Method::GET, &messages, Value::Null)
+                .await
+                .1,
+            json!([])
+        );
+        let input =
+            json!({"id": uuid::Uuid::new_v4(), "text": "Find cups, not bottles", "image": null});
+        let (status, saved) = call_json(&service, Method::POST, &messages, input.clone()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            call_json(&service, Method::POST, &messages, input.clone())
+                .await
+                .1,
+            saved
+        );
+        let mut conflict = input.clone();
+        conflict["text"] = json!("different");
+        assert_eq!(
+            call_json(&service, Method::POST, &messages, conflict)
+                .await
+                .0,
+            StatusCode::BAD_REQUEST
+        );
+        let foreign = messages.replace("chat-a", "chat-b");
+        assert_eq!(
+            call_json(&service, Method::GET, &foreign, Value::Null)
+                .await
+                .0,
+            StatusCode::BAD_REQUEST
+        );
+        let mut privileged = input;
+        privileged["authorized"] = json!(true);
+        assert!(
+            !call_json(&service, Method::POST, &messages, privileged)
+                .await
+                .0
+                .is_success()
+        );
+        assert_eq!(
+            call_json(&service, Method::GET, &messages, Value::Null)
+                .await
+                .1,
+            json!([saved])
+        );
+        assert!(
+            application
+                .get_project("chat-a")
+                .unwrap()
+                .annotation_schema
+                .is_empty()
         );
     }
 

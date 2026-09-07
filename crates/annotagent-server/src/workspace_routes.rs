@@ -30,6 +30,14 @@ use super::{
 pub(super) fn routes() -> Router<ServerState> {
     Router::new()
         .route(
+            "/api/projects/{project_id}/conversations",
+            post(super::conversations::create),
+        )
+        .route(
+            "/api/projects/{project_id}/conversations/{conversation_id}/messages",
+            get(super::conversations::messages).post(super::conversations::append),
+        )
+        .route(
             "/api/projects/{project_id}/processing-preview",
             get(super::processing_operations::preview),
         )
