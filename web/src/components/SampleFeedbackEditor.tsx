@@ -15,7 +15,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
   onDirtyChange: (dirty: boolean) => void;
   onConfirmed?: () => void;
 }) {
-  const original: Annotation[] = sample.outcomes.flatMap((outcome) => outcome.value ? [{
+  const original: Annotation[] = (sample.projection ? sample.outcomes : []).flatMap((outcome) => outcome.value ? [{
     id: outcome.id, image_id: image.image_id, task_id: "sample", label: outcome.label,
     value: outcome.value, attributes: {}, confidence: outcome.confidence ?? undefined,
     source: "sample test", review_status: "needs_review" as const, provenance: { sample_test_id: testId }, created_at: "",
@@ -106,6 +106,6 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
       {reason !== "correct" && <p>{t("This records a quality issue, not a promised improvement. Review the existing Pipeline or correct the result manually; a new model test requires separate authorization.")}</p>}
       </div>
     </details>
-    <div className="sample-confirm-action"><span>{t(selected ? "This decision applies only to the selected result." : "This decision applies to this sample image only.")}</span><button className="primary" disabled={!loaded || busy} onClick={() => void save(true)}>{t(selected ? "Confirm selected result" : onConfirmed ? "Confirm sample and next" : "Confirm this sample")}</button>{saved && <span role="status">{t("Sample feedback saved")}</span>}{error && <p role="alert">{error}</p>}</div>
+    <div className="sample-confirm-action"><span>{t(selected ? "This decision applies only to the selected result." : "This decision applies to this sample image only.")}</span><button className="primary" disabled={!loaded || busy || !sample.projection} onClick={() => void save(true)}>{t(selected ? "Confirm selected result" : onConfirmed ? "Confirm sample and next" : "Confirm this sample")}</button>{saved && <span role="status">{t("Sample feedback saved")}</span>}{error && <p role="alert">{error}</p>}</div>
   </div>;
 }

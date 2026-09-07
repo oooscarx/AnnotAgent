@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { workspaceShortcutAllowed } from "../workspaceKeyboard";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { annotationColor, annotationVisual } from "../annotationVisuals";
 import type { AnnotationVisualContext } from "../annotationVisuals";
@@ -59,6 +60,8 @@ export function AnnotationCanvas({
   );
   const editingHint = readOnly ? "Read-only geometry · you can still zoom and select results" : !selected
     ? "Select an annotation to edit it"
+    : selected.value.kind === "classification"
+      ? "Image-level classification · edit the label in details"
     : selected.value.kind === "bounding_box"
       ? "Drag the box to move it · drag a corner handle to resize"
       : selected.value.kind === "keypoints"
@@ -195,6 +198,7 @@ export function AnnotationCanvas({
         <button className="canvas-fit-button" aria-label={t("Fit image")} title={t("Fit image")} onClick={() => { setZoom(1); setPan([0, 0]); }}>{t("Fit")}</button>
         {compactList && <button aria-expanded={listOpen} onClick={() => setListOpen(!listOpen)}>{t("Annotation list")} · {annotations.length}</button>}
       </div>
+      {annotations.some((annotation) => annotation.value.kind === "classification") && <div className="canvas-classification-results" aria-label={t("Image classification results")}>{annotations.filter((annotation) => annotation.value.kind === "classification").map((annotation) => <span key={annotation.id}>{annotation.label ?? annotation.task_id}</span>)}</div>}
       {listOpen && <ul className="canvas-annotation-list" aria-label={t("Annotations on canvas")}>
         {annotations.map((annotation) => {
           const visual = annotationVisual(annotation, visualContext);
@@ -222,6 +226,7 @@ export function AnnotationCanvas({
         role="img"
         aria-label={`${annotations.length} annotations over the active image`}
         viewBox={`0 0 ${width} ${height}`}
+        preserveAspectRatio="xMidYMid meet"
         onDoubleClick={addVertex}
         onPointerMove={onPointerMove}
         onPointerUp={() => setDrag(undefined)}
@@ -346,6 +351,7 @@ function AnnotationShape({
         aria-label={`Vertex ${index + 1}; drag to move, Delete to remove`}
         onPointerDown={(event) => onVertex(ring, index, event)}
         onKeyDown={(event) => {
+          if (!workspaceShortcutAllowed(event.nativeEvent, false, Boolean(document.querySelector('dialog[open], [role="dialog"]')))) return;
           if (event.key === "Delete" || event.key === "Backspace") {
             event.preventDefault();
             onDeleteVertex(ring, index);

@@ -1605,5 +1605,13 @@ export const zhCN: Record<string, string> = {
   "Annotation list": "标注列表",
   "Confirm selected result": "确认选中结果",
   "This decision applies only to the selected result.": "仅确认选中的结果，不会自动进入下一张。",
-  "This decision applies to this sample image only.": "本次决定仅适用于当前样例图片。"
+  "This decision applies to this sample image only.": "本次决定仅适用于当前样例图片。",
+  "Image-level classification · edit the label in details": "整图分类 · 可在详情中修改标签",
+  "Image classification results": "图片分类结果",
+  "Output example": "输出示意",
+  "One category per image": "给每张图片指定类别",
+  "A box around each object": "为每个目标画出边界框",
+  "A region defined by pixels": "用像素表示目标区域",
+  "Output example only, not a model result.": "仅为输出示意，并非模型结果。",
+  "This legacy test has no final-result projection. Test the Draft again before confirming its annotations.": "此旧样例测试没有最终结果投影，请重新试跑草稿后再确认标注。"
 };

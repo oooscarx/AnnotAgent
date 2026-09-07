@@ -1,4 +1,5 @@
 import { t, localeTag, useLocale } from "./i18n";
+import { isTextEditingTarget, workspaceShortcutAllowed } from "./workspaceKeyboard";
 import { recoveryNodeIds, builderStopLabel, builderPlanSource } from "./pipelinePresentation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LanguageSelector } from "./components/LanguageSelector";
@@ -1866,7 +1867,7 @@ function SampleAnnotationDialog({
   );
   const selectedStages = stages.filter((item) => item.stage === selectedStage);
   const visualResults = selectedStage === "final"
-    ? sample.outcomes
+    ? sample.projection ? sample.outcomes : []
     : selectedStages.map((stage, index) => ({
         id: `${stage.artifact_id}-${stage.lineage_id}-${index}`,
         label: stage.label ?? selectedStage.replaceAll("_", " "),
@@ -1887,6 +1888,7 @@ function SampleAnnotationDialog({
         <button type="button" onClick={onClose} aria-label={t("Close annotation preview")}>{t("View all sample images")}</button>
       </header>
       <p className="sample-risk-notice">{t("Model confidence is not boundary accuracy. Sample decisions do not accept formal annotations.")}</p>
+      {!sample.projection && <p role="alert">{t("This legacy test has no final-result projection. Test the Draft again before confirming its annotations.")}</p>}
       {selectedStage === "final" && image && sampleTestId && <SampleFeedbackEditor sample={sample} image={image} testId={sampleTestId} onDirtyChange={setFeedbackDirty} onConfirmed={onNext ? () => { onNavigationGuardChange(undefined); onNext(); } : undefined} />}
       <details className="sample-technical-details"><summary>{t("View execution details")}</summary>
       <nav className="sample-preview-stage-tabs" aria-label={t("Annotation stages")}>
@@ -2867,7 +2869,6 @@ function WorkflowsPage({
     message: string;
   }>();
   const [savedAt, setSavedAt] = useState<Date>();
-  const [clock, setClock] = useState(() => Date.now());
   const refreshDrafts = () =>
     workspaceQueries
       .load(
@@ -2999,10 +3000,6 @@ function WorkflowsPage({
     setProposalDiff(undefined);
     setSelectedProposalChanges([]);
   };
-  useEffect(() => {
-    const timer = window.setInterval(() => setClock(Date.now()), 1_000);
-    return () => window.clearInterval(timer);
-  }, []);
   useEffect(() => {
     if (!draft || draft.status === "published" || draft.status === "archived") return;
     if (draftConflict?.local.id === draft.id) return;
@@ -3719,7 +3716,7 @@ function WorkflowsPage({
           <p>{t("Start from a registered recipe or Advisor suggestion, then edit the same autosaved Draft. Technical graph details remain available for expert inspection.")}</p>
         </div>
         <div className="button-row">
-          <small className="save-indicator" aria-live="polite">{draftConflict || autosaveError ? t("Save failed") : draftHasUnsavedChanges ? t("Saving…") : draft ? `${t("Saved")} ${Math.max(0, Math.floor((clock - (savedAt?.getTime() ?? new Date(draft.updated_at).getTime())) / 1000))} ${t("seconds ago")}` : t("No Current Draft")}</small>
+          <small className="save-indicator" aria-live="polite" title={savedAt?.toISOString() ?? draft?.updated_at}>{draftConflict || autosaveError ? t("Save failed") : draftHasUnsavedChanges ? t("Saving…") : draft ? t("Saved") : t("No Current Draft")}</small>
           <button
             onClick={() => create(false)}
             disabled={busy || !activeProjectId}
@@ -8922,7 +8919,7 @@ function RunArtifactCanvas({ projectId, project, artifacts, annotations, imageId
   const selectedMark = detections.find((item) => item.id === selectedId);
   const imageStage = (showResults: boolean, label: string) => <div className="canvas-pan"><div className="artifact-image-stage" style={{ transform: `scale(${zoom})` }}><img src={imageUrl} alt={label} />{showResults && masks.length > 0 && <ArtifactMaskLayer masks={masks} />}{showResults && <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" focusable="false">{detections.map((rect) => <g key={rect.id} focusable="false" className={rect.id === selectedId ? "selected" : ""} style={{ color: rect.color }} onMouseDown={(event) => event.preventDefault()} onClick={() => setSelectedId(rect.id)}><rect x={rect.x * 100} y={rect.y * 100} width={rect.width * 100} height={rect.height * 100} /><text x={rect.x * 100} y={Math.max(3, rect.y * 100 - 1)}>{rect.label}</text></g>)}</svg>}</div></div>;
   return (
-    <div className="run-artifact-canvas" role="region" aria-label="Run result annotation viewer" onKeyDown={(event) => { if (event.target instanceof HTMLInputElement && event.target.type === "range") return; if (event.key === "ArrowRight" || event.key === "ArrowDown") { event.preventDefault(); selectOffset(1); } if (event.key === "ArrowLeft" || event.key === "ArrowUp") { event.preventDefault(); selectOffset(-1); } }}>
+    <div className="run-artifact-canvas" role="region" aria-label="Run result annotation viewer" onKeyDown={(event) => { if (!workspaceShortcutAllowed(event.nativeEvent, isTextEditingTarget(event.target), Boolean(document.querySelector('dialog[open], [role="dialog"]'))) || event.metaKey || event.ctrlKey || event.altKey) return; if (event.key === "ArrowRight" || event.key === "ArrowDown") { event.preventDefault(); selectOffset(1); } if (event.key === "ArrowLeft" || event.key === "ArrowUp") { event.preventDefault(); selectOffset(-1); } }}>
       <div className="preview-toggle">
         <button className={mode === "original" ? "active" : ""} onClick={() => setMode("original")}>{t("Original")}</button>
         <button className={mode === "result" ? "active" : ""} onClick={() => setMode("result")}>{t("Result")}</button>
@@ -9247,6 +9244,7 @@ function ReviewPage({
   useEffect(() => {
     const keyboard = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "z") return;
+      if (!workspaceShortcutAllowed(event, isTextEditingTarget(event.target), Boolean(document.querySelector('dialog[open], [role="dialog"]')))) return;
       event.preventDefault();
       if (event.shiftKey) redo();
       else undo();
@@ -9407,6 +9405,7 @@ function ReviewPage({
   useEffect(() => {
     const keyboard = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
+      if (!workspaceShortcutAllowed(event, isTextEditingTarget(target), Boolean(document.querySelector('dialog[open], [role="dialog"]')))) return;
       if (target?.closest("input, textarea, select, button, [contenteditable='true']")) return;
       if (event.metaKey || event.ctrlKey || event.altKey || decisionBusy || !selected) return;
       const key = event.key.toLowerCase();
@@ -10760,12 +10759,12 @@ function CreateProject({
     return () => urls.forEach((url) => URL.revokeObjectURL(url));
   }, [files]);
   useEffect(() => {
-    const dirty = Boolean(files.length || goal || projectName);
+    const dirty = Boolean(files.length || goal || projectName || labelName || kind !== "bounding_box");
     onNavigationGuardChange(() => completed.current || (!busy && (!dirty || window.confirm(t("Discard unsaved project input?")))));
     const guard = (event: BeforeUnloadEvent) => { if (dirty || busy) event.preventDefault(); };
     window.addEventListener("beforeunload", guard);
     return () => { onNavigationGuardChange(undefined); window.removeEventListener("beforeunload", guard); };
-  }, [files.length, goal, projectName, busy, onNavigationGuardChange]);
+  }, [files.length, goal, projectName, labelName, kind, busy, onNavigationGuardChange]);
   const close = () => {
     if (busy) return;
     onClose();
@@ -10813,6 +10812,10 @@ function CreateProject({
         <button disabled={busy || created.current} onClick={() => { setGoal(t("Find cups, but not bottles.")); setLabelName(t("Cup")); }}>{t("Try a goal example")}</button>
         <label>{t("Object name")}<input value={labelName} disabled={busy || created.current} onChange={(event) => setLabelName(event.target.value)} /></label>
         <label>{t("What you will get")}<select aria-label={t("What you will get")} value={kind} disabled={busy || created.current} onChange={(event) => setKind(event.target.value)}><option value="bounding_box">{t("Find objects")}</option><option value="classification">{t("Classify images")}</option><option value="semantic_mask">{t("Segment regions")}</option></select></label>
+        <figure className="task-output-example" aria-label={t("Output example")}>
+          <svg viewBox="0 0 100 70" aria-hidden="true"><path d="M30 22h30v28a8 8 0 0 1-8 8H38a8 8 0 0 1-8-8z M60 27h8a9 9 0 0 1 0 18h-8" fill="none" stroke="currentColor" strokeWidth="2" />{kind === "bounding_box" && <rect x="24" y="16" width="55" height="48" rx="2" fill="none" stroke="var(--aa-primary)" strokeWidth="2" />}{kind === "semantic_mask" && <path d="M30 22h30v28a8 8 0 0 1-8 8H38a8 8 0 0 1-8-8z" fill="var(--aa-primary)" opacity="0.35" />}{kind === "classification" && <rect x="8" y="4" width="45" height="8" rx="4" fill="var(--aa-primary)" />}</svg>
+          <figcaption><strong>{t(kind === "classification" ? "One category per image" : kind === "bounding_box" ? "A box around each object" : "A region defined by pixels")}</strong><small>{t("Output example only, not a model result.")}</small></figcaption>
+        </figure>
         <p>{t("Saving defines the label and an editable Draft. No model is called; the goal is not automatically parsed.")}</p>
         {kind === "bounding_box" && <p>{t("A confident prediction is not geometry proof. Initial boxes still require the Project's review and calibration policy.")}</p>}
         {modelsReady === false && <p role="status">{t("No Ready model is configured. You can save your images and goal now; connect a compatible model before testing.")}</p>}

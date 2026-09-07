@@ -209,6 +209,19 @@ export:
   await expect(sampleEditor.getByLabel("Result to inspect", { exact: true })).toHaveValue(box.id);
   expect(Number(await x.inputValue())).toBeCloseTo(correctedX);
   await expect(sampleEditor.getByLabel("What needs attention?", { exact: true })).toHaveValue("poor_boundary");
+  await page.route(`**/api/workflow-drafts/${draft.id}/sample-test*`, async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    for (const sample of body.sample_test.report.samples) delete sample.projection;
+    await route.fulfill({ response, json: body });
+  });
+  await page.reload();
+  await expect(page.getByText("This legacy test has no final-result projection. Test the Draft again before confirming its annotations.")).toBeVisible();
+  await expect(sampleEditor.locator(".sample-confirm-action button")).toBeDisabled();
+  await expect(sampleEditor.locator(".annotation-canvas .annotation-shape")).toHaveCount(0);
+  await page.unroute(`**/api/workflow-drafts/${draft.id}/sample-test*`);
+  await page.reload();
+  await expect(sampleEditor.locator(".sample-confirm-action button")).toBeEnabled();
   await page.screenshot({ path: resolve("../docs/execution/first-result/bbox-feedback.png") });
   for (const [width, height] of [[1440, 900], [1280, 720], [1024, 768], [390, 844]]) {
     await page.setViewportSize({ width, height });
@@ -975,7 +988,7 @@ test("Review to Run to Review navigation is bidirectional", async ({ page, reque
   expect(widthWithoutInspector).toBeGreaterThan(widthWithInspector);
   const canvasPresentation = await page.locator(".annotation-canvas").evaluate((element) => {
     const canvas = element as SVGSVGElement;
-    const rect = canvas.getBoundingClientRect();
+    const rect = canvas.querySelector("image")!.getBoundingClientRect();
     return {
       renderedRatio: rect.width / rect.height,
       sourceRatio: canvas.viewBox.baseVal.width / canvas.viewBox.baseVal.height,
@@ -1592,6 +1605,10 @@ test("legacy HTTP compatibility exposes truthful discovery-failure states", asyn
 });
 
 test("Review behaves as a keyboard-operable decision inbox", async ({ page }) => {
+  const decisions: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && /accept-and-next/.test(request.url())) decisions.push(request.url());
+  });
   await page.goto(`/review/${reviewId}?project_id=${projectId}`);
   await page.evaluate(() => window.localStorage.removeItem("annotagent.reviewInspectorCollapsed"));
   await page.reload();
@@ -1600,11 +1617,16 @@ test("Review behaves as a keyboard-operable decision inbox", async ({ page }) =>
   await expect(page.getByRole("button", { name: "Accept and next" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Reject & next" })).toBeVisible();
   await expect(page.locator(".review-inspector")).toHaveCount(0);
+  await page.locator("body").dispatchEvent("keydown", { key: "a", isComposing: true, bubbles: true });
+  await page.locator("body").dispatchEvent("keydown", { key: "a", keyCode: 229, bubbles: true });
+  expect(decisions).toEqual([]);
 
   await page.keyboard.press("E");
   await expect(page.getByLabel("Annotation edit details")).toBeVisible();
   await expect(page.locator(".review-execution-details")).not.toHaveAttribute("open", "");
   const label = page.getByLabel("Label", { exact: true });
+  await label.fill("中文输入 a r e");
+  expect(decisions).toEqual([]);
   await label.fill("day corrected");
   await expect(page.getByText("This correction will be saved as geometry-quality evidence for calibration and future Automation improvements.")).toBeVisible();
   await page.screenshot({ path: `${screenshots}/09-review-inbox.png`, fullPage: true });
@@ -1616,6 +1638,8 @@ test("Review behaves as a keyboard-operable decision inbox", async ({ page }) =>
   await expect(page.getByLabel("Canvas view", { exact: true })).toHaveValue("before");
   await page.locator("body").press("R");
   await expect(page.getByRole("dialog", { name: "Why is this result incorrect?" })).toBeVisible();
+  await page.locator("body").press("A");
+  expect(decisions).toEqual([]);
   await expect(page.getByLabel("Reject reason").locator("option")).toHaveCount(8);
   await expect(page.locator('optgroup[label="Enabled Skill reasons"]')).toHaveCount(0);
   await page.screenshot({ path: `${screenshots}/10-review-reject.png`, fullPage: true });
