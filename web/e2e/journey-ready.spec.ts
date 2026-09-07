@@ -1,7 +1,8 @@
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { renameSync } from "node:fs";
 import { expect, test } from "./fixtures";
 
-test("ready fixture journey plans without image calls then authorizes a bounded sandbox test", async ({ page, request }) => {
+test("ready fixture journey plans without image calls then authorizes a bounded sandbox test", async ({ page, request }, testInfo) => {
   test.setTimeout(120_000);
   const provider = await (await request.post("/api/providers", { data: { display_name: "Journey TEST fixture", adapter: "open_ai_compatible", base_url: "http://127.0.0.1:8796/openai/v1" } })).json();
   expect((await request.post(`/api/providers/${provider.id}/credential`, { data: { source: "workspace_file", secret: "guided-e2e-protocol-fixture" } })).ok()).toBeTruthy();
@@ -114,4 +115,62 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   await page.getByRole("button", { name: "Retry this authorized request", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Does this result match what you need?" })).toBeVisible();
   expect(new URL(page.url()).searchParams.get("test")).toBe(pendingId);
+  const processingRequests: Record<string, unknown>[] = [];
+  page.on("request", (req) => { if (req.method() === "POST" && req.url().endsWith("/processing-operations")) processingRequests.push(req.postDataJSON()); });
+  await page.getByRole("button", { name: "Continue with this plan", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Ready to process 1 images.", exact: true })).toBeVisible();
+  await expect(page.locator(".sidebar, .build-steps, .workflow-edit-details, .focus-project-menu")).toHaveCount(0);
+  await page.reload();
+  expect(processingRequests).toHaveLength(0);
+  await page.getByRole("checkbox", { name: "I authorize this image, model and call-budget scope", exact: true }).check();
+  await page.screenshot({ path: "../docs/execution/guided-journey/processing-confirm.png", fullPage: true });
+  const fixtureWorkspace = dirname(String(testInfo.config.metadata.e2eImport));
+  expect(fixtureWorkspace).toMatch(/^\/tmp\/annotagent-guided-e2e-\d+$/);
+  const credentialPath = resolve(fixtureWorkspace, `.annotagent/credentials/registry-provider-${provider.id}.key`);
+  // Simulate an unavailable file without changing the approved Registry identity.
+  renameSync(credentialPath, `${credentialPath}.temporarily-unavailable`);
+  try {
+    await page.getByRole("button", { name: "Confirm and start processing", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Plan saved. Processing has not started.", exact: true })).toBeVisible();
+    const failedConfirmationUrl = page.url();
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Plan saved. Processing has not started.", exact: true })).toBeVisible();
+    await expect(page).toHaveURL(failedConfirmationUrl);
+  } finally { renameSync(`${credentialPath}.temporarily-unavailable`, credentialPath); }
+  await page.getByRole("button", { name: "Retry starting processing", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/batches/`));
+  expect(processingRequests).toHaveLength(2);
+  expect(processingRequests[1]).toEqual(processingRequests[0]);
+  const confirmation = await (await request.post(`/api/projects/${projectId}/processing-operations`, { data: processingRequests[0] })).json();
+  expect(confirmation.phase, JSON.stringify(confirmation)).toBe("started");
+  expect((await request.get(`/api/projects/wrong-owner/processing-operations/${confirmation.id}`)).status()).toBe(404);
+  expect((await request.post(`/api/projects/${projectId}/processing-operations`, { data: { ...processingRequests[0], expected_revision: 999999 } })).status()).toBe(400);
+  expect(page.url()).toContain(confirmation.batch_id);
+  const versions = await (await request.get(`/api/workflows?project_id=${projectId}`)).json();
+  expect(JSON.stringify(versions)).toContain(draftId);
+  await page.reload();
+  expect(processingRequests).toHaveLength(2);
+  await expect.poll(async () => {
+    const value = await (await request.get(`/api/batches/${confirmation.batch_id}`)).json();
+    return value.batch.images[0].execution_status;
+  }).toMatch(/^(completed|awaiting_review)$/);
+  await expect(page.getByRole("region", { name: "Processing results", exact: true })).toBeVisible();
+  await expect(page.locator(".sidebar, .build-steps, .workflow-edit-details, .focus-project-menu")).toHaveCount(0);
+  await expect(page.locator(".journey-result-image svg image")).toBeVisible();
+  await page.getByRole("button", { name: "Show original", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Show results", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "Show results", exact: true }).click();
+  await page.getByRole("combobox", { name: "Show images", exact: true }).selectOption("failed");
+  await expect(page).toHaveURL(/status=failed/);
+  await page.reload();
+  await expect(page.getByRole("combobox", { name: "Show images", exact: true })).toHaveValue("failed");
+  await expect(page.getByText("No images match this status", { exact: true })).toBeVisible();
+  await page.getByRole("combobox", { name: "Show images", exact: true }).selectOption("all");
+  await expect(page.locator(".journey-result-image svg image")).toBeVisible();
+  for (const [width, height] of [[1440, 900], [390, 844]]) {
+    await page.setViewportSize({ width, height });
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    await page.screenshot({ path: `../docs/execution/guided-journey/processing-results-${width}.png`, fullPage: true, animations: "disabled" });
+  }
+  expect(processingRequests).toHaveLength(2);
 });

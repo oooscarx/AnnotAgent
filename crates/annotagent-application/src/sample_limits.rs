@@ -12,13 +12,34 @@ use std::sync::{
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
-pub(crate) struct SampleCalls(Arc<AtomicU64>);
+pub(crate) struct SampleCalls(Arc<CallAllowance>);
+enum CallAllowance {
+    Sample(AtomicU64),
+    Batch(
+        Arc<annotagent_storage::SqliteStore>,
+        annotagent_core::BatchId,
+    ),
+}
 impl SampleCalls {
     pub(crate) fn new(limit: u64) -> Self {
-        Self(Arc::new(AtomicU64::new(limit)))
+        Self(Arc::new(CallAllowance::Sample(AtomicU64::new(limit))))
+    }
+    pub(crate) fn batch(
+        store: Arc<annotagent_storage::SqliteStore>,
+        id: annotagent_core::BatchId,
+    ) -> Self {
+        Self(Arc::new(CallAllowance::Batch(store, id)))
     }
     fn reserve(&self) -> CoreResult<()> {
-        self.0
+        let remaining = match self.0.as_ref() {
+            CallAllowance::Batch(store, id) => {
+                return store
+                    .reserve_batch_model_call(*id)
+                    .map_err(|error| CoreError::Validation(error.to_string()));
+            }
+            CallAllowance::Sample(remaining) => remaining,
+        };
+        remaining
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
                 remaining.checked_sub(1)
             })

@@ -87,6 +87,10 @@ impl SqliteStore {
         self.with_connection(|connection| {
             let transaction = connection.unchecked_transaction()?;
             insert_batch(&transaction, &batch)?;
+            if batch.workflow_snapshot.get("guided_processing").is_some() {
+                let maximum = batch.budget_limits.max_request_count.filter(|limit| *limit > 0).ok_or_else(|| StorageError::InvalidEnum("Confirmed processing requires a positive model-call allowance".into()))?;
+                transaction.execute("INSERT INTO batch_model_call_allowances(batch_id,maximum,reserved) VALUES(?1,?2,0)", params![batch.id.to_string(), i64::try_from(maximum).map_err(|_| StorageError::InvalidEnum("model-call allowance is too large".into()))?])?;
+            }
             for (position, (image_id, image_path)) in images.iter().enumerate() {
                 transaction.execute(
                     "INSERT INTO batch_images

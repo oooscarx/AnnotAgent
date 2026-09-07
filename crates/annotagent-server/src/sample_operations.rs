@@ -152,10 +152,15 @@ pub(super) async fn start_operation(
         .resolved_workflow_draft_model_profiles(&operation.draft_id)
         .map_err(ApiError::bad_request)?;
     validate_scope(&state, &latest, &models, &execution)?;
+    let scope_seal = json!({
+        "project_schema_hash": state.application.project_execution_schema_hash(&project_id).map_err(ApiError::bad_request)?,
+        "models": models,
+        "images": state.application.list_project_image_summaries(&project_id).map_err(ApiError::bad_request)?.iter().take(3).map(|image| json!({"image_id":image.image_id,"content_hash":image.content_hash})).collect::<Vec<_>>(),
+    });
     if !state
         .application
         .store()
-        .reserve_sample_operation(&operation)
+        .reserve_sample_operation_sealed(&operation, Some(&scope_seal))
         .map_err(ApiError::bad_request)?
     {
         return Ok((

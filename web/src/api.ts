@@ -3,6 +3,10 @@ export type SampleOperation = {
   status: "queued" | "running" | "cancelling" | "cancelled" | "interrupted" | "failed" | "succeeded";
   error?: string | null;
 };
+export type ProcessingSelection = { draft_id: string; sample_test_id: string; limit?: number };
+export type ProcessingAuthorization = { revision: number; authorization_fingerprint: string; image_count: number; available_images: number; maximum_model_calls: number; plan_name: string; goal: { goal?: string }; models: { model_profile_id: string; remote_model_id: string; provider_base_url: string }[] };
+export type ProcessingReceipt = { id: string; project_id: string; draft_id: string; phase: string; batch_id?: string; error?: string | null; authorization: ProcessingAuthorization; request?: ConfirmProcessingRequest };
+export type ConfirmProcessingRequest = { request_id: string; selection: ProcessingSelection; expected_revision: number; authorization_fingerprint: string };
 
 import type {
   Annotation,
@@ -656,12 +660,12 @@ export const api = {
     return request<{ runs: HistoryRun[]; page: PageMetadata }>(`/api/runs?${params}`, { signal });
   },
   batches: () => request<{ batches: DatasetBatchSummary[]; page: PageMetadata }>("/api/batches?limit=100"),
-  batch: (batchId: string) =>
+  batch: (batchId: string, signal?: AbortSignal) =>
     request<{
       batch: DatasetBatchSummary;
       progress: DatasetBatchSummary["progress"];
       events: unknown[];
-    }>(`/api/batches/${batchId}`),
+    }>(`/api/batches/${batchId}`, { signal }),
   previewManagement: (projectId: string, body: ManagementRequest) =>
     request<ManagementPreview>(
       `/api/projects/${encodeURIComponent(projectId)}/management/preview`,
@@ -841,6 +845,9 @@ export const api = {
       signal,
     }),
   samplePreview: (draftId: string) => request<{ project_id: string; revision: number; image_count: number; models: { name: string; destination: string; id: string; revision: number }[]; other_bindings: string[]; estimated_cost: null; request_limit: number; sandbox: true; supported: boolean; authorization_fingerprint: string }>(`/api/workflow-drafts/${encodeURIComponent(draftId)}/sample-preview`),
+  processingPreview: (projectId: string, selection: ProcessingSelection, signal?: AbortSignal) => request<ProcessingAuthorization>(`/api/projects/${encodeURIComponent(projectId)}/processing-preview?${new URLSearchParams({ draft_id: selection.draft_id, sample_test_id: selection.sample_test_id, ...(selection.limit ? { limit: String(selection.limit) } : {}) })}`, { signal }),
+  confirmProcessing: (projectId: string, input: ConfirmProcessingRequest) => request<ProcessingReceipt>(`/api/projects/${encodeURIComponent(projectId)}/processing-operations`, { method: "POST", body: JSON.stringify(input) }),
+  processingOperation: (projectId: string, id: string, signal?: AbortSignal) => request<ProcessingReceipt>(`/api/projects/${encodeURIComponent(projectId)}/processing-operations/${encodeURIComponent(id)}`, { signal }),
   startSampleOperation: (projectId: string, input: { request_id: string; draft_id: string; image_indices: number[]; expected_revision: number; authorization_fingerprint: string }) => request<SampleOperation>(`/api/projects/${encodeURIComponent(projectId)}/sample-operations`, { method: "POST", body: JSON.stringify(input) }),
   sampleOperation: (projectId: string, id: string, signal?: AbortSignal) => request<SampleOperation>(`/api/projects/${encodeURIComponent(projectId)}/sample-operations/${encodeURIComponent(id)}`, { signal }),
   cancelSampleOperation: (projectId: string, id: string) => request<SampleOperation>(`/api/projects/${encodeURIComponent(projectId)}/sample-operations/${encodeURIComponent(id)}/cancel`, { method: "POST" }),

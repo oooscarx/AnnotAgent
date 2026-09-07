@@ -141,6 +141,7 @@ export interface DatasetBatchSummary {
   max_concurrency: number;
   workflow_version: string;
   workflow_snapshot: {
+    guided_processing?: { request_id: string };
     draft?: { name?: string };
     workflow?: { draft?: { name?: string } };
   };

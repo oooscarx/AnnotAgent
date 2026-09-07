@@ -117,8 +117,25 @@ struct ModelExecution {
 impl PublishedWorkflowRuntime {
     pub(crate) fn with_sample_request_limit(mut self, limit: u64) -> Self {
         let calls = crate::sample_limits::SampleCalls::new(limit);
-        self.external_backend = self.external_backend.map(|inner| calls.backend(inner));
-        self.pipeline_provider = self.pipeline_provider.map(|inner| calls.provider(inner));
+        self.apply_request_allowance(&calls);
+        self
+    }
+
+    pub(crate) fn with_batch_request_limit(mut self, id: annotagent_core::BatchId) -> Self {
+        let calls = crate::sample_limits::SampleCalls::batch(self.store.clone(), id);
+        self.apply_request_allowance(&calls);
+        self
+    }
+
+    fn apply_request_allowance(&mut self, calls: &crate::sample_limits::SampleCalls) {
+        self.external_backend = self
+            .external_backend
+            .take()
+            .map(|inner| calls.backend(inner));
+        self.pipeline_provider = self
+            .pipeline_provider
+            .take()
+            .map(|inner| calls.provider(inner));
         for execution in self.profile_executions.values_mut() {
             execution.external_backend = execution
                 .external_backend
@@ -129,7 +146,6 @@ impl PublishedWorkflowRuntime {
                 .take()
                 .map(|inner| calls.provider(inner));
         }
-        self
     }
 
     #[allow(clippy::too_many_arguments)]

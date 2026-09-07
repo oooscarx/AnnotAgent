@@ -8,10 +8,12 @@ import { AnnotationCanvas } from "./components/AnnotationCanvas";
 import { FirstResultEntry } from "./components/FirstResultEntry";
 import { SampleFeedbackEditor } from "./components/SampleFeedbackEditor";
 import { FocusHeader, usesFocusLayout } from "./components/FocusHeader";
+import { JourneyBatch } from "./components/JourneyBatch";
 import { JourneyImages } from "./components/JourneyImages";
 import { JourneyGoal } from "./components/JourneyGoal";
 import { JourneyModel } from "./components/JourneyModel";
 import { JourneySampleTask } from "./components/JourneySampleTask";
+import { JourneyConfirm } from "./components/JourneyConfirm";
 import { ImproveAutomationPanel } from "./components/GeometrySafetyPanel";
 import { NotFoundPage } from "./features/notFound/NotFoundPage";
 import {
@@ -676,9 +678,11 @@ export function App() {
           }} />
           : route.scene === "goal" ? <JourneyGoal key={route.projectId} project={selectedProject} sessionId={route.agentSessionId} onNavigate={navigate} onRefresh={refresh} onNavigationGuardChange={setNavigationGuard} />
           : route.scene === "model" ? <JourneyModel key={route.projectId} project={selectedProject} onNavigate={navigate} />
+          : route.scene === "confirm" ? <JourneyConfirm key={route.projectId} projectId={route.projectId} draftId={route.draftId} testId={route.sampleTestId} imageId={route.imageId} operationId={route.processingOperationId} onNavigate={navigate} />
           : <BuildTestPublish key={route.projectId} project={selectedProject} guided selectedDraftId={route.draftId} selectedSampleTestId={route.sampleTestId} selectedSampleImageId={route.imageId}
             sampleOperationId={route.sampleOperationId}
             requestNewSample={route.sampleView === "authorize"}
+            onAdopt={(draftId, sampleTestId, imageId) => navigate(projectJourneyPath(route.projectId, "confirm", { draftId, sampleTestId, imageId }))}
             onSampleOperation={(sampleOperationId) => navigate(projectJourneyPath(route.projectId, "samples", { draftId: route.draftId, sampleOperationId, sampleView: sampleOperationId ? undefined : "authorize" }), true)}
             onNavigationGuardChange={setNavigationGuard}
             onSelectTestContext={(draftId, sampleTestId, replace, imageId) => navigate(projectJourneyPath(route.projectId, "samples", { draftId, sampleTestId, imageId }), replace)}
@@ -1251,6 +1255,7 @@ function BuildTestPublish({
   guided = false,
   sampleOperationId,
   requestNewSample = false,
+  onAdopt,
   onSampleOperation,
   selectedDraftId,
   selectedSampleTestId,
@@ -1266,6 +1271,7 @@ function BuildTestPublish({
   guided?: boolean;
   sampleOperationId?: string;
   requestNewSample?: boolean;
+  onAdopt?: (draftId: string, testId: string, imageId?: string) => void;
   onSampleOperation?: (id?: string) => void;
   selectedDraftId?: string;
   selectedSampleTestId?: string;
@@ -1489,6 +1495,7 @@ function BuildTestPublish({
   if (selectedSampleImageId && reportLoading) return <p role="status">{t("Restoring the saved Sample Test…")}</p>;
   if (selectedSampleImageId && !reportLoading && !inspectedSample) return <section role="alert"><h2>{t("Sample image unavailable")}</h2><p>{t("This image is not part of the selected saved Sample Test. No other result was substituted.")}</p><button onClick={() => setInspectedSampleIndex(undefined)}>{t("View all sample images")}</button></section>;
   if (inspectedSample) return <SampleAnnotationDialog key={`${activeSampleTest?.id}:${selectedSampleImageId}`}
+    onAdopt={guided && activeSampleTest ? () => onAdopt?.(draftId, activeSampleTest.id, selectedSampleImageId) : undefined}
     guided={guided}
     sample={inspectedSample} image={sampleImage(inspectedSample)} configuredRefiners={configuredRefiners}
     sampleTestId={activeSampleTest?.draftId === draftId ? activeSampleTest.id : undefined}
@@ -1882,6 +1889,7 @@ function SampleResultCard({
 function SampleAnnotationDialog({
   sample,
   guided = false,
+  onAdopt,
   image,
   configuredRefiners,
   sampleTestId,
@@ -1890,6 +1898,7 @@ function SampleAnnotationDialog({
 }: {
   sample: WorkflowDryRunReport["samples"][number];
   guided?: boolean;
+  onAdopt?: () => void;
   image?: ImageItem;
   configuredRefiners: WorkflowDraftNode[];
   sampleTestId?: string;
@@ -1933,7 +1942,7 @@ function SampleAnnotationDialog({
       </header>
       <p className="sample-risk-notice">{t("Model confidence is not boundary accuracy. Sample decisions do not accept formal annotations.")}</p>
       {!sample.projection && <p role="alert">{t("This legacy test has no final-result projection. Test the Draft again before confirming its annotations.")}</p>}
-      {selectedStage === "final" && image && sampleTestId && <SampleFeedbackEditor sample={sample} image={image} testId={sampleTestId} onDirtyChange={setFeedbackDirty} onConfirmed={onNext ? () => { onNavigationGuardChange(undefined); onNext(); } : undefined} navigation={guided && count > 1 ? <nav className="button-row" aria-label={t("Sample images")}><button disabled={!onPrevious} onClick={onPrevious}>{t("Previous image")}</button><span>{position}/{count}</span><button disabled={!onNext} onClick={onNext}>{t("Next image")}</button></nav> : undefined} />}
+      {selectedStage === "final" && image && sampleTestId && <SampleFeedbackEditor onAdopt={onAdopt} sample={sample} image={image} testId={sampleTestId} onDirtyChange={setFeedbackDirty} onConfirmed={onNext ? () => { onNavigationGuardChange(undefined); onNext(); } : undefined} navigation={guided && count > 1 ? <nav className="button-row" aria-label={t("Sample images")}><button disabled={!onPrevious} onClick={onPrevious}>{t("Previous image")}</button><span>{position}/{count}</span><button disabled={!onNext} onClick={onNext}>{t("Next image")}</button></nav> : undefined} />}
       {!guided && <details className="sample-technical-details"><summary>{t("View execution details")}</summary>
       <nav className="sample-preview-stage-tabs" aria-label={t("Annotation stages")}>
         {availableStages.map((stage) => <button key={stage} type="button" className={selectedStage === stage ? "active" : ""} aria-pressed={selectedStage === stage} onClick={() => { if (stage === selectedStage || !feedbackDirty || window.confirm(t("Discard unsaved sample feedback?"))) setSelectedStage(stage); }}>{stage === "search_region" ? t("Search region") : stage === "prompt_coverage" ? t("Prompt coverage") : stage[0].toUpperCase() + stage.slice(1)}</button>)}
@@ -2676,15 +2685,7 @@ function ProjectExportPage({
   if (!project)
     return <section className="page-stack"><Empty title={t("Project unavailable")} detail={t("Return to Projects and choose a valid Project.")} /></section>;
   return (
-    <section className="page-stack export-workspace">
-      <ProjectBreadcrumb project={project} current="Export" onOpenProjects={() => onNavigate("/projects")} onOpenProject={() => onNavigate(`/projects/${encodeURIComponent(project.id)}`)} />
-      <nav className="section-tabs" aria-label={`${project.name} workspace`}>
-        <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}`)}>{t("Overview")}</button>
-        <button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}/build/data`)}>{t("Build")}</button>
-        <button onClick={() => onNavigate(projectRunsPath(project.id))}>{t("Runs")}</button>
-        <button onClick={() => onNavigate(projectReviewPath(project.id))}>{t("Review")}</button>
-        <button className="active" aria-current="page">{t("Export")}</button>
-      </nav>
+    <section className="journey-scene export-workspace">
       {!activeReadiness ? (
         <div className="loading-banner" role="status">{t("Checking dataset export readiness…")}</div>
       ) : (
@@ -2734,7 +2735,7 @@ function ProjectExportPage({
 
           {result && <section className="export-success" aria-live="polite">
             <div className="export-success-heading"><span aria-hidden="true">✓</span><div><span className="eyebrow">{t("Export complete")}</span><h2>{t("Dataset exported successfully")}</h2><p>{result.report.exported_count} annotation{result.report.exported_count === 1 ? "" : t("s")} exported · {result.report.skipped_count} skipped · {new Date(result.completed_at).toLocaleString(localeTag())}</p></div></div>
-            <div className="export-result-path"><span>{t("Result folder")}</span><code>{result.output_path}</code><button onClick={copyOutputPath}>{t("Copy folder path")}</button>{copyStatus && <small role="status">{copyStatus}</small>}</div>
+            <div className="export-result-path"><span>{t("Result folder")}</span><code>{result.output_path}</code><button onClick={copyOutputPath}>{t("Copy folder path")}</button>{copyStatus && <small role="status">{copyStatus}</small>}<small>{t("This folder is on the AnnotAgent server, not necessarily on this device.")}</small></div>
             <details className="export-report"><summary>{t("View export report")}</summary><dl>
               <div><dt>{t("Format")}</dt><dd>{result.format}</dd></div>
               <div><dt>{t("Exported")}</dt><dd>{result.report.exported_count}</dd></div>
@@ -8012,19 +8013,27 @@ function BatchDetailWorkspace({
   const [statusFilter, setStatusFilter] = useState("all");
   const [busy, setBusy] = useState(false);
   const [managementDialog, setManagementDialog] = useState<ManagementDialogState>();
-  const load = () =>
+  const requestGeneration = useRef(0);
+  const load = (signal?: AbortSignal) => {
+    const generation = ++requestGeneration.current;
+    return (
     api
-      .batch(route.batchId)
+      .batch(route.batchId, signal)
       .then((value) => {
+        if (signal?.aborted || generation !== requestGeneration.current) return;
         setBatch(value.batch);
         setLoaded(true);
-      });
+      })
+    );
+  };
   useEffect(() => {
+    const controller = new AbortController();
     setBatch(undefined);
     setLoaded(false);
     setStatusFilter("all");
-    void load().catch((error: Error) => onError(error.message));
-  }, [route.batchId, runs.length, runs[0]?.updated_at]);
+    void load(controller.signal).catch((error: Error) => { if (!controller.signal.aborted) onError(error.message); });
+    return () => { controller.abort(); requestGeneration.current += 1; };
+  }, [route.batchId]);
   const owner = batch
     ? projects.find((project) => project.id === batch.project_id)
     : projects.find((project) => project.id === route.projectId);
@@ -8051,6 +8060,8 @@ function BatchDetailWorkspace({
     );
   if (batch.project_id !== route.projectId)
     return <div className="loading-banner" role="status">{t("Opening the owning Project…")}</div>;
+  if (batch.workflow_snapshot.guided_processing && !batch.in_trash)
+    return <JourneyBatch key={batch.id} batch={batch} route={route} onNavigate={onNavigate} onReload={() => load()} />;
   const childRuns = batch.child_run_ids.flatMap((id) => {
     const run = runs.find((candidate) => candidate.id === id);
     return run ? [run] : [];

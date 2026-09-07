@@ -6362,6 +6362,21 @@ pub struct DatasetCoordinator<'a> {
     application: &'a LocalApplication,
 }
 
+/// Exact input/configuration scope for a user-confirmed creation of an existing Batch.
+pub struct ConfirmedBatchScope {
+    pub id: BatchId,
+    pub settings: Settings,
+    pub images: Vec<WorkflowSampleTestInput>,
+    pub project_schema_hash: String,
+}
+
+pub struct PublicationApproval {
+    pub sample_test_id: String,
+    pub revision: u64,
+    pub models: Vec<ModelProfileSnapshot>,
+    pub project_schema_hash: String,
+}
+
 impl<'a> DatasetCoordinator<'a> {
     #[must_use]
     pub const fn new(application: &'a LocalApplication) -> Self {
@@ -6397,11 +6412,31 @@ impl<'a> DatasetCoordinator<'a> {
         limit: Option<usize>,
         workflow: Option<(&str, u32)>,
     ) -> Result<BatchRecord> {
+        self.create_confirmed(project_path, provider, config_path, limit, workflow, None)
+    }
+
+    pub fn create_confirmed(
+        &self,
+        project_path: &Path,
+        provider: &str,
+        config_path: Option<&Path>,
+        limit: Option<usize>,
+        workflow: Option<(&str, u32)>,
+        confirmed: Option<&ConfirmedBatchScope>,
+    ) -> Result<BatchRecord> {
         let project_path = project_path.canonicalize()?;
         ensure_within(&self.application.workspace, &project_path)?;
         let (project, project_skills) =
             load_project_schema_with_registry(&project_path, &self.application.skills)?;
-        let settings = load_settings(config_path)?;
+        let settings = confirmed
+            .map(|scope| scope.settings.clone())
+            .map_or_else(|| load_settings(config_path), Ok)?;
+        if let Some(scope) = confirmed
+            && annotagent_image_tools::sha256(&serde_json::to_vec(&project)?)
+                != scope.project_schema_hash
+        {
+            bail!("Project schema changed after processing authorization");
+        }
         let mut images = self
             .application
             .list_images_for_project_path(&project_path)?;
@@ -6444,6 +6479,21 @@ impl<'a> DatasetCoordinator<'a> {
                 ))
             })
             .collect::<Result<Vec<_>>>()?;
+        if let Some(scope) = confirmed {
+            let actual = image_records
+                .iter()
+                .zip(&images)
+                .map(|((id, _), path)| {
+                    Ok(WorkflowSampleTestInput {
+                        image_id: id.to_string(),
+                        content_hash: annotagent_image_tools::sha256(&std::fs::read(path)?),
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            if actual != scope.images {
+                bail!("Image scope changed after processing authorization");
+            }
+        }
         let project_id = project_path
             .parent()
             .and_then(Path::file_name)
@@ -6479,7 +6529,7 @@ impl<'a> DatasetCoordinator<'a> {
             || compatibility.version.clone(),
             |published| format!("{}@{}", published.workflow_id, published.version),
         );
-        let workflow_snapshot = published_workflow.as_ref().map_or_else(
+        let mut workflow_snapshot = published_workflow.as_ref().map_or_else(
             || {
                 json!({
                     "workflow": compatibility,
@@ -6493,6 +6543,10 @@ impl<'a> DatasetCoordinator<'a> {
                 })
             },
         );
+        if let Some(scope) = confirmed {
+            workflow_snapshot["guided_processing"] =
+                json!({"request_id": scope.id, "images": scope.images});
+        }
         let now = chrono::Utc::now();
         if self
             .application
@@ -6518,7 +6572,7 @@ impl<'a> DatasetCoordinator<'a> {
             bail!("project {project_id:?} already has an active image Run");
         }
         let record = BatchRecord {
-            id: BatchId::new(),
+            id: confirmed.map_or_else(BatchId::new, |scope| scope.id),
             project_id,
             project_path: relative_project_path,
             provider: provider.to_owned(),
@@ -6710,7 +6764,7 @@ impl<'a> DatasetCoordinator<'a> {
                 BatchClaimResult::Empty | BatchClaimResult::BudgetExceeded(_) => break,
             };
             let image_path = self.application.workspace.join(&image.image_path);
-            let prepared = prepare_run_with_settings(
+            let prepared = prepare_run_with_batch_scope(
                 project_path,
                 &self.application.store.get_batch(batch_id)?.provider,
                 settings.clone(),
@@ -6720,6 +6774,7 @@ impl<'a> DatasetCoordinator<'a> {
                 Some(&image_path),
                 Some(image.image_id),
                 published_workflow.clone(),
+                Some(batch_id),
             );
             let prepared = match prepared {
                 Ok(prepared) => prepared,
@@ -9100,6 +9155,14 @@ impl LocalApplication {
     }
 
     /// The guided goal edits the existing Schema, never a parallel workflow store.
+    pub fn project_execution_schema_hash(&self, project_id: &str) -> Result<String> {
+        let path = self.project_path(project_id)?;
+        let (project, _) = load_project_schema_with_registry(&path, &self.skills)?;
+        Ok(annotagent_image_tools::sha256(&serde_json::to_vec(
+            &project,
+        )?))
+    }
+
     pub fn project_goal(&self, project_id: &str) -> Result<serde_json::Value> {
         let yaml = std::fs::read(self.project_path(project_id)?)?;
         let project = ProjectSchema::from_yaml(std::str::from_utf8(&yaml)?)
@@ -17186,6 +17249,15 @@ impl LocalApplication {
         draft_id: &str,
         settings: &Settings,
     ) -> Result<PublishedWorkflowVersion> {
+        self.publish_workflow_with_approval(draft_id, settings, None)
+    }
+
+    pub fn publish_workflow_with_approval(
+        &self,
+        draft_id: &str,
+        settings: &Settings,
+        approval: Option<&PublicationApproval>,
+    ) -> Result<PublishedWorkflowVersion> {
         let draft = self.store.get_workflow_draft(draft_id)?;
         let scope = self.management_scope(&draft.project_id)?;
         let object = annotagent_core::ManagementObjectRef {
@@ -17202,7 +17274,7 @@ impl LocalApplication {
             &owner,
             chrono::Duration::minutes(30),
         )?;
-        let result = self.publish_workflow_unleased(draft_id, settings);
+        let result = self.publish_workflow_unleased(draft_id, settings, approval);
         let release = self
             .store
             .release_management_lease(&scope, &object, "publication", &owner);
@@ -17217,6 +17289,7 @@ impl LocalApplication {
         &self,
         draft_id: &str,
         settings: &Settings,
+        approval: Option<&PublicationApproval>,
     ) -> Result<PublishedWorkflowVersion> {
         let mut draft = self.store.get_workflow_draft(draft_id)?;
         if matches!(
@@ -17225,11 +17298,25 @@ impl LocalApplication {
         ) {
             bail!("published or archived workflow drafts are immutable; clone it to a new draft");
         }
-        let sample_test = self
-            .store
-            .get_workflow_sample_test_for_revision(draft_id, draft.revision, &draft.content_hash)?
-            .ok_or_else(|| anyhow!("workflow publication requires a persisted Sample Test"))?;
+        let sample_test = if let Some(approval) = approval {
+            if draft.revision != approval.revision
+                || self.project_execution_schema_hash(&draft.project_id)?
+                    != approval.project_schema_hash
+            {
+                bail!("The approved plan or Project definition changed before publication");
+            }
+            self.store
+                .get_workflow_sample_test_by_id(&approval.sample_test_id)?
+        } else {
+            self.store.get_workflow_sample_test_for_revision(
+                draft_id,
+                draft.revision,
+                &draft.content_hash,
+            )?
+        }
+        .ok_or_else(|| anyhow!("workflow publication requires a persisted Sample Test"))?;
         if sample_test.project_id != draft.project_id
+            || sample_test.draft_id != draft.id
             || sample_test.draft_revision != draft.revision
             || sample_test.request_revision != draft.revision
             || sample_test.draft_content_hash.is_empty()
@@ -17267,6 +17354,13 @@ impl LocalApplication {
             bail!("workflow cannot be published: {blockers}");
         }
         let model_profiles = self.freeze_registry_model_profiles(&mut draft)?;
+        if let Some(approval) = approval
+            && (model_profiles != approval.models
+                || self.project_execution_schema_hash(&draft.project_id)?
+                    != approval.project_schema_hash)
+        {
+            bail!("The approved models or Project definition changed before publication");
+        }
         let plugin_models = self.freeze_plugin_models(&draft)?;
         let (_, models) = self.workflow_catalog(settings)?;
         normalize_profile_compatibility_bindings(&mut draft, &models)?;
@@ -18210,12 +18304,66 @@ fn prepare_run_with_settings(
     image_id_override: Option<ImageId>,
     published_workflow: Option<PublishedWorkflowVersion>,
 ) -> Result<PreparedRun> {
+    prepare_run_with_batch_scope(
+        project_path,
+        provider_kind,
+        settings,
+        temporary_api_key,
+        store,
+        skills,
+        image_override,
+        image_id_override,
+        published_workflow,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_run_with_batch_scope(
+    project_path: &Path,
+    provider_kind: &str,
+    settings: Settings,
+    temporary_api_key: Option<String>,
+    store: Arc<SqliteStore>,
+    skills: &SkillRegistry,
+    image_override: Option<&Path>,
+    image_id_override: Option<ImageId>,
+    published_workflow: Option<PublishedWorkflowVersion>,
+    batch_id: Option<BatchId>,
+) -> Result<PreparedRun> {
     let (project, project_skills) = load_project_schema_with_registry(project_path, skills)?;
+    let confirmed_batch = batch_id
+        .map(|id| store.get_batch(id))
+        .transpose()?
+        .filter(|batch| batch.workflow_snapshot.get("guided_processing").is_some());
+    if let Some(batch) = &confirmed_batch
+        && serde_json::to_value(&project)? != batch.project_snapshot
+    {
+        bail!("Project schema changed since processing was confirmed; no inference was started");
+    }
     let image_path = image_override.map_or_else(
         || find_or_generate_image(project_path, &project),
         |path| Ok(path.to_path_buf()),
     )?;
     let image = Arc::new(load_image(&image_path, 40_000_000).map_err(|error| anyhow!(error))?);
+    if let Some(batch) = &confirmed_batch {
+        let expected = batch.workflow_snapshot["guided_processing"]["images"]
+            .as_array()
+            .and_then(|images| {
+                images.iter().find(|input| {
+                    input["image_id"].as_str()
+                        == image_id_override
+                            .as_ref()
+                            .map(ToString::to_string)
+                            .as_deref()
+                })
+            });
+        if expected.and_then(|input| input["content_hash"].as_str())
+            != Some(image.metadata.sha256.as_str())
+        {
+            bail!("Image changed since processing was confirmed; no inference was started");
+        }
+    }
     let model_image_max_dimension = published_workflow.as_ref().map_or(1280, |workflow| {
         workflow_model_image_max_dimension(
             &workflow.draft,
@@ -18268,7 +18416,7 @@ fn prepare_run_with_settings(
         let model_bundle_registry = Arc::new(Mutex::new(ModelBundleRegistry::open(
             plugin_workspace.join(".annotagent"),
         )?));
-        Arc::new(PublishedWorkflowRuntime::new(
+        let runtime = PublishedWorkflowRuntime::new(
             published,
             provider_kind,
             &settings,
@@ -18278,7 +18426,13 @@ fn prepare_run_with_settings(
             refiners,
             plugin_registry,
             model_bundle_registry,
-        )?)
+        )?;
+        let runtime = if let Some(batch) = &confirmed_batch {
+            runtime.with_batch_request_limit(batch.id)
+        } else {
+            runtime
+        };
+        Arc::new(runtime)
     } else {
         if project_skills.len() != 1 {
             bail!("Projects with zero or multiple Skills must select a Published Workflow Version");

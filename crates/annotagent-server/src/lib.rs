@@ -1,5 +1,6 @@
 //! Thin HTTP/SSE adapter over the shared application service.
 
+mod processing_operations;
 mod sample_operations;
 mod security;
 mod workspace_routes;
@@ -117,6 +118,7 @@ pub struct ServerState {
     default_write_reference: Arc<CredentialReference>,
     model_install_operations: Arc<RwLock<BTreeMap<uuid::Uuid, ModelInstallOperation>>>,
     sample_cancellations: Arc<RwLock<BTreeMap<String, CancellationToken>>>,
+    processing_gate: Arc<tokio::sync::Mutex<()>>,
     security: security::LocalSecurity,
 }
 
@@ -223,6 +225,7 @@ impl ServerState {
             default_write_reference: Arc::new(default_write_reference),
             model_install_operations: Arc::new(RwLock::new(BTreeMap::new())),
             sample_cancellations: Arc::new(RwLock::new(BTreeMap::new())),
+            processing_gate: Arc::new(tokio::sync::Mutex::new(())),
             security: security::LocalSecurity::default(),
         })
     }
@@ -5886,7 +5889,15 @@ async fn resume_batch(
         .get_batch(batch_id)
         .map_err(ApiError::not_found)?;
     let application = state.application.clone();
-    let api_key = state.api_key.read().await.clone();
+    let api_key = if let Some(value) = batch.workflow_snapshot.get("published_workflow") {
+        let published: PublishedWorkflowVersion =
+            serde_json::from_value(value.clone()).map_err(ApiError::bad_request)?;
+        resolve_published_runtime_provider(&state, &published.workflow_id, published.version)
+            .await?
+            .1
+    } else {
+        state.api_key.read().await.clone()
+    };
     tokio::spawn(async move {
         let _ignored = DatasetCoordinator::new(application.as_ref())
             .resume(batch_id, api_key)

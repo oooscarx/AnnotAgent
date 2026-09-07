@@ -32,6 +32,14 @@ impl SqliteStore {
 
     /// The idempotency key is the future Sample Test ID; no secret is persisted.
     pub fn reserve_sample_operation(&self, value: &SampleOperation) -> Result<bool, StorageError> {
+        self.reserve_sample_operation_sealed(value, None)
+    }
+
+    pub fn reserve_sample_operation_sealed(
+        &self,
+        value: &SampleOperation,
+        scope: Option<&serde_json::Value>,
+    ) -> Result<bool, StorageError> {
         self.with_connection(|connection| {
             let transaction = connection.unchecked_transaction()?;
             let existing = transaction.query_row("SELECT project_id,draft_id,authorization_fingerprint,request_json FROM sample_operations WHERE id=?1", [&value.id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?))).optional()?;
@@ -51,6 +59,9 @@ impl SqliteStore {
                 return Err(StorageError::InvalidSampleOperation("this Project already has an active sample task".to_owned()));
             }
             transaction.execute("INSERT INTO sample_operations(id,project_id,draft_id,authorization_fingerprint,request_json,status,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,'queued',?6,?6)", params![value.id,value.project_id,value.draft_id,value.authorization_fingerprint,request,value.created_at])?;
+            if let Some(scope) = scope {
+                transaction.execute("INSERT INTO sample_scope_seals(sample_test_id,scope_json) VALUES(?1,?2)", params![value.id,serde_json::to_string(scope)?])?;
+            }
             transaction.commit()?;
             Ok(true)
         })

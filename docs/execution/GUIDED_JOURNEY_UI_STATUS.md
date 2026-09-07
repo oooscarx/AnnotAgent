@@ -268,3 +268,59 @@ All three older screenshot directories were restored byte-for-byte to the saved
 pre-task baseline, preserving the user's fourteen existing screenshot changes.
 Only the Guided Journey evidence and this phase's source/test files enter the
 local milestone commit (`feat(journey): persist and recover bounded sample tasks`).
+
+## M3 in progress — confirmation and bounded Dataset execution
+
+Screen contract: Sample canvas → **Continue with this plan** →
+`/projects/:id/task/confirm?draft=…&test=…&image=…`.
+Question: what exact images, tested plan and external services will be used?
+Necessary inputs: image count and explicit call-budget/data-scope consent.
+Success: same-Project canonical Batch detail. Failure: same confirmation receipt;
+Back restores the selected sample. No mutation on preview, GET or refresh.
+
+Implemented (verification ongoing):
+
+- Durable processing receipts compose existing publication and DatasetCoordinator;
+  receipt UUID is also the Batch UUID. Lost responses and retry cannot create a
+  second Batch. Published-but-not-started records retain the published identity.
+- Exact Sample Test/revision and current Project/model/image scope checks; new
+  bounded samples store their scope seal atomically with the execution receipt.
+  Older unsealed samples must be re-tested for this guided confirmation path.
+- Approval checks inside the existing publication service prevent a changed Draft
+  or model snapshot from being published under an earlier confirmation.
+- A persistent pre-request allowance wraps existing external model adapters for
+  confirmed Batches, including concurrent workers/retries/restart. Reservations
+  are never refunded after failed/uncertain sends. No synthetic price estimate.
+- Batch creation freezes authorized images/settings and checks image hashes and
+  Project schema before image inference. It does not introduce another Runtime.
+- Sample feedback confirmation remains separate from plan adoption and formal
+  annotation review. Unsaved sample edits disable adoption.
+
+First isolated browser traversal of sample → confirmation → actual publication
+and Batch creation passed. Partial-start failure, full execution and regression
+tests are in progress. Guided running/Review/export presentation and the remaining
+M2/M4 checks are not yet complete. Goal remains active until the remaining work is
+handled; no push or real workspace changes are authorized.
+
+M3 vertical slice verification (2026-09-07):
+
+- Real fixture-backed classification Batch reached `completed`, not merely a
+  created record. The external service is the explicitly marked offline E2E
+  fixture, not a live model or a claim about ball-detection accuracy.
+- Simulated unavailable credential file in `/tmp/annotagent-guided-e2e-*` after
+  sample testing: publication succeeded, launch failed, refresh restored the
+  receipt, and explicit retry started the same deterministic Batch. Replaying the
+  request returned that Batch without re-publication or re-execution.
+- Guided Batch results reuse shared result/annotation/image query keys. Only
+  terminal projection IDs are drawn; filters and image IDs are URL state.
+  Original/results switching, empty failure filter and refresh are covered.
+  Pause/Resume/Cancel remain visible during active processing; Resume now resolves
+  credentials from the frozen published model registry instead of the old global
+  session key. Management remains in the existing Project history/Trash pages.
+- Screenshots: `guided-journey/processing-confirm.png`,
+  `processing-results-1440.png`, `processing-results-390.png`. Screenshot
+  animations are disabled to avoid capturing a transient fade. These are
+  synthetic fixture images, not real inference evidence.
+- `cargo test --workspace --all-features`, Clippy with warnings denied, workspace
+  build, Web typecheck/unit tests (82), production build and the isolated journey
+  E2E passed. Full browser regression and Review/export refinements remain next.
