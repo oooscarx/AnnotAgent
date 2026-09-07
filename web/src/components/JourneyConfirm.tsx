@@ -71,7 +71,8 @@ export function JourneyConfirm({ projectId, draftId, testId, imageId, operationI
       {!operationId && <label>{t("Images to process, in dataset order")}<input type="number" min="1" max={preview.available_images} value={limit ?? preview.available_images} disabled={busy} onChange={(event) => setLimit(Math.max(1, Math.min(preview.available_images, Number(event.target.value))))} /></label>}
       <p>{t("{count} images, including any sample images. Samples did not create formal annotations.", { count: preview.image_count })}</p>
       {preview.models.map((model) => <p key={model.model_profile_id}><strong>{model.remote_model_id}</strong><br />{model.provider_base_url}</p>)}
-      <p>{t("Cost is unknown. At most {count} external model calls are authorized across this processing task. Provider-internal retries may add network requests; this is not a monetary cap.", { count: preview.maximum_model_calls })}</p>
+      {preview.native_models?.map((model) => <p key={model.id}><strong>{model.name}</strong><br />{t(model.destination)}</p>)}
+      <p>{t("Cost is unknown. At most {count} model calls are authorized across this processing task, including local plugins. Provider-internal retries may add network requests; this is not a monetary cap.", { count: preview.maximum_model_calls })}</p>
       <p>{t("This does not automatically approve all future results. No-target and automatically accepted images remain available for inspection.")}</p>
       {preview.sample_feedback_count > 0 && <p className="journey-risk">{t("Your sample corrections are saved evaluation feedback. They do not change this plan's future predictions; processing may repeat the issues you identified.")}</p>}
       {!operationId && <label><input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} />{t("I authorize this image, model and call-budget scope")}</label>}

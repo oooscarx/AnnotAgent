@@ -41,14 +41,9 @@ fn scope(
         ));
     }
     reject_unresolved_registry_model_nodes(&draft)?;
-    if draft.label_pipeline.is_none()
-        || draft
-            .nodes
-            .iter()
-            .any(|node| node.model_binding.is_some() && node.model_profile_binding.is_none())
-    {
+    if draft.label_pipeline.is_none() || !guided_other_bindings(&draft).is_empty() {
         return Err(ApiError::bad_request(
-            "This plan needs a Registry-backed model before guided processing",
+            "This plan needs a verified Registry or installed plugin model before guided processing",
         ));
     }
     let sample = state
@@ -90,7 +85,8 @@ fn scope(
         .project_execution_schema_hash(project)
         .map_err(ApiError::bad_request)?;
     let sealed = state.application.store().sample_scope_seal(&sample.id).map_err(ApiError::internal)?.ok_or_else(|| ApiError::bad_request("This older sample has no authorization snapshot. Run a new bounded sample test before processing."))?;
-    let current_seal = json!({"project_schema_hash":schema_hash,"models":models,"images":inputs.iter().take(3).collect::<Vec<_>>()});
+    let native_models = guided_native_models(state, &draft)?;
+    let current_seal = guided_sample_seal(state, &draft, &models)?;
     if sealed != current_seal {
         return Err(ApiError::bad_request(
             "Images, model connection or Project definition changed after the sample. A new sample and authorization are required.",
@@ -132,6 +128,10 @@ fn scope(
         "sample_feedback":sample_feedback,"sample_feedback_count":feedback_count,
         "sample_images_are_sandbox_only":true,"review_policy":"Uncertain results stay in Review. This action does not accept every output.",
     });
+    add_native_scope(&mut value, &native_models);
+    if !native_models.is_empty() {
+        value["native_models"] = json!(native_model_descriptions(&native_models));
+    }
     value["authorization_fingerprint"] = json!(annotagent_image_tools::sha256(
         &serde_json::to_vec(&json!({"scope":value,"settings":settings}))
             .map_err(ApiError::internal)?
@@ -276,6 +276,13 @@ async fn execute_confirmation(
                 && version.draft.revision == input.expected_revision
                 && serde_json::to_value(&version.snapshot.model_profiles)
                     .is_ok_and(|models| models == authorization["models"])
+                && serde_json::to_value(&version.snapshot.plugin_models).is_ok_and(|models| {
+                    models
+                        == authorization
+                            .get("plugin_models")
+                            .cloned()
+                            .unwrap_or_else(|| json!([]))
+                })
                 && version.draft.content_hash
                     == authorization["draft_content_hash"]
                         .as_str()

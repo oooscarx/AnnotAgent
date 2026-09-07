@@ -4,7 +4,7 @@ export type SampleOperation = {
   error?: string | null;
 };
 export type ProcessingSelection = { draft_id: string; sample_test_id: string; limit?: number };
-export type ProcessingAuthorization = { revision: number; authorization_fingerprint: string; image_count: number; available_images: number; maximum_model_calls: number; sample_feedback_count: number; plan_name: string; goal: { goal?: string }; models: { model_profile_id: string; remote_model_id: string; provider_base_url: string }[] };
+export type ProcessingAuthorization = { revision: number; authorization_fingerprint: string; image_count: number; available_images: number; maximum_model_calls: number; sample_feedback_count: number; plan_name: string; goal: { goal?: string }; models: { model_profile_id: string; remote_model_id: string; provider_base_url: string }[]; native_models?: { id: string; name: string; destination: string; revision: number }[] };
 export type ProcessingReceipt = { id: string; project_id: string; draft_id: string; phase: string; batch_id?: string; error?: string | null; authorization: ProcessingAuthorization; request?: ConfirmProcessingRequest };
 export type ConfirmProcessingRequest = { request_id: string; selection: ProcessingSelection; expected_revision: number; authorization_fingerprint: string };
 

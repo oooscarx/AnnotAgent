@@ -3913,6 +3913,55 @@ async fn apply_workflow_draft_diff(
     Ok(Json(json!(report)))
 }
 
+fn guided_native_models(
+    state: &ServerState,
+    draft: &WorkflowDraft,
+) -> ApiResult<Vec<annotagent_core::PluginModelSnapshot>> {
+    state
+        .application
+        .workflow_draft_plugin_model_snapshots(draft)
+        .map_err(ApiError::bad_request)
+}
+
+fn guided_other_bindings(draft: &WorkflowDraft) -> BTreeSet<&str> {
+    draft
+        .nodes
+        .iter()
+        .filter(|node| node.model_profile_binding.is_none())
+        .filter_map(|node| node.model_binding.as_deref())
+        .filter(|binding| !plugin_model_selection(binding))
+        .collect()
+}
+
+fn add_native_scope(scope: &mut Value, models: &[annotagent_core::PluginModelSnapshot]) {
+    // Preserve pre-native authorization material for existing remote-only receipts.
+    if !models.is_empty() {
+        scope["plugin_models"] = json!(models);
+    }
+}
+
+fn native_model_descriptions(models: &[annotagent_core::PluginModelSnapshot]) -> Vec<Value> {
+    models.iter().map(|model| json!({
+        "id": model.model_asset.as_ref().map_or_else(|| format!("plugin:{}@{}:{}", model.plugin_id, model.plugin_version, model.model_id), |asset| format!("model-instance:{}", asset.model_instance_id)),
+        "name": model.model_id, "destination": "Local plugin worker (loopback)",
+        "revision": model.model_profile_revision,
+    })).collect()
+}
+
+fn guided_sample_seal(
+    state: &ServerState,
+    draft: &WorkflowDraft,
+    models: &[ModelProfileSnapshot],
+) -> ApiResult<Value> {
+    let mut seal = json!({
+        "project_schema_hash": state.application.project_execution_schema_hash(&draft.project_id).map_err(ApiError::bad_request)?,
+        "models": models,
+        "images": state.application.list_project_image_summaries(&draft.project_id).map_err(ApiError::bad_request)?.iter().take(3).map(|image| json!({"image_id":image.image_id,"content_hash":image.content_hash})).collect::<Vec<_>>(),
+    });
+    add_native_scope(&mut seal, &guided_native_models(state, draft)?);
+    Ok(seal)
+}
+
 fn guided_sample_fingerprint(
     state: &ServerState,
     draft: &WorkflowDraft,
@@ -3926,9 +3975,10 @@ fn guided_sample_fingerprint(
         .application
         .project_goal(&draft.project_id)
         .map_err(ApiError::bad_request)?;
-    let scope = json!({ "draft": draft, "models": models,
+    let mut scope = json!({ "draft": draft, "models": models,
         "images": images.iter().take(3).map(|image| (&image.image_id, &image.content_hash)).collect::<Vec<_>>(),
         "schema_revision": goal["revision"], "max_model_calls": 12 });
+    add_native_scope(&mut scope, &guided_native_models(state, draft)?);
     Ok(annotagent_image_tools::sha256(
         &serde_json::to_vec(&scope).map_err(ApiError::internal)?,
     ))
@@ -3950,7 +4000,7 @@ async fn preview_workflow_samples(
         .map_err(ApiError::not_found)?
         .image_count
         .min(3);
-    let models = profiles
+    let mut models = profiles
         .iter()
         .map(|model| {
             json!({
@@ -3959,13 +4009,10 @@ async fn preview_workflow_samples(
             })
         })
         .collect::<Vec<_>>();
-    // Explicitly report non-Registry bindings; never guess their data destination.
-    let other_bindings = draft
-        .nodes
-        .iter()
-        .filter(|node| node.model_profile_binding.is_none())
-        .filter_map(|node| node.model_binding.as_ref())
-        .collect::<BTreeSet<_>>();
+    models.extend(native_model_descriptions(&guided_native_models(
+        &state, &draft,
+    )?));
+    let other_bindings = guided_other_bindings(&draft);
     Ok(Json(
         json!({ "project_id": draft.project_id, "revision": draft.revision,
         "image_count": image_count, "models": models, "other_bindings": other_bindings, "authorization_fingerprint": authorization_fingerprint,
@@ -4002,11 +4049,7 @@ async fn dry_run_workflow(
                     "The image, goal or model scope changed after authorization. Review the updated sample scope.",
                 ));
             }
-            if draft.label_pipeline.is_none()
-                || draft.nodes.iter().any(|node| {
-                    node.model_binding.is_some() && node.model_profile_binding.is_none()
-                })
-            {
+            if draft.label_pipeline.is_none() || !guided_other_bindings(&draft).is_empty() {
                 return Err(ApiError::bad_request(
                     "This plan contains bindings not yet supported by bounded guided sampling. No inference was started.",
                 ));
@@ -4100,12 +4143,36 @@ async fn get_workflow_sample_test(
             "Sample Test does not belong to the requested Draft",
         ));
     }
-    let current = sample_test.as_ref().is_some_and(|record| {
+    let mut current = sample_test.as_ref().is_some_and(|record| {
         record.project_id == draft.project_id
             && record.draft_revision == draft.revision
             && !record.draft_content_hash.is_empty()
             && record.draft_content_hash == draft.content_hash
     });
+    if current && let Some(record) = &sample_test {
+        if let Some(sealed) = state
+            .application
+            .store()
+            .sample_scope_seal(&record.id)
+            .map_err(ApiError::internal)?
+        {
+            // A stale or disabled binding must not hide the saved results. Return
+            // them read-only instead, with the same freshness rule as adoption.
+            current = state
+                .application
+                .resolved_workflow_draft_model_profiles(&draft_id)
+                .ok()
+                .and_then(|(resolved, models)| guided_sample_seal(&state, &resolved, &models).ok())
+                .is_some_and(|actual| actual == sealed);
+        } else if draft.nodes.iter().any(|node| {
+            node.model_binding
+                .as_deref()
+                .is_some_and(plugin_model_selection)
+        }) {
+            // Legacy native tests did not freeze plugin identities.
+            current = false;
+        }
+    }
     Ok(Json(json!({
         "sample_test": sample_test,
         "current": current,
@@ -10634,6 +10701,113 @@ mod tests {
             }
         }))
         .expect("legacy HTTP Worker fixture")
+    }
+
+    #[tokio::test]
+    async fn guided_native_scope_freezes_real_registry_state_without_executing_a_model() {
+        let temp = tempfile::tempdir().unwrap();
+        let application = Arc::new(LocalApplication::new(temp.path()).unwrap());
+        application.create_project("native-scope", "version: 1\nproject:\n  name: Native scope TEST\n  language: en\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n").unwrap();
+        let _fixture = plugin_package(&temp);
+        let shared = application.plugin_registry();
+        let installed = shared
+            .lock()
+            .unwrap()
+            .install(
+                &temp.path().join("fixture.annotplugin"),
+                &InstallApproval {
+                    permissions_reviewed: true,
+                    code_license_accepted: true,
+                    weight_license_accepted: true,
+                },
+            )
+            .unwrap();
+        let now = chrono::Utc::now();
+        let readiness = annotagent_plugin_api::PluginTestReport {
+            plugin_id: installed.manifest.id.clone(),
+            plugin_version: installed.manifest.version.clone(),
+            passed: true,
+            checks: [
+                "health",
+                "capability declaration",
+                "model discovery",
+                "contract discovery",
+                "sample inference",
+            ]
+            .into_iter()
+            .map(|name| annotagent_plugin_api::PluginTestCheck {
+                name: name.into(),
+                passed: true,
+                detail: "Registry metadata fixture only; no model invoked".into(),
+            })
+            .collect(),
+            started_at: now,
+            finished_at: now,
+        };
+        shared
+            .lock()
+            .unwrap()
+            .record_test(readiness.clone())
+            .unwrap();
+        let selection = annotagent_plugin_registry::plugin_model_selection_id(
+            &shared.lock().unwrap().ready_models()[0].reference,
+        );
+        let draft: WorkflowDraft = serde_json::from_value(json!({
+            "id":"native-draft", "project_id":"native-scope", "name":"Native scope TEST", "status":"editing",
+            "nodes":[{"id":"detector","node_type":"capability.detect","kind":"vision_model","model_binding":selection}],
+            "created_at":now, "updated_at":now,
+        })).unwrap();
+        let state = test_state(
+            application.clone(),
+            Arc::new(InMemorySecretStore::default()),
+        )
+        .await;
+        assert!(guided_other_bindings(&draft).is_empty());
+        let frozen = guided_native_models(&state, &draft).unwrap();
+        assert_eq!(frozen.len(), 1);
+        let fingerprint = guided_sample_fingerprint(&state, &draft, &[]).unwrap();
+        let descriptions = native_model_descriptions(&frozen);
+        assert_eq!(
+            descriptions[0]["destination"],
+            "Local plugin worker (loopback)"
+        );
+        let mut original_seal = json!({"models":[]});
+        add_native_scope(&mut original_seal, &[]);
+        assert_eq!(
+            original_seal,
+            json!({"models":[]}),
+            "remote-only legacy receipts retain identical material"
+        );
+        add_native_scope(&mut original_seal, &frozen);
+        assert!(original_seal["plugin_models"][0]["plugin_package_sha256"].is_string());
+        // Identical readiness evidence must not invent a changed model identity.
+        shared.lock().unwrap().record_test(readiness).unwrap();
+        assert_eq!(
+            guided_sample_fingerprint(&state, &draft, &[]).unwrap(),
+            fingerprint
+        );
+        let mut changed = frozen;
+        changed[0].model_profile_revision += 1;
+        let mut changed_seal = json!({"models":[]});
+        add_native_scope(&mut changed_seal, &changed);
+        assert_ne!(
+            changed_seal, original_seal,
+            "a different native identity invalidates the sample seal"
+        );
+        shared
+            .lock()
+            .unwrap()
+            .disable(&installed.manifest.id, &installed.manifest.version)
+            .unwrap();
+        assert!(guided_sample_fingerprint(&state, &draft, &[]).is_err());
+        let mut unknown = draft;
+        unknown.nodes[0].model_binding = Some("unregistered-worker".into());
+        assert_eq!(
+            guided_other_bindings(&unknown)
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec!["unregistered-worker"]
+        );
     }
 
     #[tokio::test]

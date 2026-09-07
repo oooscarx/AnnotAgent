@@ -28,12 +28,7 @@ pub(super) fn validate_scope(
         ));
     }
     reject_unresolved_registry_model_nodes(draft)?;
-    if draft.label_pipeline.is_none()
-        || draft
-            .nodes
-            .iter()
-            .any(|node| node.model_binding.is_some() && node.model_profile_binding.is_none())
-    {
+    if draft.label_pipeline.is_none() || !guided_other_bindings(draft).is_empty() {
         return Err(ApiError::bad_request(
             "This plan contains bindings not yet supported by bounded guided sampling. No inference was started.",
         ));
@@ -152,11 +147,7 @@ pub(super) async fn start_operation(
         .resolved_workflow_draft_model_profiles(&operation.draft_id)
         .map_err(ApiError::bad_request)?;
     validate_scope(&state, &latest, &models, &execution)?;
-    let scope_seal = json!({
-        "project_schema_hash": state.application.project_execution_schema_hash(&project_id).map_err(ApiError::bad_request)?,
-        "models": models,
-        "images": state.application.list_project_image_summaries(&project_id).map_err(ApiError::bad_request)?.iter().take(3).map(|image| json!({"image_id":image.image_id,"content_hash":image.content_hash})).collect::<Vec<_>>(),
-    });
+    let scope_seal = guided_sample_seal(&state, &latest, &models)?;
     if !state
         .application
         .store()

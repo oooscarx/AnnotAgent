@@ -649,3 +649,48 @@ including exact-revision publication, partial-start recovery and fixed Batch
 creation. This increment changes no default model availability claim and makes
 no external call against a real Provider or model installation.
 Full suite evidence above remains 62/62 before these narrowly retested changes.
+
+Native allowance prerequisite commit: `3b42fdb`.
+
+### Native consent scope and saved-sample freshness
+
+Existing installed native model bindings can now participate in bounded guided
+sample/processing operations. This is a bridge to existing Registry freezing and
+Runtime adapters, not a new model, plugin or execution engine. Unknown non-Registry
+bindings remain rejected. Consent includes each exact native identity and its
+local loopback worker destination; the call allowance includes local inference.
+Native package/version/digest, model identity and asset/profile revision are
+sealed with the sample and compared again for publication and partial-start
+recovery. Empty native scopes are omitted to preserve existing remote-only
+authorization receipts byte-for-byte. This does not install missing weights or
+claim that a boundary refiner can find objects by itself.
+
+Saved-sample reads now check the same seal as adoption, including Registry
+availability, Project schema and image hashes. Disabled/changed models return the
+saved image and terminal results as stale/read-only, rather than hiding the result
+behind a Registry error or allowing an outdated sample to authorize processing.
+Older native samples without an identity seal require a fresh bounded test.
+Remote-only legacy sample behavior is retained; old unsealed samples still cannot
+authorize guided processing. The stale explanation now mentions image/model
+changes instead of incorrectly blaming only a Draft edit.
+
+Verification: real isolated Registry metadata fixture proves known native bindings,
+snapshot/destination inclusion, disabled-plugin rejection, unknown binding
+rejection and unchanged identity after identical readiness evidence. It does NOT
+execute a real model; existing plugin process conformance tests remain separate.
+All-feature Rust **514 passed / 5 real-weight tests ignored**; strict Clippy,
+all-feature build and Web typecheck/**90 unit tests** passed. First extended browser
+run reached stale/read-only results but failed its new assertion because it reused
+the earlier two-request count after intentional later retries. The assertion now
+captures the actual count before disabling a model and uses the latest tested
+revision, first proving that sample was current. Browser rerun is recorded below.
+
+Still open: local-model installation as a conditional task setup flow, open-tab
+freshness without discarding unsaved edits, and final M4 cross-screen/accessibility
+audit. Real SAM accuracy, native assistive technology and human usability have
+not been tested. These limits are not replaced by fixture test claims.
+
+Final focused browser rerun **1/1 passed** (33.3 seconds), including a current
+persisted sample becoming read-only after disabling its model, image preservation,
+refresh without new sample calls, and the existing publication/start retry path.
+Production Web build passed; its existing >500 kB chunk warning remains.

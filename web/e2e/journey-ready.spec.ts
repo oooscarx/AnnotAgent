@@ -266,6 +266,7 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   await page.getByRole("button", { name: "Retry this authorized request", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Does this result match what you need?" })).toBeVisible();
   expect(new URL(page.url()).searchParams.get("test")).toBe(pendingId);
+  const latestSampleUrl = page.url();
   const processingRequests: Record<string, unknown>[] = [];
   page.on("request", (req) => { if (req.method() === "POST" && req.url().endsWith("/processing-operations")) processingRequests.push(req.postDataJSON()); });
   await page.getByRole("button", { name: "Continue with this plan", exact: true }).click();
@@ -324,4 +325,19 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
     await page.screenshot({ path: `../docs/execution/guided-journey/processing-results-${width}.png`, fullPage: true, animations: "disabled" });
   }
   expect(processingRequests).toHaveLength(2);
+  // Registry changes invalidate adoption without hiding persisted sample images.
+  const sampleRequestCount = sampleRequests.length;
+  expect((await (await request.get(`/api/workflow-drafts/${draftId}/sample-test?test_id=${pendingId}`)).json()).current).toBe(true);
+  expect((await request.patch(`/api/model-profiles/${model.id}`, { data: { enabled: false } })).ok()).toBeTruthy();
+  try {
+    await page.goto(latestSampleUrl);
+    await expect(page.getByRole("heading", { name: "Sample Test is out of date", exact: true })).toBeVisible();
+    await expect(page.locator(".annotation-canvas image")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Continue with this plan", exact: true })).toHaveCount(0);
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Sample Test is out of date", exact: true })).toBeVisible();
+    expect(sampleRequests).toHaveLength(sampleRequestCount);
+  } finally {
+    expect((await request.patch(`/api/model-profiles/${model.id}`, { data: { enabled: true } })).ok()).toBeTruthy();
+  }
 });

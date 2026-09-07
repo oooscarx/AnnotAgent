@@ -23,7 +23,7 @@ export function JourneySampleStart({ projectId, draftId, busy, stale, onTest, on
     {busy ? <p role="status">{t("Waiting for the sample service. No percentage is available.")}</p> : <>
       {stale && <p role="alert">{t("The plan changed after the previous test. New authorization is needed.")}</p>}
       {!draftId && <p>{t("Save your goal and prepare a plan first.")}</p>}
-      {preview && <section className="journey-consent"><h3>{t("{count} sample images", { count: preview.image_count })}</h3>{preview.models.map((model) => <p key={model.id}><strong>{model.name}</strong><br />{model.destination}</p>)}
+      {preview && <section className="journey-consent"><h3>{t("{count} sample images", { count: preview.image_count })}</h3>{preview.models.map((model) => <p key={model.id}><strong>{model.name}</strong><br />{t(model.destination)}</p>)}
         {!!preview.other_bindings.length && <p>{t("Some model destinations could not be resolved. Testing is blocked until their connections are verified.")}</p>}
         <p>{t("Estimated cost: unknown. At most {count} model calls across these samples; service-internal retries may add network requests. This is not a monetary spending cap.", { count: preview.request_limit })}</p>
         {!preview.supported && <p>{t("This plan is not yet supported by bounded guided sampling. Saved results remain available; no inference has started.")}</p>}
