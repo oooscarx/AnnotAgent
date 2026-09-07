@@ -3085,6 +3085,10 @@ function WorkflowsPage({
     entries.find((entry) => entry.project.id === activeProjectId);
   const [drafts, setDrafts] = useState<WorkflowDraft[]>([]);
   const [draft, setDraft] = useState<WorkflowDraft>();
+  const selectedContextRef = useRef({ draftId: selectedDraftId, agentSessionId: selectedAgentSessionId, published: selectedPublishedFromRoute });
+  selectedContextRef.current = { draftId: selectedDraftId, agentSessionId: selectedAgentSessionId, published: selectedPublishedFromRoute };
+  const draftEditorRef = useRef<HTMLDivElement>(null);
+  const [pendingDraftFocus, setPendingDraftFocus] = useState<string>();
   const [report, setReport] = useState<WorkflowDryRunReport>();
   const [catalog, setCatalog] = useState<WorkflowCatalog>();
   const [comparison, setComparison] = useState<WorkflowVersionComparison>();
@@ -3225,10 +3229,18 @@ function WorkflowsPage({
   };
   const recoverAdvisorProposal = async (session: AgentSession) => {
     if (!activeProjectId || session.status === "running" || !session.draft_id) return;
+    const matchesSelection = () => {
+      const context = selectedContextRef.current;
+      if (context.published) return false;
+      if (context.agentSessionId) return context.agentSessionId === session.id;
+      return !context.draftId || context.draftId === session.draft_id;
+    };
+    if (!matchesSelection()) return;
     const [{ drafts: latestDrafts }, sample] = await Promise.all([
       api.workflowDrafts(activeProjectId),
       api.workflowSampleTest(session.draft_id).catch(() => ({ sample_test: null, current: false })),
     ]);
+    if (!matchesSelection()) return;
     const savedDraft = latestDrafts.find((candidate) => candidate.id === session.draft_id);
     if (!savedDraft || ["published", "archived"].includes(savedDraft.status)) return;
     for (const item of latestDrafts)
@@ -3334,14 +3346,19 @@ function WorkflowsPage({
           { force: true },
         )
         .then(({ sessions }) => {
-          const requested = sessions.find(
-            (session) => session.id === selectedAgentSessionId,
+          const context = selectedContextRef.current;
+          const scopedSessions = sessions.filter((session) => !context.published && (
+            context.agentSessionId ? session.id === context.agentSessionId
+              : !context.draftId || session.draft_id === context.draftId
+          ));
+          const requested = scopedSessions.find(
+            (session) => session.id === context.agentSessionId,
           );
-          const latest = requested ?? sessions.find(
+          const latest = requested ?? scopedSessions.find(
             (session) =>
               session.kind === "pipeline_builder" &&
               ["running", "waiting_for_human"].includes(session.status),
-          ) ?? sessions.find((session) => session.kind === "pipeline_builder");
+          ) ?? scopedSessions.find((session) => session.kind === "pipeline_builder");
           setActiveAgentSession(latest);
           setAdvisorRunning(latest?.status === "running");
           if (latest && latest.status !== "running")
@@ -3374,6 +3391,12 @@ function WorkflowsPage({
     }
   }, [selectedDraftId, drafts]);
   useEffect(() => {
+    if (!pendingDraftFocus || draft?.id !== pendingDraftFocus || !draftEditorRef.current) return;
+    draftEditorRef.current.scrollIntoView({ block: "start" });
+    draftEditorRef.current.focus({ preventScroll: true });
+    setPendingDraftFocus(undefined);
+  }, [pendingDraftFocus, draft?.id]);
+  useEffect(() => {
     setSelectedPublishedKey(selectedPublishedFromRoute);
   }, [selectedPublishedFromRoute]);
   useEffect(() => {
@@ -3393,12 +3416,16 @@ function WorkflowsPage({
           { force: true },
         );
         if (stopped) return;
-        const latest = sessions.find((session) => session.kind === "pipeline_builder");
+        const context = selectedContextRef.current;
+        const latest = sessions.find((session) => session.kind === "pipeline_builder" && !context.published && (
+          context.agentSessionId ? session.id === context.agentSessionId
+            : !context.draftId || session.draft_id === context.draftId
+        ));
         if (latest) {
           if (advisorRequestActive.current && latest.status !== "running") return;
           setActiveAgentSession(latest);
           onSelectContext({
-            draftId: draft?.id ?? selectedDraftId ?? latest.draft_id,
+            draftId: context.draftId ?? latest.draft_id,
             agentSessionId: latest.id,
           }, true);
           if (!advisorRequestActive.current && latest.status !== "running") {
@@ -3587,6 +3614,27 @@ function WorkflowsPage({
       }
       else onError("The saved Agent Draft is no longer available in this Project.");
     }).catch((error: Error) => onError(error.message));
+  };
+  const openManagedDraft = (draftId: string) => {
+    const target = drafts.find((item) => item.id === draftId);
+    if (!target) {
+      onError(t("This Draft is unavailable. Refresh the Pipeline list and try again."));
+      return;
+    }
+    if (draft && draft.id !== draftId && persistedDrafts.current.get(draft.id) !== JSON.stringify(draft)) {
+      onError(t("Wait for the current Draft to finish saving, or resolve its save conflict before opening another Draft."));
+      return;
+    }
+    selectedContextRef.current = { draftId, agentSessionId: undefined, published: "" };
+    setAdvisorRunning(false);
+    setActiveAgentSession(undefined);
+    setAdvisorProposal(undefined);
+    setProposalDiff(undefined);
+    setDraft(target);
+    setReport(undefined);
+    setSelectedPublishedKey("");
+    onSelectContext({ draftId });
+    setPendingDraftFocus(draftId);
   };
   const applyProposalChanges = (changeIds = selectedProposalChanges) => {
     if (!draft || !advisorProposal || !proposalDiff)
@@ -3941,7 +3989,7 @@ function WorkflowsPage({
         project={activeProject}
         currentDraftId={draft?.id}
         currentDraftDirty={Boolean(draft && persistedDrafts.current.get(draft.id) !== JSON.stringify(draft))}
-        onOpenDraft={(draftId) => onSelectContext({ draftId }, true)}
+        onOpenDraft={openManagedDraft}
         onChanged={() => Promise.all([refreshDrafts(), onRefresh()]).then(() => undefined)}
         onCurrentDraftRemoved={() => {
           autosaveController.current?.abort();
@@ -4492,7 +4540,7 @@ function WorkflowsPage({
             </button>
           ))}
         </aside>
-        <div>
+        <div ref={draftEditorRef} tabIndex={-1} role="region" aria-label={t("Draft editor")} data-draft-id={draft?.id}>
           {draft ? (
             <Panel
               title={draft.name}

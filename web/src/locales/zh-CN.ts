@@ -1,5 +1,8 @@
 /** English source messages are stable keys; untranslated technical copy falls back to English. */
 export const zhCN: Record<string, string> = {
+  "Draft editor": "草稿编辑区",
+  "This Draft is unavailable. Refresh the Pipeline list and try again.": "此草稿不可用，请刷新流程列表后重试。",
+  "Wait for the current Draft to finish saving, or resolve its save conflict before opening another Draft.": "请等待当前草稿保存完成，或解决保存冲突后再打开其他草稿。",
   "text generation": "文本生成",
   "vision language": "视觉语言",
   "image classification": "图片分类",

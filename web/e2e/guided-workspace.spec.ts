@@ -1914,6 +1914,44 @@ test("a newly created template Draft opens immediately and survives refresh", as
   await expect(page.getByRole("heading", { name: created.name, exact: true }).last()).toBeVisible();
 });
 
+test("opening a managed Draft takes priority over a late Agent poll and focuses its editor", async ({ page, request }) => {
+  const createDraft = async () => {
+    const response = await request.post("/api/workflow-drafts", { data: { project_id: projectId, from_template: false } });
+    expect(response.ok()).toBeTruthy();
+    return response.json();
+  };
+  const previous = await createDraft();
+  const target = await createDraft();
+  let calls = 0;
+  let release!: () => void;
+  const delayed = new Promise<void>((resolve) => { release = resolve; });
+  await page.route(`**/api/projects/${projectId}/agent-sessions`, async (route) => {
+    calls += 1;
+    if (calls === 2) await delayed;
+    await route.fulfill({ json: { sessions: [{
+      id: "managed-draft-old-session", project_id: projectId, draft_id: previous.id,
+      kind: "pipeline_builder", status: "running", phase: "drafting",
+      budget: { max_steps: 48, max_tool_calls: 48, max_cost: "1" },
+      usage: { steps: 0, tool_calls: 0, input_tokens: 0, output_tokens: 0, cost: "0" },
+      steps: [], model_calls: [], unresolved_bindings: [],
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    }] } });
+  });
+  await page.goto(`/projects/${projectId}/build/pipeline?draft=${previous.id}`);
+  await expect.poll(() => calls).toBeGreaterThanOrEqual(2);
+  const row = page.locator(".pipeline-management-item").filter({ has: page.locator("code", { hasText: target.id }) });
+  await row.locator("summary").click();
+  await row.getByRole("button", { name: "Open", exact: true }).click();
+  release();
+  const editor = page.getByRole("region", { name: "Draft editor", exact: true });
+  await expect(editor).toHaveAttribute("data-draft-id", target.id);
+  await expect(editor).toBeFocused();
+  await expect(page).toHaveURL(new RegExp(`\\?draft=${target.id}$`));
+  await page.reload();
+  await expect(editor).toHaveAttribute("data-draft-id", target.id);
+  await expect(page).toHaveURL(new RegExp(`\\?draft=${target.id}$`));
+});
+
 test("Run lifecycle management survives refresh, restores, and preserves provenance after cleanup", async ({ page, request }) => {
   const shortRunId = runId.slice(0, 8);
   const readinessBefore = await request.get(`/api/projects/${projectId}/export-readiness`);
