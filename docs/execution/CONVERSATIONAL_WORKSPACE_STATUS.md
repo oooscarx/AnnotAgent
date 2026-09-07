@@ -766,3 +766,30 @@ delivery consumer, actual repair continuation or browser evidence in this increm
 ClarifyTask/IdentifyTarget/CompareCandidates and formal Review linkage remain pending.
 The new storage API is not exposed to model tools. No real workspace was migrated or
 restarted, no model was called, no push or remote changes occurred.
+
+### Human correction Application ownership and pixel validation (M2 increment)
+
+Added Application commands to list/create/answer the stored correction requests using
+canonical Project identity. New requests and unsaved answers resolve the actual current
+Project image and compare its SHA-256 with the immutable Sample Test input. Only final
+or review terminal projections may be targeted; coarse/intermediate outcomes and legacy
+empty projections are rejected. Storage still checks the exact Sample Operation/task
+association and feedback sequence. A completed answer's identical retry restores its
+original receipt even after the image changes; it does not silently edit new pixels.
+No command invokes a model, publishes or writes formal annotations.
+
+Evidence: two new Application tests cover foreign Project/Task, missing terminal
+projection, intermediate candidate rejection and changed pixels. The integration test
+creates a temporary Project, imports a TEST copy through the existing controlled import,
+saves a sample and task request, changes the actual image file, verifies answer rejection
+with zero feedback, restores the pixels, saves the answer and verifies idempotent recovery
+after another file change. Its model-call history remains empty. Initial test attempts
+incorrectly imported directly from outside the workspace; the existing security check
+correctly rejected them, so the test now stages its copy inside the isolated workspace.
+
+HTTP routes, Human Request cards, submit-and-continue and the durable coordinator consumer
+are still pending; this is not browser or end-to-end human continuation evidence.
+
+Increment validation: Application all-features **97 passed / 1 billable ignored**,
+strict all-targets/all-features Clippy and workspace rustfmt check passed. No real
+workspace changes, paid inference, push or remote changes.

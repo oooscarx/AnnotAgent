@@ -1,6 +1,7 @@
 //! Shared application service used by CLI/TUI and HTTP frontends.
 
 mod conversation_builder;
+mod conversation_human_requests;
 mod conversation_provider;
 mod conversation_vision_calls;
 pub use conversation_builder::ConversationBuilderExecution;
