@@ -2167,6 +2167,8 @@ button[aria-disabled="true"] { cursor: not-allowed; opacity: .55; }
 .sample-feedback-image { min-width: 0; }
 .sample-feedback-decision h3, .sample-feedback-decision p { margin: 0; }
 .sample-feedback-fields { display: grid; gap: 1rem; padding-top: 1rem; line-height: 1.5; }
+.workflow-edit-details > summary, .agent-execution-facts > summary { cursor: pointer; font-weight: 600; padding: 1rem; }
+.workflow-edit-details[open] > .workflow-layout { margin-top: 1rem; }
 .sample-feedback-fields .inline-notice { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
 .sample-feedback-decision > summary, .sample-technical-details > summary { cursor: pointer; font-weight: 600; padding-block: 0.5rem; }
 .sample-feedback-coordinates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }

@@ -708,6 +708,7 @@ export function App() {
             onOpenProjects={() => navigate("/projects")}
             onOpenProject={() => openProject(route.projectId)}
             onOpenTrash={() => navigate(projectTrashPath(route.projectId, "pipeline"))}
+            onNavigationGuardChange={setNavigationGuard}
             onError={setError}
           />
         )}
@@ -2754,6 +2755,7 @@ function WorkflowsPage({
   onOpenProjects,
   onOpenProject,
   onOpenTrash,
+  onNavigationGuardChange,
   onError,
 }: {
   projects: ProjectSummary[];
@@ -2779,6 +2781,7 @@ function WorkflowsPage({
   onOpenProjects: () => void;
   onOpenProject: () => void;
   onOpenTrash: () => void;
+  onNavigationGuardChange: (guard?: () => boolean) => void;
   onError: (value: string) => void;
 }) {
   const entries = projects.flatMap((project) =>
@@ -2857,6 +2860,7 @@ function WorkflowsPage({
   const autosaveTimer = useRef<number | undefined>(undefined);
   const autosaveController = useRef<AbortController | undefined>(undefined);
   const autosaveGeneration = useRef(0);
+  const [autosaveError, setAutosaveError] = useState("");
   const [draftConflict, setDraftConflict] = useState<{
     local: WorkflowDraft;
     server?: WorkflowDraft;
@@ -3004,6 +3008,7 @@ function WorkflowsPage({
     if (draftConflict?.local.id === draft.id) return;
     const snapshot = JSON.stringify(draft);
     if (persistedDrafts.current.get(draft.id) === snapshot) return;
+    setAutosaveError("");
     if (autosaveTimer.current) window.clearTimeout(autosaveTimer.current);
     autosaveTimer.current = window.setTimeout(() => {
       autosaveController.current?.abort();
@@ -3047,6 +3052,7 @@ function WorkflowsPage({
             return;
           }
           onError(`Draft autosave failed: ${error.message}`);
+          setAutosaveError(error.message);
         });
     }, 800);
     return () => {
@@ -3054,6 +3060,14 @@ function WorkflowsPage({
     };
   }, [activeProjectId, draft, draftConflict]);
   useEffect(() => () => autosaveController.current?.abort(), []);
+  const draftHasUnsavedChanges = Boolean(draft && !["published", "archived"].includes(draft.status)
+    && persistedDrafts.current.get(draft.id) !== JSON.stringify(draft));
+  useEffect(() => {
+    onNavigationGuardChange(() => !draftHasUnsavedChanges || window.confirm(t("This Draft has unsaved changes. Leave without saving?")));
+    const guard = (event: BeforeUnloadEvent) => { if (draftHasUnsavedChanges) event.preventDefault(); };
+    window.addEventListener("beforeunload", guard);
+    return () => { onNavigationGuardChange(undefined); window.removeEventListener("beforeunload", guard); };
+  }, [draftHasUnsavedChanges, onNavigationGuardChange]);
   useEffect(() => {
     setAdvisorProposal(undefined);
     setAdvisorProposalRecovered(false);
@@ -3117,6 +3131,7 @@ function WorkflowsPage({
   }, [selectedDraftId, drafts]);
   useEffect(() => {
     if (!pendingDraftFocus || draft?.id !== pendingDraftFocus || !draftEditorRef.current) return;
+    draftEditorRef.current.closest("details")?.setAttribute("open", "");
     draftEditorRef.current.scrollIntoView({ block: "start" });
     draftEditorRef.current.focus({ preventScroll: true });
     setPendingDraftFocus(undefined);
@@ -3213,6 +3228,7 @@ function WorkflowsPage({
         setDraft(created);
         setReport(undefined);
         onSelectContext({ draftId: created.id }, true);
+        setPendingDraftFocus(created.id);
         return Promise.all([refreshDrafts(), onRefresh()]);
       })
       .catch((error: Error) => {
@@ -3331,6 +3347,7 @@ function WorkflowsPage({
     if (selectedDraft) {
       setDraft(selectedDraft);
       onSelectContext({ draftId }, true);
+      setPendingDraftFocus(draftId);
       return;
     }
     void api.workflowDrafts(activeProjectId || undefined).then(({ drafts: latest }) => {
@@ -3338,6 +3355,7 @@ function WorkflowsPage({
       if (recovered) {
         setDraft(recovered);
         onSelectContext({ draftId }, true);
+        setPendingDraftFocus(draftId);
       }
       else onError("The saved Agent Draft is no longer available in this Project.");
     }).catch((error: Error) => onError(error.message));
@@ -3685,14 +3703,15 @@ function WorkflowsPage({
     return <section className="page-stack"><ProjectBreadcrumb project={activeProject} current="Build" onOpenProjects={onOpenProjects} onOpenProject={onOpenProject} /><BuildNavigation step="pipeline" onNavigate={onNavigate} /><div className="loading-banner" role="status">{t("Loading Build readiness…")}</div></section>;
   if (buildSummary && !buildStepAllowed(buildSummary.guidance, "pipeline"))
     return <section className="page-stack"><ProjectBreadcrumb project={activeProject} current="Build" onOpenProjects={onOpenProjects} onOpenProject={onOpenProject} /><BuildNavigation step="pipeline" guidance={buildSummary.guidance} onNavigate={onNavigate} /><BuildBlocker guidance={buildSummary.guidance} onNavigate={onNavigate} /></section>;
+  if (preparation) return <TaskModelPreparation section={preparation} onSelect={setPreparation} onError={onError} onClose={async () => {
+    await refreshModelChoices();
+    setPreparation(undefined);
+    requestAnimationFrame(() => document.getElementById("prepare-task-models")?.focus());
+  }} />;
   return (
     <section className="page-stack">
       <ProjectBreadcrumb project={activeProject} current="Build" onOpenProjects={onOpenProjects} onOpenProject={onOpenProject} />
       <BuildNavigation step="pipeline" guidance={buildSummary?.guidance} onNavigate={(step) => onNavigate(step, step === "test" ? draft?.id : undefined)} />
-      {preparation && <TaskModelPreparation section={preparation} onSelect={setPreparation} onError={onError} onClose={async () => {
-        await refreshModelChoices();
-        setPreparation(undefined);
-      }} />}
       <div className="toolbar-panel workflow-designer-header">
         <div>
           <span className="eyebrow">{t("Step 3 · Automation")}</span>
@@ -3700,7 +3719,7 @@ function WorkflowsPage({
           <p>{t("Start from a registered recipe or Advisor suggestion, then edit the same autosaved Draft. Technical graph details remain available for expert inspection.")}</p>
         </div>
         <div className="button-row">
-          <small className="save-indicator" aria-live="polite">{t("Saved")}{" "}{Math.max(0, Math.floor((clock - (savedAt?.getTime() ?? new Date(draft?.updated_at ?? clock).getTime())) / 1000))}{" "}{t("seconds ago")}</small>
+          <small className="save-indicator" aria-live="polite">{draftConflict || autosaveError ? t("Save failed") : draftHasUnsavedChanges ? t("Saving…") : draft ? `${t("Saved")} ${Math.max(0, Math.floor((clock - (savedAt?.getTime() ?? new Date(draft.updated_at).getTime())) / 1000))} ${t("seconds ago")}` : t("No Current Draft")}</small>
           <button
             onClick={() => create(false)}
             disabled={busy || !activeProjectId}
@@ -3856,7 +3875,7 @@ function WorkflowsPage({
             <div className="inline-provider-setup">
               <h4>{t("Provider setup required")}</h4>
               <p>{t("Pipeline Builder needs an available text model with Tool Calls and Structured Output. Your images and goal are already saved; you can prepare a model here or return later.")}</p>
-              <button className="primary" onClick={onOpenModels}>{t("Prepare models in this task")}</button>
+              <button id="prepare-task-models" className="primary" onClick={onOpenModels}>{t("Prepare models in this task")}</button>
             </div>
           )}
           <fieldset className="agent-objective agent-objective-primary" aria-label={t("Pipeline Builder objective")}>
@@ -4219,7 +4238,7 @@ function WorkflowsPage({
         )}
       </div>
       </details>
-      <div className="workflow-layout">
+      <details className="workflow-edit-details"><summary>{t("Edit plan and advanced configuration")}</summary><div className="workflow-layout">
         <aside className="panel workflow-list">
           <span className="eyebrow">{t("Current Draft")}</span>
           <h2>{draft ? draft.name : t("No Current Draft")}</h2>
@@ -4587,6 +4606,7 @@ function WorkflowsPage({
           )}
         </div>
       </div>
+      </details>
       {buildSummary && <BuildFooter previous="labels" next="test" nextEnabled={buildStepAllowed(buildSummary.guidance, "test")} nextPrimary={false} onNavigate={(step) => onNavigate(step, step === "test" ? draft?.id : undefined)} />}
     </section>
   );
@@ -9922,7 +9942,7 @@ function AgentSessionTrace({
             </p>
           </section>
         )}
-      <div className="fact-grid">
+      <details className="agent-execution-facts"><summary>{t("Execution details and budget")}</summary><div className="fact-grid">
         <Fact label={t("Current stage")} value={stage} />
         <Fact label={t("Model turns")} value={session.model_turns ?? session.model_calls.length} />
         <Fact label={t("Tool budget")} value={`${remainingCalls} remaining · ${reservedCalls} reserved`} />
@@ -9960,7 +9980,7 @@ function AgentSessionTrace({
         />
         {session.builder_constraints && <Fact label={t("Priority")} value={session.builder_constraints.priority.replaceAll("_", " ")} />}
         {session.build_mode && <Fact label={t("Build mode")} value={session.build_mode.kind.replaceAll("_", " ")} />}
-      </div>
+      </div></details>
       {!!session.plan_candidates?.length && (
         <details className="agent-plan-candidates" aria-label={t("Pipeline plan candidates")}>
           <summary>{t("Alternative plans and selection details")} · {session.plan_candidates?.length}</summary>
@@ -10053,7 +10073,7 @@ function AgentSessionTrace({
           </div>
         </section>
       )}
-      <details className="agent-tool-trace" open={session.status === "running"}>
+      <details className="agent-tool-trace">
         <summary>Tool actions ({session.steps.length})</summary>
       <ol className="agent-action-list">
         {session.steps.map((step) => (

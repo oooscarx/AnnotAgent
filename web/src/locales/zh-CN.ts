@@ -1590,5 +1590,9 @@ export const zhCN: Record<string, string> = {
   "Sandbox only": "仅用于沙箱评估",
   "Result needs attention": "结果有问题",
   "Confirm sample and next": "确认样例并下一张",
-  "Confirm this sample": "确认此样例"
+  "Confirm this sample": "确认此样例",
+  "This Draft has unsaved changes. Leave without saving?": "此草稿有尚未保存的修改。仍要离开吗？",
+  "Execution details and budget": "执行详情与调用预算",
+  "Save failed": "保存失败",
+  "Edit plan and advanced configuration": "编辑方案与高级配置"
 };

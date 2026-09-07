@@ -164,6 +164,7 @@ export:
   expect(suggested.status(), suggestionBody).toBe(201);
   const suggestion = JSON.parse(suggestionBody);
   await page.goto(`/projects/${cropProjectId}/build/pipeline`);
+  await page.getByText("Edit plan and advanced configuration", { exact: true }).click();
   await expect(page.getByText("Shared Stages", { exact: true })).toBeVisible();
   await page.getByText("Edit automation", { exact: true }).click();
   const autosaved = page.waitForResponse((response) =>
@@ -481,6 +482,9 @@ export:
   ]);
 
   const editNode = async (page: Page, key: string) => {
+    if (await page.locator(".workflow-edit-details").getAttribute("open") === null) {
+      await page.getByText("Edit plan and advanced configuration", { exact: true }).click();
+    }
     const draftName = page.getByLabel("Draft name");
     const value = await draftName.inputValue();
     const response = page.waitForResponse((candidate) =>
@@ -1222,6 +1226,7 @@ test("geometry safety is visible from Results through Improve Automation", async
 test("generic Project routes contain no RoboCup-specific copy", async ({ page }) => {
   await page.goto(`/projects/${projectId}/build/pipeline`);
   await expect(page.locator("body")).not.toContainText("RoboCup");
+  await page.getByText("Edit plan and advanced configuration", { exact: true }).click();
   await expect(page.getByText("Shared Stages", { exact: true })).toBeVisible();
 });
 
@@ -1920,6 +1925,7 @@ test("a newly created template Draft opens immediately and survives refresh", as
   await expect(page.getByRole("heading", { name: created.name, exact: true }).last()).toBeVisible();
   await page.reload();
   await expect(page).toHaveURL(new RegExp(`\\?draft=${created.id}$`));
+  await page.getByText("Edit plan and advanced configuration", { exact: true }).click();
   await expect(page.getByRole("heading", { name: created.name, exact: true }).last()).toBeVisible();
 });
 
@@ -1957,8 +1963,31 @@ test("opening a managed Draft takes priority over a late Agent poll and focuses 
   await expect(editor).toBeFocused();
   await expect(page).toHaveURL(new RegExp(`\\?draft=${target.id}$`));
   await page.reload();
+  await page.getByText("Edit plan and advanced configuration", { exact: true }).click();
   await expect(editor).toHaveAttribute("data-draft-id", target.id);
   await expect(page).toHaveURL(new RegExp(`\\?draft=${target.id}$`));
+});
+
+test("failed Draft autosave stays explicit and guards the original task", async ({ page, request }) => {
+  const response = await request.get(`/api/workflow-drafts?project_id=${conflictProjectId}`);
+  const { drafts } = await response.json();
+  const draft = drafts.find((value: { status: string }) => !["archived", "published"].includes(value.status));
+  expect(draft).toBeTruthy();
+  await page.goto(`/projects/${conflictProjectId}/build/pipeline?draft=${draft.id}`);
+  await page.getByText("Edit plan and advanced configuration", { exact: true }).click();
+  await page.route(`**/api/workflow-drafts/${draft.id}`, async (route) => {
+    if (route.request().method() === "PATCH") await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Isolated test: save unavailable" }) });
+    else await route.continue();
+  });
+  await page.getByLabel("Draft name", { exact: true }).fill("Unsaved local test edit");
+  await expect(page.locator(".save-indicator")).toContainText("Save failed");
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await page.getByRole("button", { name: "Back to project", exact: true }).click();
+  await expect(page.getByLabel("Draft name", { exact: true })).toHaveValue("Unsaved local test edit");
+  await expect(page).toHaveURL(new RegExp(`/build/pipeline\\?draft=${draft.id}`));
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Back to project", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${conflictProjectId}$`));
 });
 
 test("Run lifecycle management survives refresh, restores, and preserves provenance after cleanup", async ({ page, request }) => {

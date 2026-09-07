@@ -86,3 +86,29 @@ coverage includes 1024/720/640 CSS-pixel reflow and phone paths; **native 200% b
 has not been tested**. No real-person usability test performed.
 
 Commits: M0 `a4e36f9`; M1 is recorded by the next local commit containing this ledger.
+
+## M2 checkpoint: progressive setup and truthful Draft progress
+
+M1 commit: `a6a68f2`. Model preparation now occupies the current task content instead of
+stacking Registry forms above the entire Builder. It reuses the same forms, refreshes real
+compatibility when returning, retains the Draft URL and does not resume inference. Advanced
+plan editing is collapsed; explicit Open/Create Draft actions expand and focus it. Pipeline
+management stays outside that disclosure and remains directly reachable. Raw running tool
+actions and budget counters no longer expand automatically; phase/status/cancel and outcome
+repair controls remain visible. Counters describe the real tool budget, not completion %.
+
+Autosave now distinguishes unsaved/saving, failure/conflict and saved snapshots. Navigation
+and refresh guards protect unsaved Draft edits. New browser regression forces PATCH failure,
+verifies the error state and retained name, rejects a leave request, then explicitly discards
+the local edit. It does not mutate real Workspace data. Four additional browser checks cover
+preparation at 1440×900, 1280×720, 1024×768 and 390×844 (`prepare-*.png`).
+
+Remaining M2 boundaries: no scope-bound sample approval receipt or cancellable synchronous
+sample execution has been added. Registry panel selection itself resets on refresh, while
+Project/Draft remain stable. Advanced-editor expansion resets on refresh and is one click
+away. Do not claim these acceptance items complete. No new authorization or automatic paid
+operation is inferred by entering, refreshing or leaving either screen.
+
+M2 checkpoint verification: **60/60 E2E passed**, TypeScript and production build passed;
+`/tmp/annotagent-focus-m2-verified.log`. Includes unchanged security, deletion/restore,
+publication, same-project navigation, slow poll and dual-tab conflict regressions.
