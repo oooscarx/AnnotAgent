@@ -112,11 +112,24 @@ fn scope(
             "The configured model-call budget is zero",
         ));
     }
+    let sample_feedback = sample
+        .inputs
+        .iter()
+        .map(|image| {
+            state
+                .application
+                .store()
+                .sample_feedback(&sample.id, &image.image_id)
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(ApiError::internal)?;
+    let feedback_count = sample_feedback.iter().map(Vec::len).sum::<usize>();
     let mut value = json!({
         "project_id":project,"draft_id":draft.id,"sample_test_id":sample.id,"revision":draft.revision,"draft_content_hash":draft.content_hash,
         "goal":state.application.project_goal(project).map_err(ApiError::bad_request)?,
         "plan_name":draft.name,"project_schema_hash":schema_hash,"image_count":count,"available_images":inputs.len(),"images":inputs.iter().take(count).collect::<Vec<_>>(),
         "models":models,"maximum_model_calls":maximum,"estimated_cost":null,
+        "sample_feedback":sample_feedback,"sample_feedback_count":feedback_count,
         "sample_images_are_sandbox_only":true,"review_policy":"Uncertain results stay in Review. This action does not accept every output.",
     });
     value["authorization_fingerprint"] = json!(annotagent_image_tools::sha256(

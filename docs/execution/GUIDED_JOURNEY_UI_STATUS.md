@@ -324,3 +324,35 @@ M3 vertical slice verification (2026-09-07):
 - `cargo test --workspace --all-features`, Clippy with warnings denied, workspace
   build, Web typecheck/unit tests (82), production build and the isolated journey
   E2E passed. Full browser regression and Review/export refinements remain next.
+
+M3a local commit: `79b83fd` — confirmed processing and bounded results.
+
+### M3b — continuous Review and delivery
+
+Review contract: inspect this object → save/accept/reject using the existing
+Project-owned endpoints → next actual queue item only after success. The last
+decision stays on its stable image URL, with an explicit export action. Failure
+retains edits. The default item renders direct shape editing, label/reason fields
+only while editing, Add/Undo and original/result comparison; no Debug Inspector.
+Existing technical evidence, revision history and provenance are still available
+from the Review management list via the typed `?view=audit` canonical route.
+
+Export contract: show real readiness, accepted count, unresolved work, compatible
+formats and loss warnings → explicit export → persisted real report/output path.
+The output path is labeled as server-side, not a browser-local folder. Duplicate
+navigation tabs were removed. No install/publish/inference is triggered by entry.
+Slow readiness requests and export completions cannot overwrite another Project.
+
+Verification: full 62-test browser suite passed after updating audit-route and
+connection-recovery assertions to the new presentation. Further regression adds
+an injected HTTP 503 on Review save (fields retained, no acceptance or advance),
+last-item canvas after refresh, and export DOM isolation. New screenshots are
+`guided-journey/review-default.png`, `review-complete.png`, `export-complete.png`.
+These remain explicitly synthetic fixture interactions, not real inference or
+human usability testing.
+
+Confirmation now includes the saved Sample Feedback history in its authorization
+fingerprint. Feedback changed in another tab requires re-confirmation. The UI
+warns that manually corrected samples do not change future model predictions.
+Remaining work: task-specific vision setup, sample-feedback-driven controlled
+improvement, complete default Run/management isolation and final M4 coverage.

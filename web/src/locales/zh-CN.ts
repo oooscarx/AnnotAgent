@@ -1,5 +1,12 @@
 /** English source messages are stable keys; untranslated technical copy falls back to English. */
 export const zhCN: Record<string, string> = {
+  "Decision saved": "审核决定已保存",
+  "Image-level classification · use the label control to edit": "整图分类，可通过标签输入框修改",
+  "Your sample corrections are saved evaluation feedback. They do not change this plan's future predictions; processing may repeat the issues you identified.": "样例修正已保存为评估反馈，并不会改变这套方案之后的预测。继续处理可能仍会出现你指出的问题。",
+  "Loading saved task…": "正在加载已保存的任务…",
+  "Live updates interrupted — showing the last saved state": "实时更新已中断，当前显示上次保存的状态",
+  "Review audit and sources": "审核审计与来源",
+  "Your last decision is saved. You can keep inspecting this image or export the confirmed results.": "最后一次审核已保存。你可以继续检查这张图片，或导出已确认的结果。",
   "Processing results": "处理结果",
   "Processing your images": "正在处理你的图片",
   "Your processing results": "你的处理结果",

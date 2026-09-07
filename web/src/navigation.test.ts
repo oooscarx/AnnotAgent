@@ -11,6 +11,16 @@ import {
 } from "./navigation";
 
 describe("guided workspace routing", () => {
+  it("keeps review audit and Batch filters in explicit canonical context", () => {
+    const audit = projectReviewPath("project", "review", "audit");
+    expect(parseWorkspaceRoute("/review/review", "?project_id=project&view=audit").canonicalPath).toBe(audit);
+    expect(parseWorkspaceRoute("/projects/project/review/review", "?view=untrusted").canonicalPath).toBe(projectReviewPath("project", "review"));
+    const path = projectBatchPath("project", "batch", { imageId: "image", status: "failed" });
+    const url = new URL(path, "http://localhost");
+    const route = parseWorkspaceRoute(url.pathname, url.search);
+    expect(route).toMatchObject({ imageId: "image", status: "failed", canonicalPath: path });
+    expect(routeFocusKey(route)).toBe(routeFocusKey(parseWorkspaceRoute(url.pathname, "?image=next")));
+  });
   it("preserves exact sample image identity without moving page focus", () => {
     const path = projectBuildPath("same name", "test", { draftId: "draft", sampleTestId: "test", imageId: "stable image" });
     const url = new URL(path, "http://localhost");

@@ -30,6 +30,7 @@ export function FocusHeader({ project, route, titleRef, loaded, connection, onNa
     <button onClick={() => onNavigate(parent)}>{t(projectId ? "Back to project" : "Back to projects")}</button>
     <div className="focus-heading"><span>{project?.name ?? t(projectId ? "Loading Project…" : "New annotation project")}</span><h1 ref={titleRef} tabIndex={-1}>{t(title)}</h1></div>
     {!journey && <span className="focus-connection" role="status">{t(loaded ? "Workspace loaded" : "Loading workspace state…")} · SSE {t(connection)}</span>}
+    {journey && (!loaded || connection !== "connected") && <span className="focus-connection" role="status">{t(!loaded ? "Loading saved task…" : "Live updates interrupted — showing the last saved state")}</span>}
     {!journey && <details className="focus-project-menu"><summary>{t("Project menu")}</summary><nav aria-label={t("Project management")}>
       {items.map(([label, path]) => <a key={path} href={path} onClick={(event) => { event.preventDefault(); event.currentTarget.closest("details")?.removeAttribute("open"); onNavigate(path); }}>{t(label)}</a>)}
     </nav></details>}

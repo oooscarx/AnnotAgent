@@ -1,7 +1,7 @@
 import { t, localeTag, useLocale } from "./i18n";
 import { isTextEditingTarget, workspaceShortcutAllowed } from "./workspaceKeyboard";
 import { recoveryNodeIds, builderStopLabel, builderPlanSource } from "./pipelinePresentation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { LanguageSelector } from "./components/LanguageSelector";
 import { ApiRequestError, api, subscribeEvents } from "./api";
 import { AnnotationCanvas } from "./components/AnnotationCanvas";
@@ -2637,10 +2637,17 @@ function ProjectExportPage({
   const [exporting, setExporting] = useState(false);
   const [result, setResult] = useState<ProjectExportResult>();
   const [copyStatus, setCopyStatus] = useState("");
+  const exportPending = useRef(false);
+  const exportOwner = useRef(project?.id); exportOwner.current = project?.id;
+  const readinessGeneration = useRef(0);
+  const exportMounted = useRef(false);
+  useEffect(() => { exportMounted.current = true; return () => { exportMounted.current = false; readinessGeneration.current += 1; }; }, []);
   const activeReadiness = readiness?.project_id === project?.id ? readiness : undefined;
-  const loadReadiness = () => {
+  const loadReadiness = (signal?: AbortSignal) => {
     if (!project) return Promise.resolve();
-    return api.exportReadiness(project.id).then((value) => {
+    const generation = ++readinessGeneration.current;
+    return api.exportReadiness(project.id, signal).then((value) => {
+      if (!exportMounted.current || signal?.aborted || exportOwner.current !== project.id || generation !== readinessGeneration.current) return;
       setReadiness(value);
       setFormat((current) =>
         value.formats.some((item) => item.format === current && item.supported)
@@ -2651,10 +2658,12 @@ function ProjectExportPage({
     });
   };
   useEffect(() => {
+    const controller = new AbortController();
     setReadiness(undefined);
     setResult(undefined);
     setCopyStatus("");
-    void loadReadiness().catch((error: Error) => onError(error.message));
+    void loadReadiness(controller.signal).catch((error: Error) => { if (!controller.signal.aborted) onError(error.message); });
+    return () => controller.abort();
   }, [
     project?.id,
     project?.image_count,
@@ -2663,17 +2672,19 @@ function ProjectExportPage({
     project?.active_batch?.event_sequence,
   ]);
   const executeExport = () => {
-    if (!project || !format || !activeReadiness?.ready) return;
+    if (!project || !format || !activeReadiness?.ready || exportPending.current) return;
+    exportPending.current = true;
     setExporting(true);
     setCopyStatus("");
     void api
       .export(project.id, format)
       .then((value) => {
+        if (!exportMounted.current || exportOwner.current !== project.id) return;
         setResult(value);
         return loadReadiness();
       })
-      .catch((error: Error) => onError(error.message))
-      .finally(() => setExporting(false));
+      .catch((error: Error) => { if (exportMounted.current && exportOwner.current === project.id) onError(error.message); })
+      .finally(() => { exportPending.current = false; if (exportMounted.current) setExporting(false); });
   };
   const copyOutputPath = () => {
     if (!result) return;
@@ -2715,7 +2726,7 @@ function ProjectExportPage({
           <section className="export-format-section" aria-labelledby="export-format-title">
             <div className="section-heading"><div><span className="eyebrow">{t("Schema compatibility")}</span><h2 id="export-format-title">{t("Choose an export format")}</h2></div><small>{t("The recommendation is calculated from the active Project Schema.")}</small></div>
             <div className="export-format-grid">
-              {activeReadiness.formats.map((item) => <label className={`export-format-card ${format === item.format ? "selected" : ""} ${!item.supported ? "unsupported" : ""}`} key={item.format}>
+              {activeReadiness.formats.filter((item) => item.supported).map((item) => <label className={`export-format-card ${format === item.format ? "selected" : ""}`} key={item.format}>
                 <input type="radio" name="export-format" value={item.format} checked={format === item.format} disabled={!item.supported} onChange={() => setFormat(item.format)} />
                 <span>
                   <span className="export-format-title"><strong>{item.display_name}</strong>{item.recommended && <b>{t("Recommended")}</b>}{!item.supported && <b>{t("Incompatible")}</b>}</span>
@@ -9050,6 +9061,7 @@ function ReviewPage({
   onNavigationGuardChange: (guard?: () => boolean) => void;
   onError: (value: string) => void;
 }) {
+  const guidedReview = !!route.reviewItemId && route.view !== "audit";
   const [reviews, setReviews] = useState<ReviewItem[]>([]);
   const [queueLoaded, setQueueLoaded] = useState(false);
   const [nextReviewOffset, setNextReviewOffset] = useState<number | null>(null);
@@ -9087,6 +9099,16 @@ function ReviewPage({
   const [images, setImages] = useState<ImageItem[]>([]);
   const queueLoadGeneration = useRef(0);
   const itemLoadGeneration = useRef(0);
+  const reviewProgressRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!rejectOpen) return;
+    const previousFocus = document.activeElement;
+    document.querySelector<HTMLSelectElement>(".review-reject-panel select")?.focus();
+    return () => {
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus({ preventScroll: true });
+      else reviewProgressRef.current?.focus({ preventScroll: true });
+    };
+  }, [rejectOpen]);
   useEffect(() => setSelectedId(route.reviewItemId ?? ""), [route.reviewItemId]);
   const routeReview = route.reviewItemId
     ? reviews.find((review) => review.id === route.reviewItemId)
@@ -9113,8 +9135,8 @@ function ReviewPage({
       projects,
       item ?? reviews.find((review) => review.id === reviewId),
     );
-    if (owner) return projectReviewPath(owner.id, reviewId);
-    if (route.projectId) return projectReviewPath(route.projectId, reviewId);
+    if (owner) return projectReviewPath(owner.id, reviewId, route.view);
+    if (route.projectId) return projectReviewPath(route.projectId, reviewId, route.view);
     return `/review/${encodeURIComponent(reviewId)}`;
   };
   useEffect(() => {
@@ -9125,7 +9147,7 @@ function ReviewPage({
         route.projectId !== routeReviewProject.id)
     )
       onNavigate(
-        projectReviewPath(routeReviewProject.id, route.reviewItemId),
+        projectReviewPath(routeReviewProject.id, route.reviewItemId, route.view),
         true,
       );
   }, [route.kind, route.reviewItemId, route.projectId, routeReviewProject?.id]);
@@ -9139,7 +9161,7 @@ function ReviewPage({
         if (generation !== queueLoadGeneration.current) return;
         setReviews((current) => append
           ? [...current, ...value.reviews.filter((review) => !current.some((item) => item.id === review.id))]
-          : value.reviews);
+          : [...value.reviews, ...current.filter((item) => item.id === route.reviewItemId && !value.reviews.some((review) => review.id === item.id))]);
         setProgress(value.progress);
         setNextReviewOffset(value.page.next_offset);
       })
@@ -9175,30 +9197,35 @@ function ReviewPage({
       .catch((error: Error) => {
         if (generation === itemLoadGeneration.current && !isAbortError(error)) onError(error.message);
       });
-    return () => workspaceQueries.abort(key);
+    return () => { itemLoadGeneration.current += 1; workspaceQueries.abort(key); };
   }, [route.kind, route.projectId, detailReviewId]);
   useEffect(() => {
     void refresh();
     const key = `${queryKeys.reviewQueue(route.projectId)}:0`;
-    return () => workspaceQueries.abort(key);
+    return () => { queueLoadGeneration.current += 1; workspaceQueries.abort(key); };
   }, [route.projectId]);
   useEffect(() => {
     if (!selected?.id) {
       setQueueNavigation(undefined);
       return;
     }
+    let current = true;
     void api
       .reviewNext(selected.id, route.projectId)
       .then((value) => {
+        if (!current) return;
         setQueueNavigation(value);
         setProgress(value.progress);
       })
-      .catch((error: Error) => onError(error.message));
+      .catch((error: Error) => { if (current) onError(error.message); });
+    return () => { current = false; };
   }, [selected?.id, route.projectId]);
   useEffect(() => {
+    let current = true;
     void api
       .skills()
       .then((skills) => {
+        if (!current) return;
         const ids = reviewProject?.enabled_skills.map((skill) => skill.id) ?? [];
         const enabled = skills.filter((skill) => ids.includes(skill.id));
         const options = enabled.flatMap((skill) => skill.correction_taxonomy.map((value) => ({
@@ -9214,18 +9241,21 @@ function ReviewPage({
         setSkillReasonOptions(options);
         setReason("other");
       })
-      .catch((error: Error) => onError(error.message));
+      .catch((error: Error) => { if (current) onError(error.message); });
+    return () => { current = false; };
   }, [reviewProject?.id, selected?.source_skill_id]);
   useEffect(() => {
+    let current = true;
+    setImages([]);
     if (reviewProject) {
       const key = queryKeys.projectImages(reviewProject.id);
       void workspaceQueries
         .load(key, (signal) => api.images(reviewProject.id, signal), { staleTime: 30_000 })
-        .then((value) => setImages(value.images))
+        .then((value) => { if (current) setImages(value.images); })
         .catch((error: Error) => {
-          if (!isAbortError(error)) onError(error.message);
+          if (current && !isAbortError(error)) onError(error.message);
         });
-      return () => workspaceQueries.abort(key);
+      return () => { current = false; workspaceQueries.abort(key); };
     }
     setImages([]);
   }, [reviewProject?.id]);
@@ -9325,7 +9355,12 @@ function ReviewPage({
     try {
       if (isNew) await api.createAnnotation(selected.run_id, annotation);
       else await api.revise(annotation, reason);
+      const savedReview = await api.review(annotation.id, undefined, reviewProject?.id);
+      setReviews((items) => [...items.filter((item) => item.id !== savedReview.id), savedReview]);
+      setDraft(savedReview.annotation);
+      setAttributesText(JSON.stringify(savedReview.annotation.attributes ?? {}, null, 2));
       if (isNew) {
+        onNavigationGuardChange();
         setSelectedId(annotation.id);
         onNavigate(reviewHref(annotation.id), true);
       }
@@ -9373,6 +9408,7 @@ function ReviewPage({
     setDraft(annotation);
     setAttributesText("{}");
     setIsNew(true);
+    setEditing(true);
   };
   const hasUnsavedAnnotationChanges = Boolean(
     isNew ||
@@ -9417,6 +9453,7 @@ function ReviewPage({
     decision: "accept" | "reject",
     reasonCode: string,
   ) => {
+    if (decisionBusy || (selected && ["human_accepted", "rejected"].includes(selected.annotation.review_status) && !hasUnsavedAnnotationChanges)) return;
     if (!selected || !reviewProject) {
       onError("Select the Review item's Project before recording a decision.");
       return;
@@ -9442,15 +9479,18 @@ function ReviewPage({
       setProgress(outcome.progress);
       setRejectOpen(false);
       setEditing(false);
-      const queue = await api.reviews(route.projectId);
-      setReviews(queue.reviews);
-      setProgress(queue.progress);
+      setDraft(outcome.annotation);
+      setAttributesText(JSON.stringify(outcome.annotation.attributes ?? {}, null, 2));
+      setPast([]); setFuture([]);
+      setReviews((items) => items.map((item) => item.id === selected.id ? { ...item, annotation: outcome.annotation } : item));
+      onNavigationGuardChange();
       if (outcome.next_review) {
+        setReviews((items) => [...items.filter((item) => item.id !== outcome.next_review!.id), outcome.next_review!]);
         setSelectedId(outcome.next_review.id);
         onNavigate(reviewHref(outcome.next_review.id, outcome.next_review), true);
       } else {
-        setSelectedId("");
-        onNavigate(projectReviewPath(reviewProject.id), true);
+        // Keep the last saved result on its stable URL. Export is a separate action.
+        setQueueNavigation(undefined);
       }
     } catch (error) {
       onError((error as Error).message);
@@ -9474,7 +9514,7 @@ function ReviewPage({
       } else if (key === "e") {
         event.preventDefault();
         setEditing(true);
-        setInspectorVisibility(false);
+        if (!guidedReview) setInspectorVisibility(false);
       } else if (event.key === " ") {
         event.preventDefault();
         setCompareMode((mode) => mode === "before" ? "after" : "before");
@@ -9530,7 +9570,7 @@ function ReviewPage({
     ? selected.annotation.provenance.geometry_calibration_status
     : reviewGeometrySemantics === "human_verified" ? "passed" : "uncalibrated";
   return (
-    <section className={`review-layout${inspectorCollapsed ? " inspector-collapsed" : ""}${!queueOpen ? " queue-collapsed" : ""}`}>
+    <section className={`review-layout${inspectorCollapsed || guidedReview ? " inspector-collapsed" : ""}${!queueOpen ? " queue-collapsed" : ""}`}>
       {queueOpen && <aside className="review-queue panel">
         <span className="eyebrow">{t("Human attention")}</span>
         <h2>{t("Review queue")}{" "}<b>{queueLoaded ? progress.remaining_count : "…"}</b>
@@ -9551,7 +9591,7 @@ function ReviewPage({
           </select>
         </label>
         <div className="queue-items" aria-label={t("Annotations requiring review")}>
-          {visibleReviews.map((review) => (
+          {visibleReviews.map((review) => (<Fragment key={review.id}>
             <button
               key={review.id}
               aria-pressed={selected?.id === review.id}
@@ -9573,6 +9613,11 @@ function ReviewPage({
                 </small>
               </span>
             </button>
+            {!route.reviewItemId && <button className="text-button review-audit-entry" onClick={() => {
+              const owner = projectForReview(projects, review);
+              if (owner) navigateFromReview(projectReviewPath(owner.id, review.id, "audit"));
+            }}>{t("Review audit and sources")} · {review.annotation.label ?? review.annotation.task_id}</button>}
+            </Fragment>
           ))}
         </div>
         {nextReviewOffset !== null && (
@@ -9589,7 +9634,7 @@ function ReviewPage({
         )}
       </aside>}
       <div className="review-center">
-        <div className="review-progress-header" aria-label={t("Review progress")} role="status">
+        <div ref={reviewProgressRef} tabIndex={-1} className="review-progress-header" aria-label={t("Review progress")} role="status">
           <div>
             <span className="eyebrow">{t("Inbox progress")}</span>
             <strong>{queueLoaded ? `${progress.reviewed_count} of ${progress.total_count} results reviewed` : t("Loading review progress…")}</strong>
@@ -9602,8 +9647,8 @@ function ReviewPage({
           </div>
         </div>
         {selected && <div className="review-edit-toolbar" aria-label={t("Annotation editing controls")}>
-          <button className={editing ? "active" : ""} aria-pressed={editing} onClick={() => { setEditing((value) => !value); setInspectorVisibility(false); }}>{t("Edit")}{" "}<kbd>E</kbd></button>
-          {editing && availableShapeKinds.length > 0 && (
+          <button className={editing ? "active" : ""} aria-pressed={editing} onClick={() => { setEditing((value) => !value); if (!guidedReview) setInspectorVisibility(false); }}>{t("Edit")}{" "}<kbd>E</kbd></button>
+          {(editing || guidedReview) && availableShapeKinds.length > 0 && (
             <details className="review-add-menu">
               <summary aria-label={t("Add annotation")}>
                 <span className="review-add-icon" aria-hidden="true" />
@@ -9652,16 +9697,21 @@ function ReviewPage({
               <option value="before">{t("Original")}</option>
               <option value="split">{t("Compare")}</option>
             </select>
-            <button
+            {!guidedReview && <button
               className="details-toggle"
               onClick={() => setInspectorVisibility(!inspectorCollapsed)}
               aria-label={inspectorCollapsed ? t("Show details") : t("Hide details")}
               aria-expanded={!inspectorCollapsed}
             >{t("Details")}{" "}<span aria-hidden="true">{inspectorCollapsed ? "›" : "‹"}</span>
-            </button>
+            </button>}
           </div>
         </div>}
-        {selected && <div className="review-canvas-risk"><strong>{t("Why this needs review")}</strong><p>{reviewReasonExplanation(selected)}</p><small>{t("Current decision applies to this object, not every object in the image.")}</small></div>}
+        {guidedReview && editing && draft && <div className="journey-review-edit" aria-label={t("Annotation edit details")}>
+          <label>{t("Label")}<input value={draft.label ?? ""} disabled={decisionBusy} onChange={(event) => edit({ ...draft, label: event.target.value })} /></label>
+          <label>{t("Correction reason")}<select value={reason} disabled={decisionBusy} onChange={(event) => setReason(event.target.value)}>{GENERIC_REVIEW_REASONS.map((option) => <option key={option.value} value={option.value}>{t(option.label)}</option>)}</select></label>
+          {hasUnsavedAnnotationChanges && <p>{t("This correction will be saved as geometry-quality evidence for calibration and future Automation improvements.")}</p>}
+        </div>}
+        {selected && <div className="review-canvas-risk"><strong>{t(["human_accepted", "rejected"].includes(selected.annotation.review_status) ? "Decision saved" : "Why this needs review")}</strong><p>{["human_accepted", "rejected"].includes(selected.annotation.review_status) ? t(selected.annotation.review_status) : reviewReasonExplanation(selected)}</p><small>{t("Current decision applies to this object, not every object in the image.")}</small></div>}
         {selected ? <div
           className={`review-canvas-stage${compareMode === "split" ? " review-canvas-compare" : ""}`}
         >
@@ -9683,6 +9733,7 @@ function ReviewPage({
               imageUrl={images.find((image) => image.image_id === selected.annotation.image_id)?.url}
               annotations={draft ? [draft] : []}
               selectedId={draft?.id}
+              readOnly={decisionBusy}
               visualContext={visualContext}
               onSelect={() => undefined}
               onEditStart={() => { setEditing(true); setReason((value) => value || "shifted"); beginEdit(); }}
@@ -9723,7 +9774,7 @@ function ReviewPage({
               <button className="danger" disabled={decisionBusy || (rejectReason === "other" && !note.trim())} onClick={() => void decideAndAdvance("reject", rejectReason)}>{decisionBusy ? t("Rejecting…") : t("Reject & next")}</button>
             </div>
           </section>}
-          {draft && selected && !rejectOpen && (
+          {draft && selected && !rejectOpen && (!(["human_accepted", "rejected"].includes(draft.review_status)) || hasUnsavedAnnotationChanges) && (
             <div className="review-action-bar" aria-label={t("Review decision controls")}>
               <span className="review-shortcuts" aria-label={t("Keyboard shortcuts")}><kbd>A</kbd>{" "}{t("accept")}{" "}<kbd>R</kbd>{" "}{t("reject")}{" "}<kbd>Space</kbd>{" "}{t("original/result")}</span>
               {editing && hasUnsavedAnnotationChanges && (
@@ -9733,9 +9784,13 @@ function ReviewPage({
               <button className="primary" disabled={decisionBusy || isNew} onClick={() => void decideAndAdvance("accept", hasUnsavedAnnotationChanges ? reason : "accepted_as_is")} aria-label={t("Accept and next")}>{decisionBusy ? t("Saving decision…") : t("Accept & next")}</button>
             </div>
           )}
+          {draft && ["human_accepted", "rejected"].includes(draft.review_status) && progress.remaining_count === 0 && <section className="review-saved-result">
+            <h2>{t("Review complete")}</h2><p role="status">{t("Your last decision is saved. You can keep inspecting this image or export the confirmed results.")}</p>
+            {reviewProject && <button className="primary" onClick={() => navigateFromReview(`/projects/${encodeURIComponent(reviewProject.id)}/export`)}>{t("Continue to export")}</button>}
+          </section>}
         </div>
       </div>
-      {!inspectorCollapsed && <aside className="inspector panel review-inspector">
+      {!guidedReview && !inspectorCollapsed && <aside className="inspector panel review-inspector">
         <div className="review-inspector-header">
           <div>
             <span className="eyebrow">{t("Review details")}</span>

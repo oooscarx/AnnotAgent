@@ -73,6 +73,7 @@ export function JourneyConfirm({ projectId, draftId, testId, imageId, operationI
       {preview.models.map((model) => <p key={model.model_profile_id}><strong>{model.remote_model_id}</strong><br />{model.provider_base_url}</p>)}
       <p>{t("Cost is unknown. At most {count} external model calls are authorized across this processing task. Provider-internal retries may add network requests; this is not a monetary cap.", { count: preview.maximum_model_calls })}</p>
       <p>{t("This does not automatically approve all future results. No-target and automatically accepted images remain available for inspection.")}</p>
+      {preview.sample_feedback_count > 0 && <p className="journey-risk">{t("Your sample corrections are saved evaluation feedback. They do not change this plan's future predictions; processing may repeat the issues you identified.")}</p>}
       {!operationId && <label><input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} />{t("I authorize this image, model and call-budget scope")}</label>}
     </div>}
     {busy && <p role="status">{t("Saving the confirmed plan and starting processing…")}</p>}

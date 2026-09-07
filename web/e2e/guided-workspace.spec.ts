@@ -975,7 +975,7 @@ test("Review to Run to Review navigation is bidirectional", async ({ page, reque
     (review: { run_id: string }) => review.run_id === runId,
   )?.id;
   expect(reviewId).toBeTruthy();
-  await page.goto(`/review/${reviewId}`);
+  await page.goto(`/review/${reviewId}?view=audit`);
   await page.evaluate(() => window.localStorage.removeItem("annotagent.reviewInspectorCollapsed"));
   await page.reload();
   await expect(page.getByRole("button", { name: "Accept and next" })).toBeVisible();
@@ -1542,7 +1542,7 @@ export:
   await expect(page).toHaveURL(new RegExp(`view=debug&image=${mixedImageId}&node=match$`));
   await expect(page.getByLabel("Evidence decision")).toContainText("Detector boxes disagree");
 
-  await page.goto(`/review/${mixedReviewId}?project_id=${mixedProjectId}`);
+  await page.goto(`/review/${mixedReviewId}?project_id=${mixedProjectId}&view=audit`);
   await page.getByRole("button", { name: "Show details" }).click();
   await expect(page.getByText("RF-DETR and LocateAnything disagree on the object's location.")).toBeVisible();
   await expect(page.getByLabel("Source model evidence")).toContainText("2 detector results");
@@ -1560,7 +1560,7 @@ export:
     await dialog.dismiss();
   });
   await page.getByRole("button", { name: "Back to project", exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`/projects/${mixedProjectId}/review/${mixedReviewId}$`));
+  await expect(page).toHaveURL(new RegExp(`/projects/${mixedProjectId}/review/${mixedReviewId}\\?view=audit$`));
   await page.getByRole("button", { name: "View revision history" }).click();
   const revisionHistory = page.getByRole("dialog", { name: "Annotation revisions" });
   await expect(revisionHistory).toContainText("candidate created");
@@ -1573,7 +1573,7 @@ export:
     await dialog.dismiss();
   });
   await page.locator(".queue-items > button").filter({ hasText: "goal" }).click();
-  await expect(page).toHaveURL(new RegExp(`/projects/${mixedProjectId}/review/${mixedReviewId}$`));
+  await expect(page).toHaveURL(new RegExp(`/projects/${mixedProjectId}/review/${mixedReviewId}\\?view=audit$`));
   await page.getByRole("button", { name: "Show details" }).click();
   await page.getByText("Execution details", { exact: true }).click();
   await expect(page.getByLabel("Annotation attributes JSON")).toContainText("locate-anything-v1");
@@ -1581,7 +1581,7 @@ export:
   await page.getByRole("button", { name: "Show review queue", exact: true }).click();
   page.once("dialog", async (dialog) => dialog.accept());
   await page.locator(".queue-items > button").filter({ hasText: "goal" }).click();
-  await expect(page).toHaveURL(new RegExp(`/projects/${mixedProjectId}/review/${secondReviewId}$`));
+  await expect(page).toHaveURL(new RegExp(`/projects/${mixedProjectId}/review/${secondReviewId}\\?view=audit$`));
   await page.getByRole("button", { name: "Edit E" }).click();
   await expect(page.getByLabel("Reviewer note")).toHaveValue("");
   await page.getByText("Execution details", { exact: true }).click();
@@ -1623,14 +1623,22 @@ test("Review behaves as a keyboard-operable decision inbox", async ({ page }) =>
   await page.locator("body").dispatchEvent("keydown", { key: "a", keyCode: 229, bubbles: true });
   expect(decisions).toEqual([]);
 
+  await page.screenshot({ path: "../docs/execution/guided-journey/review-default.png", fullPage: true, animations: "disabled" });
   await page.keyboard.press("E");
   await expect(page.getByLabel("Annotation edit details")).toBeVisible();
-  await expect(page.locator(".review-execution-details")).not.toHaveAttribute("open", "");
+  await expect(page.locator(".review-execution-details")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Show details" })).toHaveCount(0);
   const label = page.getByLabel("Label", { exact: true });
   await label.fill("中文输入 a r e");
   expect(decisions).toEqual([]);
   await label.fill("day corrected");
   await expect(page.getByText("This correction will be saved as geometry-quality evidence for calibration and future Automation improvements.")).toBeVisible();
+  await page.route(`**/api/annotations/${reviewId}`, (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "TEST fixture: save unavailable" }) }), { times: 1 });
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("save unavailable");
+  await expect(label).toHaveValue("day corrected");
+  await expect(page).toHaveURL(new RegExp(`/review/${reviewId}$`));
+  expect(decisions).toEqual([]);
   await page.screenshot({ path: `${screenshots}/09-review-inbox.png`, fullPage: true });
   await page.screenshot({ path: resolve("../docs/execution/first-result/project-review.png") });
 
@@ -1647,8 +1655,10 @@ test("Review behaves as a keyboard-operable decision inbox", async ({ page }) =>
   await page.screenshot({ path: `${screenshots}/10-review-reject.png`, fullPage: true });
   await page.getByRole("dialog", { name: "Why is this result incorrect?" }).getByRole("button", { name: "Reject & next" }).click();
   await expect(page.getByRole("heading", { name: "Review complete" })).toBeVisible();
+  await expect(page.locator(".annotation-canvas image")).toBeVisible();
+  await page.screenshot({ path: "../docs/execution/guided-journey/review-complete.png", fullPage: true, animations: "disabled" });
   await expect(page.getByRole("button", { name: "Continue to export" })).toBeVisible();
-  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/review$`));
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/review/${reviewId}$`));
   await page.reload();
   await expect(page.getByLabel("Review progress")).toContainText("1 of 1 results reviewed");
   await expect(page.getByRole("heading", { name: "Review complete" })).toBeVisible();
@@ -1696,6 +1706,9 @@ test("Export readiness blocks unresolved reviews and persists a completed export
   await expect(page.getByText("Recommended", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Export AnnotAgent Native dataset" }).click();
   await expect(page.getByRole("heading", { name: "Dataset exported successfully" })).toBeVisible();
+  await expect(page.locator(".section-tabs, .focus-project-menu")).toHaveCount(0);
+  await expect(page.getByText("This folder is on the AnnotAgent server, not necessarily on this device.", { exact: true })).toBeVisible();
+  await page.screenshot({ path: "../docs/execution/guided-journey/export-complete.png", fullPage: true, animations: "disabled" });
   await expect(page.getByText("Result folder", { exact: true })).toBeVisible();
   await expect(page.locator(".export-report")).not.toHaveAttribute("open", "");
   await page.screenshot({ path: `${screenshots}/11-export-complete.png`, fullPage: true });
@@ -1738,7 +1751,7 @@ test("SSE reconnect refreshes Export from server truth", async ({ page, request 
   await page.route("**/api/events", (route) => route.abort("connectionfailed"));
   await page.goto(`/projects/${projectId}/export`);
   await expect(page.getByRole("heading", { name: "Dataset exported successfully" })).toBeVisible();
-  await expect(page.locator(".focus-connection")).toContainText("SSE reconnecting");
+  await expect(page.locator(".focus-connection")).toContainText("Live updates interrupted");
   const reconnectReviewId = randomUUID();
   const createdReview = await request.post(`/api/runs/${runId}/annotations`, {
     data: {
@@ -1767,7 +1780,7 @@ test("SSE reconnect refreshes Export from server truth", async ({ page, request 
   expect(createdReview.status()).toBe(201);
 
   await page.unroute("**/api/events");
-  await expect(page.locator(".focus-connection")).toContainText("SSE connected", { timeout: 15_000 });
+  await expect(page.locator(".focus-connection")).toHaveCount(0, { timeout: 15_000 });
   await expect(page.getByRole("heading", { name: "Export needs attention" })).toBeVisible();
   await expect(page.getByText("1 annotation still requires a human decision.")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Dataset exported successfully" })).toHaveCount(0);

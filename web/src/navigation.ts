@@ -50,12 +50,13 @@ export type WorkspaceRoute =
       view?: "results" | "debug";
     }
   | { kind: "projectBatch"; canonicalPath: string; projectId: string; batchId: string; imageId?: string; status?: string }
-  | { kind: "projectReview"; canonicalPath: string; projectId: string; reviewItemId?: string }
+  | { kind: "projectReview"; canonicalPath: string; projectId: string; reviewItemId?: string; view?: "audit" }
   | {
       kind: "review";
       canonicalPath: string;
       reviewItemId?: string;
       projectId?: string;
+      view?: "audit";
     }
   | {
       kind: "settings";
@@ -128,9 +129,9 @@ export function projectTrashPath(projectId: string, objectKind?: string): string
     : base;
 }
 
-export function projectReviewPath(projectId: string, reviewItemId?: string): string {
+export function projectReviewPath(projectId: string, reviewItemId?: string, view?: "audit"): string {
   const base = `/projects/${encodeURIComponent(projectId)}/review`;
-  return reviewItemId ? `${base}/${encodeURIComponent(reviewItemId)}` : base;
+  return reviewItemId ? `${base}/${encodeURIComponent(reviewItemId)}${view === "audit" ? "?view=audit" : ""}` : base;
 }
 
 export function projectBuildPath(
@@ -393,7 +394,8 @@ export function parseWorkspaceRoute(
       kind: "projectReview",
       projectId,
       reviewItemId,
-      canonicalPath: projectReviewPath(projectId, reviewItemId),
+      view: params.get("view") === "audit" ? "audit" : undefined,
+      canonicalPath: projectReviewPath(projectId, reviewItemId, params.get("view") === "audit" ? "audit" : undefined),
     };
   }
 
@@ -551,6 +553,7 @@ export function parseWorkspaceRoute(
     const projectId = params.get("project_id") ?? params.get("project") ?? undefined;
     const context = new URLSearchParams();
     if (projectId) context.set("project_id", projectId);
+    if (params.get("view") === "audit") context.set("view", "audit");
     const suffix = context.size ? `?${context.toString()}` : "";
     const reviewItemId = review[1] ? decodePathSegment(review[1]) : undefined;
     if (review[1] && !reviewItemId)
@@ -564,12 +567,14 @@ export function parseWorkspaceRoute(
         kind: "projectReview",
         projectId,
         reviewItemId,
-        canonicalPath: projectReviewPath(projectId, reviewItemId),
+        view: params.get("view") === "audit" ? "audit" : undefined,
+        canonicalPath: projectReviewPath(projectId, reviewItemId, params.get("view") === "audit" ? "audit" : undefined),
       };
     return {
       kind: "review",
       reviewItemId,
       projectId,
+      view: params.get("view") === "audit" ? "audit" : undefined,
       canonicalPath: reviewItemId
         ? `/review/${encodeURIComponent(reviewItemId)}${suffix}`
         : `/review${suffix}`,

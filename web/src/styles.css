@@ -73,6 +73,13 @@ code, pre { font-family: var(--aa-font-mono); }
 .journey-result-image { min-width: 0; }
 .journey-result-image h3 { overflow-wrap: anywhere; margin-bottom: 8px; }
 .journey-risk { border-left: 3px solid var(--aa-warning); padding-left: 12px; }
+.journey-review-edit { display: flex; flex-wrap: wrap; gap: 16px; padding: 12px 0; }
+.journey-review-edit label { flex: 1 1 200px; }
+.journey-review-edit p { flex-basis: 100%; margin: 0; font-size: 13px; color: var(--aa-text-muted); }
+.review-saved-result { padding: 16px; display: flex; align-items: center; flex-wrap: wrap; gap: 10px 20px; }
+.review-saved-result h2 { margin: 0; font-size: 20px; }
+.review-saved-result p { margin: 0; color: var(--aa-text-muted); max-width: 60ch; }
+.review-saved-result .primary { margin-left: auto; }
 .journey-goal { max-width: 960px; }
 .journey-goal > label { display: grid; gap: 10px; line-height: 1.5; font-weight: 500; }
 .journey-goal textarea { min-height: 96px; resize: vertical; }

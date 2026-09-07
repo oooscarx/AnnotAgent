@@ -61,7 +61,7 @@ export function AnnotationCanvas({
   const editingHint = readOnly ? "Read-only geometry · you can still zoom and select results" : !selected
     ? "Select an annotation to edit it"
     : selected.value.kind === "classification"
-      ? "Image-level classification · edit the label in details"
+      ? "Image-level classification · use the label control to edit"
     : selected.value.kind === "bounding_box"
       ? "Drag the box to move it · drag a corner handle to resize"
       : selected.value.kind === "keypoints"
