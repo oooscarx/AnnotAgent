@@ -6,6 +6,7 @@ import {
   projectReviewPath,
   projectRunPath,
   projectRunsPath,
+  projectTrashPath,
   routeFocusKey,
 } from "./navigation";
 
@@ -123,7 +124,7 @@ describe("guided workspace routing", () => {
     expect(parseWorkspaceRoute("/review")).not.toHaveProperty("projectId", "alpha");
   });
 
-  it("models the Project-owned Run, Batch, and Review hierarchy in paths", () => {
+  it("models the Project-owned Run, Batch, Review, and Trash hierarchy in paths", () => {
     expect(parseWorkspaceRoute("/projects/project-a/runs")).toMatchObject({
       kind: "projectRuns",
       projectId: "project-a",
@@ -142,6 +143,12 @@ describe("guided workspace routing", () => {
       kind: "projectReview",
       projectId: "project-a",
       reviewItemId: "review-1",
+    });
+    expect(parseWorkspaceRoute("/projects/project-a/manage/trash", "?kind=run")).toEqual({
+      kind: "projectTrash",
+      projectId: "project-a",
+      objectKind: "run",
+      canonicalPath: "/projects/project-a/manage/trash?kind=run",
     });
   });
 
@@ -232,6 +239,7 @@ describe("guided workspace routing", () => {
       }),
       projectBatchPath("project / one", "batch / one"),
       projectReviewPath("project / one", "review / one"),
+      projectTrashPath("project / one", "workflow_version"),
     ];
     for (const path of routes) {
       const url = new URL(path, "http://annotagent.local");

@@ -1913,3 +1913,54 @@ test("a newly created template Draft opens immediately and survives refresh", as
   await expect(page).toHaveURL(new RegExp(`\\?draft=${created.id}$`));
   await expect(page.getByRole("heading", { name: created.name, exact: true }).last()).toBeVisible();
 });
+
+test("Run lifecycle management survives refresh, restores, and preserves provenance after cleanup", async ({ page, request }) => {
+  const shortRunId = runId.slice(0, 8);
+  const readinessBefore = await request.get(`/api/projects/${projectId}/export-readiness`);
+  expect(readinessBefore.ok()).toBeTruthy();
+  const acceptedBefore = (await readinessBefore.json()).accepted_annotations as number;
+
+  await page.goto(`/projects/${projectId}/runs`);
+  await page.getByLabel(`Manage Run ${shortRunId}`).click();
+  await page.getByRole("button", { name: "Delete…" }).click();
+  let dialog = page.getByRole("dialog", { name: "Move 1 item to Trash?" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Storage is unchanged");
+  await dialog.getByRole("button", { name: "Move to Trash" }).click();
+  await expect(page.getByRole("status")).toContainText("Moved to Trash");
+  await page.reload();
+  await expect(page.getByText(shortRunId)).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Trash" }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/manage/trash$`));
+  await expect(page.getByText(`Run ${shortRunId}`, { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Restore", exact: true }).click();
+  dialog = page.getByRole("dialog", { name: "Restore 1 item?" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Restore" }).click();
+  await expect(page.getByRole("status")).toContainText("restore completed");
+
+  await page.getByRole("button", { name: "Back to Runs" }).click();
+  await page.getByLabel(`Select Run ${shortRunId}`).check();
+  await page.getByRole("button", { name: "Delete selected (1)" }).click();
+  dialog = page.getByRole("dialog", { name: "Move 1 item to Trash?" });
+  await dialog.getByRole("button", { name: "Move to Trash" }).click();
+  await page.getByRole("button", { name: "Trash" }).click();
+  await page.reload();
+  await expect(page.getByText(`Run ${shortRunId}`, { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Clean up…" }).click();
+  dialog = page.getByRole("dialog", { name: "Permanently clean up 1 item?" });
+  await expect(dialog).toContainText("Annotations retained");
+  await dialog.getByLabel(/Type DELETE/).fill("DELETE");
+  await dialog.getByRole("button", { name: "Permanently clean up" }).click();
+  await expect(page.getByRole("status")).toContainText("purge completed");
+  await expect(page.getByText(`Run ${shortRunId}`, { exact: true })).toHaveCount(0);
+
+  const readinessAfter = await request.get(`/api/projects/${projectId}/export-readiness`);
+  expect(readinessAfter.ok()).toBeTruthy();
+  expect((await readinessAfter.json()).accepted_annotations).toBe(acceptedBefore);
+  await page.goto(`/projects/${projectId}/runs/${runId}`);
+  await expect(page.getByRole("heading", { name: "Source Run was permanently cleaned up" })).toBeVisible();
+  await expect(page.getByText("Retained source summary", { exact: true })).toBeVisible();
+});

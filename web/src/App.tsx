@@ -18,6 +18,7 @@ import {
   projectReviewPath,
   projectRunPath,
   projectRunsPath,
+  projectTrashPath,
   routeFocusKey,
   type SettingsSection,
   type WorkspaceRoute,
@@ -80,6 +81,7 @@ import type {
   RunDebugSummary,
   RunNodeArtifactInspection,
   RunResultSummary,
+  RunProvenanceSummary,
   SkillDetail,
   WorkflowCatalog,
   WorkflowDraft,
@@ -95,6 +97,15 @@ import type {
   ModelCatalogEntry,
   ModelInstallOperation,
   ModelInstanceProfile,
+  ManagementAction,
+  ManagementObjectKind,
+  ManagementObjectRef,
+  ManagementPreview,
+  ManagementReceipt,
+  ManagementRequest,
+  ManagementUsageSummary,
+  PipelineLifecycleSummary,
+  TrashEntry,
   VerifiedExpertPluginPackage,
   VerifiedModelBundlePackage,
 } from "./types";
@@ -351,6 +362,47 @@ export function App() {
   useEffect(() => {
     void refresh(false);
   }, []);
+  useEffect(() => {
+    const applyManagementReceipt = (receipt: ManagementReceipt) => {
+      workspaceQueries.invalidate(queryKeys.dashboard);
+      workspaceQueries.invalidate("runs");
+      workspaceQueries.invalidate(queryKeys.project(receipt.project_id));
+      workspaceQueries.invalidate(queryKeys.projectSummary(receipt.project_id));
+      workspaceQueries.invalidate(queryKeys.projectRuns(receipt.project_id));
+      workspaceQueries.invalidate(queryKeys.workflowDrafts(receipt.project_id));
+      workspaceQueries.invalidate(queryKeys.reviewQueue(receipt.project_id));
+      workspaceQueries.invalidate(queryKeys.reviewQueue());
+      for (const object of receipt.affected_objects) {
+        if (object.kind === "run") {
+          workspaceQueries.invalidate(queryKeys.run(object.id));
+          workspaceQueries.invalidate(queryKeys.runResults(object.id));
+          workspaceQueries.invalidate(queryKeys.runDebug(object.id));
+          workspaceQueries.invalidate(queryKeys.runAnnotations(object.id));
+        }
+        if (object.kind === "workflow_draft")
+          workspaceQueries.invalidate(queryKeys.workflowDraft(object.id));
+      }
+      void refresh(true);
+    };
+    const local = (event: Event) => {
+      const receipt = (event as CustomEvent<ManagementReceipt>).detail;
+      if (receipt) applyManagementReceipt(receipt);
+    };
+    const remote = (event: StorageEvent) => {
+      if (event.key !== "annotagent.management.receipt" || !event.newValue) return;
+      try {
+        applyManagementReceipt(JSON.parse(event.newValue) as ManagementReceipt);
+      } catch {
+        // A malformed or legacy localStorage value is ignored; the next server refresh wins.
+      }
+    };
+    window.addEventListener("annotagent:management", local);
+    window.addEventListener("storage", remote);
+    return () => {
+      window.removeEventListener("annotagent:management", local);
+      window.removeEventListener("storage", remote);
+    };
+  }, []);
   useEffect(
     () =>
       subscribeEvents(
@@ -410,6 +462,7 @@ export function App() {
       case "projectRun":
       case "projectBatch":
       case "projectReview":
+      case "projectTrash":
         return route.projectId;
       default:
         return "";
@@ -437,6 +490,8 @@ export function App() {
       destination = `/projects/${encodeURIComponent(id)}/export`;
     else if (id && route.kind === "build")
       destination = `/projects/${encodeURIComponent(id)}/build/${route.step}`;
+    else if (id && route.kind === "projectTrash")
+      destination = projectTrashPath(id, route.objectKind);
     else if (id && (
       route.kind === "projectRuns" ||
       route.kind === "projectRun" ||
@@ -474,6 +529,7 @@ export function App() {
     route.kind === "projectRuns" ||
     route.kind === "projectRun" ||
     route.kind === "projectBatch"
+    || route.kind === "projectTrash"
       ? "runs"
       : route.kind === "projectReview"
         ? "review"
@@ -521,6 +577,7 @@ export function App() {
                     route.kind === "projectRun" ||
                     route.kind === "projectBatch" ||
                     route.kind === "projectReview"
+                    || route.kind === "projectTrash"
                   : !isProjectWorkspace && page === item.page
               }
               href={item.href}
@@ -667,6 +724,7 @@ export function App() {
             onOpenProviders={() => navigate("/settings")}
             onOpenModels={() => navigate("/settings/models")}
             onOpenPlugins={() => navigate("/settings/plugins")}
+            onOpenTrash={() => navigate(projectTrashPath(route.projectId, "pipeline"))}
             onError={setError}
           />
         )}
@@ -719,6 +777,15 @@ export function App() {
             route={route}
             runs={runs}
             projects={projects}
+            onNavigate={navigate}
+            onRefresh={refresh}
+            onError={setError}
+          />
+        )}
+        {loaded && route.kind === "projectTrash" && (
+          <TrashWorkspace
+            project={selectedProject}
+            route={route}
             onNavigate={navigate}
             onRefresh={refresh}
             onError={setError}
@@ -2990,6 +3057,7 @@ function WorkflowsPage({
   onOpenProviders,
   onOpenModels,
   onOpenPlugins,
+  onOpenTrash,
   onError,
 }: {
   projects: ProjectSummary[];
@@ -3017,6 +3085,7 @@ function WorkflowsPage({
   onOpenProviders: () => void;
   onOpenModels: () => void;
   onOpenPlugins: () => void;
+  onOpenTrash: () => void;
   onError: (value: string) => void;
 }) {
   const entries = projects.flatMap((project) =>
@@ -3907,6 +3976,21 @@ function WorkflowsPage({
           </div>
         </section>
       )}
+      {activeProject && <PipelineManagementPanel
+        project={activeProject}
+        currentDraftId={draft?.id}
+        currentDraftDirty={Boolean(draft && persistedDrafts.current.get(draft.id) !== JSON.stringify(draft))}
+        onOpenDraft={(draftId) => onSelectContext({ draftId }, true)}
+        onChanged={() => Promise.all([refreshDrafts(), onRefresh()]).then(() => undefined)}
+        onCurrentDraftRemoved={() => {
+          autosaveController.current?.abort();
+          if (autosaveTimer.current) window.clearTimeout(autosaveTimer.current);
+          setDraft(undefined);
+          onSelectContext({}, true);
+        }}
+        onOpenTrash={onOpenTrash}
+        onError={onError}
+      />}
       <section className="pipeline-model-overview" aria-labelledby="pipeline-model-overview-title">
         <header>
           <div><span className="eyebrow">Runtime model calls</span><h2 id="pipeline-model-overview-title">Models this automation will call</h2><p>The Builder LLM plans the Draft; only the calls below process your images.</p></div>
@@ -7548,6 +7632,318 @@ function ModelsPage({
   );
 }
 
+type ManagementDialogState = {
+  request: ManagementRequest;
+  preview: ManagementPreview;
+  replacementOptions?: { label: string; value: { workflow_id: string; version: number } }[];
+};
+
+function managementRequest(
+  projectId: string,
+  objects: ManagementObjectRef[],
+  action: ManagementAction,
+): ManagementRequest {
+  return {
+    project_id: projectId,
+    objects,
+    action,
+    idempotency_key: crypto.randomUUID(),
+  };
+}
+
+function PipelineManagementPanel({
+  project,
+  currentDraftId,
+  currentDraftDirty,
+  onOpenDraft,
+  onChanged,
+  onCurrentDraftRemoved,
+  onOpenTrash,
+  onError,
+}: {
+  project: ProjectSummary;
+  currentDraftId?: string;
+  currentDraftDirty: boolean;
+  onOpenDraft: (draftId: string) => void;
+  onChanged: () => Promise<void>;
+  onCurrentDraftRemoved: () => void;
+  onOpenTrash: () => void;
+  onError: (value: string) => void;
+}) {
+  const [pipelines, setPipelines] = useState<PipelineLifecycleSummary[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
+  const [selected, setSelected] = useState<Map<string, ManagementObjectRef>>(new Map());
+  const [dialog, setDialog] = useState<ManagementDialogState>();
+  const [receipt, setReceipt] = useState<ManagementReceipt>();
+  const [renaming, setRenaming] = useState<PipelineLifecycleSummary>();
+  const [displayName, setDisplayName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const load = () => api.pipelineLifecycle(project.id, true, false).then(({ pipelines: items }) => {
+    setPipelines(items);
+    setSelected(new Map());
+  });
+  useEffect(() => {
+    void load().catch((error: Error) => onError(error.message));
+  }, [project.id]);
+  const visible = pipelines.filter((pipeline) => showArchived || !pipeline.archived_at);
+  const availableVersions = pipelines.flatMap((pipeline) => pipeline.versions
+    .filter((version) => !version.archived_at && !version.deleted_at)
+    .map((version) => ({
+      label: `${pipeline.display_name} · v${version.object.version}`,
+      value: { workflow_id: version.object.id, version: version.object.version! },
+    })));
+  const key = (object: ManagementObjectRef) => `${object.kind}:${object.id}:${object.version ?? 0}`;
+  const toggle = (object: ManagementObjectRef, checked: boolean) => setSelected((current) => {
+    const next = new Map(current);
+    if (checked) next.set(key(object), object);
+    else next.delete(key(object));
+    return next;
+  });
+  const blocksDirtyDraft = (objects: ManagementObjectRef[]) => currentDraftDirty && objects.some((object) =>
+    (object.kind === "workflow_draft" && object.id === currentDraftId)
+      || (object.kind === "pipeline" && object.id === currentDraftId));
+  const openAction = (action: ManagementAction, objects: ManagementObjectRef[]) => {
+    if (!objects.length) return;
+    if (blocksDirtyDraft(objects)) {
+      onError("Save or discard the current Draft changes before removing its Draft or Pipeline.");
+      return;
+    }
+    const request = managementRequest(project.id, objects, action);
+    void api.previewManagement(project.id, request)
+      .then((preview) => setDialog({ request, preview, replacementOptions: availableVersions.filter(({ value }) =>
+        !objects.some((object) => object.kind === "workflow_version" && object.id === value.workflow_id && object.version === value.version)
+          && !objects.some((object) => object.kind === "pipeline" && object.id === value.workflow_id)) }))
+      .catch((error: Error) => onError(error.message));
+  };
+  const openRename = () => {
+    if (!renaming || !displayName.trim()) return;
+    const request = {
+      ...managementRequest(project.id, [{
+        kind: "pipeline" as const,
+        id: renaming.workflow_id,
+        expected_revision: renaming.lifecycle_revision,
+      }], "rename"),
+      display_name: displayName.trim(),
+    };
+    void api.previewManagement(project.id, request)
+      .then((preview) => {
+        setRenaming(undefined);
+        setDialog({ request, preview });
+      })
+      .catch((error: Error) => onError(error.message));
+  };
+  const cloneVersion = (workflowId: string, version: number) => {
+    setBusy(true);
+    void api.cloneWorkflowVersion(workflowId, version)
+      .then((draft) => Promise.all([onChanged(), load()]).then(() => onOpenDraft(draft.id)))
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setBusy(false));
+  };
+  const complete = (nextReceipt: ManagementReceipt, preview: ManagementPreview) => {
+    setDialog(undefined);
+    setReceipt(nextReceipt);
+    const removedCurrent = nextReceipt.action === "move_to_trash" && preview.objects.some((object) =>
+      (object.kind === "workflow_draft" && object.id === currentDraftId)
+        || (object.kind === "pipeline" && object.id === currentDraftId));
+    if (removedCurrent) onCurrentDraftRemoved();
+    void Promise.all([load(), onChanged()]).catch((error: Error) => onError(error.message));
+  };
+  return <section className="panel pipeline-management" aria-labelledby="pipeline-management-title">
+    <header className="pipeline-management-header">
+      <div><span className="eyebrow">Saved work</span><h2 id="pipeline-management-title">Pipelines and Versions</h2><p>Manage display aliases and lifecycle state without changing immutable published content.</p></div>
+      <div className="button-row"><label className="checkbox-row"><input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />Show archived</label><button onClick={onOpenTrash}>Trash</button></div>
+    </header>
+    {receipt && <div className="operation-receipt" role="status"><span><strong>{receipt.action.replaceAll("_", " ")} completed</strong><small>Operation {receipt.operation_id.slice(0, 8)} is persisted.</small></span><button onClick={() => setReceipt(undefined)}>Dismiss</button></div>}
+    {selected.size > 0 && <div className="pipeline-selection-toolbar"><strong>{selected.size} lifecycle item{selected.size === 1 ? "" : "s"} selected</strong><button className="danger-button" onClick={() => openAction("move_to_trash", [...selected.values()])}>Move selected to Trash…</button><button onClick={() => setSelected(new Map())}>Clear</button></div>}
+    <div className="pipeline-management-list">
+      {visible.map((pipeline) => {
+        const pipelineObject: ManagementObjectRef = { kind: "pipeline", id: pipeline.workflow_id, expected_revision: pipeline.lifecycle_revision };
+        return <details key={pipeline.workflow_id} className="pipeline-management-item">
+          <summary>
+            <input type="checkbox" aria-label={`Select Pipeline ${pipeline.display_name}`} checked={selected.has(key(pipelineObject))} onClick={(event) => event.stopPropagation()} onChange={(event) => toggle(pipelineObject, event.target.checked)} />
+            <span><strong>{pipeline.display_name}</strong><small>{pipeline.drafts.length} Draft{pipeline.drafts.length === 1 ? "" : "s"} · {pipeline.versions.length} Published Version{pipeline.versions.length === 1 ? "" : "s"}</small></span>
+            {pipeline.default_version && <span className="status status-auto-accepted">Default v{pipeline.default_version}</span>}
+            {pipeline.archived_at && <span className="status status-archived">Archived</span>}
+            <span className="row-arrow" aria-hidden="true">⌄</span>
+          </summary>
+          <div className="pipeline-management-body">
+            <div className="pipeline-parent-actions">
+              <code>{pipeline.workflow_id}</code>
+              <div className="button-row"><button onClick={() => { setRenaming(pipeline); setDisplayName(pipeline.display_name); }}>Rename alias</button><button onClick={() => openAction(pipeline.archived_at ? "unarchive" : "archive", [pipelineObject])}>{pipeline.archived_at ? "Unarchive" : "Archive"}</button><button className="danger-button" onClick={() => openAction("move_to_trash", [pipelineObject])}>Delete Pipeline…</button></div>
+            </div>
+            <section><header><strong>Drafts</strong><span>Editable working copies</span></header>{pipeline.drafts.map((draft) => <article key={key(draft.object)}><input type="checkbox" aria-label={`Select Draft ${draft.display_name}`} checked={selected.has(key(draft.object))} onChange={(event) => toggle(draft.object, event.target.checked)} /><span><strong>{draft.display_name}</strong><small>{draft.archived_at ? "Archived" : "Editing"} · {draft.content_hash.slice(0, 10) || "not hashed"}</small></span><div className="button-row"><button onClick={() => onOpenDraft(draft.object.id)}>Open</button><button onClick={() => openAction(draft.archived_at ? "unarchive" : "archive", [draft.object])}>{draft.archived_at ? "Unarchive" : "Archive"}</button><button className="danger-button" onClick={() => openAction("move_to_trash", [draft.object])}>Delete Draft…</button></div></article>)}{pipeline.drafts.length === 0 && <small>No visible Drafts.</small>}</section>
+            <section><header><strong>Published Versions</strong><span>Immutable execution definitions</span></header>{pipeline.versions.map((version) => <article key={key(version.object)}><input type="checkbox" aria-label={`Select Published Version ${pipeline.display_name} v${version.object.version}`} checked={selected.has(key(version.object))} onChange={(event) => toggle(version.object, event.target.checked)} /><span><strong>Version {version.object.version}</strong><small title={version.content_hash}>Hash {version.content_hash.slice(0, 12)} · {version.historical_run_references} historical Run reference{version.historical_run_references === 1 ? "" : "s"}</small></span>{version.is_default && <span className="status status-auto-accepted">Default</span>}<div className="button-row"><button disabled={busy} onClick={() => cloneVersion(version.object.id, version.object.version!)}>Copy as Draft</button>{version.is_default ? <button onClick={() => openAction("clear_default", [version.object])}>Clear default</button> : <button onClick={() => openAction("set_default", [version.object])}>Set default</button>}<button onClick={() => openAction(version.archived_at ? "unarchive" : "archive", [version.object])}>{version.archived_at ? "Unarchive" : "Archive"}</button><button className="danger-button" onClick={() => openAction("move_to_trash", [version.object])}>Delete Version…</button></div></article>)}{pipeline.versions.length === 0 && <small>No visible Published Versions.</small>}</section>
+          </div>
+        </details>;
+      })}
+      {visible.length === 0 && <Empty title="No saved Pipelines" detail={showArchived ? "Create a Draft to begin." : "Show archived Pipelines or create a new Draft."} />}
+    </div>
+    {renaming && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setRenaming(undefined)}><section className="modal pipeline-rename-dialog" role="dialog" aria-modal="true" aria-labelledby="pipeline-rename-title"><header><div><span className="eyebrow">Display alias only</span><h2 id="pipeline-rename-title">Rename Pipeline</h2></div><button onClick={() => setRenaming(undefined)}>Close</button></header><label>Pipeline display name<input autoFocus maxLength={160} value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><p>Published nodes, bindings, prompts, Versions and content hashes remain unchanged.</p><footer className="button-row"><button onClick={() => setRenaming(undefined)}>Cancel</button><button className="primary" disabled={!displayName.trim()} onClick={openRename}>Preview rename</button></footer></section></div>}
+    {dialog && <ManagementImpactDialog state={dialog} onClose={() => setDialog(undefined)} onComplete={complete} onError={onError} />}
+  </section>;
+}
+
+function ManagementImpactDialog({
+  state,
+  onClose,
+  onComplete,
+  onError,
+}: {
+  state: ManagementDialogState;
+  onClose: () => void;
+  onComplete: (receipt: ManagementReceipt, preview: ManagementPreview) => void;
+  onError: (value: string) => void;
+}) {
+  const [request, setRequest] = useState(state.request);
+  const [preview, setPreview] = useState(state.preview);
+  const [busy, setBusy] = useState(false);
+  const [purgeConfirmation, setPurgeConfirmation] = useState("");
+  const needsDefaultChoice = preview.blockers.some(
+    (blocker) => blocker.code === "default_replacement_required",
+  );
+  const refreshPreview = (next: ManagementRequest) => {
+    setBusy(true);
+    void api.previewManagement(next.project_id, next)
+      .then((value) => {
+        setRequest(next);
+        setPreview(value);
+      })
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setBusy(false));
+  };
+  const execute = () => {
+    setBusy(true);
+    void api.executeManagement(request.project_id, {
+      ...request,
+      confirmation_token: preview.confirmation_token,
+    })
+      .then((receipt) => onComplete(receipt, preview))
+      .catch((error: Error) => onError(error.message))
+      .finally(() => setBusy(false));
+  };
+  const objectCount = `${preview.objects.length} item${preview.objects.length === 1 ? "" : "s"}`;
+  const title = request.action === "purge"
+    ? `Permanently clean up ${objectCount}?`
+    : request.action === "restore"
+      ? `Restore ${objectCount}?`
+      : request.action === "archive"
+        ? `Archive ${objectCount}?`
+        : request.action === "unarchive"
+          ? `Unarchive ${objectCount}?`
+          : request.action === "rename"
+            ? "Rename Pipeline?"
+            : request.action === "set_default"
+              ? "Use this Published Version by default?"
+              : request.action === "clear_default"
+                ? "Clear the default Automation?"
+                : request.action === "cancel_and_delete"
+                  ? `Cancel and move ${objectCount} to Trash?`
+                : `Move ${objectCount} to Trash?`;
+  const confirmLabel = request.action === "purge"
+    ? "Permanently clean up"
+    : request.action === "move_to_trash"
+      ? "Move to Trash"
+      : request.action === "set_default"
+        ? "Set default"
+      : request.action === "clear_default"
+          ? "Clear default"
+          : request.action === "cancel_and_delete"
+            ? "Cancel and move to Trash"
+          : request.action[0].toUpperCase() + request.action.slice(1).replaceAll("_", " ");
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <section className="modal management-dialog" role="dialog" aria-modal="true" aria-labelledby="management-dialog-title">
+      <header>
+        <div><span className="eyebrow">Project lifecycle management</span><h2 id="management-dialog-title">{title}</h2></div>
+        <button aria-label="Close management dialog" onClick={onClose}>Close</button>
+      </header>
+      <p className="management-summary">{preview.summary}</p>
+      <dl className="management-impact-grid">
+        <div><dt>Selected</dt><dd>{preview.impact.top_level_objects}</dd></div>
+        <div><dt>Owned child Runs</dt><dd>{preview.impact.child_runs}</dd></div>
+        <div><dt>Reviews hidden</dt><dd>{preview.impact.unresolved_reviews_hidden}</dd></div>
+        <div><dt>Annotations retained</dt><dd>{preview.impact.confirmed_annotations_retained}</dd></div>
+        <div><dt>Historical references</dt><dd>{preview.impact.historical_run_references}</dd></div>
+        <div><dt>Debug rows</dt><dd>{preview.impact.debug_rows}</dd></div>
+      </dl>
+      <aside className="management-storage-note"><strong>{request.action === "purge" ? "Cleanup estimate" : "Storage is unchanged"}</strong><span>{preview.impact.estimate_note}</span></aside>
+      {needsDefaultChoice && <fieldset className="management-default-choice">
+        <legend>Current Project default</legend>
+        <p>This item is the default Automation. Choose a replacement or explicitly leave this Project without a default.</p>
+        <label>Replacement Version<select value={request.replacement_default_version ? `${request.replacement_default_version.workflow_id}@${request.replacement_default_version.version}` : ""} onChange={(event) => {
+          const option = state.replacementOptions?.find(({ value }) => `${value.workflow_id}@${value.version}` === event.target.value);
+          refreshPreview({ ...request, replacement_default_version: option?.value, clear_default: false, confirmation_token: undefined });
+        }}><option value="">Choose another Version…</option>{state.replacementOptions?.map((option) => <option key={`${option.value.workflow_id}@${option.value.version}`} value={`${option.value.workflow_id}@${option.value.version}`}>{option.label}</option>)}</select></label>
+        <button onClick={() => refreshPreview({ ...request, replacement_default_version: undefined, clear_default: true, confirmation_token: undefined })}>Clear default Automation</button>
+      </fieldset>}
+      {preview.blockers.length > 0 && <div className="management-blockers" role="alert">
+        {preview.blockers.map((blocker) => <article key={`${blocker.code}-${blocker.object.kind}-${blocker.object.id}-${blocker.object.version ?? 0}`}><strong>{blocker.code.replaceAll("_", " ")}</strong><span>{blocker.message}</span>{blocker.related_ids.length > 0 && <small>{blocker.related_ids.join(", ")}</small>}</article>)}
+      </div>}
+      {request.action === "purge" && <label className="management-purge-confirmation">Type <strong>DELETE</strong> to confirm permanent cleanup<input value={purgeConfirmation} onChange={(event) => setPurgeConfirmation(event.target.value)} autoComplete="off" /></label>}
+      <footer className="button-row">
+        <button onClick={onClose} disabled={busy}>Cancel</button>
+        <button className={request.action === "purge" ? "danger" : "primary"} disabled={busy || !preview.can_execute || (request.action === "purge" && purgeConfirmation !== "DELETE")} onClick={execute}>{busy ? "Working…" : confirmLabel}</button>
+      </footer>
+    </section>
+  </div>;
+}
+
+function TrashWorkspace({
+  project,
+  route,
+  onNavigate,
+  onRefresh,
+  onError,
+}: {
+  project?: ProjectSummary;
+  route: Extract<WorkspaceRoute, { kind: "projectTrash" }>;
+  onNavigate: (path: string, replace?: boolean) => void;
+  onRefresh: () => Promise<void>;
+  onError: (value: string) => void;
+}) {
+  const [items, setItems] = useState<TrashEntry[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [dialog, setDialog] = useState<ManagementDialogState>();
+  const [receipt, setReceipt] = useState<ManagementReceipt>();
+  const kind = route.objectKind === "all" ? undefined : route.objectKind as ManagementObjectKind | undefined;
+  const load = () => api.trash(route.projectId, kind).then((value) => setItems(value.items));
+  useEffect(() => {
+    setSelected(new Set());
+    void load().catch((error: Error) => onError(error.message));
+  }, [route.projectId, kind]);
+  const selectionKey = (item: TrashEntry) => `${item.object.kind}:${item.object.id}:${item.object.version ?? 0}`;
+  const selectedItems = items.filter((item) => selected.has(selectionKey(item)));
+  const openAction = (action: "restore" | "purge", targets = selectedItems) => {
+    const request = managementRequest(route.projectId, targets.map((item) => item.object), action);
+    void api.previewManagement(route.projectId, request)
+      .then((preview) => setDialog({ request, preview }))
+      .catch((error: Error) => onError(error.message));
+  };
+  if (!project) return <section className="page-stack"><Empty title="Project not found" detail="Trash is always scoped to a stable Project." /></section>;
+  return <section className="page-stack management-page">
+    <ProjectBreadcrumb project={project} current="Trash" onOpenProjects={() => onNavigate("/projects")} onOpenProject={() => onNavigate(`/projects/${encodeURIComponent(project.id)}`)} />
+    <div className="toolbar-panel"><div><span className="eyebrow">Project management</span><h2>Trash</h2><p>Restore removed work or explicitly clean up eligible records. Original images, accepted annotations, exports, models, and credentials are not removed here.</p></div><button onClick={() => onNavigate(projectRunsPath(project.id))}>Back to Runs</button></div>
+    {receipt && <div className="operation-receipt" role="status"><span><strong>{receipt.action.replaceAll("_", " ")} completed</strong><small>Operation {receipt.operation_id.slice(0, 8)} · persisted on the server</small></span><button onClick={() => setReceipt(undefined)}>Dismiss</button></div>}
+    <Panel title="Removed items" eyebrow={`${items.length} recoverable item${items.length === 1 ? "" : "s"}`}>
+      <div className="management-list-toolbar">
+        <label>Object type<select value={kind ?? "all"} onChange={(event) => onNavigate(projectTrashPath(project.id, event.target.value))}><option value="all">All objects</option><option value="run">Runs</option><option value="batch">Dataset Runs</option><option value="workflow_draft">Drafts</option><option value="workflow_version">Published Versions</option><option value="pipeline">Pipelines</option></select></label>
+        <span>{selected.size} selected</span>
+        <button disabled={selectedItems.length === 0} onClick={() => openAction("restore")}>Restore selected</button>
+        <button className="danger" disabled={selectedItems.length === 0} onClick={() => openAction("purge")}>Permanently clean up…</button>
+      </div>
+      <div className="management-object-list">
+        {items.map((item) => <article key={selectionKey(item)}>
+          <input type="checkbox" aria-label={`Select ${item.display_name}`} checked={selected.has(selectionKey(item))} onChange={(event) => setSelected((current) => { const next = new Set(current); if (event.target.checked) next.add(selectionKey(item)); else next.delete(selectionKey(item)); return next; })} />
+          <span><strong>{item.display_name}</strong><small>{item.object.kind.replaceAll("_", " ")} · removed {new Date(item.deleted_at).toLocaleString()}</small><code>Operation {item.deletion_operation_id.slice(0, 8)}</code></span>
+          <button onClick={() => openAction("restore", [item])}>Restore</button>
+          <button className="danger-button" onClick={() => openAction("purge", [item])}>Clean up…</button>
+        </article>)}
+        {items.length === 0 && <Empty title="Trash is empty" detail="Items moved to Trash remain recoverable until you explicitly clean them up." />}
+      </div>
+    </Panel>
+    {dialog && <ManagementImpactDialog state={dialog} onClose={() => setDialog(undefined)} onError={onError} onComplete={(nextReceipt) => { setDialog(undefined); setReceipt(nextReceipt); setSelected(new Set()); void Promise.all([load(), onRefresh()]).catch((error: Error) => onError(error.message)); }} />}
+  </section>;
+}
+
 function RunsPage({
   runs,
   projects,
@@ -7572,6 +7968,12 @@ function RunsPage({
   const [indexedRuns, setIndexedRuns] = useState<HistoryRun[]>(runs);
   const [runTotal, setRunTotal] = useState(runs.length);
   const [nextRunOffset, setNextRunOffset] = useState<number | null>(null);
+  const [selectedManagement, setSelectedManagement] = useState<Map<string, ManagementObjectRef>>(new Map());
+  const [managementDialog, setManagementDialog] = useState<ManagementDialogState>();
+  const [managementReceipt, setManagementReceipt] = useState<ManagementReceipt>();
+  const [undoObjects, setUndoObjects] = useState<ManagementObjectRef[]>([]);
+  const [purgedRun, setPurgedRun] = useState<RunProvenanceSummary>();
+  const [usageSummary, setUsageSummary] = useState<ManagementUsageSummary>();
   const loadRunPage = (offset = 0, append = false) => {
     const controller = new AbortController();
     void api
@@ -7592,16 +7994,22 @@ function RunsPage({
     void api.batches().then((value) => setBatches(value.batches)).catch((error: Error) => onError(error.message));
   }, [runs.length, runs[0]?.updated_at]);
   useEffect(() => {
+    if (!scopeProject) return setUsageSummary(undefined);
+    void api.managementUsage(scopeProject.id).then(setUsageSummary).catch((error: Error) => onError(error.message));
+  }, [scopeProject?.id, runs.length, managementReceipt?.operation_id]);
+  useEffect(() => {
     if (route.kind === "projectRun" || (route.kind === "runs" && route.runId)) return;
     const controller = loadRunPage();
     return () => controller.abort();
   }, [route.kind, scopeProject?.id, runs.length, runs[0]?.updated_at]);
+  useEffect(() => setSelectedManagement(new Map()), [scopeProject?.id, route.kind === "projectRuns" ? route.status : undefined]);
   const detailRoute =
     route.kind === "runs" || route.kind === "projectRun" ? route : undefined;
   const routeRunId = detailRoute?.runId;
   const availableRuns = [...indexedRuns, ...runs.filter((run) => !indexedRuns.some((item) => item.id === run.id))];
   const run = availableRuns.find((item) => item.id === routeRunId);
   useEffect(() => {
+    setPurgedRun(undefined);
     if (!routeRunId || run) return;
     const controller = new AbortController();
     void api
@@ -7611,7 +8019,16 @@ function RunsPage({
         ...current.filter((item) => item.id !== value.run.id),
       ]))
       .catch((error: Error) => {
-        if (!isAbortError(error)) onError(error.message);
+        if (isAbortError(error)) return;
+        if (error instanceof ApiRequestError && error.status === 404) {
+          void api.runProvenance(routeRunId, controller.signal)
+            .then(setPurgedRun)
+            .catch((provenanceError: Error) => {
+              if (!isAbortError(provenanceError)) onError(error.message);
+            });
+          return;
+        }
+        onError(error.message);
       });
     return () => controller.abort();
   }, [routeRunId, run?.id]);
@@ -7645,6 +8062,12 @@ function RunsPage({
         onError={onError}
       />
     );
+  if (detailRoute && routeRunId && purgedRun) return <section className="page-stack management-page">
+    {scopeProject && <ProjectBreadcrumb project={scopeProject} current="Deleted Run source" onOpenProjects={() => onNavigate("/projects")} onOpenProject={() => onNavigate(`/projects/${encodeURIComponent(scopeProject.id)}`)} />}
+    <button className="text-button run-back" onClick={() => onNavigate(scopeProject ? projectRunsPath(scopeProject.id) : "/runs")}>← Run history</button>
+    <div className="toolbar-panel"><div><span className="eyebrow">Retained provenance · Run {purgedRun.run_id.slice(0, 8)}</span><h2>Source Run was permanently cleaned up</h2><p>The original trace and model transcript are gone. This minimal read-only summary remains because user annotation data refers to the source.</p></div></div>
+    <Panel title="Retained source summary" eyebrow={new Date(purgedRun.purged_at).toLocaleString()}><dl className="management-impact-grid"><div><dt>Provider</dt><dd>{purgedRun.provider}</dd></div><div><dt>Model</dt><dd>{purgedRun.model}</dd></div><div><dt>Workflow</dt><dd>{purgedRun.workflow_id ? `${purgedRun.workflow_id}@v${purgedRun.workflow_version ?? "?"}` : "Legacy"}</dd></div></dl>{purgedRun.workflow_content_hash && <p><strong>Frozen content hash</strong><br /><code>{purgedRun.workflow_content_hash}</code></p>}</Panel>
+  </section>;
   const projectRuns = runsForContext(indexedRuns, scopeProject);
   const statusFilter =
     route.kind === "runs" || route.kind === "projectRuns"
@@ -7670,6 +8093,7 @@ function RunsPage({
     ...standaloneRuns.map((item) => item.status),
   ])];
   const setListFilters = (projectId: string, status: string) => {
+    setSelectedManagement(new Map());
     const params = new URLSearchParams();
     if (status !== "all") params.set("status", status);
     onNavigate(
@@ -7677,6 +8101,45 @@ function RunsPage({
         ? projectRunsPath(projectId, status)
         : `/runs${params.size ? `?${params.toString()}` : ""}`,
     );
+  };
+  const managementKey = (object: ManagementObjectRef) => `${object.kind}:${object.id}:${object.version ?? 0}`;
+  const toggleManagement = (object: ManagementObjectRef, checked: boolean) =>
+    setSelectedManagement((current) => {
+      const next = new Map(current);
+      if (checked) next.set(managementKey(object), object);
+      else next.delete(managementKey(object));
+      return next;
+    });
+  const openDelete = (objects = [...selectedManagement.values()]) => {
+    if (!scopeProject || objects.length === 0) return;
+    const request = managementRequest(scopeProject.id, objects, "move_to_trash");
+    void api.previewManagement(scopeProject.id, request)
+      .then((preview) => setManagementDialog({ request, preview }))
+      .catch((error: Error) => onError(error.message));
+  };
+  const reloadManagedRuns = () => Promise.all([
+    api.runs(undefined, 0, scopeProject?.id).then((value) => {
+      setIndexedRuns(value.runs);
+      setRunTotal(value.page.total);
+      setNextRunOffset(value.page.next_offset);
+    }),
+    api.batches().then((value) => setBatches(value.batches)),
+    onRefresh(),
+  ]);
+  const undo = () => {
+    if (!scopeProject || undoObjects.length === 0) return;
+    const request = managementRequest(scopeProject.id, undoObjects, "restore");
+    void api.previewManagement(scopeProject.id, request)
+      .then((preview) => {
+        if (!preview.can_execute) throw new Error(preview.blockers.map((blocker) => blocker.message).join(" "));
+        return api.executeManagement(scopeProject.id, { ...request, confirmation_token: preview.confirmation_token });
+      })
+      .then((receipt) => {
+        setManagementReceipt(receipt);
+        setUndoObjects([]);
+        return reloadManagedRuns();
+      })
+      .catch((error: Error) => onError(error.message));
   };
   return (
     <section className="page-stack">
@@ -7686,7 +8149,9 @@ function RunsPage({
         onOpenProjects={() => onNavigate("/projects")}
         onOpenProject={() => onNavigate(`/projects/${encodeURIComponent(scopeProject.id)}`)}
       />}
-      <div className="toolbar-panel"><div><span className="eyebrow">Immutable execution history</span><h2>Runs</h2><p>Open a Run to inspect its exact Pipeline Version, progress, image, node Artifacts, errors, usage, and Replay.</p></div></div>
+      <div className="toolbar-panel"><div><span className="eyebrow">Immutable execution history</span><h2>Runs</h2><p>Open a Run to inspect its exact Pipeline Version, progress, image, node Artifacts, errors, usage, and Replay.</p></div>{scopeProject && <div className="button-row"><button onClick={() => onNavigate(projectTrashPath(scopeProject.id))}>Trash</button><button className="danger-button" disabled={selectedManagement.size === 0} onClick={() => openDelete()}>Delete selected ({selectedManagement.size})</button></div>}</div>
+      {usageSummary && <div className="run-lifecycle-usage" aria-label="Project Run usage"><span><small>Visible Run usage</small><strong>{usageSummary.visible_runs.total_tokens.toLocaleString()} tokens · ${usageSummary.visible_runs.cost}</strong></span><span><small>Historical actual usage</small><strong>{usageSummary.historical_total.total_tokens.toLocaleString()} tokens · ${usageSummary.historical_total.cost}</strong></span><span><small>Retained after cleanup</small><strong>{usageSummary.cleaned_up_runs.total_tokens.toLocaleString()} tokens · ${usageSummary.cleaned_up_runs.cost}</strong></span></div>}
+      {managementReceipt && <div className="operation-receipt" role="status"><span><strong>{managementReceipt.action === "restore" ? "Items restored" : "Moved to Trash"}</strong><small>Server operation {managementReceipt.operation_id.slice(0, 8)} is durable.</small></span>{undoObjects.length > 0 && <button onClick={undo}>Undo</button>}<button onClick={() => setManagementReceipt(undefined)}>Dismiss</button></div>}
       <Panel title="Run history" eyebrow={`${visibleExecutions.length} executions visible · ${runTotal} image Runs recorded`}>
         <div className="list-filters">
           <label>Project
@@ -7708,13 +8173,14 @@ function RunsPage({
         </div>
         <div className="runs-table">
           {visibleExecutions.map((execution) => execution.kind === "batch"
-            ? <BatchRunGroup key={execution.batch.id} batch={execution.batch} runs={availableRuns} project={projects.find((project) => project.id === execution.batch.project_id)} onNavigate={onNavigate} />
-            : <RunHistoryRow key={execution.run.id} run={execution.run} projectId={projects.find((project) => project.project_id === execution.run.project_id)?.id} onNavigate={onNavigate} />)}
+            ? <BatchRunGroup key={execution.batch.id} batch={execution.batch} runs={availableRuns} project={projects.find((project) => project.id === execution.batch.project_id)} onNavigate={onNavigate} management={scopeProject ? { selected: selectedManagement.has(`batch:${execution.batch.id}:0`), onToggle: toggleManagement, onDelete: openDelete } : undefined} />
+            : <RunHistoryRow key={execution.run.id} run={execution.run} projectId={projects.find((project) => project.project_id === execution.run.project_id)?.id} onNavigate={onNavigate} management={scopeProject ? { selected: selectedManagement.has(`run:${execution.run.id}:0`), onToggle: toggleManagement, onDelete: openDelete } : undefined} />)}
           {visibleExecutions.length === 0 && <Empty title="No matching runs" detail="Change the explicit Project or status filter to see more Run history." />}
         </div>
         {nextRunOffset !== null && <button className="text-button" onClick={() => loadRunPage(nextRunOffset, true)}>Load older Runs</button>}
       </Panel>
       {routeRunId && !run && <Empty title="Run not found" detail="The linked Run is not available in this workspace." />}
+      {managementDialog && <ManagementImpactDialog state={managementDialog} onClose={() => setManagementDialog(undefined)} onError={onError} onComplete={(receipt, preview) => { setManagementDialog(undefined); setManagementReceipt(receipt); setSelectedManagement(new Map()); setUndoObjects(preview.objects.map((object) => ({ ...object, expected_revision: object.expected_revision + 1 }))); void reloadManagedRuns().catch((error: Error) => onError(error.message)); }} />}
     </section>
   );
 }
@@ -7724,11 +8190,17 @@ function BatchRunGroup({
   runs,
   project,
   onNavigate,
+  management,
 }: {
   batch: DatasetBatchSummary;
   runs: HistoryRun[];
   project?: ProjectSummary;
   onNavigate: (path: string) => void;
+  management?: {
+    selected: boolean;
+    onToggle: (object: ManagementObjectRef, checked: boolean) => void;
+    onDelete: (objects: ManagementObjectRef[]) => void;
+  };
 }) {
   const childRuns = batch.child_run_ids.flatMap((id) => {
     const run = runs.find((candidate) => candidate.id === id);
@@ -7740,7 +8212,10 @@ function BatchRunGroup({
     ?? "Published workflow";
   const workflowVersion = childRuns[0]?.workflow_version ?? batch.workflow_version.split("@").at(-1) ?? "unknown";
   const usage = batch.budget_ledger.consumed;
-  return <details className="batch-run-group">
+  const object: ManagementObjectRef = { kind: "batch", id: batch.id, expected_revision: batch.lifecycle_revision };
+  return <div className="managed-execution-row">
+    {management && <input type="checkbox" aria-label={`Select Dataset Run ${batch.id.slice(0, 8)}`} checked={management.selected} onChange={(event) => management.onToggle(object, event.target.checked)} />}
+    <details className="batch-run-group">
     <summary className="batch-run-row">
       <span className="event-rail" />
       <div><strong>{project?.name ?? batch.project_id}</strong><small>Dataset Run · {workflowName}@v{workflowVersion}</small><code>{batch.progress.completed_images}/{batch.progress.total_images} images completed · Batch {batch.id.slice(0, 8)}</code></div>
@@ -7754,7 +8229,9 @@ function BatchRunGroup({
       {childRuns.map((run, index) => <RunHistoryRow key={run.id} run={run} projectId={project?.id} onNavigate={onNavigate} childLabel={`Image ${index + 1} of ${batch.progress.total_images}`} />)}
       {childRuns.length === 0 && <Empty title="No image Runs recorded" detail="This Dataset Run stopped before an image Run was created." />}
     </div>
-  </details>;
+    </details>
+    {management && <details className="row-menu"><summary aria-label={`Manage Dataset Run ${batch.id.slice(0, 8)}`}>•••</summary><div><button onClick={() => onNavigate(projectBatchPath(batch.project_id, batch.id))}>View</button><button className="danger-button" onClick={() => management.onDelete([object])}>Delete…</button></div></details>}
+  </div>;
 }
 
 function BatchDetailWorkspace({
@@ -7776,6 +8253,7 @@ function BatchDetailWorkspace({
   const [loaded, setLoaded] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const [busy, setBusy] = useState(false);
+  const [managementDialog, setManagementDialog] = useState<ManagementDialogState>();
   const load = () =>
     api
       .batch(route.batchId)
@@ -7842,6 +8320,16 @@ function BatchDetailWorkspace({
   );
   const statusOptions = [...new Set(batch.images.map((image) => image.status))];
   const usage = batch.budget_ledger.consumed;
+  const manageBatch = (action: "move_to_trash" | "restore" | "cancel_and_delete") => {
+    const request = managementRequest(batch.project_id, [{
+      kind: "batch",
+      id: batch.id,
+      expected_revision: batch.lifecycle_revision,
+    }], action);
+    void api.previewManagement(batch.project_id, request)
+      .then((preview) => setManagementDialog({ request, preview }))
+      .catch((error: Error) => onError(error.message));
+  };
   return (
     <section className="page-stack batch-detail-page">
       <ProjectBreadcrumb
@@ -7856,6 +8344,7 @@ function BatchDetailWorkspace({
       >
         ← Run history
       </button>
+      {batch.in_trash && <div className="trash-state-banner" role="status"><span><strong>This Dataset Run is in Trash</strong><small>Its child results are hidden from normal Run history but remain recoverable.</small></span><button onClick={() => manageBatch("restore")}>Restore Dataset Run</button><button onClick={() => onNavigate(projectTrashPath(batch.project_id, "batch"))}>Open Trash</button></div>}
       <div className="toolbar-panel run-detail-header">
         <div>
           <span className="eyebrow">Dataset Run · {batch.id.slice(0, 8)}</span>
@@ -7872,6 +8361,7 @@ function BatchDetailWorkspace({
           {batch.status === "running" && <button disabled={busy} onClick={() => control("pause")}>Pause</button>}
           {batch.status === "paused" && <button disabled={busy} onClick={() => control("resume")}>Resume</button>}
           {(batch.status === "running" || batch.status === "paused" || batch.status === "pending") && <button className="danger" disabled={busy} onClick={() => control("cancel")}>Cancel</button>}
+          {!batch.in_trash && <button className="danger-button" disabled={busy} onClick={() => manageBatch(["running", "paused", "pending", "awaiting_review"].includes(batch.status) ? "cancel_and_delete" : "move_to_trash")}>{["running", "paused", "pending", "awaiting_review"].includes(batch.status) ? "Cancel and delete…" : "Delete…"}</button>}
         </div>
       </div>
       <dl className="run-result-metrics" aria-label="Dataset Run progress">
@@ -7913,6 +8403,7 @@ function BatchDetailWorkspace({
           )}
         </div>
       </Panel>
+      {managementDialog && <ManagementImpactDialog state={managementDialog} onClose={() => setManagementDialog(undefined)} onError={onError} onComplete={(receipt) => { setManagementDialog(undefined); void onRefresh(); if (receipt.action === "move_to_trash") onNavigate(projectRunsPath(batch.project_id)); else void load().catch((error: Error) => onError(error.message)); }} />}
     </section>
   );
 }
@@ -7922,19 +8413,30 @@ function RunHistoryRow({
   projectId,
   onNavigate,
   childLabel,
+  management,
 }: {
   run: HistoryRun;
   projectId?: string;
   onNavigate: (path: string) => void;
   childLabel?: string;
+  management?: {
+    selected: boolean;
+    onToggle: (object: ManagementObjectRef, checked: boolean) => void;
+    onDelete: (objects: ManagementObjectRef[]) => void;
+  };
 }) {
-  return <button className={`run-row${childLabel ? " batch-child-run" : ""}`} onClick={() => onNavigate(projectId ? projectRunPath(projectId, run.id) : `/runs/${encodeURIComponent(run.id)}`)}>
+  const object: ManagementObjectRef = { kind: "run", id: run.id, expected_revision: run.lifecycle_revision };
+  return <div className={`managed-execution-row${childLabel ? " managed-child-row" : ""}`}>
+    {management && <input type="checkbox" aria-label={`Select Run ${run.id.slice(0, 8)}`} checked={management.selected} onChange={(event) => management.onToggle(object, event.target.checked)} />}
+    <button className={`run-row${childLabel ? " batch-child-run" : ""}`} onClick={() => onNavigate(projectId ? projectRunPath(projectId, run.id) : `/runs/${encodeURIComponent(run.id)}`)}>
     <span className="event-rail" />
     <div><strong>{childLabel ?? run.project_name}</strong><small>{run.workflow_name}@v{run.workflow_version}</small><code>{run.model_identity} · {run.artifact_count} Artifacts</code>{run.terminal_reason && <small className="run-reason">{run.terminal_reason}</small>}</div>
     <div className="run-usage"><span>{(run.input_tokens + run.output_tokens).toLocaleString()} tokens</span><span>${run.cost}</span></div>
     <Status status={run.status} />
     <span className="row-arrow" aria-hidden="true">→</span>
-  </button>;
+    </button>
+    {management && <details className="row-menu"><summary aria-label={`Manage Run ${run.id.slice(0, 8)}`}>•••</summary><div><button onClick={() => onNavigate(projectId ? projectRunPath(projectId, run.id) : `/runs/${encodeURIComponent(run.id)}`)}>View</button><button className="danger-button" onClick={() => management.onDelete([object])}>Delete…</button></div></details>}
+  </div>;
 }
 
 function RunDetailWorkspace({
@@ -7955,6 +8457,7 @@ function RunDetailWorkspace({
   const view = route.view ?? "results";
   const [replay, setReplay] = useState<NodeReplayReport>();
   const [busy, setBusy] = useState(false);
+  const [managementDialog, setManagementDialog] = useState<ManagementDialogState>();
   const resultQuery = useRouteQuery(
     queryKeys.runResults(run.id),
     (signal) => api.runResultSummary(run.id, signal),
@@ -8082,6 +8585,17 @@ function RunDetailWorkspace({
     setBusy(true);
     void api.control(run.id, action).then(onRefresh).catch((error: Error) => onError(error.message)).finally(() => setBusy(false));
   };
+  const manageRun = (action: "move_to_trash" | "restore" | "cancel_and_delete") => {
+    if (!project) return onError("This Run does not have a resolvable owning Project.");
+    const request = managementRequest(project.id, [{
+      kind: "run",
+      id: run.id,
+      expected_revision: run.lifecycle_revision,
+    }], action);
+    void api.previewManagement(project.id, request)
+      .then((preview) => setManagementDialog({ request, preview }))
+      .catch((error: Error) => onError(error.message));
+  };
   const replayNode = () => {
     if (!selectedNode) return;
     setBusy(true);
@@ -8118,6 +8632,7 @@ function RunDetailWorkspace({
         onOpenProject={project ? () => onNavigate(`/projects/${encodeURIComponent(project.id)}`) : undefined}
       />
       <button className="text-button run-back" onClick={() => onNavigate(project ? projectRunsPath(project.id) : "/runs")}>← Run history</button>
+      {run.in_trash && project && <div className="trash-state-banner" role="status"><span><strong>This Run is in Trash</strong><small>Its unfinished Review work is hidden. Accepted annotations and source data are preserved.</small></span><button onClick={() => manageRun("restore")}>Restore Run</button><button onClick={() => onNavigate(projectTrashPath(project.id, "run"))}>Open Trash</button></div>}
       <nav className="run-view-tabs" aria-label="Run workspace view">
         <button className={view === "results" ? "active" : ""} aria-current={view === "results" ? "page" : undefined} onClick={() => setView("results")}>Results</button>
         <button className={view === "debug" ? "active" : ""} aria-current={view === "debug" ? "page" : undefined} onClick={() => setView("debug")}>Debug</button>
@@ -8130,6 +8645,7 @@ function RunDetailWorkspace({
           {run.status === "running" && <button disabled={busy} onClick={() => control("pause")}>Pause</button>}
           {run.status === "paused" && <button disabled={busy} onClick={() => control("resume")}>Resume</button>}
           {run.controllable && <button className="danger" disabled={busy} onClick={() => control("cancel")}>Cancel</button>}
+          {!run.in_trash && project && <button className="danger-button" disabled={busy} onClick={() => manageRun(run.controllable || ["pending", "running", "paused", "awaiting_review"].includes(run.status) ? "cancel_and_delete" : "move_to_trash")}>{run.controllable || ["pending", "running", "paused", "awaiting_review"].includes(run.status) ? "Cancel and delete…" : "Delete…"}</button>}
         </div>
       </div>
       {view === "results" ? <>
@@ -8188,6 +8704,7 @@ function RunDetailWorkspace({
         </section>
       )}
       </>}
+      {managementDialog && <ManagementImpactDialog state={managementDialog} onClose={() => setManagementDialog(undefined)} onError={onError} onComplete={(receipt) => { setManagementDialog(undefined); void onRefresh(); if (project) onNavigate(projectRunsPath(project.id)); }} />}
     </section>
   );
 }

@@ -124,6 +124,11 @@ export interface HistoryRun {
   checkpoint_present: boolean;
   review_suspended: boolean;
   terminal_reason?: string;
+  lifecycle_revision: number;
+  archived_at?: string;
+  deleted_at?: string;
+  deletion_operation_id?: string;
+  in_trash: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -159,9 +164,172 @@ export interface DatasetBatchSummary {
     cancelled_images: number;
   };
   child_run_ids: string[];
+  deleted_child_runs: number;
+  lifecycle_revision: number;
+  archived_at?: string;
+  deleted_at?: string;
+  deletion_operation_id?: string;
+  in_trash: boolean;
   images: BatchImageSummary[];
   created_at: string;
   updated_at: string;
+}
+
+export type ManagementObjectKind =
+  | "run"
+  | "batch"
+  | "workflow_draft"
+  | "workflow_version"
+  | "pipeline";
+
+export type ManagementAction =
+  | "move_to_trash"
+  | "restore"
+  | "archive"
+  | "unarchive"
+  | "rename"
+  | "set_default"
+  | "clear_default"
+  | "purge"
+  | "cancel_and_delete";
+
+export interface ManagementObjectRef {
+  kind: ManagementObjectKind;
+  id: string;
+  version?: number;
+  expected_revision: number;
+}
+
+export interface WorkflowVersionRef {
+  workflow_id: string;
+  version: number;
+}
+
+export interface ManagementRequest {
+  project_id: string;
+  objects: ManagementObjectRef[];
+  action: ManagementAction;
+  replacement_default_version?: WorkflowVersionRef;
+  clear_default?: boolean;
+  display_name?: string;
+  idempotency_key: string;
+  confirmation_token?: string;
+}
+
+export interface ManagementImpact {
+  top_level_objects: number;
+  child_runs: number;
+  unresolved_reviews_hidden: number;
+  confirmed_annotations_retained: number;
+  historical_run_references: number;
+  calibration_references: number;
+  debug_rows: number;
+  estimated_reclaimable_bytes?: number;
+  estimate_note: string;
+}
+
+export interface ManagementBlocker {
+  code: string;
+  object: ManagementObjectRef;
+  message: string;
+  related_ids: string[];
+}
+
+export interface ManagementPreview {
+  project_id: string;
+  action: ManagementAction;
+  objects: ManagementObjectRef[];
+  impact: ManagementImpact;
+  blockers: ManagementBlocker[];
+  confirmation_token: string;
+  can_execute: boolean;
+  recoverable: boolean;
+  navigation_target: string;
+  summary: string;
+}
+
+export interface PurgeReport {
+  database_rows_removed: number;
+  files_removed: number;
+  bytes_reclaimed: number;
+  retained_annotation_records: number;
+  retained_usage_records: number;
+  retained_provenance_records: number;
+  retained_reasons: string[];
+  failed_items: string[];
+}
+
+export interface RunProvenanceSummary {
+  run_id: string;
+  project_id: string;
+  source_deleted: boolean;
+  workflow_id?: string;
+  workflow_version?: number;
+  workflow_content_hash?: string;
+  provider: string;
+  model: string;
+  summary: Record<string, unknown>;
+  purged_at: string;
+}
+
+export interface LifecycleUsageTotals {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cost: string;
+}
+
+export interface ManagementUsageSummary {
+  visible_runs: LifecycleUsageTotals;
+  cleaned_up_runs: LifecycleUsageTotals;
+  historical_total: LifecycleUsageTotals;
+}
+
+export interface ManagementReceipt {
+  operation_id: string;
+  project_id: string;
+  action: ManagementAction;
+  status: "prepared" | "waiting_for_cancellation" | "running" | "completed" | "failed";
+  affected_objects: ManagementObjectRef[];
+  impact: ManagementImpact;
+  purge?: PurgeReport;
+  error?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TrashEntry {
+  project_id: string;
+  object: ManagementObjectRef;
+  display_name: string;
+  deleted_at: string;
+  deletion_operation_id: string;
+  source_project: string;
+  recoverable: boolean;
+}
+
+export interface WorkflowLifecycleItem {
+  object: ManagementObjectRef;
+  display_name: string;
+  content_hash: string;
+  archived_at?: string;
+  deleted_at?: string;
+  deletion_operation_id?: string;
+  is_default: boolean;
+  historical_run_references: number;
+}
+
+export interface PipelineLifecycleSummary {
+  project_id: string;
+  workflow_id: string;
+  display_name: string;
+  lifecycle_revision: number;
+  archived_at?: string;
+  deleted_at?: string;
+  deletion_operation_id?: string;
+  default_version?: number;
+  drafts: WorkflowLifecycleItem[];
+  versions: WorkflowLifecycleItem[];
 }
 
 export interface BatchImageSummary {

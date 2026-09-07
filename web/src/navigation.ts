@@ -36,6 +36,7 @@ export type WorkspaceRoute =
       view?: "results" | "debug";
     }
   | { kind: "projectRuns"; canonicalPath: string; projectId: string; status?: string }
+  | { kind: "projectTrash"; canonicalPath: string; projectId: string; objectKind?: string }
   | {
       kind: "projectRun";
       canonicalPath: string;
@@ -111,6 +112,13 @@ export function projectBatchPath(projectId: string, batchId: string): string {
   return `/projects/${encodeURIComponent(projectId)}/batches/${encodeURIComponent(batchId)}`;
 }
 
+export function projectTrashPath(projectId: string, objectKind?: string): string {
+  const base = `/projects/${encodeURIComponent(projectId)}/manage/trash`;
+  return objectKind && objectKind !== "all"
+    ? `${base}?kind=${encodeURIComponent(objectKind)}`
+    : base;
+}
+
 export function projectReviewPath(projectId: string, reviewItemId?: string): string {
   const base = `/projects/${encodeURIComponent(projectId)}/review`;
   return reviewItemId ? `${base}/${encodeURIComponent(reviewItemId)}` : base;
@@ -152,6 +160,8 @@ export function routeFocusKey(route: WorkspaceRoute): string {
       return `project-runs:${route.projectId}`;
     case "projectBatch":
       return `project-batch:${route.projectId}:${route.batchId}`;
+    case "projectTrash":
+      return `project-trash:${route.projectId}`;
     case "project":
     case "export":
       return `${route.kind}:${route.projectId}`;
@@ -311,6 +321,23 @@ export function parseWorkspaceRoute(
       projectId,
       batchId,
       canonicalPath: projectBatchPath(projectId, batchId),
+    };
+  }
+  const projectTrash = clean.match(/^\/projects\/([^/]+)\/manage\/trash$/);
+  if (projectTrash) {
+    const projectId = decodePathSegment(projectTrash[1]);
+    if (!projectId)
+      return {
+        kind: "notFound",
+        invalidPath: `${clean}${search}`,
+        canonicalPath: `${clean}${search}`,
+      };
+    const objectKind = params.get("kind") ?? undefined;
+    return {
+      kind: "projectTrash",
+      projectId,
+      objectKind,
+      canonicalPath: projectTrashPath(projectId, objectKind),
     };
   }
   const projectReview = clean.match(/^\/projects\/([^/]+)\/review(?:\/([^/]+))?$/);
