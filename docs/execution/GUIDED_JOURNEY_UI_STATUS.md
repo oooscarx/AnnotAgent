@@ -356,3 +356,32 @@ fingerprint. Feedback changed in another tab requires re-confirmation. The UI
 warns that manually corrected samples do not change future model predictions.
 Remaining work: task-specific vision setup, sample-feedback-driven controlled
 improvement, complete default Run/management isolation and final M4 coverage.
+
+M3b local commit: `99dcfb4` — continuous Review and delivery. Final full browser
+run passed **62/62**, including HTTP 503 Review-save recovery, unchanged canvas
+after the last decision and refresh, separate advanced audit route, export/SSE
+recovery, management deletion/restoration and existing SDK/plugin checks.
+
+### M2 follow-up — distinguish planning from image execution
+
+- Goal entry checks task-compatible available image profiles independently from
+  the text planner. Missing vision support goes to the typed `purpose=vision`
+  connection scene, then returns to the same saved goal without inference.
+- The task connection scene filters by actual declared modality/capability;
+  text-only planning and prompted-refiner-only profiles are not presented as
+  independent object detectors. Vision setup does not claim tool-call support.
+- Successful Provider/model substeps persist in the existing Registry. Only
+  their IDs are saved as a local recovery preference; no key enters browser
+  storage/URL. A failed model-create step can resume after refresh, reusing the
+  saved Provider and workspace-file credential without creating a duplicate.
+- Selecting a model now compares and changes one binding inside a storage
+  transaction. It does not delete/reinsert the Project's complete binding list;
+  locked bindings and concurrent changes are rejected, unrelated bindings stay.
+- Isolated planning + vision setup / cancellation / partial-save recovery and
+  the ready-model end-to-end processing case passed (2/2). Storage tests passed;
+  Clippy warnings-as-errors passed. Current unit additions distinguish image
+  classification/detection from text planning and prompted segmentation.
+- Limitation still open: this scene provisions OpenAI-compatible services, not
+  native model bundles. Existing plugin installation remains in management until
+  a task-scoped native setup return path is implemented and verified. This is
+  not reported as a completed local-model first-use path.

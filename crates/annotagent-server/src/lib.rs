@@ -741,7 +741,7 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         )
         .route(
             "/api/projects/{project_id}/model-bindings",
-            get(get_project_model_bindings).put(put_project_model_bindings),
+            get(get_project_model_bindings).put(put_project_model_bindings).post(select_project_model_binding),
         )
         .route(
             "/api/agent-model-bindings",
@@ -2140,6 +2140,37 @@ struct ProjectModelBindingInput {
     model_profile_id: ModelProfileId,
     #[serde(default)]
     locked: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SelectProjectModelBindingRequest {
+    binding: ProjectModelBindingInput,
+    expected_binding_id: Option<ModelBindingId>,
+}
+
+async fn select_project_model_binding(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+    Json(input): Json<SelectProjectModelBindingRequest>,
+) -> ApiResult<Json<Value>> {
+    let stable_id = registry_project_id(&state, &project_id)?;
+    let binding = ProjectModelBinding {
+        id: ModelBindingId::new(),
+        project_id: stable_id,
+        capability: input.binding.capability,
+        role: input.binding.role,
+        match_kind: input.binding.match_kind,
+        model_profile_id: input.binding.model_profile_id,
+        locked: input.binding.locked,
+        created_at: Utc::now(),
+    };
+    state
+        .application
+        .store()
+        .select_project_model_binding(&binding, input.expected_binding_id)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({"project_id":project_id,"binding":binding})))
 }
 
 async fn get_project_model_bindings(

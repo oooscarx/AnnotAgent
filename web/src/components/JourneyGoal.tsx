@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { t } from "../i18n";
 import { projectJourneyPath } from "../navigation";
+import { journeyConnectionReady, journeyModelMatches } from "../journeyConnections";
 import type { AgentSession, ImageItem, ProjectSummary, RegistryModelProfile } from "../types";
 
 export function splitGoalLabels(value: string): string[] {
@@ -34,6 +35,7 @@ export function JourneyGoal({ project, sessionId, onNavigate, onRefresh, onNavig
   const [images, setImages] = useState<ImageItem[]>([]);
   const [model, setModel] = useState<RegistryModelProfile>();
   const [destination, setDestination] = useState("");
+  const [visionModels, setVisionModels] = useState<RegistryModelProfile[]>([]);
   const [busy, setBusy] = useState(false);
   const [planning, setPlanning] = useState(false);
   const [session, setSession] = useState<AgentSession>();
@@ -43,6 +45,7 @@ export function JourneyGoal({ project, sessionId, onNavigate, onRefresh, onNavig
   const mounted = useRef(true);
   const leaving = useRef(false);
   const started = useRef("");
+  const visionReady = visionModels.some((profile) => journeyModelMatches(profile, "vision", kind));
   const dirty = Boolean(saved && (goal !== saved.goal || kind !== (saved.kind ?? "bounding_box") || JSON.stringify(splitGoalLabels(labels)) !== JSON.stringify(saved.labels ?? [])));
   useEffect(() => {
     mounted.current = true;
@@ -54,6 +57,7 @@ export function JourneyGoal({ project, sessionId, onNavigate, onRefresh, onNavig
       const plannerId = bindings.bindings.find((item) => item.role === "pipeline_builder")?.model_profile_id ?? defaults.pipeline_builder;
       const planner = profiles.models.find((item) => item.id === plannerId && item.enabled && item.status === "available" && item.input_modalities.includes("text") && item.task_capabilities.includes("text_generation") && item.protocol_features.tool_calls && item.protocol_features.structured_output && providers.providers.some((provider) => provider.id === item.provider_id && provider.enabled && provider.credential_configured && ["available", "configured"].includes(provider.health.status)));
       setModel(planner);
+      setVisionModels(profiles.models.filter((profile) => journeyConnectionReady(profile, providers.providers)));
       setDestination(providers.providers.find((provider) => provider.id === planner?.provider_id)?.base_url ?? "");
     }).catch((error: Error) => { if (current) setError(error.message); });
     return () => { mounted.current = false; current = false; controller.abort(); };
@@ -96,7 +100,11 @@ export function JourneyGoal({ project, sessionId, onNavigate, onRefresh, onNavig
   }
   async function prepare() {
     const next = await save();
-    if (next && model) setConsent(true);
+    if (next && model && visionReady) setConsent(true);
+    else if (next && model) {
+      leaving.current = true; onNavigationGuardChange(undefined);
+      onNavigate(projectJourneyPath(project.id, "model", { modelPurpose: "vision" }));
+    }
     else if (next) {
       leaving.current = true; onNavigationGuardChange(undefined);
       onNavigate(projectJourneyPath(project.id, "model"));
@@ -146,8 +154,9 @@ export function JourneyGoal({ project, sessionId, onNavigate, onRefresh, onNavig
       <label>{t("Categories to keep")}<input aria-label={t("Categories to keep")} value={labels} disabled={busy || consent} onChange={(event) => setLabels(event.target.value)} placeholder={t("cup, bottle, plate")} /><small>{t("Separate categories with commas. These names are used as written; no language model is needed to save them.")}</small></label>
       <p role="status">{t(busy ? "Saving your goal…" : dirty ? "Unsaved goal changes" : "Goal saved")}</p>
       {!model && <p className="journey-notice">{t("Your goal can be saved without a language model. No available planning model is connected yet; no inference will start.")}</p>}
+      {model && !visionReady && <p className="journey-notice">{t("Planning is connected, but this output still needs a compatible image model. No sample calls will start.")}</p>}
       {consent && <section className="journey-consent" aria-label={t("Planning authorization")}><h3>{t("First, prepare the plan")}</h3><p>{model?.display_name} · {destination}</p><p>{t("Only your goal, labels and model catalog are sent in this step. Up to 16 planning turns and a $1 reported-usage budget. Actual cost is unknown when the service does not report prices. No image testing is permitted in this planning step.")}</p><p>{t("Before testing images, you will confirm the actual services and sample scope separately. This does not publish or process your dataset.")}</p><div className="button-row"><button onClick={() => setConsent(false)}>{t("Back to goal")}</button><button className="primary" onClick={() => void build()}>{t("Authorize planning")}</button></div></section>}
-      {!consent && <footer className="journey-actions"><button disabled={busy} onClick={() => onNavigate(projectJourneyPath(project.id, "images"))}>{t("Back to images")}</button><button className="primary" disabled={busy || !splitGoalLabels(labels).length || !images.length} onClick={() => void prepare()}>{t(model ? "Prepare sample results" : "Save goal and connect model")}</button></footer>}
+      {!consent && <footer className="journey-actions"><button disabled={busy} onClick={() => onNavigate(projectJourneyPath(project.id, "images"))}>{t("Back to images")}</button><button className="primary" disabled={busy || !splitGoalLabels(labels).length || !images.length} onClick={() => void prepare()}>{t(model ? visionReady ? "Prepare sample results" : "Connect an image model" : "Save goal and connect model")}</button></footer>}
     </>}
     {error && <p role="alert">{error}</p>}
   </section>;

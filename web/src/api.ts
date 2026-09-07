@@ -583,6 +583,8 @@ export const api = {
       `/api/projects/${encodeURIComponent(projectId)}/model-bindings`,
       { method: "PUT", body: JSON.stringify({ bindings }) },
     ),
+  selectProjectModelBinding: (projectId: string, binding: { capability: ModelCapability; role: ModelBindingRole; match_kind: "capability" | "role"; model_profile_id: string; locked: boolean }, expectedBindingId?: string) =>
+    request<{ project_id: string; binding: ProjectModelBinding }>(`/api/projects/${encodeURIComponent(projectId)}/model-bindings`, { method: "POST", body: JSON.stringify({ binding, expected_binding_id: expectedBindingId ?? null }) }),
   agentModelBindings: () =>
     request<GlobalModelDefaults>("/api/agent-model-bindings"),
   saveAgentModelBindings: (defaults: GlobalModelDefaults) =>

@@ -1,5 +1,15 @@
 /** English source messages are stable keys; untranslated technical copy falls back to English. */
 export const zhCN: Record<string, string> = {
+  "Connect another service without deleting the saved connection": "连接其他服务，保留已有连接",
+  "Connect an image model": "连接图片模型",
+  "Planning is connected, but this output still needs a compatible image model. No sample calls will start.": "规划模型已连接，但当前输出还需要兼容的图片模型。尚未发起样例调用。",
+  "Your goal is saved. Choose a model that can process images for this task; connecting it does not run your images.": "目标已保存。请选择能处理本任务图片的模型，连接操作不会运行你的图片。",
+  "Choose a compatible image model": "选择兼容的图片模型",
+  "No compatible image connection is available yet.": "尚无兼容的图片模型连接。",
+  "A prompted boundary refiner alone cannot find objects. This connection step does not install weights; local plugin provisioning remains in Project management.": "依赖提示的边界精修模型不能独立寻找目标。本页不安装权重，本地插件配置仍在项目管理中。",
+  "Connect an OpenAI-compatible image service for the selected output type. A text-only model cannot process your images. Capabilities remain user-declared.": "请连接支持当前输出类型的 OpenAI 兼容图片服务。纯文本模型无法处理图片，此处能力仍为用户声明。",
+  "This model accepts images and supports my selected output type with structured responses": "此模型接受图片，并能以结构化响应提供我选择的输出类型",
+  "This task has a locked model connection. It was not changed.": "此任务的模型连接已锁定，未作更改。",
   "Decision saved": "审核决定已保存",
   "Image-level classification · use the label control to edit": "整图分类，可通过标签输入框修改",
   "Your sample corrections are saved evaluation feedback. They do not change this plan's future predictions; processing may repeat the issues you identified.": "样例修正已保存为评估反馈，并不会改变这套方案之后的预测。继续处理可能仍会出现你指出的问题。",

@@ -299,6 +299,12 @@ pub enum RunStartReservation {
     Conflict { run_id: RunId, status: RunStatus },
 }
 
+#[derive(Clone, Copy)]
+enum BindingExpectation {
+    Unchecked,
+    Exact(Option<ModelBindingId>),
+}
+
 pub struct SqliteStore {
     connection: Mutex<Connection>,
 }
@@ -1355,7 +1361,31 @@ impl SqliteStore {
         binding: &ProjectModelBinding,
         actor: BindingMutationActor,
     ) -> Result<(), StorageError> {
+        self.save_project_model_binding_checked(binding, actor, BindingExpectation::Unchecked)
+    }
+
+    /// A task-scoped connection changes one match key, never rewrites unrelated bindings.
+    /// `None` requires an absent binding; an ID requires that exact existing row.
+    pub fn select_project_model_binding(
+        &self,
+        binding: &ProjectModelBinding,
+        expected: Option<ModelBindingId>,
+    ) -> Result<(), StorageError> {
+        self.save_project_model_binding_checked(
+            binding,
+            BindingMutationActor::Agent,
+            BindingExpectation::Exact(expected),
+        )
+    }
+
+    fn save_project_model_binding_checked(
+        &self,
+        binding: &ProjectModelBinding,
+        actor: BindingMutationActor,
+        expected: BindingExpectation,
+    ) -> Result<(), StorageError> {
         self.with_connection(|connection| {
+            let transaction = connection.unchecked_transaction()?;
             let match_value = binding_match_value(binding)?;
             let existing = connection
                 .query_row(
@@ -1371,6 +1401,14 @@ impl SqliteStore {
                 .optional()?
                 .map(|json| serde_json::from_str::<ProjectModelBinding>(&json))
                 .transpose()?;
+            if let BindingExpectation::Exact(id) = expected
+                && id != existing.as_ref().map(|value| value.id)
+            {
+                return Err(StorageError::InvalidEnum(
+                    "Project connection changed in another task; reload before selecting a model"
+                        .into(),
+                ));
+            }
             if existing
                 .as_ref()
                 .is_some_and(|existing| existing.locked && actor == BindingMutationActor::Agent)
@@ -1428,6 +1466,7 @@ impl SqliteStore {
                     binding.created_at.to_rfc3339(),
                 ],
             )?;
+            transaction.commit()?;
             Ok(())
         })
     }
@@ -5304,6 +5343,43 @@ mod tests {
             .expect("binding");
         let mut agent_replacement = binding.clone();
         agent_replacement.model_profile_id = ModelProfileId::new();
+        assert!(
+            store
+                .select_project_model_binding(&binding, Some(binding.id))
+                .is_err()
+        );
+        let mut task_connection = binding.clone();
+        task_connection.id = ModelBindingId::new();
+        task_connection.match_kind = ModelBindingMatch::Capability;
+        task_connection.locked = false;
+        store
+            .select_project_model_binding(&task_connection, None)
+            .expect("new independent connection");
+        assert!(
+            store
+                .select_project_model_binding(&task_connection, None)
+                .is_err()
+        );
+        let mut replacement = task_connection.clone();
+        replacement.id = ModelBindingId::new();
+        store
+            .select_project_model_binding(&replacement, Some(task_connection.id))
+            .expect("compare and replace one connection");
+        assert!(
+            store
+                .select_project_model_binding(&task_connection, Some(task_connection.id))
+                .is_err()
+        );
+        assert_eq!(
+            store
+                .list_project_model_bindings(project_id)
+                .expect("both bindings")
+                .len(),
+            2
+        );
+        store
+            .delete_project_model_binding(replacement.id, BindingMutationActor::User)
+            .expect("remove test connection");
         assert!(matches!(
             store.save_project_model_binding(&agent_replacement, BindingMutationActor::Agent),
             Err(StorageError::ModelBindingLocked)
