@@ -934,3 +934,28 @@ No Live quality, real-user usability or complete LLM repair claim is made. Human
 request generation, automatic UI notification, request kinds beyond existing sample
 correction, bounded model repair, processing/Review/export and remaining M4 checks
 are unfinished. No real workspace restart/mutation, paid calls, push or remote change.
+
+### Repair evidence uses feedback-scoped terminal results (M3 prerequisite)
+
+Code inspection found that the existing sample-plan Repair Builder supplied raw
+`sample.outcomes` from every baseline image. Those can contain intermediate boxes,
+and unrelated images could enter a local correction's analysis. Replaced that
+observation assembly with the existing terminal projection, filtered by the saved
+feedback's image and outcome identities. Missing-target feedback includes that
+image's terminal subjects; intermediate/legacy IDs are explicitly reported absent,
+never substituted with a coarse detection. Duplicate terminal IDs are collapsed.
+
+The bounded payload retains bbox/classification values, lineage, semantic confidence
+and separate geometry/status evidence. It explicitly says no image pixels were
+supplied; unsupported geometry values are marked omitted. Candidate truncation is
+reported with counts, no-target remains explicit, and mismatched input/result counts
+or foreign feedback are rejected rather than silently paired. This changes the actual
+existing Repair prompt assembly, not only a test helper. It does not yet connect a
+conversation repair authorization/command or claim that the model improved quality.
+
+Regression: Application all-features **98 passed / 1 billable ignored**, strict
+Application Clippy passed. Added terminal-vs-intermediate, unrelated image/object,
+classification, deduplication, whole-image feedback, foreign scope, malformed report,
+candidate-limit and no-target assertions. Workspace formatting and diff checks pass.
+No UI changed, so no new screenshot claim. Existing generated screenshot changes are
+left unstaged. No real workspace change, paid call, push or remote modification.

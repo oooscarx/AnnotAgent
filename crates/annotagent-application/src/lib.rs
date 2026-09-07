@@ -17,6 +17,7 @@ mod management;
 mod published_run;
 mod result_projection;
 mod sample_limits;
+mod sample_repair_evidence;
 mod workspace_summary;
 
 pub use guidance::{
@@ -12346,21 +12347,7 @@ impl LocalApplication {
                     evidence["sample_test_id"].as_str().unwrap_or_default(),
                 )?
                 .ok_or_else(|| anyhow!("Original Sample Test is unavailable"))?;
-            let observations = baseline.inputs.iter().zip(&baseline.report.samples).take(10).map(|(image, sample)| json!({
-                "image_id": image.image_id,
-                "failed": sample.failed,
-                "outcome_count": sample.outcomes.len(),
-                "outcomes_truncated": sample.outcomes.len() > 64,
-                "outcomes": sample.outcomes.iter().take(64).map(|outcome| json!({
-                    "id": outcome.id, "label": outcome.label, "status": outcome.status,
-                    "semantic_confidence": outcome.confidence,
-                    "failure_classes": outcome.failure_classes,
-                    "bounding_box": match &outcome.value {
-                        Some(annotagent_core::VisionArtifactValue::BoundingBox { rect }) => Some(rect),
-                        _ => None,
-                    },
-                })).collect::<Vec<_>>(),
-            })).collect::<Vec<_>>();
+            let observations = sample_repair_evidence::observations(&baseline, &evidence)?;
             messages.push(ModelMessage {
                 role: ModelRole::User,
                 content: serde_json::to_string(&json!({
