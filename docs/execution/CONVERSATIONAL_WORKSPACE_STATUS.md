@@ -649,3 +649,54 @@ Journey regression completed: **1/1**, 29.1s test / 46.3s total, fresh
 start, changed-scope rejection, cancellation and lost-response behavior passed. This
 is the existing Journey path, not evidence that the new conversation consent is wired
 to the UI. Production build passed with its existing >500 kB chunk warning.
+
+### First conversation → authorized classification sample → editable canvas (M1/M2)
+
+Connected the task-scoped sample authorization/history API to the saved Builder card.
+The card shows the exact Draft revision, actual models/destinations, image/call limits,
+cumulative spend and unknown cost, requires consent, restores operation history and
+offers Stop while active. A lost POST response reads the existing receipt. Pending
+non-secret request envelopes survive tab reload in sessionStorage for explicit retry;
+mount/GET never replays them. A saved report is not described as accurate or accepted.
+
+The right pane now reuses SampleFeedbackEditor/AnnotationCanvas for the selected saved
+test. Typed `/projects/:id/work?conversation=&draft=&test=&image=` navigation keeps the
+same task and page focus identity. Project/Draft/Test ownership and image hash are
+checked; missing, changed or legacy evidence cannot substitute another final box.
+Only terminal projections feed the editor, with lineage duplicates removed. Original
+pixels, classification/geometry editing, feedback save, dirty guard and image switching
+reuse existing controls. Sample edits remain Sandbox feedback. Saved sample scope now
+also freezes the bound semantic Schema; additions use those labels/kind, not a newer
+unrelated Project goal. Model-call previews and source errors remain truthful.
+
+The new real-HTTP fixture path found two backend defects: conversation classification
+seeded a legacy task-provider node, and Registry binding normalization updated only
+compiled nodes while leaving their authored PipelineStep unbound. Classification now
+uses the existing controlled classification composition, keeps every declared category
+and binds actual Registry profiles. Normalization synchronizes the authoring projection
+without replacing the frozen Profile identity; an idempotency regression covers this.
+Bounding-box conversation synthesis still needs its own complete golden path.
+
+Evidence: new browser test runs goal→Schema→Builder→explicit sample consent→HTTP
+classification→durable call receipt→canvas. It drops the successful sample POST response,
+reloads with no POST/model work, edits 室内 to 室外, verifies leave-with-unsaved confirmation,
+saves and restores the correction with an unchanged model ledger. With journal regression:
+**2/2** in `/tmp/annotagent-guided-e2e-88620`; with Schema/Builder regression previously
+**2/2** in `/tmp/annotagent-guided-e2e-88430`. Web typecheck and **106/106** unit tests pass.
+Application **93 passed/1 billable ignored** plus the added binding normalization test
+passed; Server **36/36** passed. Strict Application/server Clippy passed before final
+visual-only sizing adjustment. Screenshots `sample-classification.png` and
+`sample-classification-390.png` are TEST synthetic images and scripted HTTP model
+outputs, not Live quality or real-user usability evidence.
+
+Remaining: bbox/crop golden path, Human Request answer/outbox/resume, task intent routing
+beyond the first message, controlled rerun/improvement, project creation/no-LLM flow,
+same-workspace processing/Review/export, missing-model return and broad accessibility/
+responsive/200%/race audit. Default rollout is still not enabled. No push, remote change,
+real workspace restart/data change, old credential use or paid inference occurred.
+
+Final increment recheck: Application **94 passed/1 billable ignored**, strict
+Application/server Clippy passed after fixing the new test's clone-on-Copy lint.
+Latest classification browser **1/1**, 3.3s / 8.4s total in
+`/tmp/annotagent-guided-e2e-88838`, regenerated the two viewport screenshots after
+canvas sizing adjustment. No full-workspace Rust or real-user usability claim is made.

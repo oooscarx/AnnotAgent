@@ -20,6 +20,12 @@ describe("guided workspace routing", () => {
     expect(route).toMatchObject({ kind: "conversation", projectId: "project a", conversationId: "saved", imageId: "image", canonicalPath: path });
     expect(routeFocusKey(route)).toBe(routeFocusKey(parseWorkspaceRoute(url.pathname, "?image=other")));
   });
+  it("restores the exact conversation Sample Test and Draft without changing the page focus key",()=>{
+    const path=projectWorkPath("project",{conversationId:"saved",draftId:"draft",sampleTestId:"test",imageId:"image"});
+    const url=new URL(path,"http://localhost");const route=parseWorkspaceRoute(url.pathname,url.search);
+    expect(route).toMatchObject({kind:"conversation",draftId:"draft",sampleTestId:"test",imageId:"image",canonicalPath:path});
+    expect(routeFocusKey(route)).toBe(routeFocusKey(parseWorkspaceRoute(url.pathname,"?image=another")));
+  });
   it("accepts only a typed same-project revision return for model setup", () => {
     const path = projectJourneyPath("project", "model", { returnScene: "revise", draftId: "draft", sampleTestId: "test", imageId: "image" });
     const url = new URL(path, "http://localhost");

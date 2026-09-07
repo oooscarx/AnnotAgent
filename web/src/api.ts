@@ -3,6 +3,8 @@ export type SampleOperation = {
   status: "queued" | "running" | "cancelling" | "cancelled" | "interrupted" | "failed" | "succeeded";
   error?: string | null;
 };
+export type ConversationSampleConsent = { conversation_id: string; task_id: string; previous_grant_id: string; scope_hash: string; expires_at: string; allow_unknown_cost: boolean };
+export type ConversationSamplePreview = { project_id: string; revision: number; image_count: number; models: {name: string; destination: string; id: string; revision: number}[]; supported: boolean; other_bindings: string[]; authorization_fingerprint: string; request_limit: number; estimated_cost: null; request_id: string; conversation_budget: { previous_grant_id: string; scope_hash: string; expires_at: string; maximum_calls: number; used_calls: number } };
 export type ProcessingSelection = { draft_id: string; sample_test_id: string; limit?: number };
 export type ProcessingAuthorization = { revision: number; authorization_fingerprint: string; image_count: number; available_images: number; maximum_model_calls: number; sample_feedback_count: number; plan_name: string; goal: { goal?: string }; models: { model_profile_id: string; remote_model_id: string; provider_base_url: string }[]; native_models?: { id: string; name: string; destination: string; revision: number }[] };
 export type ProcessingReceipt = { id: string; project_id: string; draft_id: string; phase: string; batch_id?: string; error?: string | null; authorization: ProcessingAuthorization; request?: ConfirmProcessingRequest };
@@ -871,7 +873,9 @@ export const api = {
   processingPreview: (projectId: string, selection: ProcessingSelection, signal?: AbortSignal) => request<ProcessingAuthorization>(`/api/projects/${encodeURIComponent(projectId)}/processing-preview?${new URLSearchParams({ draft_id: selection.draft_id, sample_test_id: selection.sample_test_id, ...(selection.limit ? { limit: String(selection.limit) } : {}) })}`, { signal }),
   confirmProcessing: (projectId: string, input: ConfirmProcessingRequest) => request<ProcessingReceipt>(`/api/projects/${encodeURIComponent(projectId)}/processing-operations`, { method: "POST", body: JSON.stringify(input) }),
   processingOperation: (projectId: string, id: string, signal?: AbortSignal) => request<ProcessingReceipt>(`/api/projects/${encodeURIComponent(projectId)}/processing-operations/${encodeURIComponent(id)}`, { signal }),
-  startSampleOperation: (projectId: string, input: { request_id: string; draft_id: string; image_indices: number[]; expected_revision: number; authorization_fingerprint: string }) => request<SampleOperation>(`/api/projects/${encodeURIComponent(projectId)}/sample-operations`, { method: "POST", body: JSON.stringify(input) }),
+  conversationSamplePreview: (project: string, conversation: string, task: string, draft: string, requestId: string) => request<ConversationSamplePreview>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/tasks/${encodeURIComponent(task)}/sample-preview?${new URLSearchParams({draft_id:draft,request_id:requestId})}`),
+  conversationSampleHistory: (project: string, conversation: string, task: string, signal?: AbortSignal) => request<{items:SampleOperation[]}>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/tasks/${encodeURIComponent(task)}/sample-operations`,{signal}),
+  startSampleOperation: (projectId: string, input: { request_id: string; draft_id: string; image_indices: number[]; expected_revision: number; authorization_fingerprint: string; conversation?: ConversationSampleConsent }) => request<SampleOperation>(`/api/projects/${encodeURIComponent(projectId)}/sample-operations`, { method: "POST", body: JSON.stringify(input) }),
   sampleOperation: (projectId: string, id: string, signal?: AbortSignal) => request<SampleOperation>(`/api/projects/${encodeURIComponent(projectId)}/sample-operations/${encodeURIComponent(id)}`, { signal }),
   cancelSampleOperation: (projectId: string, id: string) => request<SampleOperation>(`/api/projects/${encodeURIComponent(projectId)}/sample-operations/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
   dryRunWorkflow: (draftId: string, imageIndices: number[] = [], expectedRevision?: number, authorizationFingerprint?: string) =>
@@ -883,6 +887,7 @@ export const api = {
     request<{
       sample_test?: WorkflowSampleTestRecord | null;
       current: boolean;
+      annotation_schema?: {schema_draft_id:string;revision:number;task:import("./types").ConversationSchemaDraft["definition"]["task"]} | null;
     }>(`/api/workflow-drafts/${encodeURIComponent(draftId)}/sample-test${
       sampleTestId ? `?test_id=${encodeURIComponent(sampleTestId)}` : ""
     }`, { signal }),

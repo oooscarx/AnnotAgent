@@ -4,10 +4,11 @@ import { projectWorkPath } from "../navigation";
 import type { ConversationMessage, ConversationMessageInput, ImageItem, ProjectSummary } from "../types";
 import "./conversation-workspace.css";
 import { ConversationSchemaCard } from "./ConversationSchemaCard";
+import { ConversationSampleCanvas } from "./ConversationSampleCanvas";
 
 /** The journal and image importer share the existing Project; neither starts inference. */
-export function ConversationWorkspace({ project, conversationId, imageId, onNavigate, onNavigationGuardChange }: {
-  project: ProjectSummary; conversationId?: string; imageId?: string;
+export function ConversationWorkspace({ project, conversationId, imageId, draftId, sampleTestId, onNavigate, onNavigationGuardChange }: {
+  project: ProjectSummary; conversationId?: string; imageId?: string; draftId?:string; sampleTestId?:string;
   onNavigate: (path: string) => void;
   onNavigationGuardChange: (guard?: () => boolean) => void;
 }) {
@@ -24,8 +25,12 @@ export function ConversationWorkspace({ project, conversationId, imageId, onNavi
   const root = useRef<HTMLDivElement>(null);
   const pending = useRef(false);
   const selectingImage = useRef(false);
+  const sampleNavigation = useRef(0);
+  useEffect(()=>{sampleNavigation.current++;},[imageId,draftId,sampleTestId]);
   const unsent = useRef("");
   const schemaDirty = useRef(false);
+  const sampleDirty = useRef(false);
+  const sampleDirtyChange = useCallback((dirty:boolean)=>{sampleDirty.current=dirty;},[]);
   const schemaDirtyChange = useCallback((dirty: boolean) => { schemaDirty.current = dirty; }, []);
   const frozen = useRef<ConversationMessageInput | undefined>(undefined);
   const alive = useRef(true);
@@ -33,8 +38,8 @@ export function ConversationWorkspace({ project, conversationId, imageId, onNavi
   const referenceImage = frozen.current ? images.find((image) => image.image_id === frozen.current?.image?.image_id) : selected;
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
-    const guard = () => selectingImage.current || (!pending.current && (!(unsent.current || schemaDirty.current) || window.confirm("Leave with unsaved message or Schema edits? Saved workspace data remains on the server.")));
-    const unload = (event: BeforeUnloadEvent) => { if (pending.current || unsent.current || schemaDirty.current) event.preventDefault(); };
+    const guard = () => selectingImage.current || (!pending.current && (!(unsent.current || schemaDirty.current || sampleDirty.current) || window.confirm("Leave with unsaved message, Schema or sample edits? Saved workspace data remains on the server.")));
+    const unload = (event: BeforeUnloadEvent) => { if (pending.current || unsent.current || schemaDirty.current || sampleDirty.current) event.preventDefault(); };
     onNavigationGuardChange(guard);
     window.addEventListener("beforeunload", unload);
     return () => { onNavigationGuardChange(undefined); window.removeEventListener("beforeunload", unload); };
@@ -87,10 +92,21 @@ export function ConversationWorkspace({ project, conversationId, imageId, onNavi
     finally { pending.current = false; if (alive.current) setBusy(false); }
   }
   const openImage = (id: string) => {
+    sampleNavigation.current++;
+    if(sampleDirty.current && !window.confirm("Discard unsaved sample edits and change the image?"))return;
     selectingImage.current = true;
-    try { onNavigate(projectWorkPath(project.id, { conversationId: conversation, imageId: id })); }
+    try { onNavigate(projectWorkPath(project.id, { conversationId: conversation, imageId: id, draftId, sampleTestId })); }
     finally { selectingImage.current = false; }
   };
+  async function openSample(draft:string,test:string,image?:string){
+    const request=++sampleNavigation.current;
+    try{const {sample_test}=await api.workflowSampleTest(draft,undefined,test);
+      if(!sample_test || sample_test.project_id!==project.id || sample_test.draft_id!==draft || sample_test.id!==test)throw new Error("Sample Test does not belong to this Project.");
+      if(!alive.current || request!==sampleNavigation.current)return;
+      onNavigate(projectWorkPath(project.id,{conversationId:conversation,draftId:draft,sampleTestId:test,imageId:image ?? sample_test.inputs[0]?.image_id}));
+      setMobileView("images");
+    }catch(error){if(alive.current)setError((error as Error).message);}
+  }
   return <section className="conversation-workspace" aria-label="Annotation workspace">
     <nav className="conversation-mobile-tabs" aria-label="Workspace panels">
       <button aria-pressed={mobileView === "conversation"} onClick={() => setMobileView("conversation")}>Conversation</button>
@@ -100,7 +116,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, onNavi
       <section className="conversation-panel" aria-label="Project conversation">
         <h2>What would you like to annotate?</h2>
         <p className="muted">Describe your goal before or after uploading images.</p>
-        <p className="conversation-development-note">Workspace integration in progress: propose labels and build a Pipeline Draft after authorization. Sample execution and annotation editing are not connected here yet.</p>
+        <p className="conversation-development-note">Workspace integration in progress: authorized label proposals, Pipeline Drafts and sample tests share saved server state. Dataset processing and human-request continuation are not connected here yet.</p>
         <ol className="conversation-messages" aria-label="Saved messages">
           {messages.map((message) => <li key={message.input.id}><p>{message.input.text}</p>{message.input.image && <button onClick={() => {
             const reference = message.input.image;
@@ -109,7 +125,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, onNavi
             openImage(image.image_id);
           }}>Referenced image · {images.find((image) => image.image_id === message.input.image?.image_id)?.name ?? message.input.image.image_id}</button>}<small>Saved · {message.sequence}</small></li>)}
         </ol>
-        {conversation && messages[0] && <ConversationSchemaCard key={`${conversation}:${messages[0].input.id}`} project={project.id} conversation={conversation} message={messages[0].input.id} onDirtyChange={schemaDirtyChange} />}
+        {conversation && messages[0] && <ConversationSchemaCard key={`${conversation}:${messages[0].input.id}`} project={project.id} conversation={conversation} message={messages[0].input.id} onDirtyChange={schemaDirtyChange} onSample={(draft,test,image)=>void openSample(draft,test,image)} />}
         <form onSubmit={(event) => { event.preventDefault(); void send(); }} className="conversation-composer">
           <label htmlFor="conversation-message">Your message</label>
           <textarea id="conversation-message" value={text} disabled={busy || Boolean(frozen.current)} rows={3} placeholder="Find cups, but not bottles" onChange={(event) => { unsent.current = event.target.value; setText(event.target.value); }} />
@@ -123,7 +139,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, onNavi
         onPointerMove={(event) => { if (!event.currentTarget.hasPointerCapture(event.pointerId)) return; const bounds = root.current?.getBoundingClientRect(); if (bounds) setWidth(Math.round(Math.max(25, Math.min(50, (event.clientX - bounds.left) / bounds.width * 100)))); }} />
       <section className="conversation-image-panel" aria-label="Project images">
         <div className="conversation-image-tools"><h2>{images.length ? `${images.length} images` : "Your images"}</h2><label className="conversation-upload">Add images<input type="file" accept="image/png,image/jpeg" multiple disabled={busy || !ready} onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; void upload(files); }} /></label></div>
-        {imageId && !selected && ready ? <p role="alert">This image is not available in this Project. Select an existing image below.</p> : selected ? <figure className="conversation-image"><img src={selected.url} alt={selected.name} /><figcaption>{selected.name} · Original image · No annotation overlay</figcaption></figure> : <div className="conversation-image-empty"><h3>Start with your own images</h3><p>PNG or JPEG · up to 25 MB per image. Files are uploaded to this AnnotAgent server, not sent to a model.</p></div>}
+        {draftId && sampleTestId ? <ConversationSampleCanvas project={project.id} draft={draftId} test={sampleTestId} image={selected} onDirtyChange={sampleDirtyChange} onOpen={(draft,test,image)=>void openSample(draft,test,image)} /> : imageId && !selected && ready ? <p role="alert">This image is not available in this Project. Select an existing image below.</p> : selected ? <figure className="conversation-image"><img src={selected.url} alt={selected.name} /><figcaption>{selected.name} · Original image · No annotation overlay</figcaption></figure> : <div className="conversation-image-empty"><h3>Start with your own images</h3><p>PNG or JPEG · up to 25 MB per image. Files are uploaded to this AnnotAgent server, not sent to a model.</p></div>}
         <nav className="conversation-thumbnails" aria-label="Select image">{images.map((image) => <button key={image.image_id} aria-label={image.name} aria-current={image.image_id === selected?.image_id ? "true" : undefined} onClick={() => openImage(image.image_id)}><img loading="lazy" src={image.url} alt="" /><span>{image.name}</span></button>)}</nav>
       </section>
     </div>

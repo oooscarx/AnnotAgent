@@ -11,7 +11,7 @@ const reasons: [SampleFeedbackRevision["reason"], string][] = [
   ["cannot_judge", "Cannot judge yet"],
 ];
 
-export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onConfirmed, navigation, onAdopt, projectId, draftId, onImprove, onKeepOriginal }: {
+export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onConfirmed, navigation, onAdopt, projectId, draftId, onImprove, onKeepOriginal, goalOverride }: {
   sample: WorkflowDryRunReport["samples"][number]; image: ImageItem; testId: string;
   onDirtyChange: (dirty: boolean) => void;
   onConfirmed?: () => void;
@@ -21,6 +21,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
   onKeepOriginal: (draftId: string, testId: string, imageId?: string) => void;
   onImprove?: (draftId: string, testId: string, imageId?: string) => void;
   navigation?: ReactNode;
+  goalOverride?: {kind:string;labels:string[]};
 }) {
   const freshness = useSampleFreshness(projectId, draftId, testId);
   const original: Annotation[] = (sample.projection ? sample.outcomes : []).flatMap((outcome) => outcome.value ? [{
@@ -42,7 +43,8 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
   const [showOriginal, setShowOriginal] = useState(false);
   const [before, setBefore] = useState<{annotations: Annotation[]; draftId:string; testId:string}>();
   const [showBefore, setShowBefore] = useState(false);
-  const [goal, setGoal] = useState<Awaited<ReturnType<typeof api.projectGoal>>>();
+  const [projectGoal, setGoal] = useState<Awaited<ReturnType<typeof api.projectGoal>>>();
+  const goal=goalOverride ?? projectGoal;
   const mounted = useRef(true);
   const copyKey = useRef(crypto.randomUUID());
   const copying = useRef(false);
@@ -50,7 +52,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
   const pendingFeedback = useRef<SampleFeedbackRevision | undefined>(undefined);
   useEffect(() => {
     let current = true; mounted.current = true;
-    void api.projectGoal(projectId).then((value) => { if (current) setGoal(value); }).catch((error: Error) => { if (current) setError(error.message); });
+    if(!goalOverride)void api.projectGoal(projectId).then((value) => { if (current) setGoal(value); }).catch((error: Error) => { if (current) setError(error.message); });
     void api.samplePlanEvidence(projectId, draftId).then(async (evidence) => {
       const { sample_test: baseline } = await api.workflowSampleTest(evidence.baseline_draft_id, undefined, evidence.sample_test_id);
       if (!current) return;

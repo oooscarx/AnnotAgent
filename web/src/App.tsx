@@ -678,7 +678,7 @@ export function App() {
           />
         )}
         {loaded && route.kind === "conversation" && (
-          selectedProject ? <ConversationWorkspace key={route.projectId} project={selectedProject} conversationId={route.conversationId} imageId={route.imageId} onNavigate={navigate} onNavigationGuardChange={setNavigationGuard} />
+          selectedProject ? <ConversationWorkspace key={route.projectId} project={selectedProject} conversationId={route.conversationId} imageId={route.imageId} draftId={route.draftId} sampleTestId={route.sampleTestId} onNavigate={navigate} onNavigationGuardChange={setNavigationGuard} />
             : <NotFoundPage invalidPath={route.canonicalPath} onNavigate={navigate} />
         )}
         {loaded && route.kind === "journey" && (

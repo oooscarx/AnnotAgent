@@ -4748,12 +4748,7 @@ fn normalize_profile_compatibility_bindings(
 ) -> Result<()> {
     let available = models.models();
     for node in &mut draft.nodes {
-        if node.model_profile_binding.is_none()
-            || node
-                .model_binding
-                .as_deref()
-                .is_some_and(|model_id| models.resolve(model_id).is_ok())
-        {
+        if node.model_profile_binding.is_none() {
             continue;
         }
         let Some((capability, _)) = registry_requirement_for_node(node) else {
@@ -4774,7 +4769,8 @@ fn normalize_profile_compatibility_bindings(
         };
         let compatibility_model = available
             .iter()
-            .find(|model| model.capabilities.contains(&runtime_capability))
+            .find(|model| Some(model.id.as_str()) == node.model_binding.as_deref())
+            .or_else(|| available.iter().find(|model| model.capabilities.contains(&runtime_capability)))
             .ok_or_else(|| {
                 anyhow!(
                     "no Runtime compatibility model is registered for Profile-bound node {:?} with capability {:?}",
@@ -4783,6 +4779,33 @@ fn normalize_profile_compatibility_bindings(
                 )
         })?;
         node.model_binding = Some(compatibility_model.id.clone());
+        // The authored composition and compiled node must reference the same adapter.
+        // Registry Model Profile identity remains on the node and frozen snapshot.
+        if let Some(composition) = &mut draft.label_pipeline {
+            for step in composition
+                .shared_stages
+                .iter_mut()
+                .flat_map(|stage| &mut stage.steps)
+                .chain(
+                    composition
+                        .label_pipelines
+                        .iter_mut()
+                        .flat_map(|pipeline| &mut pipeline.steps),
+                )
+            {
+                if step.id == node.id {
+                    let binding = step
+                        .model_binding
+                        .get_or_insert_with(|| PipelineModelBinding {
+                            model_id: compatibility_model.id.clone(),
+                            capability: runtime_capability,
+                            configuration: BTreeMap::new(),
+                        });
+                    binding.model_id.clone_from(&compatibility_model.id);
+                    binding.capability = runtime_capability;
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -22430,6 +22453,64 @@ export:
         assert_ne!(
             app.store.get_workflow_draft(&draft.id).unwrap().status,
             WorkflowDraftStatus::Published
+        );
+    }
+
+    #[test]
+    fn profile_compatibility_normalization_keeps_authored_and_compiled_bindings_in_sync() {
+        let temporary = tempfile::tempdir().unwrap();
+        let app = LocalApplication::new(temporary.path()).unwrap();
+        app.create_project("TEST-profile-projection", GENERIC_CLASSIFICATION_PROJECT)
+            .unwrap();
+        let settings = load_settings(None).unwrap();
+        let mut draft = app
+            .suggest_label_pipeline(
+                "TEST-profile-projection",
+                &settings,
+                "scene",
+                "day",
+                &WorkflowConstraints::default(),
+            )
+            .unwrap()
+            .draft;
+        let profile = annotagent_core::WorkflowModelBinding {
+            model_profile_id: ModelProfileId(uuid::Uuid::new_v4()),
+            locked: true,
+        };
+        let node = draft
+            .nodes
+            .iter_mut()
+            .find(|node| node.id.ends_with(".classifier"))
+            .unwrap();
+        node.model_profile_binding = Some(profile);
+        let id = node.id.clone();
+        for step in &mut draft.label_pipeline.as_mut().unwrap().label_pipelines[0].steps {
+            if step.id == id {
+                step.model_binding = None;
+            }
+        }
+        let (_, models) = app.workflow_catalog(&settings).unwrap();
+        normalize_profile_compatibility_bindings(&mut draft, &models).unwrap();
+        let compiled = draft.nodes.iter().find(|node| node.id == id).unwrap();
+        let authored = draft.label_pipeline.as_ref().unwrap().label_pipelines[0]
+            .steps
+            .iter()
+            .find(|step| step.id == id)
+            .unwrap()
+            .model_binding
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            compiled.model_binding.as_deref(),
+            Some(authored.model_id.as_str())
+        );
+        assert_eq!(authored.capability, VisionCapability::Classification);
+        assert_eq!(compiled.model_profile_binding, Some(profile));
+        let normalized = draft.clone();
+        normalize_profile_compatibility_bindings(&mut draft, &models).unwrap();
+        assert_eq!(
+            draft, normalized,
+            "A repeated preparation must not change the binding or Draft semantics"
         );
     }
 

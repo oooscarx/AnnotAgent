@@ -3962,6 +3962,9 @@ fn guided_sample_seal(
         "images": state.application.list_project_image_summaries(&draft.project_id).map_err(ApiError::bad_request)?.iter().take(3).map(|image| json!({"image_id":image.image_id,"content_hash":image.content_hash})).collect::<Vec<_>>(),
     });
     add_native_scope(&mut seal, &guided_native_models(state, draft)?);
+    if let Some(schema) = &draft.annotation_schema {
+        seal["annotation_schema"] = json!(schema);
+    }
     Ok(seal)
 }
 
@@ -4238,9 +4241,20 @@ async fn get_workflow_sample_test(
             current = false;
         }
     }
+    let annotation_schema = if let Some(record) = &sample_test {
+        state
+            .application
+            .store()
+            .sample_scope_seal(&record.id)
+            .map_err(ApiError::internal)?
+            .and_then(|seal| seal.get("annotation_schema").cloned())
+    } else {
+        None
+    };
     Ok(Json(json!({
         "sample_test": sample_test,
         "current": current,
+        "annotation_schema": annotation_schema,
     })))
 }
 

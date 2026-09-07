@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiRequestError } from "../api";
 import type { ConversationCallReceipt, ConversationSchemaPreview, ConversationTask } from "../types";
 import { ConversationSchemaEditor } from "./ConversationSchemaEditor";
+import type { OpenConversationSample } from "./ConversationSampleCard";
 
 /** Restores server objects; mounting never creates a task or invokes a model. */
-export function ConversationSchemaCard({ project, conversation, message, onDirtyChange }: { project: string; conversation: string; message: string; onDirtyChange: (dirty: boolean) => void }) {
+export function ConversationSchemaCard({ project, conversation, message, onDirtyChange, onSample }: { project: string; conversation: string; message: string; onDirtyChange: (dirty: boolean) => void; onSample: OpenConversationSample }) {
   const [task, setTask] = useState<ConversationTask>();
   const [preview, setPreview] = useState<ConversationSchemaPreview>();
   const [receipt, setReceipt] = useState<ConversationCallReceipt>();
@@ -77,7 +78,7 @@ export function ConversationSchemaCard({ project, conversation, message, onDirty
     {waiting && <><p role="status">Request recorded or being submitted. Checking the saved outcome; no automatic model retry.</p><button onClick={() => void stop()}>Stop Schema request</button><small>You may return to the Project; leaving does not cancel this request.</small></>}
     {decision && <div className="conversation-proposal-result"><strong>{decision.decision === "clarify" ? "Clarification needed" : "Schema proposal saved"}</strong>{decision.question && <p>{decision.question}</p>}{decision.kind && <p>{decision.kind === "bounding_box" ? "Object boxes" : "Whole-image categories"}</p>}{decision.labels && <ul>{decision.labels.map((label) => <li key={label}>{label}</li>)}</ul>}<p>{decision.rationale}</p>{decision.boundary_rules?.map((rule) => <p key={rule}>{rule}</p>)}<small>Original model proposal. Editable Schema revisions and Pipeline Drafts are separate; no formal annotations have been accepted.</small></div>}
     {receipt && receipt.status !== "reserved" && !decision && <p role="alert">{receipt.evidence?.error || receipt.evidence?.decision?.Err || "No valid Schema proposal was produced. Saved evidence is retained; no automatic retry."}</p>}
-    {decision?.decision === "draft" && task && receipt && <ConversationSchemaEditor key={receipt.id} project={project} conversation={conversation} task={task.input.id} call={receipt.id} onDirtyChange={onDirtyChange} />}
+    {decision?.decision === "draft" && task && receipt && <ConversationSchemaEditor key={receipt.id} project={project} conversation={conversation} task={task.input.id} call={receipt.id} onDirtyChange={onDirtyChange} onSample={onSample} />}
     {error && <p role="alert">{error}</p>}
   </section>;
 }

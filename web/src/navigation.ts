@@ -11,7 +11,7 @@ export type WorkspaceRoute =
   | { kind: "home"; canonicalPath: string }
   | { kind: "projects"; canonicalPath: string; create?: boolean }
   | { kind: "project"; canonicalPath: string; projectId: string }
-  | { kind: "conversation"; canonicalPath: string; projectId: string; conversationId?: string; imageId?: string }
+  | { kind: "conversation"; canonicalPath: string; projectId: string; conversationId?: string; imageId?: string; draftId?: string; sampleTestId?: string }
   | { kind: "journey"; canonicalPath: string; projectId: string; scene: "images" | "goal" | "samples" | "model" | "confirm" | "revise"; draftId?: string; sampleTestId?: string; imageId?: string; agentSessionId?: string; sampleOperationId?: string; processingOperationId?: string; sampleView?: "authorize"; modelPurpose?: "vision"; returnScene?: "revise" }
   | { kind: "export"; canonicalPath: string; projectId: string }
   | {
@@ -183,9 +183,11 @@ export function projectJourneyPath(projectId: string, scene: "images" | "goal" |
   return `/projects/${encodeURIComponent(projectId)}/task/${scene}${params.size ? `?${canonicalSearch(params)}` : ""}`;
 }
 
-export function projectWorkPath(projectId: string, context: { conversationId?: string; imageId?: string } = {}): string {
+export function projectWorkPath(projectId: string, context: { conversationId?: string; imageId?: string; draftId?: string; sampleTestId?: string } = {}): string {
   const params = new URLSearchParams();
   if (context.conversationId) params.set("conversation", context.conversationId);
+  if (context.draftId) params.set("draft", context.draftId);
+  if (context.sampleTestId) params.set("test", context.sampleTestId);
   if (context.imageId) params.set("image", context.imageId);
   return `/projects/${encodeURIComponent(projectId)}/work${params.size ? `?${canonicalSearch(params)}` : ""}`;
 }
@@ -326,7 +328,7 @@ export function parseWorkspaceRoute(
   if (conversation) {
     const projectId = decodePathSegment(conversation[1]);
     if (!projectId) return { kind: "notFound", invalidPath: clean, canonicalPath: clean };
-    const context = { conversationId: params.get("conversation") || undefined, imageId: params.get("image") || undefined };
+    const context = { conversationId: params.get("conversation") || undefined, imageId: params.get("image") || undefined, draftId: params.get("draft") || undefined, sampleTestId: params.get("test") || undefined };
     return { kind: "conversation", projectId, ...context, canonicalPath: projectWorkPath(projectId, context) };
   }
   const journey = clean.match(/^\/projects\/([^/]+)\/task\/(images|goal|samples|model|confirm|revise)$/);

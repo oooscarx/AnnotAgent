@@ -193,6 +193,29 @@ impl LocalApplication {
             &models,
             &constraints,
         );
+        // A semantic classification task must use the executable Classification Skill,
+        // not the legacy task-provider projection. Preserve all declared categories.
+        if binding.task.kind == annotagent_core::TaskKind::Classification {
+            let label = binding
+                .task
+                .labels
+                .first()
+                .ok_or_else(|| anyhow!("Schema has no labels"))?;
+            let composition = crate::controlled_label_composition(
+                &input.project_schema,
+                binding.task.id.as_str(),
+                label,
+                &constraints,
+                &models,
+            )?;
+            seed.draft = composition.compile_draft(
+                project,
+                "Conversation classification plan",
+                input.project_schema.project.enabled_skill_versions(),
+                chrono::Utc::now(),
+            );
+            crate::bind_available_registry_models(&mut seed.draft, &input);
+        }
         seed.draft.annotation_schema = Some(binding);
         let budget = self
             .store
