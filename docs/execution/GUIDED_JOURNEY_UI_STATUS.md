@@ -827,3 +827,72 @@ and local-setup cancellation back to the original persisted labels/goal. No real
 model or plugin was installed. Remaining work is the final requirement audit,
 including missed-target correction from non-Review Run/Batch results, and explicit
 records of unexecuted native zoom/assistive-technology/human usability checks.
+
+Conditional local preparation increment: `b600d82`.
+
+### Human additions from Run and Batch result canvases
+
+Default Run/Batch result views now expose an explicit missing-annotation action
+for a settled image with an owning Run, even if there is no existing Review item.
+The same compact editor uses the existing AnnotationCanvas, Project label schema
+and human-annotation API; it does not create an executor or synthesize a model
+result. Supported manual values are classification, bounding box, polygon,
+polygon-encoded semantic/instance masks, keypoints and polyline. Other task kinds
+and tasks without labels do not get a fake add control. Initial geometry is
+clearly identified as a user-created starting shape, never a final prediction.
+
+The editor keeps its task/label scope, geometry and undo history through background
+Project refreshes. The existing application navigation guard and before-unload
+guard protect unfinished work. Save failure stays on the same image with the same
+Annotation ID. Successful save navigates to the same Project's Review item, only
+after server acknowledgement; it does not accept the object or the whole image.
+Batch execution controls remain available while editing a completed child image.
+An active single-image Run does not expose new-object creation.
+
+The existing human-annotation boundary now validates the typed value and treats an
+identical ID/body/Run retry as the same creation. A different body or owner fails,
+and the underlying INSERT never overwrites an existing annotation. Source is
+Human, confidence is absent and status is NeedsReview, regardless of caller input.
+An empty-Run application test proves foreign-image rejection, valid first creation,
+identical retry without duplication, conflicting content rejection and malformed
+classification rejection. A browser regression also found the previous Review Add
+action supplied empty provenance without required `tool_names`; both human-create
+UIs now send the correct empty tool/artifact lists rather than impersonating model
+provenance.
+
+Evidence so far: all-feature Rust **514 passed / 5 real-weight tests ignored**,
+strict Clippy/build passed; Web **93 unit tests** and typecheck passed. Focused
+journey **1/1 passed** with real isolated server writes, simulated lost successful
+response, identical retry, preserved edit/navigation guard, and owner-scoped Review
+return. A second path rejects all retained fixture annotations through the real
+Review API, checks the actual zero-result Run summary, then adds a new human
+annotation from its default canvas without an existing Review link. This tests
+empty-result repair, not model missed-detection accuracy. The test initially used
+the sample-feedback reason `wrong_target`; formal Review correctly rejected it.
+It now uses the existing formal `wrong_object` reason. Full regression and fresh
+manual-editor screenshots follow before commit.
+
+Full browser suite **63/63 passed** (1.8 minutes), with manual creation from a
+zero-retained-result Run and Batch-to-Review creation using real API persistence.
+Actual 1440/390 screenshots: `guided-journey/manual-addition-{width}.png` (synthetic
+image and classification fixture; not a ball-detection accuracy demonstration).
+Visual inspection confirmed visible human-source/risk scope, a single save primary
+action and no horizontal overflow. A final narrow refinement clears the discarded
+Batch editor when the selected image/filter changes, so returning to that image
+does not create another unsaved starting shape automatically. The final focused
+run checks this explicit-discard navigation before commit.
+
+Resume verification (2026-09-08): the focused ready-model Journey passes 1/1
+against a fresh `/tmp/annotagent-guided-e2e-49551` workspace. It verifies explicit
+discard when changing Batch filters, no resurfacing discarded editor, failed
+response after successful persistence, identical retry, no duplicate annotation,
+Human/NeedsReview provenance and manual additions from a zero-result Run.
+The application regression for foreign image rejection and idempotent human
+creation passes. Desktop/mobile screenshots were regenerated and the 390px
+capture inspected: visible scope warning, label, canvas and save/cancel controls,
+with no horizontal overflow. All non-target screenshots from this focused run
+were restored to their pre-run bytes. No real Workspace or Provider was used.
+The prior comparison commit omitted a JSX closing expression from its selected
+hunks; follow-up commit `f87986b` includes it without rewriting commit history.
+Full current-tree regression and the requirement-by-requirement final audit
+remain pending; this checkpoint does not claim the whole Journey is finished.

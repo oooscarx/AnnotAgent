@@ -784,6 +784,7 @@ export function App() {
         )}
         {loaded && (route.kind === "runs" || route.kind === "projectRuns" || route.kind === "projectRun") && (
           <RunsPage
+            onNavigationGuardChange={setNavigationGuard}
             runs={runs}
             projects={projects}
             activeProject={selectedProject}
@@ -795,6 +796,7 @@ export function App() {
         )}
         {loaded && route.kind === "projectBatch" && (
           <BatchDetailWorkspace
+            onNavigationGuardChange={setNavigationGuard}
             route={route}
             runs={runs}
             projects={projects}
@@ -7750,6 +7752,7 @@ function TrashWorkspace({
 }
 
 function RunsPage({
+  onNavigationGuardChange,
   runs,
   projects,
   activeProject: scopeProject,
@@ -7758,6 +7761,7 @@ function RunsPage({
   onRefresh,
   onError,
 }: {
+  onNavigationGuardChange: (guard?: () => boolean) => void;
   runs: HistoryRun[];
   projects: ProjectSummary[];
   activeProject?: ProjectSummary;
@@ -7860,6 +7864,7 @@ function RunsPage({
   if (detailRoute && routeRunId && run)
     return (
       <RunDetailWorkspace
+        onNavigationGuardChange={onNavigationGuardChange}
         key={run.id}
         run={run}
         project={runOwner}
@@ -8041,6 +8046,7 @@ function BatchRunGroup({
 }
 
 function BatchDetailWorkspace({
+  onNavigationGuardChange,
   route,
   runs,
   projects,
@@ -8048,6 +8054,7 @@ function BatchDetailWorkspace({
   onRefresh,
   onError,
 }: {
+  onNavigationGuardChange: (guard?: () => boolean) => void;
   route: Extract<WorkspaceRoute, { kind: "projectBatch" }>;
   runs: HistoryRun[];
   projects: ProjectSummary[];
@@ -8108,7 +8115,7 @@ function BatchDetailWorkspace({
   if (batch.project_id !== route.projectId)
     return <div className="loading-banner" role="status">{t("Opening the owning Project…")}</div>;
   if (route.view !== "history" && !batch.in_trash)
-    return <JourneyBatch key={batch.id} batch={batch} route={route} onNavigate={onNavigate} onReload={() => load()} />;
+    return <JourneyBatch key={batch.id} project={owner} onNavigationGuardChange={onNavigationGuardChange} batch={batch} route={route} onNavigate={onNavigate} onReload={() => load()} />;
   const childRuns = batch.child_run_ids.flatMap((id) => {
     const run = runs.find((candidate) => candidate.id === id);
     return run ? [run] : [];
@@ -8256,6 +8263,7 @@ function RunHistoryRow({
 }
 
 function RunDetailWorkspace({
+  onNavigationGuardChange,
   run,
   project,
   route,
@@ -8263,6 +8271,7 @@ function RunDetailWorkspace({
   onRefresh,
   onError,
 }: {
+  onNavigationGuardChange: (guard?: () => boolean) => void;
   run: HistoryRun;
   project?: ProjectSummary;
   route: Extract<WorkspaceRoute, { kind: "runs" | "projectRun" }>;
@@ -8450,7 +8459,7 @@ function RunDetailWorkspace({
           ? "Results need review"
           : `Run ${run.status.replaceAll("_", " ")}`;
   if (view === "results" && !run.in_trash && project)
-    return <JourneyRun key={run.id} run={run} image={ownedImage} summary={resultSummary} annotations={finalAnnotations} annotationsReady={Boolean(annotationInspection && annotationInspection.image_id === ownedImageId)} selectedId={route.annotationId} original={route.canvasView === "original"} onSelect={(annotationId) => onNavigate(runPath({ imageId: ownedImageId, annotationId }), true)} onOriginal={(original) => onNavigate(runPath({ imageId: ownedImageId, canvasView: original ? "original" : undefined }), true)} busy={busy} onControl={control} onNavigate={onNavigate} />;
+    return <JourneyRun key={run.id} project={project} onNavigationGuardChange={onNavigationGuardChange} run={run} image={ownedImage} summary={resultSummary} annotations={finalAnnotations} annotationsReady={Boolean(annotationInspection && annotationInspection.image_id === ownedImageId)} selectedId={route.annotationId} original={route.canvasView === "original"} onSelect={(annotationId) => onNavigate(runPath({ imageId: ownedImageId, annotationId }), true)} onOriginal={(original) => onNavigate(runPath({ imageId: ownedImageId, canvasView: original ? "original" : undefined }), true)} busy={busy} onControl={control} onNavigate={onNavigate} />;
   return (
     <section className="page-stack run-detail-page">
       <ProjectBreadcrumb
@@ -9450,7 +9459,7 @@ function ReviewPage({
       confidence: undefined,
       source: "human",
       review_status: "needs_review",
-      provenance: {},
+      provenance: { tool_names: [], artifact_ids: [] },
       created_at: new Date().toISOString(),
     };
     if (draft) setPast((items) => [...items, structuredClone(draft)]);

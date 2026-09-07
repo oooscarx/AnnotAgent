@@ -7811,10 +7811,29 @@ impl LocalApplication {
         annotation.source = AnnotationSource::Human;
         annotation.review_status = annotagent_core::ReviewStatus::NeedsReview;
         annotation.confidence = None;
-        self.store
-            .commit_annotation(run_id, &annotation)
-            .await
-            .map_err(|error| anyhow!(error))?;
+        annotation.validate()?;
+        let recover_existing = || -> Result<Option<Annotation>> {
+            match self.store.find_annotation(annotation.id)? {
+                Some((owner, persisted)) if owner == run_id && persisted == annotation => {
+                    Ok(Some(persisted))
+                }
+                Some(_) => {
+                    bail!("annotation ID already exists with different content or Run ownership")
+                }
+                None => Ok(None),
+            }
+        };
+        if let Some(saved) = recover_existing()? {
+            return Ok(saved);
+        }
+        if let Err(error) = self.store.commit_annotation(run_id, &annotation).await {
+            // An identical concurrent request may have committed first. The
+            // INSERT remains strict: never overwrite a different annotation.
+            if let Some(saved) = recover_existing()? {
+                return Ok(saved);
+            }
+            return Err(anyhow!(error));
+        }
         Ok(annotation)
     }
 
@@ -26610,10 +26629,39 @@ export:
         };
 
         let error = app
-            .create_human_annotation(run_id, annotation)
+            .create_human_annotation(run_id, annotation.clone())
             .await
             .expect_err("foreign image must be rejected");
         assert!(error.to_string().contains("does not belong to this Run"));
+        app.store()
+            .register_run_image(run_id, annotation.image_id, "completed")
+            .unwrap();
+        let first = app
+            .create_human_annotation(run_id, annotation.clone())
+            .await
+            .unwrap();
+        let retry = app
+            .create_human_annotation(run_id, annotation.clone())
+            .await
+            .unwrap();
+        assert_eq!(retry, first);
+        assert_eq!(first.review_status, ReviewStatus::NeedsReview);
+        assert!(first.confidence.is_none());
+        assert_eq!(app.store().list_annotations(run_id).unwrap().len(), 1);
+        let mut conflicting = annotation.clone();
+        conflicting.label = Some(LabelId::from("different"));
+        assert!(
+            app.create_human_annotation(run_id, conflicting)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("different content")
+        );
+        let mut invalid = annotation;
+        invalid.id = AnnotationId::new();
+        invalid.value = AnnotationValue::Classification { labels: vec![] };
+        assert!(app.create_human_annotation(run_id, invalid).await.is_err());
+        assert_eq!(app.store().list_annotations(run_id).unwrap().len(), 1);
     }
 
     #[test]

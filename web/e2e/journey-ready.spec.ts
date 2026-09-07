@@ -351,4 +351,57 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
     await otherTab.close();
     expect((await request.patch(`/api/model-profiles/${model.id}`, { data: { enabled: true } })).ok()).toBeTruthy();
   }
+  // Human creation uses the same real completed child Run, not a new inference.
+  await page.goto(`/projects/${projectId}/batches/${confirmation.batch_id}`);
+  await page.getByRole("button", { name: "Add a missing annotation", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Add a missing annotation", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save annotation to Review", exact: true })).toBeEnabled();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("combobox", { name: "Show images", exact: true }).selectOption("failed");
+  await expect(page.getByText("No images match this status", { exact: true })).toBeVisible();
+  await page.getByRole("combobox", { name: "Show images", exact: true }).selectOption("all");
+  await expect(page.getByRole("region", { name: "Add a missing annotation", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Add a missing annotation", exact: true }).click();
+  const manualRequests: Record<string, unknown>[] = [];
+  page.on("request", (req) => { if (req.method() === "POST" && /\/api\/runs\/[^/]+\/annotations$/.test(req.url())) manualRequests.push(req.postDataJSON()); });
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await page.getByRole("button", { name: "Back to project", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Add a missing annotation", exact: true })).toBeVisible();
+  await page.route("**/api/runs/*/annotations", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    const response = await fetchWithinMutationLimit(route);
+    expect(response.ok(), await response.text()).toBe(true);
+    await route.abort("failed");
+  }, { times: 1 });
+  await page.getByRole("button", { name: "Save annotation to Review", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("Your unsaved annotation remains here");
+  await page.getByRole("button", { name: "Save annotation to Review", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/review/`));
+  expect(manualRequests).toHaveLength(2); expect(manualRequests[1]).toEqual(manualRequests[0]);
+  const manualId = (manualRequests[0].annotation as { id: string }).id;
+  const savedManual = await (await request.get(`/api/projects/${projectId}/reviews/${manualId}`)).json();
+  expect(savedManual.annotation.review_status).toBe("needs_review");
+  expect(savedManual.annotation.source).toBe("human");
+  expect(savedManual.annotation.confidence ?? null).toBeNull();
+  const sourceRunId = savedManual.run_id;
+  const inspected = await (await request.get(`/api/runs/${sourceRunId}/annotations`)).json();
+  for (const annotation of inspected.annotations) {
+    const decision = await request.post(`/api/reviews/${annotation.id}/decision`, { data: { project_id: savedManual.project_id, decision: "reject", reason_code: "wrong_object", note: "Isolated TEST: remove retained candidates to check empty-result manual creation" } });
+    expect(decision.ok(), await decision.text()).toBeTruthy();
+  }
+  const emptyResult = await (await request.get(`/api/runs/${sourceRunId}/result-summary`)).json();
+  expect(emptyResult.no_target_count).toBe(1);
+  await page.goto(`/projects/${projectId}/runs/${sourceRunId}?view=results`);
+  await expect(page.locator(".journey-result-image svg image")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Review result", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Add a missing annotation", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Add a missing annotation", exact: true })).toBeVisible();
+  for (const [width, height] of [[1440, 900], [390, 844]]) {
+    await page.setViewportSize({ width, height });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await page.screenshot({ path: `../docs/execution/guided-journey/manual-addition-${width}.png`, fullPage: true, animations: "disabled" });
+  }
+  await page.getByRole("button", { name: "Save annotation to Review", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/review/`));
+  expect(sampleRequests).toHaveLength(sampleRequestCount);
 });

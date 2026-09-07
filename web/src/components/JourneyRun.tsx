@@ -1,16 +1,21 @@
 import { t } from "../i18n";
 import { projectReviewPath } from "../navigation";
-import type { Annotation, HistoryRun, ImageItem, RunResultSummary } from "../types";
+import type { Annotation, HistoryRun, ImageItem, ProjectSummary, RunResultSummary } from "../types";
+import { useState } from "react";
+import { canAddRunAnnotation, RunAnnotationEditor } from "./RunAnnotationEditor";
+import { queryKeys, workspaceQueries } from "../queryCache";
 import { AnnotationCanvas } from "./AnnotationCanvas";
 import { hasUnverifiedBoundary } from "../annotationQuality";
 
 /** Results of one existing immutable Run. Debug and history remain management views. */
-export function JourneyRun({ run, image, summary, annotations, annotationsReady, selectedId, original, onSelect, onOriginal, busy, onControl, onNavigate }: {
+export function JourneyRun({ project, onNavigationGuardChange, run, image, summary, annotations, annotationsReady, selectedId, original, onSelect, onOriginal, busy, onControl, onNavigate }: {
+  project: ProjectSummary; onNavigationGuardChange: (guard?: () => boolean) => void;
   run: HistoryRun; image?: ImageItem; summary?: RunResultSummary; annotations: Annotation[];
   annotationsReady: boolean; busy: boolean; onControl: (action: "pause" | "resume" | "cancel") => void;
   selectedId?: string; original: boolean; onSelect: (id: string) => void; onOriginal: (value: boolean) => void;
   onNavigate: (path: string) => void;
 }) {
+  const [adding, setAdding] = useState(false);
   const reviewId = summary?.projection.review_candidate_ids[0];
   const projectId = summary?.project_id ?? image?.project_id;
   return <section className="journey-scene journey-results" aria-label={t("Run results")}>
@@ -26,15 +31,16 @@ export function JourneyRun({ run, image, summary, annotations, annotationsReady,
     {summary?.needs_review_count ? <p className="journey-risk">{t("These candidates are not approved annotations. Check the target and its boundary before accepting.")}</p> : null}
     {hasUnverifiedBoundary(annotations) && <p className="journey-risk">{t("Some boundaries have not been verified. A model confidence score is not measured boundary accuracy.")}</p>}
     {summary?.no_target_count ? <p className="journey-risk">{t("No target was found. This is not evidence that the image contains none; inspect the original image.")}</p> : null}
-    <div className="journey-image-controls"><span>{image?.name ?? t("Original image")}</span><button disabled={!image} aria-pressed={original} onClick={() => onOriginal(!original)}>{t(original ? "Show results" : "Show original")}</button></div>
-    <div className="journey-result-image">
+    <div className="journey-image-controls"><span>{image?.name ?? t("Original image")}</span><button disabled={!image || adding} aria-pressed={original} onClick={() => onOriginal(!original)}>{t(original ? "Show results" : "Show original")}</button></div>
+    {adding && image ? <RunAnnotationEditor project={project} runId={run.id} image={image} onNavigationGuardChange={onNavigationGuardChange} onCancel={() => setAdding(false)} onSaved={(annotation) => { workspaceQueries.invalidate(queryKeys.runResults(run.id)); workspaceQueries.invalidate(queryKeys.runAnnotations(run.id)); onNavigate(projectReviewPath(project.id, annotation.id)); }} /> : <div className="journey-result-image">
       {image ? <AnnotationCanvas compactList imageUrl={image.url} annotations={original ? [] : annotations} selectedId={selectedId} onSelect={onSelect} onChange={() => undefined} readOnly /> : <p>{t("The original image is unavailable. No substitute result is shown.")}</p>}
-    </div>
+    </div>}
     {!annotationsReady && <p role="status">{t("Loading saved results…")}</p>}
     {annotationsReady && summary && !annotations.length && !summary.no_target_count && <p>{t("No final annotation was produced. Inspect the image and failure details.")}</p>}
-    <footer className="journey-actions">
+    {!adding && <footer className="journey-actions">
+      {image && annotationsReady && !run.controllable && !["pending", "running", "paused"].includes(run.status) && canAddRunAnnotation(project) && <button onClick={() => setAdding(true)}>{t("Add a missing annotation")}</button>}
       {projectId && reviewId ? <button className="primary" onClick={() => onNavigate(projectReviewPath(projectId, reviewId))}>{t("Review result")}</button>
         : projectId && !run.controllable && <button className="primary" onClick={() => onNavigate(`/projects/${encodeURIComponent(projectId)}/export`)}>{t("Export confirmed results")}</button>}
-    </footer>
+    </footer>}
   </section>;
 }
