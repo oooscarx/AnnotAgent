@@ -179,6 +179,7 @@ fn is_mutation(method: &Method) -> bool {
 fn is_expensive_action(path: &str) -> bool {
     path.ends_with("/active-probe")
         || path.ends_with("/schema-proposals")
+        || path.ends_with("/builder-operations")
         || path.ends_with("/sample-operations")
         || path.ends_with("/discover-models")
         || path.ends_with("/sample-test")

@@ -96,6 +96,18 @@ fn receipt(
 }
 
 impl SqliteStore {
+    pub fn conversation_authorization(
+        &self,
+        project: &str,
+        task: Uuid,
+        id: Uuid,
+    ) -> Result<ConversationCallGrant, StorageError> {
+        self.with_connection(|db| {
+            owner(db,project,task)?;
+            let (scope_hash,maximum_calls,expiry):(String,u32,String)=db.query_row("SELECT scope_hash,maximum_calls,expires_at FROM conversation_authorization_revisions WHERE id=?1 AND task_id=?2",params![id.to_string(),task.to_string()],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?)))?;
+            Ok(ConversationCallGrant {id,task_id:task,scope_hash,maximum_calls,expires_at:DateTime::parse_from_rfc3339(&expiry).map_err(|_|invalid("Invalid grant expiry"))?.with_timezone(&Utc)})
+        })
+    }
     pub fn conversation_call_budget(
         &self,
         project: &str,
@@ -154,6 +166,8 @@ impl SqliteStore {
             let tx = db.unchecked_transaction()?;
             owner(&tx,project,task)?;
             if receipt(&tx,call)?.is_some_and(|saved| saved.task_id != task) { return Err(invalid("call belongs to another task")); }
+            let foreign_builder: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_builder_operations WHERE id=?1 AND task_id!=?2)",params![call.to_string(),task.to_string()],|row|row.get(0))?;
+            if foreign_builder { return Err(invalid("Builder belongs to another task")); }
             let existing: Option<(String,String)> = tx.query_row("SELECT task_id,requested_at FROM conversation_call_cancellations WHERE call_id=?1", [call.to_string()], |row| Ok((row.get(0)?,row.get(1)?))).optional()?;
             if let Some((saved_task,requested_at)) = existing {
                 if saved_task != task.to_string() { return Err(invalid("cancellation belongs to another task")); }

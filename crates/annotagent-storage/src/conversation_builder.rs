@@ -60,8 +60,22 @@ impl SqliteStore {
                 if saved.task_id != task || saved.request_hash != hash { return Err(StorageError::InvalidConversation("Builder request key conflicts".into())); }
                 return Ok(Some(saved));
             }
+            let collision: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM workflow_drafts WHERE id=?1 UNION ALL SELECT 1 FROM agent_sessions WHERE id=?1 UNION ALL SELECT 1 FROM conversation_model_calls WHERE id=?1)",[id.to_string()],|row|row.get(0))?;
+            if collision { return Err(StorageError::InvalidConversation("Builder operation ID is already used by another object".into())); }
             tx.execute("INSERT INTO conversation_builder_operations(id,task_id,request_hash,status) VALUES(?1,?2,?3,'reserved')",params![id.to_string(),task.to_string(),hash])?;
             tx.commit()?; Ok(None)
+        })
+    }
+    pub fn conversation_builder_history(
+        &self,
+        project: &str,
+        task: Uuid,
+    ) -> Result<Vec<ConversationBuilderOperation>, StorageError> {
+        self.with_connection(|db| {
+            owned(db,project,task)?;
+            let mut statement=db.prepare("SELECT id FROM conversation_builder_operations WHERE task_id=?1 ORDER BY rowid DESC LIMIT 32")?;
+            let ids=statement.query_map([task.to_string()],|row|row.get::<_,String>(0))?.collect::<Result<Vec<_>,_>>()?;
+            ids.into_iter().map(|id|read(db,Uuid::parse_str(&id).map_err(|_|StorageError::InvalidConversation("Invalid operation ID".into()))?)?.ok_or_else(||StorageError::InvalidConversation("Operation missing".into()))).collect()
         })
     }
     pub fn conversation_builder_operation(

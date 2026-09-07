@@ -497,3 +497,39 @@ current operation is not exposed as a working UI action yet. Saved interruptions
 recoverable evidence, not automatic resumed execution. Human Request/outbox, complete
 golden paths and real-user usability remain incomplete. No real workspace mutation,
 server restart, push or remote changes.
+
+### Builder HTTP consent, history and pre-start cancellation (M2, continued)
+
+Project/conversation/task-scoped Builder preview and operation routes now resolve
+the real Registry text model and endpoint, freeze the exact semantic revision,
+disable transport retries, cap output tokens and require an explicit unknown-cost
+acknowledgement. Preview declares zero image pixels and no dry-run/publication/Run.
+Consent advances the existing cumulative grant; historical authorization reads keep
+its original predecessor available if the same request must be recovered. Completed
+operation POST retries validate their request hash and return saved state without
+resolving credentials or advancing the grant again. GET history is read-only, limited
+to the latest 32 owned operations and joins only same-project Agent Sessions.
+
+Builder cancellation uses the durable pre-admission intent and a registered live
+token. A stopped-before-start operation is interrupted without a fake Session or
+model call. Guard cleanup removes the live token. Cancel rejects another task's
+existing Builder identity; operation admission also rejects IDs already used by a
+Workflow, Agent Session or model call. The Schema card now restores the first Schema
+receipt rather than accidentally displaying a later Builder call as its proposal.
+
+Evidence: targeted storage operation **1/1**, Application Schema **4/4**, strict
+storage/Application/server Clippy passed. Isolated HTTP/browser test **1/1**, 23.1s,
+`/tmp/annotagent-guided-e2e-84665`: both bbox/classification proposal→editable revision
+→Builder consent→existing Builder→saved operation/session→identical POST retry pass.
+Pre-start cancel is exercised for each type: HTTP returns 400, operation is interrupted,
+Session is null and model-call history is exactly unchanged. Fixture-driven Builder
+results are not evidence of Live model quality or a complete annotation pipeline.
+Production Web build passed with the known chunk-size warning. No new UI launch button
+or screenshots in this backend step; the existing Schema UI regression still passes.
+
+Remaining: bind these interfaces into the conversation card, repair task-scope history
+paging beyond 32 operations, verify active Builder cancellation in browser, and finish
+shared sample allowance/canvas/human requests/processing/review/export. Expired or
+changed-registry POST retries may require GET recovery and a new explicit consent;
+they never automatically re-execute. No real workspace migration/restart, Live calls,
+push, remote mutation or human usability validation occurred.

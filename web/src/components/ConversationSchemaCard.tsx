@@ -23,8 +23,8 @@ export function ConversationSchemaCard({ project, conversation, message, onDirty
       const calls = current ? await api.conversationSchemaCalls(project, conversation, current.input.id, controller.signal) : [];
       const cancellations = current ? await api.conversationSchemaCancellations(project, conversation, current.input.id, controller.signal) : [];
       if (controller.signal.aborted) return;
-      const id = calls.at(-1)?.id ?? cancellations.at(-1)?.call_id ?? "";
-      setTask(current); setReceipt(calls.at(-1)); setCallId(id); setCancelled(cancellations.some((item) => item.call_id === id)); setReady(true);
+      const id = calls[0]?.id ?? cancellations.at(-1)?.call_id ?? "";
+      setTask(current); setReceipt(calls[0]); setCallId(id); setCancelled(cancellations.some((item) => item.call_id === id)); setReady(true);
     }).catch((error: Error) => { if (!controller.signal.aborted) setError(error.message); });
     return () => { active.current = false; controller.abort(); };
   }, [project, conversation, message]);

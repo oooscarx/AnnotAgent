@@ -30,9 +30,84 @@ struct BuilderGuard<'a> {
 impl Drop for BuilderGuard<'_> {
     fn drop(&mut self) {
         let _ = self.app.store.settle_conversation_builder(&self.owner,self.task,self.id,false,&serde_json::json!({"error":"Builder handler ended; saved Draft and receipts remain. No automatic retry."}));
+        if let Ok(mut calls) = self.app.conversation_cancellations.lock() {
+            if let Some(token) = calls.remove(&self.id) {
+                token.cancel();
+            }
+        }
     }
 }
 impl LocalApplication {
+    pub fn conversation_builder_grant(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+    ) -> Result<annotagent_storage::ConversationCallGrant> {
+        self.conversation_builder_budget(project, conversation, task)?;
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self.store.conversation_authorization(&owner, task, id)?)
+    }
+    pub fn conversation_builder_budget(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+    ) -> Result<annotagent_storage::ConversationCallBudget> {
+        if !self
+            .conversation_tasks(project, conversation)?
+            .iter()
+            .any(|item| item.input.id == task)
+        {
+            bail!("Task belongs to another conversation");
+        }
+        let owner = self.conversation_project_identity(project)?;
+        self.store
+            .conversation_call_budget(&owner, task)?
+            .ok_or_else(|| anyhow!("Task authorization not found"))
+    }
+    pub fn advance_conversation_builder_authorization(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        previous: Uuid,
+        grant: &annotagent_storage::ConversationCallGrant,
+    ) -> Result<()> {
+        self.conversation_builder_budget(project, conversation, grant.task_id)?;
+        let owner = self.conversation_project_identity(project)?;
+        self.store
+            .advance_conversation_authorization(&owner, previous, grant)?;
+        Ok(())
+    }
+    pub fn conversation_builder_history(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+    ) -> Result<serde_json::Value> {
+        if !self
+            .conversation_tasks(project, conversation)?
+            .iter()
+            .any(|item| item.input.id == task)
+        {
+            bail!("Task belongs to another conversation");
+        }
+        let owner = self.conversation_project_identity(project)?;
+        let operations = self.store.conversation_builder_history(&owner, task)?;
+        let items = operations
+            .into_iter()
+            .map(|operation| {
+                let session = self
+                    .store
+                    .get_agent_session(operation.id)
+                    .ok()
+                    .filter(|session| session.project_id.as_deref() == Some(project));
+                serde_json::json!({"operation":operation,"session":session})
+            })
+            .collect::<Vec<_>>();
+        Ok(serde_json::json!({"items":items}))
+    }
     pub async fn build_conversation_pipeline(
         &self,
         project: &str,
@@ -75,6 +150,18 @@ impl LocalApplication {
             task: execution.task_id,
             id: execution.operation_id,
         };
+        self.conversation_cancellations
+            .lock()
+            .map_err(|_| anyhow!("Cancellation registry unavailable"))?
+            .insert(execution.operation_id, cancellation.clone());
+        if self
+            .store
+            .conversation_call_cancellations(&owner, execution.task_id)?
+            .iter()
+            .any(|intent| intent.call_id == execution.operation_id)
+        {
+            cancellation.cancel();
+        }
         let metered = self.conversation_text_provider(
             project,
             execution.conversation_id,

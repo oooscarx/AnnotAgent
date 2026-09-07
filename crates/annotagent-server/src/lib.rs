@@ -1,5 +1,6 @@
 //! Thin HTTP/SSE adapter over the shared application service.
 
+mod conversation_builder;
 mod conversation_schema;
 mod conversations;
 mod processing_operations;
