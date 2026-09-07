@@ -33,6 +33,23 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
     expect((await (await request.post(`${taskRoot}/schema-proposals`,{data:consent})).json())).toEqual(receipt);
     expect((await (await request.get(`${taskRoot}/calls/${consent.call_id}`)).json())).toEqual(receipt);
     expect((await request.post(`${taskRoot}/schema-proposals`,{data:{...consent,call_id:randomUUID()}})).status()).toBe(400);
+    const saveRoot = `${taskRoot}/calls/${consent.call_id}/schema-draft`;
+    const savedResponse = await request.post(saveRoot);
+    expect(savedResponse.ok()).toBeTruthy();
+    const schemaDraft = await savedResponse.json();
+    expect(schemaDraft.revision).toBe(1);
+    expect(schemaDraft.definition.task.labels).toEqual(receipt.evidence.decision.Ok.labels);
+    const draftRoot = `/api/projects/${project}/conversation-schema-drafts/${schemaDraft.id}`;
+    const edit = {request_id:randomUUID(),expected_revision:1,decision:{...receipt.evidence.decision.Ok,labels:["TEST revised label"]}};
+    const editedResponse = await request.post(draftRoot,{data:edit});
+    expect(editedResponse.ok()).toBeTruthy();
+    const edited = await editedResponse.json();
+    expect(edited.revision).toBe(2);
+    expect((await (await request.post(draftRoot,{data:edit})).json())).toEqual(edited);
+    expect((await request.post(draftRoot,{data:{...edit,request_id:randomUUID()}})).status()).toBe(400);
+    expect((await (await request.post(saveRoot)).json())).toEqual(edited);
+    expect((await (await request.get(`${draftRoot}?revision=1`)).json())).toEqual(schemaDraft);
+    expect((await (await request.get(draftRoot)).json())).toEqual(edited);
   }
   expect((await (await request.get(`/api/projects/${project}/goal`)).json()).revision).toBe(revision);
   const defaults = await (await request.get("/api/agent-model-bindings")).json();

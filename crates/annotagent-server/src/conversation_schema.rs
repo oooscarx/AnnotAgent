@@ -6,6 +6,66 @@ use chrono::{DateTime, Duration, Utc};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(super) struct SchemaRevisionQuery {
+    revision: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct SchemaEdit {
+    request_id: uuid::Uuid,
+    expected_revision: u64,
+    decision: annotagent_application::ConversationSchemaDecision,
+}
+
+pub(super) async fn save_draft(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task, call)): AxumPath<(
+        String,
+        uuid::Uuid,
+        uuid::Uuid,
+        uuid::Uuid,
+    )>,
+) -> ApiResult<Json<annotagent_storage::ConversationSchemaDraft>> {
+    state
+        .application
+        .save_conversation_schema_draft(&project, conversation, task, call)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
+pub(super) async fn read_draft(
+    State(state): State<ServerState>,
+    AxumPath((project, draft)): AxumPath<(String, uuid::Uuid)>,
+    Query(query): Query<SchemaRevisionQuery>,
+) -> ApiResult<Json<annotagent_storage::ConversationSchemaDraft>> {
+    state
+        .application
+        .conversation_schema_draft(&project, draft, query.revision)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
+pub(super) async fn edit_draft(
+    State(state): State<ServerState>,
+    AxumPath((project, draft)): AxumPath<(String, uuid::Uuid)>,
+    Json(edit): Json<SchemaEdit>,
+) -> ApiResult<Json<annotagent_storage::ConversationSchemaDraft>> {
+    state
+        .application
+        .revise_conversation_schema_draft(
+            &project,
+            draft,
+            edit.request_id,
+            edit.expected_revision,
+            &edit.decision,
+        )
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct ModelSelection {
     model_id: Option<ModelProfileId>,
 }

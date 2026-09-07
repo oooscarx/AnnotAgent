@@ -42,6 +42,96 @@ impl Drop for CallCancellationGuard<'_> {
 }
 
 impl crate::LocalApplication {
+    /// Materialize only a validated, owned, persisted proposal. Never changes Project YAML.
+    pub fn save_conversation_schema_draft(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        call: Uuid,
+    ) -> Result<annotagent_storage::ConversationSchemaDraft> {
+        let task_record = self
+            .conversation_tasks(project, conversation)?
+            .into_iter()
+            .find(|item| item.input.id == task)
+            .ok_or_else(|| anyhow::anyhow!("task does not belong to this conversation"))?;
+        let owner = self.conversation_project_identity(project)?;
+        let receipt = self
+            .store
+            .conversation_call(&owner, task, call)?
+            .ok_or_else(|| anyhow::anyhow!("Schema proposal call not found"))?;
+        if receipt.status != annotagent_storage::ConversationCallStatus::Completed {
+            bail!("Schema proposal has not completed successfully");
+        }
+        let attempt: ConversationSchemaAttempt = serde_json::from_value(
+            receipt
+                .evidence
+                .ok_or_else(|| anyhow::anyhow!("Schema proposal evidence is missing"))?,
+        )?;
+        // Revalidate the actual saved tool response, not a client-provided summary.
+        let decision = parse_conversation_schema_response(&attempt.response)?;
+        let config = decision.task_config(task)?.ok_or_else(|| {
+            anyhow::anyhow!("Clarification requires an answer, not a Schema Draft")
+        })?;
+        let ConversationSchemaDecision::Draft { boundary_rules, .. } = decision else {
+            unreachable!()
+        };
+        let source = self
+            .store
+            .conversation_message(&owner, conversation, task_record.input.source_message_id)?
+            .ok_or_else(|| anyhow::anyhow!("Saved task goal not found"))?;
+        Ok(self.store.create_conversation_schema_draft(
+            &owner,
+            task,
+            call,
+            &annotagent_storage::ConversationSchemaDefinition {
+                goal: source.input.text,
+                task: config,
+                boundary_rules,
+            },
+        )?)
+    }
+
+    pub fn conversation_schema_draft(
+        &self,
+        project: &str,
+        id: Uuid,
+        revision: Option<u64>,
+    ) -> Result<annotagent_storage::ConversationSchemaDraft> {
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self.store.conversation_schema_draft(&owner, id, revision)?)
+    }
+
+    /// Bounded semantics only: edits cannot inject validators, models, dependencies or permissions.
+    pub fn revise_conversation_schema_draft(
+        &self,
+        project: &str,
+        id: Uuid,
+        request: Uuid,
+        expected_revision: u64,
+        decision: &ConversationSchemaDecision,
+    ) -> Result<annotagent_storage::ConversationSchemaDraft> {
+        let owner = self.conversation_project_identity(project)?;
+        let current = self.store.conversation_schema_draft(&owner, id, None)?;
+        let config = decision
+            .task_config(current.task_id)?
+            .ok_or_else(|| anyhow::anyhow!("A clarification cannot replace a Schema Draft"))?;
+        let ConversationSchemaDecision::Draft { boundary_rules, .. } = decision else {
+            unreachable!()
+        };
+        Ok(self.store.revise_conversation_schema_draft(
+            &owner,
+            id,
+            request,
+            expected_revision,
+            &annotagent_storage::ConversationSchemaDefinition {
+                goal: current.definition.goal,
+                task: config,
+                boundary_rules: boundary_rules.clone(),
+            },
+        )?)
+    }
+
     pub fn conversation_schema_cancellations(
         &self,
         project: &str,
@@ -626,6 +716,99 @@ mod tests {
             receipt
         );
         let reopened = crate::LocalApplication::new(temp.path()).unwrap();
+        let schema_draft = reopened
+            .save_conversation_schema_draft("schema-test", conversation, task, execution.call_id)
+            .unwrap();
+        assert_eq!(schema_draft.revision, 1);
+        assert_eq!(schema_draft.definition.task.labels, vec!["cup"]);
+        let edited: ConversationSchemaDecision =
+            serde_json::from_value(draft("bounding_box", &["mug"])).unwrap();
+        let edit_id = Uuid::new_v4();
+        let saved_edit = reopened
+            .revise_conversation_schema_draft("schema-test", schema_draft.id, edit_id, 1, &edited)
+            .unwrap();
+        assert_eq!(saved_edit.revision, 2);
+        assert_eq!(
+            reopened
+                .revise_conversation_schema_draft(
+                    "schema-test",
+                    schema_draft.id,
+                    edit_id,
+                    1,
+                    &edited
+                )
+                .unwrap(),
+            saved_edit
+        );
+        assert!(
+            reopened
+                .revise_conversation_schema_draft(
+                    "schema-test",
+                    schema_draft.id,
+                    Uuid::new_v4(),
+                    1,
+                    &edited
+                )
+                .is_err()
+        );
+        let duplicate: ConversationSchemaDecision =
+            serde_json::from_value(draft("bounding_box", &["cup", "cup"])).unwrap();
+        assert!(
+            reopened
+                .revise_conversation_schema_draft(
+                    "schema-test",
+                    schema_draft.id,
+                    Uuid::new_v4(),
+                    2,
+                    &duplicate
+                )
+                .is_err()
+        );
+        assert_eq!(
+            reopened
+                .save_conversation_schema_draft(
+                    "schema-test",
+                    conversation,
+                    task,
+                    execution.call_id
+                )
+                .unwrap(),
+            saved_edit
+        );
+        assert_eq!(
+            reopened
+                .conversation_schema_draft("schema-test", schema_draft.id, Some(1))
+                .unwrap(),
+            schema_draft
+        );
+        assert!(
+            reopened
+                .conversation_schema_draft("schema-test", schema_draft.id, Some(u64::MAX))
+                .is_err()
+        );
+        reopened.create_project("foreign-schema", yaml).unwrap();
+        assert!(
+            reopened
+                .conversation_schema_draft("foreign-schema", schema_draft.id, None)
+                .is_err()
+        );
+        assert!(
+            reopened
+                .save_conversation_schema_draft(
+                    "schema-test",
+                    Uuid::new_v4(),
+                    task,
+                    execution.call_id
+                )
+                .is_err()
+        );
+        let after_edit_restart = crate::LocalApplication::new(temp.path()).unwrap();
+        assert_eq!(
+            after_edit_restart
+                .conversation_schema_draft("schema-test", schema_draft.id, None)
+                .unwrap(),
+            saved_edit
+        );
         assert_eq!(
             reopened
                 .execute_conversation_schema(

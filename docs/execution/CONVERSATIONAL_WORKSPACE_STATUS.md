@@ -340,3 +340,34 @@ cancels before server admission, releases it to a verified 400 and reloads the s
 cancellation without a proposal. `schema-cancelled.png` captured and inspected.
 Existing bbox/classification consent→result browser checks also passed in that test.
 No Live calls, real workspace changes, default navigation switch or push.
+
+### Independent semantic Schema Draft revisions (M2, continued)
+
+Migration 28 stores a separate conversation Schema Draft with immutable numbered
+revisions, its source call, task owner and original Project schema digest. Initial
+materialization revalidates the persisted model tool response, derives the existing
+Core TaskConfig and freezes the saved goal. Clarifications/invalid or unfinished
+responses cannot manufacture a draft. No Project YAML, published workflow or formal
+annotation is updated. Human edits accept bounded schema semantics, never arbitrary
+model bindings, validators, refiners, dependencies or execution permissions.
+
+Creation retries preserve the latest human edit, not overwrite it with revision 1.
+Editing uses an expected revision plus idempotency key; stale/conflicting requests
+fail while exact retries return their original saved revision. Exact old revisions
+remain readable. Owner checks, restart persistence and revision integer overflow are
+covered. HTTP exposes explicit POST materialization/edit and read-only revision GET.
+
+Evidence: Application Schema tests **4/4** (expanded with revision/retry/foreign-owner/
+reopen cases), storage **44/44**, fmt and strict storage/Application/server Clippy
+passed. Isolated `conversation-schema.spec.ts` **1/1**, 24.9s, workspace
+`/tmp/annotagent-guided-e2e-80711`, exercised actual HTTP bbox/classification proposals,
+draft materialization, edit retries, stale edits and historical reads. Existing
+consent/cancellation UI regression also passed. Production Web build passed with the
+existing >500 kB chunk warning. TEST HTTP fixture only; no live model inference.
+
+Still incomplete: editing these revisions in the conversation UI and explicitly
+binding them to existing Workflow Draft/Builder/sample execution. The current
+Builder still reads Project YAML; it must not be advertised as consuming this new
+Schema Draft yet. Shared later-phase authorization, Human Request/outbox and the
+complete sample→processing→review→export journey remain active work. No default
+navigation switch, real-workspace restart, push or human usability test occurred.
