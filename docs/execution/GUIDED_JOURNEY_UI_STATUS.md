@@ -1,5 +1,12 @@
 # Guided Journey UI — execution record
 
+## Saved geometry overlay comparison (2026-09-08)
+
+- Added an on-demand all-box comparison within the existing sample inspector: independent whole-image, local, refiner and retained-result visibility; stage-specific line styles/colors and compact numbered labels. Duplicate identical geometry within a stage is collapsed, not counted as extra objects.
+- Uses saved terminal/sample and debug evidence only. Rejected SAM geometry remains explicitly diagnostic; no model calls, threshold changes, annotation acceptance or schema mutation. Mask pixels are not fabricated: this view compares bounding boxes and explicitly identifies that limitation.
+- Whole-image overlays require saved root-image input coordinates; crop-local detections are excluded until projected. Browser inspection of sample b3bbdc85 verified two boxes per group (eight stage overlays), correctly aligned on the original image.
+- Verification: typecheck, 96 Web unit tests (including coordinate-frame guards, deduplication/rejected evidence/no invented results), production build and CLI build passed. Existing bundle-size warning remains.
+
 ## Authorized follow-up: local re-localization + SAM (2026-09-08)
 
 - User approved one further same-image trial with at most three VLM calls. Draft e595c7b1 revision 4 completed sample b3bbdc85: one whole-image call, two bounded crop calls, local SAM executed, zero failed images, two review candidates, no committed annotations. Duration 14.152s, 2172 input / 264 output tokens; remote price unknown, not free.

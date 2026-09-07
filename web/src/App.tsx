@@ -7,6 +7,7 @@ import { ApiRequestError, api, subscribeEvents } from "./api";
 import { AnnotationCanvas } from "./components/AnnotationCanvas";
 import { FirstResultEntry } from "./components/FirstResultEntry";
 import { SampleFeedbackEditor } from "./components/SampleFeedbackEditor";
+import { SampleGeometryComparison } from "./components/SampleGeometryComparison";
 import { FocusHeader, usesFocusLayout } from "./components/FocusHeader";
 import { JourneyBatch } from "./components/JourneyBatch";
 import { JourneyImages } from "./components/JourneyImages";
@@ -1936,6 +1937,7 @@ function SampleAnnotationDialog({
   position: number; count: number; onPrevious?: () => void; onNext?: () => void;
 }) {
   const [feedbackDirty, setFeedbackDirty] = useState(false);
+  const [showComparison, setShowComparison] = useState(false);
   const onClose = closeDialog;
   useEffect(() => {
     onNavigationGuardChange(() => !feedbackDirty || window.confirm(t("Discard unsaved sample feedback?")));
@@ -1971,12 +1973,13 @@ function SampleAnnotationDialog({
       </header>
       <p className="sample-risk-notice">{t("Model confidence is not boundary accuracy. Sample decisions do not accept formal annotations.")}</p>
       {!sample.projection && <p role="alert">{t("This legacy test has no final-result projection. Test the Draft again before confirming its annotations.")}</p>}
-      {selectedStage === "final" && image && sampleTestId && <SampleFeedbackEditor projectId={projectId} draftId={draftId} onKeepOriginal={onKeepOriginal} onImprove={onImprove} onAdopt={onAdopt} sample={sample} image={image} testId={sampleTestId} onDirtyChange={setFeedbackDirty} onConfirmed={onNext ? () => { onNavigationGuardChange(undefined); onNext(); } : undefined} navigation={guided && count > 1 ? <nav className="button-row" aria-label={t("Sample images")}><button disabled={!onPrevious} onClick={onPrevious}>{t("Previous image")}</button><span>{position}/{count}</span><button disabled={!onNext} onClick={onNext}>{t("Next image")}</button></nav> : undefined} />}
+      {!showComparison && selectedStage === "final" && image && sampleTestId && <SampleFeedbackEditor projectId={projectId} draftId={draftId} onKeepOriginal={onKeepOriginal} onImprove={onImprove} onAdopt={onAdopt} sample={sample} image={image} testId={sampleTestId} onDirtyChange={setFeedbackDirty} onConfirmed={onNext ? () => { onNavigationGuardChange(undefined); onNext(); } : undefined} navigation={guided && count > 1 ? <nav className="button-row" aria-label={t("Sample images")}><button disabled={!onPrevious} onClick={onPrevious}>{t("Previous image")}</button><span>{position}/{count}</span><button disabled={!onNext} onClick={onNext}>{t("Next image")}</button></nav> : undefined} />}
       {!guided && <details className="sample-technical-details"><summary>{t("View execution details")}</summary>
       <nav className="sample-preview-stage-tabs" aria-label={t("Annotation stages")}>
-        {availableStages.map((stage) => <button key={stage} type="button" className={selectedStage === stage ? "active" : ""} aria-pressed={selectedStage === stage} onClick={() => { if (stage === selectedStage || !feedbackDirty || window.confirm(t("Discard unsaved sample feedback?"))) setSelectedStage(stage); }}>{stage === "search_region" ? t("Search region") : stage === "prompt_coverage" ? t("Prompt coverage") : stage[0].toUpperCase() + stage.slice(1)}</button>)}
+        <button type="button" aria-pressed={showComparison} onClick={() => { if (!feedbackDirty || window.confirm(t("Discard unsaved sample feedback?"))) setShowComparison(!showComparison); }}>{t("Compare all geometry")}</button>
+        {availableStages.map((stage) => <button key={stage} type="button" className={!showComparison && selectedStage === stage ? "active" : ""} aria-pressed={!showComparison && selectedStage === stage} onClick={() => { if (stage === selectedStage || !feedbackDirty || window.confirm(t("Discard unsaved sample feedback?"))) { setSelectedStage(stage); setShowComparison(false); } }}>{stage === "search_region" ? t("Search region") : stage === "prompt_coverage" ? t("Prompt coverage") : stage[0].toUpperCase() + stage.slice(1)}</button>)}
       </nav>
-      <details open={selectedStage !== "final" || !sampleTestId}><summary>{t("Technical evidence")}</summary><div className="sample-preview-layout">
+      {showComparison ? <SampleGeometryComparison sample={sample} imageUrl={image?.url} /> : <details open={selectedStage !== "final" || !sampleTestId}><summary>{t("Technical evidence")}</summary><div className="sample-preview-layout">
         <figure className="sample-preview-canvas" style={{ aspectRatio: `${sample.width} / ${sample.height}` }}>
           {image ? <img src={image.url} alt={sample.image_name} /> : <div className="image-placeholder">{t("Preview unavailable")}</div>}
           {boxes.map((result) => {

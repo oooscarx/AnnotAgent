@@ -1,5 +1,13 @@
 /** English source messages are stable keys; untranslated technical copy falls back to English. */
 export const zhCN: Record<string, string> = {
+  "Compare all geometry": "全部框对比",
+  "Whole-image VLM": "整图 VLM 粗框",
+  "Local VLM": "局部 VLM 框",
+  "SAM / refiner": "SAM / 精修框",
+  "Retained for review": "保留的待审核框",
+  "Diagnostic comparison only. Refiner boxes may have been rejected; showing them does not accept annotations.": "仅供诊断对比。精修框可能已被拒绝；显示它们不代表接受标注。可取消勾选重叠阶段，逐个比较。",
+  "All geometry over the original image; numbered details below": "原图上的各阶段边框，编号详情见下方",
+  "Mask artifacts remain in execution evidence; this comparison displays bounding boxes, not mask pixels.": "此处比较的是边框，不是掩膜像素。原始掩膜产物仍保留在执行证据中。",
   "Sample scope cannot be verified. The plan, images or models may have changed, or this older test lacks a model snapshot. Saved results are read-only and cannot authorize activation.": "无法核验本次样例的执行范围：方案、图片或模型可能已变化，也可能是旧测试缺少模型快照。已保存结果可只读查看，但不能据此启用方案。",
   "Run results": "运行结果",
   "Processing this image": "正在处理这张图片",
