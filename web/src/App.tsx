@@ -2007,6 +2007,7 @@ function SampleAnnotationDialog({
         </aside>
       </div>
       </details>
+      }
       </details>
       }
       {!guided && <footer className="task-action-bar"><button disabled={!onPrevious} onClick={onPrevious}>{t("Previous image")}</button><span>{position}/{count} · {t("Sandbox only")}</span><button disabled={!onNext} onClick={onNext}>{t("Next image")}</button></footer>}
