@@ -464,3 +464,36 @@ the next before calling the fixture. Isolated conversation HTTP/browser regressi
 **1/1**, 18.8s, `/tmp/annotagent-guided-e2e-83700`, also passed after the migration.
 Production Web build retains its known chunk-size warning. No Live credentials,
 real workspace migration/restart, push or real-user testing was performed.
+
+### Existing Builder execution under a conversation operation (M2, continued)
+
+Migration 30 adds idempotent Builder orchestration receipts, separate from billable
+call receipts. One operation ID identifies its existing Agent Session and working
+Workflow Draft. Duplicate admission returns saved state; startup/abandoned handlers
+mark unfinished operations interrupted without redispatch. Late settlement cannot
+rewrite a terminal receipt. Existing AgentExecutionGuard still settles its session.
+
+`build_conversation_pipeline` resolves an exact owned Schema revision, applies it to
+the existing Registry advisor input, and invokes the existing Builder loop with the
+task-ledger Provider. It does not implement another planner or executor. Remaining
+cumulative calls bound Builder turns; samples are explicitly disabled for this phase
+(`maximum_dry_runs=0`), and no publication/Run authorization is granted. A server-owned
+optional Session ID lets this caller correlate state without changing legacy callers.
+Retries read the saved operation instead of regenerating a Draft or calling a model.
+
+Evidence: Application/all-features **89 passed, 1 ignored**, targeted Schema **4/4**,
+and strict storage/Application/server Clippy passed. The expanded orchestration test
+used exactly **2** scripted model completions through the real Builder loop after
+Schema/edit/explicit allowance advancement, retained the edited label in the generated
+working Draft, did not publish and repeated the same operation without another call.
+The scripted Provider only inspects context; this proves bounded execution and state
+linkage, not a runnable quality pipeline or Live inference. Storage operation regression
+passed for duplicate/hash-conflict/foreign-owner admission, restart interruption and
+terminal result protection. No browser evidence added for a backend-only change.
+
+Next required integration: server consent preview/launch/status/cancel routes plus
+conversation UI, then authorized sample execution and terminal-artifact canvas. The
+current operation is not exposed as a working UI action yet. Saved interruptions are
+recoverable evidence, not automatic resumed execution. Human Request/outbox, complete
+golden paths and real-user usability remain incomplete. No real workspace mutation,
+server restart, push or remote changes.

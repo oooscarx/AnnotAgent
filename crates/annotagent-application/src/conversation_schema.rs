@@ -1064,6 +1064,78 @@ mod tests {
                 .used_calls,
             2
         );
+        let selected_builder =
+            crate::tests::register_pipeline_builder_model(&reopened, "TEST model");
+        let builder_grant = ConversationCallGrant {
+            id: Uuid::new_v4(),
+            scope_hash: "e".repeat(64),
+            maximum_calls: 4,
+            ..next.clone()
+        };
+        reopened
+            .store
+            .advance_conversation_authorization(&owner, next.id, &builder_grant)
+            .unwrap();
+        let mut builder_response = provider.response.clone();
+        builder_response.tool_calls[0].name = "inspect_project".into();
+        builder_response.tool_calls[0].arguments = json!({});
+        let builder_provider = TestProvider {
+            requests: Mutex::new(Vec::new()),
+            response: builder_response,
+            wait_for_cancel: false,
+        };
+        let build = crate::ConversationBuilderExecution {
+            conversation_id: conversation,
+            task_id: task,
+            schema_id: schema_draft.id,
+            schema_revision: 2,
+            operation_id: Uuid::new_v4(),
+            scope_hash: builder_grant.scope_hash.clone(),
+        };
+        let result = reopened
+            .build_conversation_pipeline(
+                "schema-test",
+                &build,
+                &settings,
+                &selected_builder,
+                &builder_provider,
+                CancellationToken::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.status, "completed");
+        assert_eq!(builder_provider.requests.lock().unwrap().len(), 2);
+        let calls_before_retry = builder_provider.requests.lock().unwrap().len();
+        assert_eq!(
+            reopened
+                .build_conversation_pipeline(
+                    "schema-test",
+                    &build,
+                    &settings,
+                    &selected_builder,
+                    &builder_provider,
+                    CancellationToken::default()
+                )
+                .await
+                .unwrap(),
+            result
+        );
+        assert_eq!(
+            builder_provider.requests.lock().unwrap().len(),
+            calls_before_retry
+        );
+        let generated = reopened
+            .store
+            .get_workflow_draft(&build.operation_id.to_string())
+            .unwrap();
+        assert_eq!(
+            generated.annotation_schema.as_ref().unwrap().task.labels,
+            vec!["mug"]
+        );
+        assert!(!matches!(
+            generated.status,
+            annotagent_core::WorkflowDraftStatus::Published
+        ));
         let message = ConversationMessageInput {
             id: Uuid::new_v4(),
             text: "TEST cancellation".into(),

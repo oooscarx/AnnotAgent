@@ -1,6 +1,8 @@
 //! Shared application service used by CLI/TUI and HTTP frontends.
 
+mod conversation_builder;
 mod conversation_provider;
+pub use conversation_builder::ConversationBuilderExecution;
 mod conversation_schema;
 pub use conversation_provider::ConversationTaskProvider;
 mod guidance;
@@ -7171,6 +7173,7 @@ impl LocalApplication {
         store.reconcile_interrupted_runs()?;
         store.recover_sample_operations()?;
         store.recover_conversation_calls()?;
+        store.recover_conversation_builders()?;
         for mut session in store.list_agent_sessions(None)? {
             if session.kind == AgentKind::PipelineBuilder
                 && session.status == AgentSessionStatus::Running
@@ -12001,6 +12004,7 @@ impl LocalApplication {
             builder_constraints,
             build_mode,
             cancellation,
+            None,
         )
         .await
     }
@@ -12162,6 +12166,7 @@ impl LocalApplication {
             builder_constraints,
             build_mode,
             cancellation,
+            None,
         )
         .await
     }
@@ -12192,6 +12197,7 @@ impl LocalApplication {
             builder_constraints,
             annotagent_core::PipelineBuildMode::FromScratch,
             cancellation,
+            None,
         )
         .await
     }
@@ -12211,6 +12217,7 @@ impl LocalApplication {
         builder_constraints: PipelineBuilderConstraints,
         build_mode: annotagent_core::PipelineBuildMode,
         cancellation: CancellationToken,
+        operation_session_id: Option<uuid::Uuid>,
     ) -> Result<WorkflowAdvisorAgentReport> {
         // A copied sample plan has one authoring operation at a time. This is the same
         // management lease used by publication/testing, not a second execution engine.
@@ -12255,6 +12262,9 @@ impl LocalApplication {
             annotagent_core::BuilderProgressInvariant::default(),
         )
         .with_project(project_id);
+        if let Some(id) = operation_session_id {
+            session.id = id;
+        }
         if let Some(selected_model) = selected_model {
             session = session.with_model_selection(selected_model.safe_selection());
         }
@@ -12400,7 +12410,9 @@ impl LocalApplication {
         } else {
             let now = chrono::Utc::now();
             let mut working_draft = safe_suggestion.draft.clone();
-            working_draft.id = uuid::Uuid::new_v4().to_string();
+            working_draft.id = operation_session_id
+                .unwrap_or_else(uuid::Uuid::new_v4)
+                .to_string();
             working_draft.name = format!("{} · working draft", working_draft.name);
             working_draft.status = WorkflowDraftStatus::Editing;
             working_draft.revision = 1;
@@ -20637,7 +20649,7 @@ export:
         assert!(error.to_string().contains("disabled or unavailable"));
     }
 
-    fn register_pipeline_builder_model(
+    pub(super) fn register_pipeline_builder_model(
         application: &LocalApplication,
         remote_model_id: &str,
     ) -> PipelineBuilderModelRuntime {
@@ -26228,6 +26240,7 @@ export:
                 builder_constraints,
                 annotagent_core::PipelineBuildMode::FromScratch,
                 CancellationToken::new(),
+                None,
             )
             .await
             .expect("live revision loop");
