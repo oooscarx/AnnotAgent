@@ -15,6 +15,7 @@ import { JourneyModel } from "./components/JourneyModel";
 import { JourneySampleTask } from "./components/JourneySampleTask";
 import { JourneyConfirm } from "./components/JourneyConfirm";
 import { JourneyRevision } from "./components/JourneyRevision";
+import { JourneyRun } from "./components/JourneyRun";
 import { ImproveAutomationPanel } from "./components/GeometrySafetyPanel";
 import { NotFoundPage } from "./features/notFound/NotFoundPage";
 import {
@@ -530,6 +531,7 @@ export function App() {
     ) {
       navigate(
         projectRunPath(routeRunProject.id, route.runId, {
+          annotationId: route.annotationId, canvasView: route.canvasView,
           imageId: route.imageId,
           nodeId: route.nodeId,
           artifactId: route.artifactId,
@@ -7829,6 +7831,7 @@ function RunsPage({
     )
       onNavigate(
         projectRunPath(runOwner.id, route.runId, {
+          annotationId: route.annotationId, canvasView: route.canvasView,
           imageId: route.imageId,
           nodeId: route.nodeId,
           artifactId: route.artifactId,
@@ -7840,6 +7843,7 @@ function RunsPage({
   if (detailRoute && routeRunId && run)
     return (
       <RunDetailWorkspace
+        key={run.id}
         run={run}
         project={runOwner}
         route={detailRoute}
@@ -7997,7 +8001,7 @@ function BatchRunGroup({
   const workflowVersion = childRuns[0]?.workflow_version ?? batch.workflow_version.split("@").at(-1) ?? "unknown";
   const usage = batch.budget_ledger.consumed;
   const object: ManagementObjectRef = { kind: "batch", id: batch.id, expected_revision: batch.lifecycle_revision };
-  return <div className="managed-execution-row">
+  return <div className={`managed-execution-row${management ? " with-management" : ""}`}>
     {management && <input type="checkbox" aria-label={`Select Dataset Run ${batch.id.slice(0, 8)}`} checked={management.selected} onChange={(event) => management.onToggle(object, event.target.checked)} />}
     <details className="batch-run-group">
     <summary className="batch-run-row">
@@ -8014,6 +8018,7 @@ function BatchRunGroup({
       {childRuns.length === 0 && <Empty title={t("No image Runs recorded")} detail="This Dataset Run stopped before an image Run was created." />}
     </div>
     </details>
+    <button className="execution-detail-button" onClick={() => onNavigate(projectBatchPath(batch.project_id, batch.id, { view: "history" }))} aria-label={`${t("Execution details")} · ${batch.id.slice(0, 8)}`}>{t("Execution details")}</button>
     {management && <details className="row-menu"><summary aria-label={`Manage Dataset Run ${batch.id.slice(0, 8)}`}>•••</summary><div><button onClick={() => onNavigate(projectBatchPath(batch.project_id, batch.id))}>{t("View")}</button><button className="danger-button" onClick={() => management.onDelete([object])}>{t("Delete…")}</button></div></details>}
   </div>;
 }
@@ -8064,8 +8069,8 @@ function BatchDetailWorkspace({
     : projects.find((project) => project.id === route.projectId);
   useEffect(() => {
     if (batch && batch.project_id !== route.projectId)
-      onNavigate(projectBatchPath(batch.project_id, batch.id), true);
-  }, [batch?.id, batch?.project_id, route.projectId]);
+      onNavigate(projectBatchPath(batch.project_id, batch.id, { imageId: route.imageId, status: route.status, view: route.view, annotationId: route.annotationId, canvasView: route.canvasView }), true);
+  }, [batch?.id, batch?.project_id, route.projectId, route.imageId, route.status, route.view]);
   if (!loaded)
     return <div className="loading-banner" role="status">{t("Loading Dataset Run…")}</div>;
   if (!batch)
@@ -8085,7 +8090,7 @@ function BatchDetailWorkspace({
     );
   if (batch.project_id !== route.projectId)
     return <div className="loading-banner" role="status">{t("Opening the owning Project…")}</div>;
-  if (batch.workflow_snapshot.guided_processing && !batch.in_trash)
+  if (route.view !== "history" && !batch.in_trash)
     return <JourneyBatch key={batch.id} batch={batch} route={route} onNavigate={onNavigate} onReload={() => load()} />;
   const childRuns = batch.child_run_ids.flatMap((id) => {
     const run = runs.find((candidate) => candidate.id === id);
@@ -8136,6 +8141,7 @@ function BatchDetailWorkspace({
         className="text-button run-back"
         onClick={() => onNavigate(projectRunsPath(batch.project_id))}
       >{t("← Run history")}</button>
+      {!batch.in_trash && <button onClick={() => onNavigate(projectBatchPath(batch.project_id, batch.id, { imageId: route.imageId, status: route.status, annotationId: route.annotationId, canvasView: route.canvasView }))}>{t("View results")}</button>}
       {batch.in_trash && <div className="trash-state-banner" role="status"><span><strong>{t("This Dataset Run is in Trash")}</strong><small>Its child results are hidden from normal Run history but remain recoverable.</small></span><button onClick={() => manageBatch("restore")}>{t("Restore Dataset Run")}</button><button onClick={() => onNavigate(projectTrashPath(batch.project_id, "batch"))}>{t("Open Trash")}</button></div>}
       <div className="toolbar-panel run-detail-header">
         <div>
@@ -8218,7 +8224,7 @@ function RunHistoryRow({
   };
 }) {
   const object: ManagementObjectRef = { kind: "run", id: run.id, expected_revision: run.lifecycle_revision };
-  return <div className={`managed-execution-row${childLabel ? " managed-child-row" : ""}`}>
+  return <div className={`managed-execution-row${childLabel ? " managed-child-row" : ""}${management ? " with-management" : ""}`}>
     {management && <input type="checkbox" aria-label={`Select Run ${run.id.slice(0, 8)}`} checked={management.selected} onChange={(event) => management.onToggle(object, event.target.checked)} />}
     <button className={`run-row${childLabel ? " batch-child-run" : ""}`} onClick={() => onNavigate(projectId ? projectRunPath(projectId, run.id) : `/runs/${encodeURIComponent(run.id)}`)}>
     <span className="event-rail" />
@@ -8227,6 +8233,7 @@ function RunHistoryRow({
     <Status status={run.status} />
     <span className="row-arrow" aria-hidden="true">→</span>
     </button>
+    <button className="execution-detail-button" onClick={() => onNavigate(projectId ? projectRunPath(projectId, run.id, { view: "debug", imageId: run.image_id }) : `/runs/${encodeURIComponent(run.id)}?view=debug`)} aria-label={`${t("Execution details")} · ${run.id.slice(0, 8)}`}>{t("Execution details")}</button>
     {management && <details className="row-menu"><summary aria-label={`Manage Run ${run.id.slice(0, 8)}`}>•••</summary><div><button onClick={() => onNavigate(projectId ? projectRunPath(projectId, run.id) : `/runs/${encodeURIComponent(run.id)}`)}>{t("View")}</button><button className="danger-button" onClick={() => management.onDelete([object])}>{t("Delete…")}</button></div></details>}
   </div>;
 }
@@ -8250,6 +8257,9 @@ function RunDetailWorkspace({
   const [replay, setReplay] = useState<NodeReplayReport>();
   const [busy, setBusy] = useState(false);
   const [managementDialog, setManagementDialog] = useState<ManagementDialogState>();
+  const alive = useRef(true);
+  const actionPending = useRef(false);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const resultQuery = useRouteQuery(
     queryKeys.runResults(run.id),
     (signal) => api.runResultSummary(run.id, signal),
@@ -8276,8 +8286,8 @@ function RunDetailWorkspace({
     { staleTime: 30_000 },
   );
   const inspection = replay?.inspection ?? artifactQuery.data;
-  const annotationInspection = annotationQuery.data;
-  const resultSummary = resultQuery.data;
+  const annotationInspection = annotationQuery.data?.run_id === run.id && (!project || annotationQuery.data.project_id === project.id) ? annotationQuery.data : undefined;
+  const resultSummary = resultQuery.data?.run_id === run.id && (!project || resultQuery.data.project_id === project.id) ? resultQuery.data : undefined;
   const debugSummary = debugQuery.data;
   const images = imageQuery.data?.images ?? [];
   const runPath = (context: {
@@ -8285,9 +8295,11 @@ function RunDetailWorkspace({
     nodeId?: string;
     artifactId?: string;
     view?: "results" | "debug";
+    annotationId?: string;
+    canvasView?: "original";
   } = {}) =>
     project
-      ? projectRunPath(project.id, run.id, context)
+      ? projectRunPath(project.id, run.id, { annotationId: route.annotationId, canvasView: route.canvasView, ...context })
       : `/runs/${encodeURIComponent(run.id)}${(() => {
           const params = new URLSearchParams();
           if (context.view === "debug" || context.nodeId || context.artifactId)
@@ -8295,6 +8307,8 @@ function RunDetailWorkspace({
           if (context.imageId) params.set("image", context.imageId);
           if (context.nodeId) params.set("node", context.nodeId);
           if (context.artifactId) params.set("artifact", context.artifactId);
+          if (context.annotationId ?? route.annotationId) params.set("annotation", context.annotationId ?? route.annotationId!);
+          if ((context.canvasView ?? route.canvasView) === "original") params.set("display", "original");
           return params.size ? `?${params.toString()}` : "";
         })()}`;
   useEffect(() => setReplay(undefined), [run.id]);
@@ -8340,7 +8354,7 @@ function RunDetailWorkspace({
         artifactId: view === "debug" ? route.artifactId : undefined,
       }), true);
   }, [ownedImageId, route.imageId, route.nodeId, route.artifactId, view]);
-  const runAnnotations = annotationInspection?.annotations ?? [];
+  const runAnnotations = annotationInspection?.image_id === ownedImageId ? annotationInspection?.annotations ?? [] : [];
   const finalAnnotationIds = new Set([
     ...(resultSummary?.projection.committed_annotation_ids ?? []),
     ...(resultSummary?.projection.review_candidate_ids ?? []),
@@ -8374,8 +8388,10 @@ function RunDetailWorkspace({
     );
   };
   const control = (action: "pause" | "resume" | "cancel") => {
+    if (actionPending.current) return;
+    actionPending.current = true;
     setBusy(true);
-    void api.control(run.id, action).then(onRefresh).catch((error: Error) => onError(error.message)).finally(() => setBusy(false));
+    void api.control(run.id, action).then(() => { if (alive.current) return onRefresh(); }).catch((error: Error) => { if (alive.current) onError(error.message); }).finally(() => { actionPending.current = false; if (alive.current) setBusy(false); });
   };
   const manageRun = (action: "move_to_trash" | "restore" | "cancel_and_delete") => {
     if (!project) return onError("This Run does not have a resolvable owning Project.");
@@ -8385,17 +8401,18 @@ function RunDetailWorkspace({
       expected_revision: run.lifecycle_revision,
     }], action);
     void api.previewManagement(project.id, request)
-      .then((preview) => setManagementDialog({ request, preview }))
-      .catch((error: Error) => onError(error.message));
+      .then((preview) => { if (alive.current) setManagementDialog({ request, preview }); })
+      .catch((error: Error) => { if (alive.current) onError(error.message); });
   };
   const replayNode = () => {
-    if (!selectedNode) return;
+    if (!selectedNode || actionPending.current) return;
+    actionPending.current = true;
     setBusy(true);
     void api.replayNode(run.id, selectedNode.node_id).then((value) => {
-      setReplay(value);
+      if (alive.current) setReplay(value);
       workspaceQueries.invalidate(queryKeys.runDebug(run.id));
       workspaceQueries.invalidate(queryKeys.runResults(run.id));
-    }).catch((error: Error) => onError(error.message)).finally(() => setBusy(false));
+    }).catch((error: Error) => { if (alive.current) onError(error.message); }).finally(() => { actionPending.current = false; if (alive.current) setBusy(false); });
   };
   const duration = Math.max(0, new Date(run.updated_at).getTime() - new Date(run.created_at).getTime());
   const completedNodes = inspection?.nodes.filter((node) =>
@@ -8415,6 +8432,8 @@ function RunDetailWorkspace({
         : run.status === "awaiting_review"
           ? "Results need review"
           : `Run ${run.status.replaceAll("_", " ")}`;
+  if (view === "results" && !run.in_trash && project)
+    return <JourneyRun key={run.id} run={run} image={ownedImage} summary={resultSummary} annotations={finalAnnotations} annotationsReady={Boolean(annotationInspection && annotationInspection.image_id === ownedImageId)} selectedId={route.annotationId} original={route.canvasView === "original"} onSelect={(annotationId) => onNavigate(runPath({ imageId: ownedImageId, annotationId }), true)} onOriginal={(original) => onNavigate(runPath({ imageId: ownedImageId, canvasView: original ? "original" : undefined }), true)} busy={busy} onControl={control} onNavigate={onNavigate} />;
   return (
     <section className="page-stack run-detail-page">
       <ProjectBreadcrumb

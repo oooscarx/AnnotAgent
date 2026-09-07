@@ -446,3 +446,37 @@ all-feature build and Clippy passed. Web typecheck and **87** unit tests passed;
 production build was performed by Playwright. No real model or person evaluated
 accuracy/usability. The missing-model test now isolates by created model IDs and
 matches query-bearing catalog URLs; it no longer depends on suite ordering.
+
+M3c commit: `b67a483`.
+
+### M4a — default Run and Batch results, management retained
+
+Run's default question is now “Check this image’s results”; Batch's is “Your
+processing results”. Both render the actual image with terminal projection only,
+real status, unverified-boundary warnings and direct supported stop controls.
+They do not mount the node timeline, Inspector, metrics dashboard or Project menu.
+Back returns to the owning Project. Review and export use the existing APIs and
+canonical owner routes. A failed/missing projection does not fabricate a box.
+
+Processing history keeps an explicit Execution details action: Run `view=debug`
+and Batch `view=history` reuse the existing professional views. Delete, recovery,
+trash, Artifact and Replay implementations remain there, not copied or removed.
+Legacy non-trash Batches use the same default results scene as confirmed Batches.
+Selected annotation and original-image display are typed URL state for Run and
+Batch; filters/image identity survive reload, and canvas selection does not
+refocus the page heading. Unknown annotation IDs show an error on the same image.
+
+Verification: Web typecheck and 89 unit tests passed; full browser regression
+62/62 passed before the final Batch URL addition. Final suite rerun is recorded
+below when complete. Isolated fixtures only. Screenshot `guided-journey/run-results.png`.
+The high-confidence warning is presentation, not a change to Core geometry policy.
+No real-model or human accuracy/usability validation is claimed. Native 200% zoom,
+OS IME and screen-reader validation remain outstanding, alongside task setup
+return and wider sample editing. Existing user screenshot modifications are
+restored from the pre-test byte backup before committing.
+
+Final M4a regression: **62/62 E2E**, **89/89 unit**, typecheck and production
+build passed, including Batch original-view refresh after the final URL changes.
+Screenshot visually inspected: actual fixture pixels, no technical success
+reason masquerading as a warning, and no offscreen skip-link artifact. The skip
+link remains focusable and becomes visible on keyboard focus.

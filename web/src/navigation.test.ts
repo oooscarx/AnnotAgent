@@ -12,6 +12,16 @@ import {
 } from "./navigation";
 
 describe("guided workspace routing", () => {
+  it("keeps selected Run results and original display through canonical owner resolution", () => {
+    const path = projectRunPath("project", "run", { imageId: "image", annotationId: "candidate", canvasView: "original" });
+    expect(parseWorkspaceRoute("/runs/run", "?project_id=project&image=image&annotation=candidate&display=original")).toMatchObject({ canonicalPath: path, annotationId: "candidate", canvasView: "original" });
+    const url = new URL(path, "http://localhost");
+    expect(parseWorkspaceRoute(url.pathname, url.search).canonicalPath).toBe(path);
+    expect(routeFocusKey(parseWorkspaceRoute(url.pathname, url.search))).toBe(routeFocusKey(parseWorkspaceRoute(url.pathname, "?image=image&annotation=other")));
+    const history = projectBatchPath("project", "batch", { view: "history", status: "failed" });
+    const batchUrl = new URL(history, "http://localhost");
+    expect(parseWorkspaceRoute(batchUrl.pathname, batchUrl.search)).toMatchObject({ canonicalPath: history, view: "history" });
+  });
   it("restores a sample revision scene without inventing a new owner", () => {
     const path = projectJourneyPath("project a", "revise", { draftId: "copy", sampleTestId: "baseline", imageId: "image" });
     const url = new URL(path, "http://localhost");
@@ -263,6 +273,7 @@ describe("guided workspace routing", () => {
         view: "debug",
       }),
       projectBatchPath("project / one", "batch / one"),
+      projectBatchPath("project / one", "batch / one", { imageId: "image / one", annotationId: "candidate / one", canvasView: "original", view: "history", status: "needs_review" }),
       projectReviewPath("project / one", "review / one"),
       projectTrashPath("project / one", "workflow_version"),
     ];

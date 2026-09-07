@@ -6,14 +6,15 @@ import { queryKeys } from "../queryCache";
 import { useRouteQuery } from "../useRouteQuery";
 import type { DatasetBatchSummary } from "../types";
 import { AnnotationCanvas } from "./AnnotationCanvas";
+import { hasUnverifiedBoundary } from "../annotationQuality";
 
 /** A results presentation of the existing Batch and terminal projection, not an executor. */
 export function JourneyBatch({ batch, route, onNavigate, onReload }: {
   batch: DatasetBatchSummary; route: Extract<WorkspaceRoute, { kind: "projectBatch" }>;
   onNavigate: (path: string, replace?: boolean) => void; onReload: () => Promise<unknown>;
 }) {
-  const [selectedId, setSelectedId] = useState<string>();
-  const [original, setOriginal] = useState(false);
+  const selectedId = route.annotationId;
+  const original = route.canvasView === "original";
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const active = ["pending", "running", "paused"].includes(batch.status);
@@ -52,7 +53,7 @@ export function JourneyBatch({ batch, route, onNavigate, onReload }: {
   const final = owned ? (inspection?.annotations ?? []).filter((annotation) => finalIds.has(annotation.id)) : [];
   const image = imageQuery.data?.images.find((item) => item.image_id === selected?.image_id && item.project_id === batch.project_id);
   const select = (imageId?: string, nextStatus = status) => onNavigate(projectBatchPath(batch.project_id, batch.id, { imageId, status: nextStatus }));
-  useEffect(() => { setSelectedId(undefined); setOriginal(false); }, [selected?.image_id]);
+  const canvasContext = (annotationId = selectedId, showOriginal = original) => onNavigate(projectBatchPath(batch.project_id, batch.id, { imageId: selected?.image_id, status, annotationId, canvasView: showOriginal ? "original" : undefined }), true);
   const control = async (action: "pause" | "resume" | "cancel") => {
     if (busy) return;
     setBusy(true); setError("");
@@ -73,15 +74,17 @@ export function JourneyBatch({ batch, route, onNavigate, onReload }: {
     </div>
     {(error || imageQuery.error || results.error || annotations.error) && <div role="alert"><p>{error || imageQuery.error?.message || results.error?.message || annotations.error?.message}</p><button onClick={() => { void onReload(); void imageQuery.retry().catch(() => undefined); void results.retry().catch(() => undefined); void annotations.retry().catch(() => undefined); }}>{t("Reload results")}</button></div>}
     <div className="journey-image-controls">
-      <label>{t("Show images")}<select value={status} onChange={(event) => select(undefined, event.target.value)}>
+      <label>{t("Show images")}<select aria-label={t("Show images")} value={status} onChange={(event) => select(undefined, event.target.value)}>
         {[['all', 'All images'], ['ready', 'Saved results'], ['no_target', 'No target found'], ['needs_review', 'Needs review'], ['failed', 'Failed'], ['cancelled', 'Cancelled'], ['pending', 'Pending'], ['running', 'Running']].map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}
       </select></label>
       <span>{index >= 0 ? t("Image {index} of {count}", { index: index + 1, count: images.length }) : t("No images match this status")}</span>
-      <button aria-pressed={original} disabled={!selected} onClick={() => setOriginal((value) => !value)}>{t(original ? "Show results" : "Show original")}</button>
+      <button aria-pressed={original} disabled={!selected} onClick={() => canvasContext(selectedId, !original)}>{t(original ? "Show results" : "Show original")}</button>
     </div>
     {selected && <div className="journey-result-image"><h3>{selected.name}</h3><p>{t(selected.status)}{selected.failure ? ` · ${selected.failure}` : ""}</p>
       {selected.status === "needs_review" && <p className="journey-risk" role="status">{t("These candidates are not approved annotations. Check the target and its boundary before accepting.")}</p>}
-      {image ? <AnnotationCanvas key={image.image_id} imageUrl={image.url} annotations={original ? [] : final} selectedId={selectedId} onSelect={setSelectedId} onChange={() => undefined} readOnly compactList /> : <p>{t("The original image is unavailable. No substitute result is shown.")}</p>}
+      {hasUnverifiedBoundary(final) && <p className="journey-risk">{t("Some boundaries have not been verified. A model confidence score is not measured boundary accuracy.")}</p>}
+      {owned && selectedId && !final.some((item) => item.id === selectedId) && <p role="alert">{t("The linked annotation is not a final result of this Run. The same image remains visible; choose an available result from the annotation list.")}</p>}
+      {image ? <AnnotationCanvas key={image.image_id} imageUrl={image.url} annotations={original ? [] : final} selectedId={selectedId} onSelect={(id) => canvasContext(id)} onChange={() => undefined} readOnly compactList /> : <p>{t(imageQuery.loading ? "Loading saved results…" : "The original image is unavailable. No substitute result is shown.")}</p>}
       {selected.status === "no_target" && <p>{t("No target was found. This is not evidence that the image contains none; inspect the original image.")}</p>}
       {runId && !owned && !results.loading && !annotations.loading && <p role="alert">{t("Final results are not available for this image yet.")}</p>}
     </div>}

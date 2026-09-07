@@ -15,7 +15,7 @@ export function FocusHeader({ project, route, titleRef, loaded, connection, onNa
   loaded: boolean; connection: string; onNavigate: (path: string) => void;
 }) {
   const projectId = "projectId" in route ? route.projectId : undefined;
-  const journey = route.kind === "journey" || route.kind === "projectBatch" || route.kind === "export" || (route.kind === "projectReview" && !!route.reviewItemId) || (route.kind === "projects" && route.create);
+  const journey = route.kind === "journey" || (route.kind === "projectRun" && route.view !== "debug") || (route.kind === "projectBatch" && route.view !== "history") || route.kind === "export" || (route.kind === "projectReview" && !!route.reviewItemId) || (route.kind === "projects" && route.create);
   const parent = projectId ? `/projects/${encodeURIComponent(projectId)}` : "/projects";
   const title = route.kind === "journey" ? ({images: "Your images", goal: "Your annotation goal", samples: "Check your samples", model: route.modelPurpose === "vision" ? "Connect an image model" : "Connect a planning model", confirm: "Confirm processing", revise: "Adjust your sample plan"})[route.scene] : route.kind === "projects" ? "Your images" : route.kind === "build"
     ? ({ data: "Project images", labels: "Annotation goal", pipeline: "Annotation plan", test: "Inspect samples" })[route.step]

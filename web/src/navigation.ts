@@ -36,6 +36,8 @@ export type WorkspaceRoute =
       nodeId?: string;
       artifactId?: string;
       view?: "results" | "debug";
+      annotationId?: string;
+      canvasView?: "original";
     }
   | { kind: "projectRuns"; canonicalPath: string; projectId: string; status?: string }
   | { kind: "projectTrash"; canonicalPath: string; projectId: string; objectKind?: string }
@@ -48,8 +50,10 @@ export type WorkspaceRoute =
       nodeId?: string;
       artifactId?: string;
       view?: "results" | "debug";
+      annotationId?: string;
+      canvasView?: "original";
     }
-  | { kind: "projectBatch"; canonicalPath: string; projectId: string; batchId: string; imageId?: string; status?: string }
+  | { kind: "projectBatch"; canonicalPath: string; projectId: string; batchId: string; imageId?: string; status?: string; view?: "history"; annotationId?: string; canvasView?: "original" }
   | { kind: "projectReview"; canonicalPath: string; projectId: string; reviewItemId?: string; view?: "audit" }
   | {
       kind: "review";
@@ -70,6 +74,8 @@ type RunUrlContext = {
   nodeId?: string;
   artifactId?: string;
   view?: "results" | "debug";
+  annotationId?: string;
+  canvasView?: "original";
 };
 
 export type BuildUrlContext = {
@@ -92,6 +98,8 @@ function runContextSearch(context: RunUrlContext): string {
   if (context.imageId) params.set("image", context.imageId);
   if (context.nodeId) params.set("node", context.nodeId);
   if (context.artifactId) params.set("artifact", context.artifactId);
+  if (context.annotationId) params.set("annotation", context.annotationId);
+  if (context.canvasView === "original") params.set("display", "original");
   return params.size ? `?${canonicalSearch(params)}` : "";
 }
 
@@ -116,10 +124,13 @@ export function projectRunPath(projectId: string, runId: string, context: RunUrl
   return `/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}${runContextSearch(context)}`;
 }
 
-export function projectBatchPath(projectId: string, batchId: string, context: { imageId?: string; status?: string } = {}): string {
+export function projectBatchPath(projectId: string, batchId: string, context: { imageId?: string; status?: string; view?: "history"; annotationId?: string; canvasView?: "original" } = {}): string {
   const search = new URLSearchParams();
   if (context.imageId) search.set("image", context.imageId);
   if (context.status && context.status !== "all") search.set("status", context.status);
+  if (context.view === "history") search.set("view", "history");
+  if (context.annotationId) search.set("annotation", context.annotationId);
+  if (context.canvasView === "original") search.set("display", "original");
   return `/projects/${encodeURIComponent(projectId)}/batches/${encodeURIComponent(batchId)}${search.size ? `?${search}` : ""}`;
 }
 
@@ -320,6 +331,8 @@ export function parseWorkspaceRoute(
         canonicalPath: `${clean}${search}`,
       };
     const context: RunUrlContext = {
+      annotationId: params.get("annotation") ?? undefined,
+      canvasView: params.get("display") === "original" ? "original" : undefined,
       imageId: params.get("image") ?? undefined,
       nodeId: params.get("node") ?? undefined,
       artifactId: params.get("artifact") ?? undefined,
@@ -361,7 +374,10 @@ export function parseWorkspaceRoute(
       batchId,
       imageId: params.get("image") ?? undefined,
       status: params.get("status") ?? undefined,
-      canonicalPath: projectBatchPath(projectId, batchId, { imageId: params.get("image") ?? undefined, status: params.get("status") ?? undefined }),
+      view: params.get("view") === "history" ? "history" : undefined,
+      annotationId: params.get("annotation") ?? undefined,
+      canvasView: params.get("display") === "original" ? "original" : undefined,
+      canonicalPath: projectBatchPath(projectId, batchId, { imageId: params.get("image") ?? undefined, status: params.get("status") ?? undefined, view: params.get("view") === "history" ? "history" : undefined, annotationId: params.get("annotation") ?? undefined, canvasView: params.get("display") === "original" ? "original" : undefined }),
     };
   }
   const projectTrash = clean.match(/^\/projects\/([^/]+)\/manage\/trash$/);
@@ -496,10 +512,11 @@ export function parseWorkspaceRoute(
       ? "debug"
       : undefined;
     if (view) context.set("view", view);
-    for (const key of ["image", "node", "artifact"] as const) {
+    for (const key of ["image", "node", "artifact", "annotation"] as const) {
       const value = params.get(key);
       if (value) context.set(key, value);
     }
+    if (params.get("display") === "original") context.set("display", "original");
     const suffix = context.size ? `?${canonicalSearch(context)}` : "";
     if (projectId) {
       if (!run[1])
@@ -517,6 +534,8 @@ export function parseWorkspaceRoute(
           canonicalPath: `${clean}${search}`,
         };
       const runContext: RunUrlContext = {
+        annotationId: params.get("annotation") ?? undefined,
+        canvasView: params.get("display") === "original" ? "original" : undefined,
         imageId: params.get("image") ?? undefined,
         nodeId: params.get("node") ?? undefined,
         artifactId: params.get("artifact") ?? undefined,
@@ -540,6 +559,8 @@ export function parseWorkspaceRoute(
     return {
       kind: "runs",
       runId,
+      annotationId: params.get("annotation") ?? undefined,
+      canvasView: params.get("display") === "original" ? "original" : undefined,
       projectId,
       status,
       imageId: params.get("image") ?? undefined,

@@ -1,5 +1,13 @@
 /** English source messages are stable keys; untranslated technical copy falls back to English. */
 export const zhCN: Record<string, string> = {
+  "Run results": "运行结果",
+  "Processing this image": "正在处理这张图片",
+  "Check this image’s results": "检查这张图片的结果",
+  "{count} final results": "{count} 个最终结果",
+  "Loading saved results…": "正在加载已保存结果…",
+  "Some boundaries have not been verified. A model confidence score is not measured boundary accuracy.": "部分边界尚未验证。模型置信度不代表实测的边界准确性。",
+  "View results": "查看结果",
+  "The linked annotation is not a final result of this Run. The same image remains visible; choose an available result from the annotation list.": "链接中的标注不是此次运行的最终结果。仍显示同一张原图；请从标注列表选择可用结果。",
   "Adjust your sample plan": "调整样例方案",
   "Choose a saved sample before requesting changes.": "请先选择已保存的样例，再请求调整。",
   "This revision does not belong to the selected sample.": "这份修订不属于当前选中的样例。",
