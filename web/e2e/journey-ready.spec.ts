@@ -281,6 +281,11 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   expect(processingRequests[1]).toEqual(processingRequests[0]);
   const confirmation = await (await request.post(`/api/projects/${projectId}/processing-operations`, { data: processingRequests[0] })).json();
   expect(confirmation.phase, JSON.stringify(confirmation)).toBe("started");
+  const correctBatchUrl = page.url();
+  await page.goto(`/projects/${projectId}/task/confirm?draft=${draftId}&test=00000000-0000-4000-8000-000000000001&operation=${confirmation.id}`);
+  await expect(page.getByRole("alert")).toContainText("different task or sample test");
+  expect(processingRequests).toHaveLength(2);
+  await page.goto(correctBatchUrl);
   expect((await request.get(`/api/projects/wrong-owner/processing-operations/${confirmation.id}`)).status()).toBe(404);
   expect((await request.post(`/api/projects/${projectId}/processing-operations`, { data: { ...processingRequests[0], expected_revision: 999999 } })).status()).toBe(400);
   expect(page.url()).toContain(confirmation.batch_id);
@@ -404,4 +409,42 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   await page.getByRole("button", { name: "Save annotation to Review", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/review/`));
   expect(sampleRequests).toHaveLength(sampleRequestCount);
+  // UI-only shape fixtures on the isolated Review GET. Never persist these
+  // substituted values into the classification Project or imply model output.
+  const reviewUrl = page.url();
+  const itemId = new URL(reviewUrl).pathname.split("/").at(-1)!;
+  const shapeRequests: string[] = [];
+  page.on("request", req => { if (req.url().includes("/api/") && !["GET", "HEAD"].includes(req.method())) shapeRequests.push(req.url()); });
+  const rings = [[[.1, .1], [.4, .1], [.4, .4], [.1, .4]]];
+  for (const value of [
+    { kind: "polygon", rings },
+    { kind: "polyline", points: rings[0] },
+    { kind: "semantic_mask", mask: { encoding: "polygon", rings } },
+    { kind: "instance_mask", mask: { encoding: "polygon", rings } },
+    { kind: "keypoints", points: rings[0].map((point, index) => ({ name: `TEST ${index}`, point, visible: true })) },
+  ]) {
+    const endpoint = `**/api/projects/${projectId}/reviews/${itemId}`;
+    await page.route(endpoint, async route => {
+      const response = await route.fetch();
+      const body = await response.json();
+      body.annotation.value = value;
+      await route.fulfill({ response, json: body });
+    });
+    await page.reload();
+    const handles = page.locator('.review-canvas-stage .annotation-canvas circle[role="button"]');
+    await expect(handles).toHaveCount(4);
+    const firstX = Number(await handles.first().getAttribute("cx"));
+    await expect(page.locator('.review-canvas-stage .canvas-dimension-probe')).toHaveJSProperty("complete", true);
+    await handles.first().focus();
+    await page.keyboard.press("ArrowRight");
+    await expect.poll(async () => Number(await handles.first().getAttribute("cx"))).toBeCloseTo(firstX + 1, 5);
+    await handles.last().focus();
+    await page.keyboard.press("Delete");
+    await expect(handles).toHaveCount(3);
+    await expect(handles.last()).toBeFocused();
+    await page.getByRole("button", { name: "Undo annotation edit", exact: true }).click();
+    await expect(handles).toHaveCount(4);
+    await page.unroute(endpoint);
+  }
+  expect(shapeRequests).toEqual([]);
 });

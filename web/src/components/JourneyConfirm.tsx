@@ -27,7 +27,7 @@ export function JourneyConfirm({ projectId, draftId, testId, imageId, operationI
     if (operationId) {
       void api.processingOperation(projectId, operationId, controller.signal).then((value) => {
         if (controller.signal.aborted) return;
-        if (value.project_id !== projectId || value.draft_id !== draftId) throw new Error("This confirmation belongs to a different task.");
+        if (value.id !== operationId || value.project_id !== projectId || value.draft_id !== draftId || value.request?.selection.sample_test_id !== testId) throw new Error(t("This confirmation belongs to a different task or sample test. Return to the matching samples."));
         setReceipt(value); setPreview(value.authorization);
         if (value.phase === "started" && value.batch_id) navigate.current(projectBatchPath(projectId, value.batch_id), true);
       }).catch((failure: Error) => { if (!controller.signal.aborted) setError(failure.message); });

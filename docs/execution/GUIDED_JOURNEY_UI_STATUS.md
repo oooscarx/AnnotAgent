@@ -966,3 +966,38 @@ editable/read-only handles. The earlier bbox browser case is a regression only:
 it does not prove vertex deletion focus or all-shape keyboard persistence. Those
 browser cases remain pending, along with the consolidated final requirement audit.
 The bbox browser regression passed 1/1 before the final keypoint-only addition.
+
+### Current completion audit checkpoint (2026-09-08)
+
+This is a current audit map, not a declaration that the historical milestone
+notes above are all complete. The latest Guided Journey attachment supersedes
+the earlier request to keep a details link on every default screen.
+
+| Requirement area | Current evidence / outstanding check |
+| --- | --- |
+| Images and goals | `JourneyImages`, `JourneyGoal`; upload and ready-model browser cases exercise persisted images, multiple labels, cancellation and explicit model-call consent. |
+| Conditional settings | `JourneyModel`; connection and local-model tests cover typed task return without implicit sample calls; local install transport is explicitly TEST-only evidence. |
+| Exact adoption and restart | `JourneyConfirm`; ready-model case covers publication-success/start-failure and same-request retry. Current source audit found receipt restoration omitted Sample Test identity; fixed and regression being added. |
+| Scoped results and human additions | `JourneyRun`, `JourneyBatch`, `RunAnnotationEditor`; ready-model test covers empty results, manual creation, identical retry and owner-scoped Review. |
+| Review and export | Existing owner-scoped Review APIs and Export UI; full suite previously checked save failure, final-item retention and persisted export. Latest canvas changes still require complete regression. |
+| Shared geometry keyboard editing | Bbox browser test passed; vertex/keypoint movement and deletion focus are now being exercised in an isolated Review transport fixture, without saving substituted shapes. |
+| Advanced isolation | App route branches mount Journey screens separately; prior ready-model test asserts no sidebar, build steps, workflow details or project menu. Need final inspection across every default scene, not only the sampled pages. |
+| Management retained | Existing Project history/Trash and lifecycle browser case; final route inventory and delete/restore deep-link evidence still need consolidation. |
+| Recovery and races | Existing route cache/abort plus stale sample checks; same-project confirmation switching while a POST is pending needs a dedicated regression, not inference from cross-project tests. |
+| Responsive and accessibility | Existing four-width/reflow, focus and composition-event cases; actual native 200% zoom, OS input method, screen reader and human usability remain unexecuted. |
+| Safety and quality | Previous full Rust/security/Registry/immutability regression passed. No live-provider or real-weight claims; full final command output must be refreshed after implementation settles. |
+
+Do not mark completion from this table alone. Remaining browser findings and
+the complete numbered acceptance matrix must be resolved or precisely classified.
+
+Checkpoint verification: extended `journey-ready.spec.ts` passed 1/1 in 35.7s
+against `/tmp/annotagent-guided-e2e-70850`. It checks the wrong-test receipt URL
+stays at an explicit error without another processing POST. UI-only Review GET
+fixtures cover polygon, polyline, both polygon mask types and keypoints: one-pixel
+move, last-handle deletion, surviving focus and Undo restoring the fourth point.
+These substitutions produce zero API mutations and are never saved as genuine
+model output or attached to the fixture classification schema. The first attempt
+failed because its selector used `.review-canvas` instead of the actual
+`.review-canvas-stage`; the corrected test passes without relaxing assertions.
+104 Web tests and production/typecheck passed (existing chunk warning). Generated
+non-target screenshots were restored to their pre-run snapshot.

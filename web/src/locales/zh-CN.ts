@@ -1,5 +1,6 @@
 /** English source messages are stable keys; untranslated technical copy falls back to English. */
 export const zhCN: Record<string, string> = {
+  "This confirmation belongs to a different task or sample test. Return to the matching samples.": "此确认记录属于其他任务或样例测试，请返回对应样例。",
   "Vertex {index}: arrows move, Shift moves faster, Delete removes": "顶点 {index}：方向键移动，Shift 加速，Delete 删除",
   "Keypoint {name}: arrows move, Shift moves faster, Delete removes": "关键点 {name}：方向键移动，Shift 加速，Delete 删除",
   "Keyboard box editing": "键盘调整标注框",
