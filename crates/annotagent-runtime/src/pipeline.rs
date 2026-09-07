@@ -101,7 +101,39 @@ impl DagNodeRunner for CorePipelineRunner {
 }
 
 fn run_resize(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
-    let image = one_image(context)?;
+    let images = context
+        .input_pipeline_artifacts
+        .iter()
+        .filter_map(|artifact| {
+            if let PipelineArtifact::Image(image) = artifact {
+                Some(image)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    if images.is_empty() {
+        one_image(context)?;
+    }
+    let mut artifacts = Vec::new();
+    for (index, image) in images.iter().enumerate() {
+        let mut artifact = resize_image(context, image)?;
+        if images.len() > 1 {
+            artifact.reference.artifact_id = format!("{}:{index}", artifact.reference.artifact_id);
+            artifact.blob_ref = format!("virtual-resize://{}", artifact.reference.artifact_id);
+        }
+        artifacts.push(PipelineArtifact::Image(artifact));
+    }
+    Ok(DagNodeOutput {
+        pipeline_artifacts: artifacts,
+        ..DagNodeOutput::default()
+    })
+}
+
+fn resize_image(
+    context: &DagNodeContext<'_>,
+    image: &annotagent_core::ImageArtifact,
+) -> Result<annotagent_core::ImageArtifact, DagNodeFailure> {
     image
         .validate()
         .map_err(|error| DagNodeFailure::terminal("invalid_image", error))?;
@@ -157,7 +189,7 @@ fn run_resize(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFail
     resized
         .validate()
         .map_err(|error| DagNodeFailure::terminal("resize_failed", error))?;
-    Ok(output(PipelineArtifact::Image(resized)))
+    Ok(resized)
 }
 
 fn run_tile(context: &DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
@@ -4388,6 +4420,33 @@ mod tests {
         };
         assert_eq!((resized_image.width, resized_image.height), (50, 40));
         assert_eq!(resized_image.parent.as_ref(), Some(image.reference()));
+        let mut second = image.clone();
+        if let PipelineArtifact::Image(value) = &mut second {
+            value.reference.artifact_id = "second-crop".to_owned();
+            value.root_region = Some(NormalizedRect::new(0.5, 0.5, 0.25, 0.25).unwrap());
+        }
+        let multiple = CorePipelineRunner
+            .run(node_context(
+                &resize,
+                vec![image.clone(), second.clone()],
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("resize multiple crops");
+        assert_eq!(multiple.pipeline_artifacts.len(), 2);
+        assert_ne!(
+            multiple.pipeline_artifacts[0].reference(),
+            multiple.pipeline_artifacts[1].reference()
+        );
+        for (artifact, source) in multiple.pipeline_artifacts.iter().zip([&image, &second]) {
+            let (PipelineArtifact::Image(result), PipelineArtifact::Image(source)) =
+                (artifact, source)
+            else {
+                panic!("image")
+            };
+            assert_eq!(result.parent.as_ref(), Some(&source.reference));
+            assert_eq!(result.root_region, source.root_region);
+        }
 
         let tile = WorkflowDraftNode {
             id: "tile".to_owned(),

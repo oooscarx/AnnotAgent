@@ -1,5 +1,12 @@
 # Guided Journey UI — execution record
 
+## Yellow cylinder local re-localization trial (2026-09-08)
+
+- User-authorized new Draft e595c7b1 preserves original f3bba068. Image -> Qwen -> expanded crop -> 384px resize -> local Qwen -> coordinate projection -> merge -> SAM -> geometry review. No publication or full run.
+- First single-image trial failed at resize after one VLM call: multiple crops were rejected by the single-image helper. Core resize now maps each Image with distinct output identity and preserved parent/root coordinates; targeted regression, runtime all-feature tests (48), strict Clippy, fmt and all-feature CLI build passed.
+- Second trial 760ea516 reached local projection after three VLM calls, then failed at prompt conversion because two DetectionSets were not merged. Added the existing core.merge_tiles node in Draft revision 4; no additional paid execution beyond the announced four-call total. This latest graph is NOT yet end-to-end verified.
+- Observed intermediate re-localized boxes: right ~30x22px versus earlier ~42x26; left ~15x21 versus earlier ~22x19. Existing dataset references ~29x24 and ~10x8. Improvement is mixed and these are intermediate outputs, not final accepted annotations. SAM has not executed in this new chain yet.
+
 ## Scoped sample restoration repair (2026-09-08)
 
 - Classic sample POST now captures selected-image, schema, Registry and native model scope before execution and stores the seal against the saved sample identity. Execution-only seals are explicitly distinct from bounded Journey authorization; processing confirmation is not weakened.
