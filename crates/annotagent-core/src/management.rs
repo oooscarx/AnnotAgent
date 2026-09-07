@@ -226,6 +226,41 @@ pub struct PurgeReport {
     pub failed_items: Vec<String>,
 }
 
+/// Minimal immutable source information retained after a Run is permanently cleaned up.
+/// It is intentionally smaller than the original Run history and never contains credentials,
+/// prompt transcripts, source image bytes, or complete model responses.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RunProvenanceSummary {
+    pub run_id: String,
+    pub project_id: String,
+    pub source_deleted: bool,
+    pub workflow_id: Option<String>,
+    pub workflow_version: Option<u32>,
+    pub workflow_content_hash: Option<String>,
+    pub provider: String,
+    pub model: String,
+    pub summary: serde_json::Value,
+    pub purged_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LifecycleUsageTotals {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub total_tokens: u64,
+    pub cost: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ManagementUsageSummary {
+    /// Usage attached to Runs currently visible in ordinary Project history.
+    pub visible_runs: LifecycleUsageTotals,
+    /// Compact usage ledger retained after source Run cleanup.
+    pub cleaned_up_runs: LifecycleUsageTotals,
+    /// Actual historical usage independent of Run list lifecycle state.
+    pub historical_total: LifecycleUsageTotals,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManagementReceipt {
     pub operation_id: String,

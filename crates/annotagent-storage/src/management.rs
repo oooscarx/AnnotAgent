@@ -1,10 +1,11 @@
 use std::collections::BTreeSet;
 
 use annotagent_core::{
-    BatchStatus, ManagementAction, ManagementBlocker, ManagementImpact, ManagementObjectKind,
-    ManagementObjectRef, ManagementOperationStatus, ManagementPreview, ManagementReceipt,
-    ManagementRequest, PipelineLifecycleSummary, ProjectId, RunStatus, TrashEntry,
-    WorkflowLifecycleItem, WorkflowVersionRef,
+    BatchStatus, LifecycleUsageTotals, ManagementAction, ManagementBlocker, ManagementImpact,
+    ManagementObjectKind, ManagementObjectRef, ManagementOperationStatus, ManagementPreview,
+    ManagementReceipt, ManagementRequest, ManagementUsageSummary, PipelineLifecycleSummary,
+    ProjectId, PurgeReport, RunProvenanceSummary, RunStatus, TrashEntry, WorkflowLifecycleItem,
+    WorkflowVersionRef,
 };
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
@@ -35,6 +36,7 @@ struct BatchLifecycle {
     status: BatchStatus,
     revision: u64,
     lease_owner: Option<String>,
+    lease_expires_at: Option<String>,
     deleted_at: Option<String>,
     deletion_operation_id: Option<String>,
 }
@@ -323,48 +325,68 @@ impl SqliteStore {
             )?;
 
             apply_default_transition(&transaction, scope, request, &current_preview.objects, &now)?;
-            let affected = match request.action {
-                ManagementAction::MoveToTrash => move_to_trash(
-                    &transaction,
-                    scope,
-                    &current_preview.objects,
-                    &operation_id,
-                    now,
-                )?,
-                ManagementAction::Restore => restore(
-                    &transaction,
-                    scope,
-                    &current_preview.objects,
-                    &operation_id,
-                    now,
-                )?,
-                ManagementAction::Archive | ManagementAction::Unarchive => change_archive_state(
-                    &transaction,
-                    scope,
-                    &current_preview.objects,
-                    &operation_id,
-                    now,
-                    request.action == ManagementAction::Archive,
-                )?,
-                ManagementAction::Rename => rename_pipeline(
-                    &transaction,
-                    scope,
-                    &current_preview.objects[0],
-                    &operation_id,
-                    now,
-                    request
-                        .display_name
-                        .as_deref()
-                        .expect("validated display name"),
-                )?,
-                ManagementAction::SetDefault | ManagementAction::ClearDefault => {
+            let (affected, purge) = match request.action {
+                ManagementAction::MoveToTrash => (
+                    move_to_trash(
+                        &transaction,
+                        scope,
+                        &current_preview.objects,
+                        &operation_id,
+                        now,
+                    )?,
+                    None,
+                ),
+                ManagementAction::Restore => (
+                    restore(
+                        &transaction,
+                        scope,
+                        &current_preview.objects,
+                        &operation_id,
+                        now,
+                    )?,
+                    None,
+                ),
+                ManagementAction::Archive | ManagementAction::Unarchive => (
+                    change_archive_state(
+                        &transaction,
+                        scope,
+                        &current_preview.objects,
+                        &operation_id,
+                        now,
+                        request.action == ManagementAction::Archive,
+                    )?,
+                    None,
+                ),
+                ManagementAction::Rename => (
+                    rename_pipeline(
+                        &transaction,
+                        scope,
+                        &current_preview.objects[0],
+                        &operation_id,
+                        now,
+                        request
+                            .display_name
+                            .as_deref()
+                            .expect("validated display name"),
+                    )?,
+                    None,
+                ),
+                ManagementAction::SetDefault | ManagementAction::ClearDefault => (
                     record_default_action(
                         &transaction,
                         scope,
                         &current_preview.objects,
                         &operation_id,
-                    )?
-                }
+                    )?,
+                    None,
+                ),
+                ManagementAction::Purge => purge_objects(
+                    &transaction,
+                    scope,
+                    &current_preview.objects,
+                    &operation_id,
+                    now,
+                )?,
                 _ => {
                     return Err(management_error(
                         "unsupported_management_action",
@@ -379,7 +401,7 @@ impl SqliteStore {
                 status: ManagementOperationStatus::Completed,
                 affected_objects: affected,
                 impact: current_preview.impact.clone(),
-                purge: None,
+                purge,
                 error: None,
                 created_at: now,
                 updated_at: now,
@@ -395,6 +417,214 @@ impl SqliteStore {
                 ],
             )?;
             transaction.commit()?;
+            Ok(receipt)
+        })
+    }
+
+    pub fn prepare_cancel_and_delete(
+        &self,
+        scope: &ManagementScope,
+        request: &ManagementRequest,
+    ) -> Result<ManagementReceipt, StorageError> {
+        request
+            .validate()
+            .map_err(|message| management_error("invalid_management_request", message))?;
+        if request.action != ManagementAction::CancelAndDelete {
+            return Err(management_error(
+                "invalid_management_request",
+                "prepare_cancel_and_delete requires the cancel_and_delete action",
+            ));
+        }
+        self.with_connection(|connection| {
+            if let Some((stored_request, result)) = connection
+                .query_row(
+                    "SELECT request_json, result_json FROM management_operations
+                     WHERE project_id = ?1 AND idempotency_key = ?2",
+                    params![scope.project_id, request.idempotency_key],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+                )
+                .optional()?
+            {
+                if stored_request != canonical_request_json(request)? {
+                    return Err(management_error(
+                        "idempotency_conflict",
+                        "this idempotency key was already used for a different management request",
+                    ));
+                }
+                return result
+                    .ok_or_else(|| {
+                        management_error(
+                            "operation_in_progress",
+                            "the cancellation operation has not persisted a status",
+                        )
+                    })
+                    .and_then(|value| serde_json::from_str(&value).map_err(StorageError::from));
+            }
+            let confirmed = request.confirmation_token.as_deref().ok_or_else(|| {
+                management_error(
+                    "confirmation_required",
+                    "execute the operation with the confirmation token returned by preview",
+                )
+            })?;
+            let current_preview = preview(connection, scope, request)?;
+            if confirmed != current_preview.confirmation_token {
+                return Err(management_error(
+                    "revision_conflict",
+                    "the management preview is stale; preview the current state and confirm again",
+                ));
+            }
+            if !current_preview.can_execute {
+                let blocker = current_preview
+                    .blockers
+                    .first()
+                    .ok_or_else(|| management_error("management_blocked", "operation blocked"))?;
+                return Err(management_error(&blocker.code, &blocker.message));
+            }
+            let now = Utc::now();
+            let operation_id = Uuid::new_v4().to_string();
+            let receipt = ManagementReceipt {
+                operation_id: operation_id.clone(),
+                project_id: scope.project_id.clone(),
+                action: ManagementAction::CancelAndDelete,
+                status: ManagementOperationStatus::WaitingForCancellation,
+                affected_objects: current_preview.objects.clone(),
+                impact: current_preview.impact.clone(),
+                purge: None,
+                error: None,
+                created_at: now,
+                updated_at: now,
+            };
+            connection.execute(
+                "INSERT INTO management_operations
+                 (id, project_id, idempotency_key, action, status, request_json, preview_json,
+                  result_json, confirmation_token, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, 'waiting_for_cancellation', ?5, ?6, ?7, ?8, ?9, ?9)",
+                params![
+                    operation_id,
+                    scope.project_id,
+                    request.idempotency_key,
+                    enum_json(request.action)?,
+                    canonical_request_json(request)?,
+                    serde_json::to_string(&current_preview)?,
+                    serde_json::to_string(&receipt)?,
+                    current_preview.confirmation_token,
+                    now.to_rfc3339(),
+                ],
+            )?;
+            Ok(receipt)
+        })
+    }
+
+    pub fn complete_cancel_and_delete(
+        &self,
+        scope: &ManagementScope,
+        request: &ManagementRequest,
+    ) -> Result<ManagementReceipt, StorageError> {
+        self.with_connection(|connection| {
+            let (operation_id, stored_request, created_at) = connection
+                .query_row(
+                    "SELECT id, request_json, created_at FROM management_operations
+                     WHERE project_id = ?1 AND idempotency_key = ?2",
+                    params![scope.project_id, request.idempotency_key],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                        ))
+                    },
+                )
+                .optional()?
+                .ok_or_else(|| {
+                    management_error(
+                        "operation_not_found",
+                        "cancellation operation was not prepared",
+                    )
+                })?;
+            if stored_request != canonical_request_json(request)? {
+                return Err(management_error(
+                    "idempotency_conflict",
+                    "the cancellation operation request changed",
+                ));
+            }
+            let mut deletion_request = request.clone();
+            deletion_request.action = ManagementAction::MoveToTrash;
+            deletion_request.confirmation_token = None;
+            let deletion_preview = preview(connection, scope, &deletion_request)?;
+            if !deletion_preview.can_execute {
+                return Err(management_error(
+                    "cancellation_not_completed",
+                    deletion_preview
+                        .blockers
+                        .iter()
+                        .map(|blocker| blocker.message.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                ));
+            }
+            let transaction = connection.unchecked_transaction()?;
+            let now = Utc::now();
+            let affected = move_to_trash(
+                &transaction,
+                scope,
+                &deletion_preview.objects,
+                &operation_id,
+                now,
+            )?;
+            let receipt = ManagementReceipt {
+                operation_id: operation_id.clone(),
+                project_id: scope.project_id.clone(),
+                action: ManagementAction::CancelAndDelete,
+                status: ManagementOperationStatus::Completed,
+                affected_objects: affected,
+                impact: deletion_preview.impact,
+                purge: None,
+                error: None,
+                created_at: parse_datetime(&created_at)?,
+                updated_at: now,
+            };
+            transaction.execute(
+                "UPDATE management_operations
+                 SET status = 'completed', result_json = ?2, updated_at = ?3, completed_at = ?3,
+                     error = NULL WHERE id = ?1",
+                params![
+                    operation_id,
+                    serde_json::to_string(&receipt)?,
+                    now.to_rfc3339(),
+                ],
+            )?;
+            transaction.commit()?;
+            Ok(receipt)
+        })
+    }
+
+    pub fn fail_cancel_and_delete(
+        &self,
+        scope: &ManagementScope,
+        request: &ManagementRequest,
+        message: &str,
+    ) -> Result<ManagementReceipt, StorageError> {
+        self.with_connection(|connection| {
+            let result = connection.query_row(
+                "SELECT result_json FROM management_operations
+                 WHERE project_id = ?1 AND idempotency_key = ?2",
+                params![scope.project_id, request.idempotency_key],
+                |row| row.get::<_, String>(0),
+            )?;
+            let mut receipt: ManagementReceipt = serde_json::from_str(&result)?;
+            receipt.status = ManagementOperationStatus::Failed;
+            receipt.error = Some(message.to_owned());
+            receipt.updated_at = Utc::now();
+            connection.execute(
+                "UPDATE management_operations SET status = 'failed', result_json = ?2,
+                   error = ?3, updated_at = ?4, completed_at = ?4 WHERE id = ?1",
+                params![
+                    receipt.operation_id,
+                    serde_json::to_string(&receipt)?,
+                    message,
+                    receipt.updated_at.to_rfc3339(),
+                ],
+            )?;
             Ok(receipt)
         })
     }
@@ -608,6 +838,155 @@ impl SqliteStore {
                 })?;
             serde_json::from_str(&result).map_err(StorageError::from)
         })
+    }
+
+    pub fn run_provenance_summary(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<RunProvenanceSummary>, StorageError> {
+        self.with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT run_id, project_id, workflow_id, workflow_version,
+                            workflow_content_hash, provider, model, summary_json, purged_at
+                     FROM run_provenance_tombstones WHERE run_id = ?1",
+                    [run_id],
+                    |row| {
+                        let summary = row.get::<_, String>(7)?;
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                            row.get::<_, Option<u32>>(3)?,
+                            row.get::<_, Option<String>>(4)?,
+                            row.get::<_, String>(5)?,
+                            row.get::<_, String>(6)?,
+                            summary,
+                            row.get::<_, String>(8)?,
+                        ))
+                    },
+                )
+                .optional()?
+                .map(
+                    |(
+                        run_id,
+                        project_id,
+                        workflow_id,
+                        workflow_version,
+                        workflow_content_hash,
+                        provider,
+                        model,
+                        summary,
+                        purged_at,
+                    )| {
+                        Ok(RunProvenanceSummary {
+                            run_id,
+                            project_id,
+                            source_deleted: true,
+                            workflow_id,
+                            workflow_version,
+                            workflow_content_hash,
+                            provider,
+                            model,
+                            summary: serde_json::from_str(&summary)?,
+                            purged_at: parse_datetime(&purged_at)?,
+                        })
+                    },
+                )
+                .transpose()
+        })
+    }
+
+    pub fn batch_lifecycle_metadata(
+        &self,
+        batch_id: &str,
+    ) -> Result<(u64, Option<String>, Option<String>, Option<String>, usize), StorageError> {
+        self.with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT b.lifecycle_revision, b.archived_at, b.deleted_at,
+                            b.deletion_operation_id,
+                            (SELECT COUNT(*) FROM batch_images bi
+                             JOIN runs child ON child.id = bi.child_run_id
+                             WHERE bi.batch_id = b.id AND child.deleted_at IS NOT NULL)
+                     FROM dataset_batches b WHERE b.id = ?1",
+                    [batch_id],
+                    |row| {
+                        Ok((
+                            to_u64(row.get(0)?),
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            usize::try_from(row.get::<_, i64>(4)?.max(0)).unwrap_or(usize::MAX),
+                        ))
+                    },
+                )
+                .optional()?
+                .ok_or_else(|| management_error("entity_purged", "Dataset Run was not found"))
+        })
+    }
+
+    pub fn project_management_usage(
+        &self,
+        scope: &ManagementScope,
+    ) -> Result<ManagementUsageSummary, StorageError> {
+        self.with_connection(|connection| {
+            let stable_project_id = scope.stable_project_id.to_string();
+            let visible = read_usage_totals(
+                connection,
+                "SELECT COALESCE(SUM(u.input_tokens), 0), COALESCE(SUM(u.output_tokens), 0),
+                        COALESCE(SUM(u.total_tokens), 0), COALESCE(SUM(CAST(u.cost AS REAL)), 0.0)
+                 FROM usage_records u JOIN runs r ON r.id = u.run_id
+                 WHERE r.project_id = ?1 AND r.deleted_at IS NULL",
+                &stable_project_id,
+            )?;
+            let current_history = read_usage_totals(
+                connection,
+                "SELECT COALESCE(SUM(u.input_tokens), 0), COALESCE(SUM(u.output_tokens), 0),
+                        COALESCE(SUM(u.total_tokens), 0), COALESCE(SUM(CAST(u.cost AS REAL)), 0.0)
+                 FROM usage_records u JOIN runs r ON r.id = u.run_id
+                 WHERE r.project_id = ?1",
+                &stable_project_id,
+            )?;
+            let cleaned = read_usage_totals(
+                connection,
+                "SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+                        COALESCE(SUM(total_tokens), 0), COALESCE(SUM(CAST(cost AS REAL)), 0.0)
+                 FROM historical_usage_ledger WHERE project_id = ?1",
+                &stable_project_id,
+            )?;
+            Ok(ManagementUsageSummary {
+                visible_runs: lifecycle_usage_totals(visible),
+                cleaned_up_runs: lifecycle_usage_totals(cleaned),
+                historical_total: lifecycle_usage_totals((
+                    current_history.0.saturating_add(cleaned.0),
+                    current_history.1.saturating_add(cleaned.1),
+                    current_history.2.saturating_add(cleaned.2),
+                    current_history.3 + cleaned.3,
+                )),
+            })
+        })
+    }
+}
+
+fn read_usage_totals(
+    connection: &Connection,
+    sql: &str,
+    project_id: &str,
+) -> Result<(i64, i64, i64, f64), StorageError> {
+    connection
+        .query_row(sql, [project_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .map_err(StorageError::from)
+}
+
+fn lifecycle_usage_totals(values: (i64, i64, i64, f64)) -> LifecycleUsageTotals {
+    LifecycleUsageTotals {
+        input_tokens: u64::try_from(values.0.max(0)).unwrap_or(u64::MAX),
+        output_tokens: u64::try_from(values.1.max(0)).unwrap_or(u64::MAX),
+        total_tokens: u64::try_from(values.2.max(0)).unwrap_or(u64::MAX),
+        cost: format!("{:.6}", values.3.max(0.0)),
     }
 }
 
@@ -865,6 +1244,15 @@ fn check_run(
                 ));
             }
         }
+        ManagementAction::CancelAndDelete => {
+            if run.deleted_at.is_some() {
+                blockers.push(blocker(
+                    "entity_in_trash",
+                    object,
+                    "Run is already in Trash.",
+                ));
+            }
+        }
         _ => blockers.push(blocker(
             "unsupported_management_action",
             object,
@@ -909,7 +1297,13 @@ fn check_batch(
                     "Dataset Run is already in Trash.",
                 ));
             }
-            if !batch.status.is_terminal() || batch.lease_owner.is_some() {
+            let has_live_lease = batch.lease_owner.is_some()
+                && batch
+                    .lease_expires_at
+                    .as_deref()
+                    .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+                    .is_some_and(|expires_at| expires_at > Utc::now());
+            if !batch.status.is_terminal() || has_live_lease {
                 blockers.push(blocker(
                     "run_active",
                     object,
@@ -949,6 +1343,15 @@ fn check_batch(
                     "entity_not_in_trash",
                     object,
                     "Dataset Run must be in Trash before permanent cleanup.",
+                ));
+            }
+        }
+        ManagementAction::CancelAndDelete => {
+            if batch.deleted_at.is_some() {
+                blockers.push(blocker(
+                    "entity_in_trash",
+                    object,
+                    "Dataset Run is already in Trash.",
                 ));
             }
         }
@@ -1170,6 +1573,38 @@ fn check_pipeline(
             object,
             "Set or clear the Project default on a specific Published Version.",
         ));
+    }
+    if request.action == ManagementAction::Purge {
+        let deletion_operation = pipeline.deletion_operation_id.as_deref();
+        let protected_children =
+            pipeline_children(connection, scope, &pipeline.workflow_id, true, None)?
+                .into_iter()
+                .filter(|child| match child.kind {
+                    ManagementObjectKind::WorkflowDraft => {
+                        read_draft(connection, &child.id).ok().is_some_and(|draft| {
+                            draft.deletion_operation_id.as_deref() != deletion_operation
+                        })
+                    }
+                    ManagementObjectKind::WorkflowVersion => {
+                        read_version(connection, &child.id, child.version.expect("Version child"))
+                            .ok()
+                            .is_some_and(|version| {
+                                version.deletion_operation_id.as_deref() != deletion_operation
+                            })
+                    }
+                    _ => false,
+                })
+                .map(|child| format!("{}@{}", child.id, child.version.unwrap_or(0)))
+                .collect::<Vec<_>>();
+        if !protected_children.is_empty() {
+            blockers.push(ManagementBlocker {
+                code: "referenced_data_protected".to_owned(),
+                object: object.clone(),
+                message: "This Pipeline has children removed by a different operation. Clean up or restore those items explicitly before cleaning up the parent."
+                    .to_owned(),
+                related_ids: protected_children,
+            });
+        }
     }
     Ok(())
 }
@@ -1620,6 +2055,419 @@ fn restore(
     Ok(affected)
 }
 
+fn purge_objects(
+    transaction: &Transaction<'_>,
+    scope: &ManagementScope,
+    objects: &[ManagementObjectRef],
+    operation_id: &str,
+    now: DateTime<Utc>,
+) -> Result<(Vec<ManagementObjectRef>, Option<PurgeReport>), StorageError> {
+    let mut affected = Vec::new();
+    let mut report = PurgeReport::default();
+    for object in objects {
+        match object.kind {
+            ManagementObjectKind::Run => {
+                purge_run(transaction, scope, object, operation_id, &now, &mut report)?;
+            }
+            ManagementObjectKind::Batch => {
+                let batch = read_batch(transaction, &object.id)?;
+                record_item(transaction, operation_id, object, &batch_state(&batch))?;
+                let deletion_operation =
+                    batch.deletion_operation_id.as_deref().ok_or_else(|| {
+                        management_error("entity_not_in_trash", "Dataset Run is not in Trash")
+                    })?;
+                for child_id in batch_child_runs(transaction, &batch.id)? {
+                    let child = read_run(transaction, &child_id)?;
+                    if child.deletion_operation_id.as_deref() != Some(deletion_operation) {
+                        continue;
+                    }
+                    let child_ref = ManagementObjectRef {
+                        kind: ManagementObjectKind::Run,
+                        id: child.id,
+                        version: None,
+                        expected_revision: child.revision,
+                    };
+                    purge_run(
+                        transaction,
+                        scope,
+                        &child_ref,
+                        operation_id,
+                        &now,
+                        &mut report,
+                    )?;
+                    affected.push(child_ref);
+                }
+                report.database_rows_removed += count(
+                    transaction,
+                    "SELECT COUNT(*) FROM batch_events WHERE batch_id = ?1",
+                    &batch.id,
+                )?;
+                report.database_rows_removed += count(
+                    transaction,
+                    "SELECT COUNT(*) FROM batch_images WHERE batch_id = ?1",
+                    &batch.id,
+                )?;
+                ensure_one(
+                    transaction.execute(
+                        "DELETE FROM dataset_batches
+                         WHERE id = ?1 AND project_id = ?2 AND lifecycle_revision = ?3
+                           AND deleted_at IS NOT NULL",
+                        params![
+                            object.id,
+                            scope.project_id,
+                            to_i64(object.expected_revision)
+                        ],
+                    )?,
+                    "revision_conflict",
+                    "Dataset Run changed during permanent cleanup",
+                )?;
+                report.database_rows_removed += 1;
+            }
+            ManagementObjectKind::WorkflowDraft => {
+                let draft = read_draft(transaction, &object.id)?;
+                record_item(transaction, operation_id, object, &draft_state(&draft))?;
+                report.database_rows_removed += delete_count(
+                    transaction,
+                    "DELETE FROM workflow_sample_tests WHERE draft_id = ?1",
+                    &object.id,
+                )?;
+                report.database_rows_removed += transaction.execute(
+                    "DELETE FROM agent_sessions WHERE project_id = ?1 AND status != 'running'
+                     AND (json_extract(session_json, '$.draft_id') = ?2
+                       OR json_extract(session_json, '$.working_draft.draft_id') = ?2)",
+                    params![scope.project_id, object.id],
+                )?;
+                ensure_one(
+                    transaction.execute(
+                        "DELETE FROM workflow_drafts
+                         WHERE id = ?1 AND project_id = ?2 AND lifecycle_revision = ?3
+                           AND deleted_at IS NOT NULL",
+                        params![
+                            object.id,
+                            scope.project_id,
+                            to_i64(object.expected_revision)
+                        ],
+                    )?,
+                    "revision_conflict",
+                    "Pipeline Draft changed during permanent cleanup",
+                )?;
+                report.database_rows_removed += 1;
+            }
+            ManagementObjectKind::WorkflowVersion => {
+                let version_number = object.version.expect("validated version");
+                let version = read_version(transaction, &object.id, version_number)?;
+                record_item(transaction, operation_id, object, &version_state(&version))?;
+                ensure_one(
+                    transaction.execute(
+                        "DELETE FROM workflow_versions
+                         WHERE workflow_id = ?1 AND version = ?2 AND project_id = ?3
+                           AND lifecycle_revision = ?4 AND deleted_at IS NOT NULL",
+                        params![
+                            object.id,
+                            version_number,
+                            scope.project_id,
+                            to_i64(object.expected_revision)
+                        ],
+                    )?,
+                    "revision_conflict",
+                    "Published Version changed during permanent cleanup",
+                )?;
+                report.database_rows_removed += 1;
+                if historical_run_references(transaction, scope, &object.id, Some(version_number))?
+                    > 0
+                {
+                    report.retained_provenance_records += 1;
+                    push_reason(
+                        &mut report,
+                        "Historical Runs retain their immutable Workflow execution snapshot and content hash.",
+                    );
+                }
+            }
+            ManagementObjectKind::Pipeline => {
+                let pipeline = read_pipeline(transaction, &object.id)?;
+                let deletion_operation =
+                    pipeline.deletion_operation_id.as_deref().ok_or_else(|| {
+                        management_error("entity_not_in_trash", "Pipeline is not in Trash")
+                    })?;
+                for child in pipeline_children(
+                    transaction,
+                    scope,
+                    &object.id,
+                    true,
+                    Some(deletion_operation),
+                )? {
+                    match child.kind {
+                        ManagementObjectKind::WorkflowDraft => {
+                            let draft = read_draft(transaction, &child.id)?;
+                            record_item(transaction, operation_id, &child, &draft_state(&draft))?;
+                            report.database_rows_removed += delete_count(
+                                transaction,
+                                "DELETE FROM workflow_sample_tests WHERE draft_id = ?1",
+                                &child.id,
+                            )?;
+                            report.database_rows_removed += transaction.execute(
+                                "DELETE FROM agent_sessions WHERE project_id = ?1 AND status != 'running'
+                                 AND (json_extract(session_json, '$.draft_id') = ?2
+                                   OR json_extract(session_json, '$.working_draft.draft_id') = ?2)",
+                                params![scope.project_id, child.id],
+                            )?;
+                            report.database_rows_removed += transaction.execute(
+                                "DELETE FROM workflow_drafts WHERE id = ?1 AND deleted_at IS NOT NULL",
+                                [&child.id],
+                            )?;
+                        }
+                        ManagementObjectKind::WorkflowVersion => {
+                            let number = child.version.expect("Pipeline Version child");
+                            let version = read_version(transaction, &child.id, number)?;
+                            record_item(
+                                transaction,
+                                operation_id,
+                                &child,
+                                &version_state(&version),
+                            )?;
+                            report.database_rows_removed += transaction.execute(
+                                "DELETE FROM workflow_versions
+                                 WHERE workflow_id = ?1 AND version = ?2 AND deleted_at IS NOT NULL",
+                                params![child.id, number],
+                            )?;
+                        }
+                        _ => unreachable!("Pipeline child kind"),
+                    }
+                    affected.push(child);
+                }
+                record_item(
+                    transaction,
+                    operation_id,
+                    object,
+                    &pipeline_state(&pipeline),
+                )?;
+                ensure_one(
+                    transaction.execute(
+                        "DELETE FROM workflow_pipelines
+                         WHERE workflow_id = ?1 AND project_id = ?2 AND lifecycle_revision = ?3
+                           AND deleted_at IS NOT NULL",
+                        params![
+                            object.id,
+                            scope.project_id,
+                            to_i64(object.expected_revision)
+                        ],
+                    )?,
+                    "revision_conflict",
+                    "Pipeline changed during permanent cleanup",
+                )?;
+                report.database_rows_removed += 1;
+                if historical_run_references(transaction, scope, &object.id, None)? > 0 {
+                    report.retained_provenance_records += 1;
+                    push_reason(
+                        &mut report,
+                        "Historical Runs retain independent immutable Workflow snapshots after Pipeline cleanup.",
+                    );
+                }
+            }
+        }
+        affected.push(object.clone());
+    }
+    affected.sort();
+    affected.dedup();
+    if report.files_removed == 0 {
+        push_reason(
+            &mut report,
+            "Original images, exports, model assets, credentials, and shared workspace files were not removed.",
+        );
+    }
+    Ok((affected, Some(report)))
+}
+
+fn purge_run(
+    transaction: &Transaction<'_>,
+    scope: &ManagementScope,
+    object: &ManagementObjectRef,
+    operation_id: &str,
+    now: &DateTime<Utc>,
+    report: &mut PurgeReport,
+) -> Result<(), StorageError> {
+    let run = read_run(transaction, &object.id)?;
+    record_item(transaction, operation_id, object, &run_state(&run))?;
+    let (provider, model, project_name, snapshot, created_at, updated_at) = transaction.query_row(
+        "SELECT provider, model, project_name, workflow_snapshot_json, created_at, updated_at
+         FROM runs WHERE id = ?1",
+        [&object.id],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+            ))
+        },
+    )?;
+    let snapshot_value = snapshot
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok());
+    let selected = snapshot_value
+        .as_ref()
+        .and_then(|value| value.get("selected_workflow"));
+    let workflow_id = selected
+        .and_then(|value| value.get("workflow_id"))
+        .and_then(serde_json::Value::as_str);
+    let workflow_version = selected
+        .and_then(|value| value.get("version"))
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok());
+    let workflow_content_hash = selected
+        .and_then(|value| value.get("content_hash"))
+        .and_then(serde_json::Value::as_str);
+    let retained_annotations = count(
+        transaction,
+        "SELECT COUNT(*) FROM annotations a WHERE a.run_id = ?1 AND (
+           a.review_status IN ('auto_accepted', 'human_accepted')
+           OR EXISTS(SELECT 1 FROM annotation_revisions ar WHERE ar.annotation_id = a.id)
+           OR EXISTS(SELECT 1 FROM geometry_correction_evidence ge WHERE ge.annotation_id = a.id)
+         )",
+        &object.id,
+    )?;
+    let summary = serde_json::json!({
+        "project_name": project_name,
+        "run_status": run.status,
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "retained_annotations": retained_annotations,
+        "workflow_name_snapshot": selected
+            .and_then(|value| value.get("name"))
+            .or_else(|| selected.and_then(|value| value.get("draft")).and_then(|value| value.get("name"))),
+    });
+    transaction.execute(
+        "INSERT OR IGNORE INTO run_provenance_tombstones
+         (run_id, project_id, workflow_id, workflow_version, workflow_content_hash,
+          provider, model, summary_json, purged_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            object.id,
+            scope.stable_project_id.to_string(),
+            workflow_id,
+            workflow_version,
+            workflow_content_hash,
+            provider,
+            model,
+            serde_json::to_string(&summary)?,
+            now.to_rfc3339(),
+        ],
+    )?;
+    report.retained_provenance_records += 1;
+
+    let (input_tokens, output_tokens, total_tokens, cost, usage_rows) = transaction.query_row(
+        "SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+                COALESCE(SUM(total_tokens), 0), COALESCE(SUM(CAST(cost AS REAL)), 0.0), COUNT(*)
+         FROM usage_records WHERE run_id = ?1",
+        [&object.id],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, f64>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
+        },
+    )?;
+    if usage_rows > 0 {
+        transaction.execute(
+            "INSERT OR IGNORE INTO historical_usage_ledger
+             (run_id, project_id, input_tokens, output_tokens, total_tokens, cost, currency, recorded_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'USD', ?7)",
+            params![
+                object.id,
+                scope.stable_project_id.to_string(),
+                input_tokens,
+                output_tokens,
+                total_tokens,
+                format!("{cost:.6}"),
+                now.to_rfc3339(),
+            ],
+        )?;
+        report.retained_usage_records += 1;
+    }
+    report.retained_annotation_records += retained_annotations;
+    if retained_annotations > 0 {
+        push_reason(
+            report,
+            "Accepted annotations, human revisions, and correction evidence remain available and exportable.",
+        );
+    }
+
+    report.database_rows_removed += delete_count(
+        transaction,
+        "DELETE FROM review_queue WHERE run_id = ?1",
+        &object.id,
+    )?;
+    report.database_rows_removed += transaction.execute(
+        "DELETE FROM annotations WHERE run_id = ?1 AND id NOT IN (
+           SELECT a.id FROM annotations a WHERE a.run_id = ?1 AND (
+             a.review_status IN ('auto_accepted', 'human_accepted')
+             OR EXISTS(SELECT 1 FROM annotation_revisions ar WHERE ar.annotation_id = a.id)
+             OR EXISTS(SELECT 1 FROM geometry_correction_evidence ge WHERE ge.annotation_id = a.id)
+           )
+         )",
+        [&object.id],
+    )?;
+    report.database_rows_removed += transaction.execute(
+        "DELETE FROM vision_artifacts WHERE run_id = ?1 AND artifact_id NOT IN (
+           SELECT candidate_artifact_id FROM geometry_quality_reports
+           UNION SELECT reference_artifact_id FROM geometry_quality_reports
+             WHERE reference_artifact_id IS NOT NULL
+           UNION SELECT value FROM annotations a, json_each(a.annotation_json, '$.provenance.artifact_ids')
+             WHERE a.run_id = ?1
+         )",
+        [&object.id],
+    )?;
+    for sql in [
+        "DELETE FROM active_project_runs WHERE run_id = ?1",
+        "DELETE FROM run_start_requests WHERE run_id = ?1",
+        "DELETE FROM run_images WHERE run_id = ?1",
+        "DELETE FROM task_runs WHERE run_id = ?1",
+        "DELETE FROM run_steps WHERE run_id = ?1",
+        "DELETE FROM run_events WHERE run_id = ?1",
+        "DELETE FROM model_calls WHERE run_id = ?1",
+        "DELETE FROM model_messages WHERE run_id = ?1",
+        "DELETE FROM tool_calls WHERE run_id = ?1",
+        "DELETE FROM validation_issues WHERE run_id = ?1",
+        "DELETE FROM usage_records WHERE run_id = ?1",
+    ] {
+        report.database_rows_removed += delete_count(transaction, sql, &object.id)?;
+    }
+    transaction.execute(
+        "UPDATE batch_images SET child_run_id = NULL WHERE child_run_id = ?1",
+        [&object.id],
+    )?;
+    ensure_one(
+        transaction.execute(
+            "DELETE FROM runs WHERE id = ?1 AND project_id = ?2 AND lifecycle_revision = ?3
+               AND deleted_at IS NOT NULL",
+            params![
+                object.id,
+                scope.stable_project_id.to_string(),
+                to_i64(object.expected_revision)
+            ],
+        )?,
+        "revision_conflict",
+        "Run changed during permanent cleanup",
+    )?;
+    report.database_rows_removed += 1;
+    Ok(())
+}
+
+fn delete_count(transaction: &Transaction<'_>, sql: &str, id: &str) -> Result<usize, StorageError> {
+    transaction.execute(sql, [id]).map_err(StorageError::from)
+}
+
+fn push_reason(report: &mut PurgeReport, reason: &str) {
+    if !report.retained_reasons.iter().any(|item| item == reason) {
+        report.retained_reasons.push(reason.to_owned());
+    }
+}
+
 fn change_archive_state(
     transaction: &Transaction<'_>,
     scope: &ManagementScope,
@@ -1953,7 +2801,7 @@ fn read_batch(connection: &Connection, id: &str) -> Result<BatchLifecycle, Stora
     connection
         .query_row(
             "SELECT id, project_id, status, lifecycle_revision, lease_owner,
-                    deleted_at, deletion_operation_id
+                    lease_expires_at, deleted_at, deletion_operation_id
              FROM dataset_batches WHERE id = ?1",
             [id],
             |row| {
@@ -1965,19 +2813,30 @@ fn read_batch(connection: &Connection, id: &str) -> Result<BatchLifecycle, Stora
                     row.get::<_, Option<String>>(4)?,
                     row.get::<_, Option<String>>(5)?,
                     row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
                 ))
             },
         )
         .optional()?
         .ok_or_else(|| management_error("entity_purged", format!("Dataset Run {id} was not found")))
         .and_then(
-            |(id, project_id, status, revision, lease_owner, deleted_at, operation)| {
+            |(
+                id,
+                project_id,
+                status,
+                revision,
+                lease_owner,
+                lease_expires_at,
+                deleted_at,
+                operation,
+            )| {
                 Ok(BatchLifecycle {
                     id,
                     project_id,
                     status: serde_json::from_value(serde_json::Value::String(status))?,
                     revision: to_u64(revision),
                     lease_owner,
+                    lease_expires_at,
                     deleted_at,
                     deletion_operation_id: operation,
                 })
@@ -2559,11 +3418,13 @@ fn management_error(code: &str, message: impl Into<String>) -> StorageError {
 mod tests {
     use super::*;
     use annotagent_core::{
-        AgentBudget, AgentKind, AgentSession, BatchBudgetLedger, BatchBudgetLimits, BatchId,
-        BatchRecord, ImageId, RunId, WorkflowDraft, WorkflowDraftNode, WorkflowDraftStatus,
-        WorkflowNodeKind, WorkflowSnapshot,
+        AgentBudget, AgentKind, AgentSession, Annotation, AnnotationId, AnnotationProvenance,
+        AnnotationSource, AnnotationValue, BatchBudgetLedger, BatchBudgetLimits, BatchId,
+        BatchRecord, ImageId, LabelId, ReviewStatus, RunId, TaskId, WorkflowDraft,
+        WorkflowDraftNode, WorkflowDraftStatus, WorkflowNodeKind, WorkflowSnapshot,
     };
     use annotagent_runtime::{RunRecord, RuntimeStore};
+    use std::collections::BTreeMap;
 
     fn test_scope() -> ManagementScope {
         ManagementScope {
@@ -2668,6 +3529,138 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn permanent_run_cleanup_retains_annotations_provenance_and_usage_ledger() {
+        let store = SqliteStore::open_in_memory().expect("store");
+        let scope = test_scope();
+        let id = insert_run(&store, &scope, RunStatus::Completed).await;
+        let accepted = Annotation {
+            id: AnnotationId::new(),
+            image_id: ImageId::new(),
+            task_id: TaskId::from("objects"),
+            label: Some(LabelId::from("ball")),
+            value: AnnotationValue::Classification {
+                labels: vec![LabelId::from("ball")],
+            },
+            attributes: BTreeMap::new(),
+            confidence: Some(0.9),
+            source: AnnotationSource::Model,
+            review_status: ReviewStatus::HumanAccepted,
+            provenance: AnnotationProvenance::default(),
+            created_at: Utc::now(),
+        };
+        let unresolved = Annotation {
+            id: AnnotationId::new(),
+            review_status: ReviewStatus::NeedsReview,
+            ..accepted.clone()
+        };
+        RuntimeStore::commit_annotation(&store, id, &accepted)
+            .await
+            .expect("accepted annotation");
+        RuntimeStore::commit_annotation(&store, id, &unresolved)
+            .await
+            .expect("unresolved annotation");
+        store
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO usage_records
+                     (run_id, usage_json, input_tokens, output_tokens, total_tokens, cost, created_at)
+                     VALUES (?1, '{}', 10, 4, 14, '0.125', ?2)",
+                    params![id.to_string(), Utc::now().to_rfc3339()],
+                )?;
+                connection.execute(
+                    "INSERT INTO run_steps (id, run_id, step_index, summary, created_at)
+                     VALUES ('debug-step', ?1, 0, 'debug', ?2)",
+                    params![id.to_string(), Utc::now().to_rfc3339()],
+                )?;
+                Ok(())
+            })
+            .expect("fixture detail");
+        let object = ManagementObjectRef {
+            kind: ManagementObjectKind::Run,
+            id: id.to_string(),
+            version: None,
+            expected_revision: 1,
+        };
+        let mut delete = request(
+            &scope.project_id,
+            object,
+            ManagementAction::MoveToTrash,
+            "delete-before-purge",
+        );
+        let preview = store
+            .preview_management(&scope, &delete)
+            .expect("delete preview");
+        delete.confirmation_token = Some(preview.confirmation_token);
+        let deleted = store
+            .execute_management(&scope, &delete)
+            .expect("soft delete");
+        let trashed = deleted
+            .affected_objects
+            .into_iter()
+            .find(|object| object.kind == ManagementObjectKind::Run)
+            .expect("trashed Run");
+        let mut purge = request(
+            &scope.project_id,
+            trashed,
+            ManagementAction::Purge,
+            "purge-run",
+        );
+        let preview = store
+            .preview_management(&scope, &purge)
+            .expect("purge preview");
+        assert!(preview.can_execute);
+        purge.confirmation_token = Some(preview.confirmation_token);
+        let receipt = store.execute_management(&scope, &purge).expect("purge Run");
+        let report = receipt.purge.expect("cleanup report");
+        assert_eq!(report.retained_annotation_records, 1);
+        assert_eq!(report.retained_usage_records, 1);
+        assert_eq!(
+            store.list_annotations(id).expect("retained annotations"),
+            vec![accepted.clone()]
+        );
+        assert_eq!(
+            store
+                .list_project_annotations_for_run(scope.stable_project_id, id)
+                .expect("retained Project annotations"),
+            vec![accepted]
+        );
+        let provenance = store
+            .run_provenance_summary(&id.to_string())
+            .expect("provenance")
+            .expect("provenance tombstone");
+        assert!(provenance.source_deleted);
+        store
+            .with_connection(|connection| {
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT COUNT(*) FROM runs WHERE id = ?1",
+                        [id.to_string()],
+                        |row| row.get::<_, i64>(0),
+                    )?,
+                    0
+                );
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT total_tokens FROM historical_usage_ledger WHERE run_id = ?1",
+                        [id.to_string()],
+                        |row| row.get::<_, i64>(0),
+                    )?,
+                    14
+                );
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT COUNT(*) FROM run_steps WHERE run_id = ?1",
+                        [id.to_string()],
+                        |row| row.get::<_, i64>(0),
+                    )?,
+                    0
+                );
+                Ok(())
+            })
+            .expect("cleanup assertions");
+    }
+
+    #[tokio::test]
     async fn active_and_foreign_runs_are_blocked_atomically() {
         let store = SqliteStore::open_in_memory().expect("store");
         let scope = test_scope();
@@ -2695,6 +3688,54 @@ mod tests {
                     .any(|blocker| blocker.code == expected_code)
             );
         }
+    }
+
+    #[tokio::test]
+    async fn cancel_and_delete_waits_for_terminal_state_before_soft_deletion() {
+        let store = SqliteStore::open_in_memory().expect("store");
+        let scope = test_scope();
+        let run_id = insert_run(&store, &scope, RunStatus::Running).await;
+        let mut cancel = request(
+            &scope.project_id,
+            ManagementObjectRef {
+                kind: ManagementObjectKind::Run,
+                id: run_id.to_string(),
+                version: None,
+                expected_revision: 1,
+            },
+            ManagementAction::CancelAndDelete,
+            "cancel-delete",
+        );
+        let preview = store.preview_management(&scope, &cancel).expect("preview");
+        assert!(preview.can_execute);
+        cancel.confirmation_token = Some(preview.confirmation_token);
+        let waiting = store
+            .prepare_cancel_and_delete(&scope, &cancel)
+            .expect("persist cancellation intent");
+        assert_eq!(
+            waiting.status,
+            ManagementOperationStatus::WaitingForCancellation
+        );
+        assert!(matches!(
+            store.complete_cancel_and_delete(&scope, &cancel),
+            Err(StorageError::Management { ref code, .. }) if code == "cancellation_not_completed"
+        ));
+        assert_eq!(store.list_runs().expect("Run remains").len(), 1);
+        RuntimeStore::set_run_status(&store, run_id, RunStatus::Cancelled, None)
+            .await
+            .expect("worker terminated");
+        let completed = store
+            .complete_cancel_and_delete(&scope, &cancel)
+            .expect("delete after terminal state");
+        assert_eq!(completed.status, ManagementOperationStatus::Completed);
+        assert!(store.list_runs().expect("hidden Run").is_empty());
+        assert_eq!(
+            store
+                .get_management_operation(&scope, &waiting.operation_id)
+                .expect("durable operation")
+                .status,
+            ManagementOperationStatus::Completed
+        );
     }
 
     #[tokio::test]

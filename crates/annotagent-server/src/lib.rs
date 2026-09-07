@@ -3233,7 +3233,8 @@ async fn execute_project_management(
     }
     let receipt = state
         .application
-        .execute_management(&request)
+        .execute_management_action(&request)
+        .await
         .map_err(ApiError::management)?;
     Ok((StatusCode::OK, Json(receipt)))
 }
@@ -3257,6 +3258,17 @@ async fn get_project_management_operation(
     state
         .application
         .management_operation(&project_id, &operation_id)
+        .map(Json)
+        .map_err(ApiError::management)
+}
+
+async fn get_project_management_usage(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+) -> ApiResult<Json<annotagent_core::ManagementUsageSummary>> {
+    state
+        .application
+        .management_usage_summary(&project_id)
         .map(Json)
         .map_err(ApiError::management)
 }
@@ -5536,11 +5548,27 @@ fn batch_summary_value(
         .filter_map(|image| image.get("child_run_id").cloned())
         .filter(|run_id| !run_id.is_null())
         .collect::<Vec<_>>();
+    let (lifecycle_revision, archived_at, deleted_at, deletion_operation_id, deleted_child_runs) =
+        state
+            .application
+            .store()
+            .batch_lifecycle_metadata(&batch.id.to_string())
+            .map_err(|error| ApiError::management(error.into()))?;
+    let in_trash = deleted_at.is_some();
     let mut summary = serde_json::to_value(batch).map_err(ApiError::internal)?;
     if let Value::Object(fields) = &mut summary {
         fields.insert("progress".to_owned(), json!(progress));
         fields.insert("child_run_ids".to_owned(), Value::Array(child_run_ids));
         fields.insert("images".to_owned(), Value::Array(images));
+        fields.insert("lifecycle_revision".to_owned(), json!(lifecycle_revision));
+        fields.insert("archived_at".to_owned(), json!(archived_at));
+        fields.insert("deleted_at".to_owned(), json!(deleted_at));
+        fields.insert(
+            "deletion_operation_id".to_owned(),
+            json!(deletion_operation_id),
+        );
+        fields.insert("in_trash".to_owned(), json!(in_trash));
+        fields.insert("deleted_child_runs".to_owned(), json!(deleted_child_runs));
     }
     Ok(summary)
 }
@@ -5684,6 +5712,20 @@ async fn get_run(
         .run_event_count(run_id)
         .map_err(ApiError::internal)?;
     Ok(Json(json!({"run": run, "event_count": event_count})))
+}
+
+async fn get_run_provenance(
+    State(state): State<ServerState>,
+    AxumPath(run_id): AxumPath<String>,
+) -> ApiResult<Json<annotagent_core::RunProvenanceSummary>> {
+    let run_id = parse_run_id(&run_id)?;
+    state
+        .application
+        .store()
+        .run_provenance_summary(&run_id.to_string())
+        .map_err(ApiError::internal)?
+        .map(Json)
+        .ok_or_else(|| ApiError::not_found("Run provenance summary was not found"))
 }
 
 async fn pause_run(
@@ -11912,7 +11954,11 @@ export:
         .expect("active Run");
 
         let service = router(
-            test_state(application, Arc::new(InMemorySecretStore::default())).await,
+            test_state(
+                application.clone(),
+                Arc::new(InMemorySecretStore::default()),
+            )
+            .await,
             None,
         );
         let base_request = |run_id: RunId, key: &str| {
@@ -12022,6 +12068,116 @@ export:
         )
         .await;
         assert_eq!(response.status(), StatusCode::OK);
+
+        let restored_revision = application
+            .store()
+            .get_run_summary(terminal_id)
+            .expect("restored Run")
+            .lifecycle_revision;
+        let mut deletion = json!({
+            "project_id": "manage-a",
+            "objects": [{
+                "kind": "run",
+                "id": terminal_id,
+                "expected_revision": restored_revision
+            }],
+            "action": "move_to_trash",
+            "idempotency_key": "delete-before-cleanup"
+        });
+        let preview = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/projects/manage-a/management/preview",
+                Some(deletion.clone()),
+            )
+            .await,
+        )
+        .await;
+        deletion["confirmation_token"] = preview["confirmation_token"].clone();
+        assert_eq!(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/projects/manage-a/management/actions",
+                Some(deletion),
+            )
+            .await
+            .status(),
+            StatusCode::OK
+        );
+        let trash = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/projects/manage-a/trash?kind=run",
+                None,
+            )
+            .await,
+        )
+        .await;
+        let mut purge = json!({
+            "project_id": "manage-a",
+            "objects": [trash["items"][0]["object"].clone()],
+            "action": "purge",
+            "idempotency_key": "purge-terminal"
+        });
+        let preview = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/projects/manage-a/management/preview",
+                Some(purge.clone()),
+            )
+            .await,
+        )
+        .await;
+        purge["confirmation_token"] = preview["confirmation_token"].clone();
+        let cleaned = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                "/api/projects/manage-a/management/actions",
+                Some(purge),
+            )
+            .await,
+        )
+        .await;
+        assert!(cleaned["purge"]["database_rows_removed"].is_number());
+        assert_eq!(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("/api/runs/{terminal_id}"),
+                None,
+            )
+            .await
+            .status(),
+            StatusCode::NOT_FOUND
+        );
+        let provenance = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("/api/runs/{terminal_id}/provenance"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(provenance["source_deleted"], json!(true));
+        assert_eq!(provenance["project_id"], json!(scope_a.to_string()));
+        let usage = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/projects/manage-a/management/usage",
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert!(usage["historical_total"]["total_tokens"].is_number());
     }
 
     #[tokio::test]

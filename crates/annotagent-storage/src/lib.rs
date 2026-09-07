@@ -1779,8 +1779,10 @@ impl SqliteStore {
             let mut statement = connection.prepare(
                 "SELECT annotations.annotation_json
                  FROM annotations
-                 INNER JOIN runs ON runs.id = annotations.run_id
-                 WHERE runs.project_id = ?1
+                 LEFT JOIN runs ON runs.id = annotations.run_id
+                 LEFT JOIN run_provenance_tombstones tombstone
+                   ON tombstone.run_id = annotations.run_id
+                 WHERE COALESCE(runs.project_id, tombstone.project_id) = ?1
                    AND annotations.run_id = ?2
                  ORDER BY annotations.created_at",
             )?;
@@ -1792,6 +1794,45 @@ impl SqliteStore {
                 .map(|row| {
                     let json = row?;
                     serde_json::from_str(&json).map_err(StorageError::from)
+                })
+                .collect()
+        })
+    }
+
+    /// Accepted or human-revised annotations whose source Run has been permanently cleaned up.
+    /// These records remain first-class Project data and can still be exported.
+    pub fn list_project_retained_annotations(
+        &self,
+        project_id: ProjectId,
+    ) -> Result<Vec<(RunId, Annotation, Vec<AnnotationRevision>)>, StorageError> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT a.run_id, a.annotation_json
+                 FROM annotations a
+                 JOIN run_provenance_tombstones tombstone ON tombstone.run_id = a.run_id
+                 WHERE tombstone.project_id = ?1
+                   AND (a.review_status IN ('auto_accepted', 'human_accepted')
+                     OR EXISTS(SELECT 1 FROM annotation_revisions ar WHERE ar.annotation_id = a.id))
+                 ORDER BY a.created_at, a.id",
+            )?;
+            let rows = statement
+                .query_map([project_id.to_string()], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows.into_iter()
+                .map(|(run_id, annotation)| {
+                    let run_id = parse_run_id(&run_id)?;
+                    let annotation: Annotation = serde_json::from_str(&annotation)?;
+                    let mut revision_statement = connection.prepare(
+                        "SELECT revision_json FROM annotation_revisions
+                         WHERE annotation_id = ?1 ORDER BY created_at",
+                    )?;
+                    let revisions = revision_statement
+                        .query_map([annotation.id.to_string()], |row| row.get::<_, String>(0))?
+                        .map(|row| Ok(serde_json::from_str(&row?)?))
+                        .collect::<Result<Vec<AnnotationRevision>, StorageError>>()?;
+                    Ok((run_id, annotation, revisions))
                 })
                 .collect()
         })

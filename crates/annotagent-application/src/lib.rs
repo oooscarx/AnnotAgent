@@ -9432,6 +9432,11 @@ impl LocalApplication {
             .to_path_buf();
         let stable_id = stable_project_id(&project_root);
         let image_paths = self.list_project_images(project_id)?;
+        let image_indices = self
+            .list_project_image_summaries(project_id)?
+            .into_iter()
+            .map(|image| (image.image_id, image.display_index))
+            .collect::<BTreeMap<_, _>>();
         let mut unresolved_reviews = 0_usize;
         let mut selected_runs = BTreeMap::<usize, (HistoryRun, Vec<Annotation>)>::new();
         for run in self.store.list_runs()? {
@@ -9462,7 +9467,7 @@ impl LocalApplication {
             }
         }
 
-        let processed_image_count = selected_runs.len();
+        let mut processed_images = selected_runs.keys().copied().collect::<BTreeSet<_>>();
         let mut annotations = Vec::new();
         let mut image_ids = BTreeMap::<usize, BTreeSet<ImageId>>::new();
         let mut revisions = Vec::new();
@@ -9494,6 +9499,21 @@ impl LocalApplication {
             );
             annotations.extend(accepted);
         }
+        for (_run_id, annotation, retained_revisions) in
+            self.store.list_project_retained_annotations(stable_id)?
+        {
+            let Some(image_index) = image_indices.get(&annotation.image_id).copied() else {
+                continue;
+            };
+            processed_images.insert(image_index);
+            image_ids
+                .entry(image_index)
+                .or_default()
+                .insert(annotation.image_id);
+            revisions.extend(retained_revisions);
+            annotations.push(annotation);
+        }
+        let processed_image_count = processed_images.len();
 
         let mut images = Vec::new();
         for (index, image_path) in image_paths.iter().enumerate() {

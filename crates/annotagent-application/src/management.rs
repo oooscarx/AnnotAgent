@@ -1,11 +1,12 @@
 use annotagent_core::{
-    ManagementAction, ManagementBlocker, ManagementObjectKind, ManagementPreview,
-    ManagementReceipt, ManagementRequest, PipelineLifecycleSummary, ProjectId, RunId, TrashEntry,
+    BatchId, ManagementAction, ManagementBlocker, ManagementObjectKind, ManagementOperationStatus,
+    ManagementPreview, ManagementReceipt, ManagementRequest, ManagementUsageSummary,
+    PipelineLifecycleSummary, ProjectId, RunId, TrashEntry,
 };
 use annotagent_storage::{ManagementScope, StorageError};
 use anyhow::{Result, anyhow};
 
-use crate::{LocalApplication, stable_project_id};
+use crate::{AnnotAgentApplication, DatasetCoordinator, LocalApplication, stable_project_id};
 
 impl LocalApplication {
     pub fn management_scope(&self, project_id: &str) -> Result<ManagementScope> {
@@ -82,6 +83,97 @@ impl LocalApplication {
             .map_err(Into::into)
     }
 
+    pub async fn execute_management_action(
+        &self,
+        request: &ManagementRequest,
+    ) -> Result<ManagementReceipt> {
+        if request.action != ManagementAction::CancelAndDelete {
+            return self.execute_management(request);
+        }
+        let scope = self.management_scope(&request.project_id)?;
+        let prepared = self.store.prepare_cancel_and_delete(&scope, request)?;
+        if prepared.status == ManagementOperationStatus::Completed {
+            return Ok(prepared);
+        }
+        if prepared.status == ManagementOperationStatus::Failed {
+            return Err(anyhow!(StorageError::Management {
+                code: "cancellation_not_completed".to_owned(),
+                message: prepared.error.unwrap_or_else(|| {
+                    "the earlier cancellation attempt failed; retry with a new explicit action"
+                        .to_owned()
+                }),
+            }));
+        }
+        let cancellation = async {
+            for object in &prepared.affected_objects {
+                match object.kind {
+                    ManagementObjectKind::Run => {
+                        let run_id = object
+                            .id
+                            .parse::<RunId>()
+                            .map_err(|error| anyhow!("invalid Run id: {error}"))?;
+                        if self.is_run_controllable(run_id) {
+                            AnnotAgentApplication::cancel_run(self, run_id).await?;
+                        } else if self.store.run_status(run_id).is_ok_and(|status| {
+                            matches!(
+                                status,
+                                annotagent_core::RunStatus::Pending
+                                    | annotagent_core::RunStatus::Running
+                                    | annotagent_core::RunStatus::Paused
+                                    | annotagent_core::RunStatus::AwaitingReview
+                            )
+                        }) {
+                            return Err(anyhow!(
+                                "Run has no live control handle; cancellation cannot be confirmed"
+                            ));
+                        }
+                    }
+                    ManagementObjectKind::Batch => {
+                        let batch_id = object
+                            .id
+                            .parse::<BatchId>()
+                            .map_err(|error| anyhow!("invalid Dataset Run id: {error}"))?;
+                        let batch = self.store.get_batch(batch_id)?;
+                        if !batch.status.is_terminal() {
+                            DatasetCoordinator::new(self).cancel(batch_id)?;
+                        }
+                    }
+                    _ => {
+                        return Err(anyhow!(
+                            "cancel_and_delete only accepts Runs and Dataset Runs"
+                        ));
+                    }
+                }
+            }
+            for _ in 0..200 {
+                match self.store.complete_cancel_and_delete(&scope, request) {
+                    Ok(receipt) => return Ok(receipt),
+                    Err(StorageError::Management { code, .. })
+                        if code == "cancellation_not_completed" =>
+                    {
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    }
+                    Err(error) => return Err(anyhow!(error)),
+                }
+            }
+            Err(anyhow!(
+                "cancellation did not reach a terminal lease-free state within 10 seconds"
+            ))
+        }
+        .await;
+        match cancellation {
+            Ok(receipt) => Ok(receipt),
+            Err(error) => {
+                let message = error.to_string();
+                let _ignored = self.store.fail_cancel_and_delete(&scope, request, &message);
+                Err(anyhow!(StorageError::Management {
+                    code: "cancellation_not_completed".to_owned(),
+                    message,
+                }))
+            }
+        }
+    }
+
     pub fn list_trash(
         &self,
         project_id: &str,
@@ -113,6 +205,13 @@ impl LocalApplication {
         let scope = self.management_scope(project_id)?;
         self.store
             .get_management_operation(&scope, operation_id)
+            .map_err(Into::into)
+    }
+
+    pub fn management_usage_summary(&self, project_id: &str) -> Result<ManagementUsageSummary> {
+        let scope = self.management_scope(project_id)?;
+        self.store
+            .project_management_usage(&scope)
             .map_err(Into::into)
     }
 
