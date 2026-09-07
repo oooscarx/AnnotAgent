@@ -100,9 +100,41 @@ Only temporary workspaces were used. No paid inference or user server restart.
 
 ## Remaining stages and limits
 
+### Dual-pane journal and images slice (M1, continued)
+
+Added typed `/projects/:project/work?conversation=:id&image=:id` with existing
+FocusHeader/Project menu, no global sidebar, independent desktop divider (pointer
+and arrow keys), and mobile conversation/images switch. It uses existing images
+and upload APIs plus the journal endpoints. Read-only main-conversation discovery
+returns null before explicit first send; mount/reload never creates a record.
+
+This is an explicitly labeled **integration-in-progress** deep-link, not yet the
+default Project entry. It saves user messages rather than fabricating Agent replies;
+automatic planning, annotation overlays and a Task coordinator are not connected.
+The new view currently uses English UI copy; localization remains before default
+rollout. Management stays in the existing Project menu and canonical routes.
+
+Goal-before-upload, frozen image/hash on send, network-response loss + same-ID
+retry, reload, deep-link image selection, accessible divider and no-inference
+behavior passed a real isolated HTTP/browser test. Existing image deduplication is
+reused. Pending text has a navigation/unload guard; same-workspace image selection
+does not discard it. Historical image refs reject changed/missing current content
+instead of representing new pixels as old evidence. This guard is implemented but
+its browser mutation/conflict coverage remains to be expanded.
+
+Evidence: `conversation-workspace.spec.ts` **1/1 passed**, 12.7s on final rerun,
+workspace `/tmp/annotagent-guided-e2e-76636`. Captures `journal-{1440,1280,1024,390}.png`
+show TEST synthetic input, **not annotation/model quality evidence**. Desktop and
+mobile captures visually inspected; native file button styling adjusted afterward
+and captures regenerated. Web **105/105** unit tests, server journal HTTP **1/1**,
+production build/typecheck, strict storage/Application/server all-feature Clippy
+passed. Existing production chunk-size warning remains. One intermediate rerun
+was stopped by TypeScript's nullable image reference check; corrected explicit
+reference narrowing and reran successfully. No real server restart or paid calls.
+
 M0 is not fully closed: Human Request transactional answer/resume failure tests
 and task-authorization admission tests still need to be added at their real service
-boundaries. The journal is exposed through Application/HTTP, but not a chat UI.
+boundaries. The journal is exposed through Application/HTTP and an opt-in UI slice.
 
 M1: wire existing Project resolver, messages and typed Task/reference context to
 the real two-pane workspace, upload and existing terminal results. Do not redirect

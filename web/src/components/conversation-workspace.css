@@ -1,0 +1,38 @@
+.conversation-workspace { min-width: 0; width: 100%; }
+.conversation-split { display: grid; grid-template-columns: minmax(0,var(--conversation-width)) 12px minmax(0,1fr); min-height: 65vh; }
+.conversation-panel, .conversation-image-panel { min-width: 0; padding: clamp(12px,2vw,24px); }
+.conversation-panel { display: flex; flex-direction: column; gap: 12px; }
+.conversation-panel h2, .conversation-panel p, .conversation-image-tools h2 { margin: 0; }
+.conversation-development-note { font-size: .85rem; border-inline-start: 3px solid var(--aa-primary); padding: 8px 12px; }
+.conversation-messages { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 16px; }
+.conversation-messages li { display: grid; gap: 8px; padding: 12px; background: var(--aa-surface-muted); border-radius: 12px; overflow-wrap: anywhere; }
+.conversation-messages p { white-space: pre-wrap; }
+.conversation-messages button { text-align: start; white-space: normal; overflow-wrap: anywhere; }
+.conversation-composer { display: grid; gap: 10px; margin-top: auto; }
+.conversation-composer textarea { width: 100%; min-width: 0; resize: vertical; }
+.conversation-composer small { overflow-wrap: anywhere; }
+.conversation-composer button { justify-self: end; }
+.conversation-divider { cursor: col-resize; touch-action: none; background: linear-gradient(to right,transparent 5px,var(--aa-border) 5px,var(--aa-border) 6px,transparent 6px); }
+.conversation-divider:focus-visible { outline: 2px solid var(--aa-primary); outline-offset: -2px; }
+.conversation-image-tools { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 16px; }
+.conversation-upload { display: grid; gap: 6px; max-width: 100%; }
+.conversation-upload input { max-width: 100%; }
+.conversation-upload input::file-selector-button { border: 0; border-radius: var(--aa-radius-sm); background: var(--aa-surface-muted); color: var(--aa-text); padding: 8px 12px; margin-inline-end: 10px; font: inherit; cursor: pointer; }
+.conversation-status { padding: 8px clamp(12px,2vw,24px); margin: 0; }
+.conversation-image { margin: 18px 0; display: grid; gap: 10px; }
+.conversation-image img { display: block; width: 100%; max-height: 64vh; object-fit: contain; }
+.conversation-image figcaption { overflow-wrap: anywhere; font-size: .85rem; }
+.conversation-image-empty { min-height: 35vh; display: grid; align-content: center; max-width: 42rem; }
+.conversation-thumbnails { display: flex; overflow-x: auto; gap: 12px; padding: 8px 2px; }
+.conversation-thumbnails button { flex: 0 0 104px; display: grid; gap: 6px; min-width: 0; padding: 6px; }
+.conversation-thumbnails img { width: 90px; height: 64px; object-fit: contain; }
+.conversation-thumbnails span { font-size: .75rem; overflow-wrap: anywhere; }
+.conversation-thumbnails [aria-current=true] { outline: 2px solid var(--aa-primary); outline-offset: -2px; }
+.conversation-mobile-tabs { display: none; }
+@media (max-width: 760px) {
+  .conversation-mobile-tabs { display: flex; gap: 8px; padding: 12px; }
+  .conversation-split { display: block; min-height: 0; }
+  .conversation-divider { display: none; }
+  .conversation-split[data-mobile-view=conversation] .conversation-image-panel,
+  .conversation-split[data-mobile-view=images] .conversation-panel { display: none; }
+}

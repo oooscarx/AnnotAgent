@@ -21,6 +21,17 @@ pub(super) async fn create(
     Ok(Json(json!({ "conversation_id": id })))
 }
 
+pub(super) async fn current(
+    State(state): State<ServerState>,
+    AxumPath(project): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let id = state
+        .application
+        .project_conversation(&project)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({ "conversation_id": id })))
+}
+
 pub(super) async fn messages(
     State(state): State<ServerState>,
     AxumPath((project, conversation)): AxumPath<(String, uuid::Uuid)>,

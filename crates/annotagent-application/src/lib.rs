@@ -9213,6 +9213,11 @@ impl LocalApplication {
         Ok(self.store.create_conversation(&owner)?)
     }
 
+    pub fn project_conversation(&self, project_id: &str) -> Result<Option<uuid::Uuid>> {
+        let owner = self.conversation_project_identity(project_id)?;
+        Ok(self.store.project_conversation(&owner)?)
+    }
+
     pub fn append_project_conversation_message(
         &self,
         project_id: &str,

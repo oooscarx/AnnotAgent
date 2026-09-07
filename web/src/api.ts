@@ -558,6 +558,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ id, yaml }),
     }),
+  conversation: (projectId: string, signal?: AbortSignal) => request<{ conversation_id: string | null }>(`/api/projects/${encodeURIComponent(projectId)}/conversations`, { signal }),
+  createConversation: (projectId: string) => request<{ conversation_id: string }>(`/api/projects/${encodeURIComponent(projectId)}/conversations`, { method: "POST" }),
+  conversationMessages: (projectId: string, conversationId: string, after = 0, signal?: AbortSignal) => request<import("./types").ConversationMessage[]>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/messages?after=${after}`, { signal }),
+  sendConversationMessage: (projectId: string, conversationId: string, input: import("./types").ConversationMessageInput) => request<import("./types").ConversationMessage>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/messages`, { method: "POST", body: JSON.stringify(input) }),
   projectGoal: (projectId: string, signal?: AbortSignal) => request<{
     revision: string; goal: string; kind: string | null; labels: string[] | null; editable: boolean;
   }>(`/api/projects/${encodeURIComponent(projectId)}/goal`, { signal }),

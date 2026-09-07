@@ -11,6 +11,7 @@ import { SampleGeometryComparison } from "./components/SampleGeometryComparison"
 import { FocusHeader, usesFocusLayout } from "./components/FocusHeader";
 import { JourneyBatch } from "./components/JourneyBatch";
 import { JourneyImages } from "./components/JourneyImages";
+import { ConversationWorkspace } from "./components/ConversationWorkspace";
 import { JourneyGoal } from "./components/JourneyGoal";
 import { JourneyModel } from "./components/JourneyModel";
 import { JourneySampleTask } from "./components/JourneySampleTask";
@@ -472,6 +473,7 @@ export function App() {
     switch (route.kind) {
       case "project":
       case "journey":
+      case "conversation":
       case "build":
       case "export":
       case "projectRuns":
@@ -550,7 +552,7 @@ export function App() {
       ? "runs"
       : route.kind === "projectReview"
         ? "review"
-        : route.kind === "journey" ? "project" : route.kind;
+        : route.kind === "journey" || route.kind === "conversation" ? "project" : route.kind;
 
   const focusLayout = usesFocusLayout(route);
   return (
@@ -674,6 +676,10 @@ export function App() {
             onRefresh={refresh}
             onError={setError}
           />
+        )}
+        {loaded && route.kind === "conversation" && (
+          selectedProject ? <ConversationWorkspace key={route.projectId} project={selectedProject} conversationId={route.conversationId} imageId={route.imageId} onNavigate={navigate} onNavigationGuardChange={setNavigationGuard} />
+            : <NotFoundPage invalidPath={route.canonicalPath} onNavigate={navigate} />
         )}
         {loaded && route.kind === "journey" && (
           !selectedProject ? <NotFoundPage invalidPath={route.canonicalPath} onNavigate={navigate} />

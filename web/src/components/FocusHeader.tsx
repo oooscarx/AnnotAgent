@@ -5,7 +5,7 @@ import type { ProjectSummary } from "../types";
 
 export function usesFocusLayout(route: WorkspaceRoute): boolean {
   return (route.kind === "projects" && Boolean(route.create))
-    || route.kind === "journey"
+    || route.kind === "journey" || route.kind === "conversation"
     || route.kind === "build" || route.kind === "projectRun" || route.kind === "projectBatch"
     || (route.kind === "projectReview" && Boolean(route.reviewItemId)) || route.kind === "export";
 }
@@ -21,7 +21,7 @@ export function FocusHeader({ project, route, titleRef, loaded, connection, onNa
   const backPath = revisionSetup ? projectJourneyPath(route.projectId, "revise", { draftId: route.draftId, sampleTestId: route.sampleTestId, imageId: route.imageId }) : parent;
   const title = route.kind === "journey" ? ({images: "Your images", goal: "Your annotation goal", samples: "Check your samples", model: route.modelPurpose === "vision" ? "Connect an image model" : "Connect a planning model", confirm: "Confirm processing", revise: "Adjust your sample plan"})[route.scene] : route.kind === "projects" ? "Your images" : route.kind === "build"
     ? ({ data: "Project images", labels: "Annotation goal", pipeline: "Annotation plan", test: "Inspect samples" })[route.step]
-    : route.kind === "projectReview" ? "Review annotations" : route.kind === "export" ? "Export dataset" : "Processing and results";
+    : route.kind === "conversation" ? "Annotation workspace" : route.kind === "projectReview" ? "Review annotations" : route.kind === "export" ? "Export dataset" : "Processing and results";
   const items = projectId ? [
     ["Project overview", parent], ["Data management", projectBuildPath(projectId, "data")],
     ["Automation", projectBuildPath(projectId, "pipeline")], ["Processing history", projectRunsPath(projectId)],

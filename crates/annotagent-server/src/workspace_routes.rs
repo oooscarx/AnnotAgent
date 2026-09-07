@@ -31,7 +31,7 @@ pub(super) fn routes() -> Router<ServerState> {
     Router::new()
         .route(
             "/api/projects/{project_id}/conversations",
-            post(super::conversations::create),
+            get(super::conversations::current).post(super::conversations::create),
         )
         .route(
             "/api/projects/{project_id}/conversations/{conversation_id}/messages",

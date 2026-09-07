@@ -12983,6 +12983,18 @@ export:
             None,
         );
         let base = "/api/projects/chat-a/conversations";
+        for _ in 0..2 {
+            assert_eq!(
+                call_json(&service, Method::GET, base, Value::Null).await.1,
+                json!({"conversation_id": null})
+            );
+        }
+        assert!(
+            application
+                .project_conversation("chat-a")
+                .unwrap()
+                .is_none()
+        );
         let response = service
             .clone()
             .oneshot(

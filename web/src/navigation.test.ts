@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseWorkspaceRoute,
   projectBuildPath,
+  projectWorkPath,
   projectJourneyPath,
   projectBatchPath,
   projectReviewPath,
@@ -12,6 +13,13 @@ import {
 } from "./navigation";
 
 describe("guided workspace routing", () => {
+  it("restores a conversation image without stealing page focus or accepting external returns", () => {
+    const path = projectWorkPath("project a", { conversationId: "saved", imageId: "image" });
+    const url = new URL(path, "http://localhost");
+    const route = parseWorkspaceRoute(url.pathname, `${url.search}&return_to=https://outside.invalid`);
+    expect(route).toMatchObject({ kind: "conversation", projectId: "project a", conversationId: "saved", imageId: "image", canonicalPath: path });
+    expect(routeFocusKey(route)).toBe(routeFocusKey(parseWorkspaceRoute(url.pathname, "?image=other")));
+  });
   it("accepts only a typed same-project revision return for model setup", () => {
     const path = projectJourneyPath("project", "model", { returnScene: "revise", draftId: "draft", sampleTestId: "test", imageId: "image" });
     const url = new URL(path, "http://localhost");

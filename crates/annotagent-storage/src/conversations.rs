@@ -49,6 +49,24 @@ fn require_owner(
 }
 
 impl SqliteStore {
+    /// Read-only discovery; opening a workspace must not create a conversation.
+    pub fn project_conversation(&self, project: &str) -> Result<Option<Uuid>, StorageError> {
+        self.with_connection(|db| {
+            let id: Option<String> = db
+                .query_row(
+                    "SELECT id FROM project_conversations WHERE project_id=?1",
+                    [project],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            id.map(|value| {
+                Uuid::parse_str(&value)
+                    .map_err(|_| invalid("invalid persisted conversation identity"))
+            })
+            .transpose()
+        })
+    }
+
     /// Explicit creation command, never a GET side effect. One main conversation
     /// per Project in this release; repeated creation returns the same identity.
     /// Application must resolve the existing Project and pass its stable UUID,

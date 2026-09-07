@@ -1856,6 +1856,17 @@ export interface NodeReplayReport {
   sandbox: boolean;
 }
 
+export interface ConversationMessageInput {
+  id: string;
+  text: string;
+  image: { image_id: string; sha256: string } | null;
+}
+export interface ConversationMessage {
+  conversation_id: string;
+  sequence: number;
+  input: ConversationMessageInput;
+}
+
 export interface ImageItem {
   image_id: string;
   project_id: string;
