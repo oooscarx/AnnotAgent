@@ -268,7 +268,34 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   // Simulate an unavailable file without changing the approved Registry identity.
   renameSync(credentialPath, `${credentialPath}.temporarily-unavailable`);
   try {
+    let releaseLateResponse!: () => void;
+    let reportSaved!: () => void;
+    const savedResponse = new Promise<void>(resolve => { reportSaved = resolve; });
+    const release = new Promise<void>(resolve => { releaseLateResponse = resolve; });
+    await page.route(`**/api/projects/${projectId}/processing-operations`, async route => {
+      const response = await fetchWithinMutationLimit(route);
+      reportSaved(); await release;
+      await route.fulfill({ response });
+    }, { times: 1 });
     await page.getByRole("button", { name: "Confirm and start processing", exact: true }).click();
+    await savedResponse;
+    const pendingConfirmationUrl = page.url();
+    const otherOperation = new URL(pendingConfirmationUrl);
+    otherOperation.searchParams.set("operation", "00000000-0000-4000-8000-000000000099");
+    // Same-document history navigation retains the component; a full reload
+    // would mask stale-completion bugs by destroying its previous promise.
+    await page.evaluate(url => { history.pushState({}, "", url); dispatchEvent(new PopStateEvent("popstate")); }, otherOperation.toString());
+    await expect(page.getByRole("alert")).toBeVisible();
+    const otherError = await page.getByRole("alert").textContent();
+    const returned = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/processing-operations"));
+    releaseLateResponse(); await returned;
+    // Let the fetch continuation and its React render run before checking that
+    // the late result did not replace the new receipt's error/state.
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await expect(page).toHaveURL(otherOperation.toString());
+    await expect(page.getByRole("alert")).toHaveText(otherError!);
+    await expect(page.getByRole("button", { name: "Reload task status", exact: true })).toBeEnabled();
+    await page.evaluate(url => { history.pushState({}, "", url); dispatchEvent(new PopStateEvent("popstate")); }, pendingConfirmationUrl);
     await expect(page.getByRole("heading", { name: "Plan saved. Processing has not started.", exact: true })).toBeVisible();
     const failedConfirmationUrl = page.url();
     await page.reload();
@@ -433,8 +460,11 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
     await page.reload();
     const handles = page.locator('.review-canvas-stage .annotation-canvas circle[role="button"]');
     await expect(handles).toHaveCount(4);
-    const firstX = Number(await handles.first().getAttribute("cx"));
     await expect(page.locator('.review-canvas-stage .canvas-dimension-probe')).toHaveJSProperty("complete", true);
+    const measuredWidth = await page.locator('.review-canvas-stage .canvas-dimension-probe').evaluate(image => (image as HTMLImageElement).naturalWidth);
+    expect(measuredWidth).toBeGreaterThan(0);
+    await expect(page.locator('.review-canvas-stage .annotation-canvas image')).toHaveAttribute("width", String(measuredWidth));
+    const firstX = Number(await handles.first().getAttribute("cx"));
     await handles.first().focus();
     await page.keyboard.press("ArrowRight");
     await expect.poll(async () => Number(await handles.first().getAttribute("cx"))).toBeCloseTo(firstX + 1, 5);

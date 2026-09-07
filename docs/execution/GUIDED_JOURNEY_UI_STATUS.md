@@ -1001,3 +1001,28 @@ failed because its selector used `.review-canvas` instead of the actual
 `.review-canvas-stage`; the corrected test passes without relaxing assertions.
 104 Web tests and production/typecheck passed (existing chunk warning). Generated
 non-target screenshots were restored to their pre-run snapshot.
+
+### Confirmation response ownership (2026-09-08)
+
+The confirmation component previously identified a pending POST only by Project,
+Draft and Test, so switching between receipts for the same task could let a late
+response overwrite the currently opened receipt. Pending state now belongs to
+the request ID plus exact task context; leaving it releases only its local busy
+state, not the server operation. Late completion can neither update the new task
+nor clear a newer request's pending flag. Preview-to-own-receipt navigation keeps
+the original operation and idempotency key intact.
+
+The isolated ready-model browser path delays a real published/start-failed POST
+response, uses same-document history navigation to a different receipt, then
+releases the response and checks URL, current error and enabled reload control.
+It returns to the original receipt and retries the same request successfully,
+without increasing the existing two processing POSTs. A full page reload is not
+used for the race, because that would mask component-reuse bugs.
+Current-tree verification passed: ready-model Journey 1/1 in 38.9s on isolated
+`/tmp/annotagent-guided-e2e-72604`, including the final context-reset guard; 104
+Web unit tests; production build/typecheck (existing bundle-size warning).
+A repeat initially failed in the point test because its baseline was read from
+the loading placeholder before the actual image dimensions reached the SVG.
+The test now waits for naturalWidth to be applied before reading the baseline;
+its exact one-pixel movement assertion remains unchanged. Non-target screenshots
+were restored from the pre-run snapshot. No real Workspace or paid service used.

@@ -14,16 +14,23 @@ export function JourneyConfirm({ projectId, draftId, testId, imageId, operationI
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
-  const pending = useRef(false);
+  const pending = useRef<string | undefined>(undefined);
+  const pendingContext = useRef("");
+  const taskIdentity = JSON.stringify([projectId, draftId, testId]);
   const alive = useRef(false);
-  const task = useRef({ projectId, draftId, testId });
-  task.current = { projectId, draftId, testId };
+  const task = useRef({ projectId, draftId, testId, operationId });
+  task.current = { projectId, draftId, testId, operationId };
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const navigate = useRef(onNavigate); navigate.current = onNavigate;
   const key = (id: string) => `annotagent.processing-request:${projectId}:${id}`;
   const context = { draftId, sampleTestId: testId, imageId };
   useEffect(() => {
     const controller = new AbortController(); setError(""); setConfirmed(false); setReceipt(undefined); setPreview(undefined);
+    // Moving from the preview to our newly assigned receipt is one request.
+    // Any other receipt/preview is a different task, even in the same Project.
+    if (pending.current && (pending.current !== operationId || pendingContext.current !== taskIdentity)) {
+      pending.current = undefined; setBusy(false);
+    }
     if (operationId) {
       void api.processingOperation(projectId, operationId, controller.signal).then((value) => {
         if (controller.signal.aborted) return;
@@ -52,8 +59,8 @@ export function JourneyConfirm({ projectId, draftId, testId, imageId, operationI
         try { sessionStorage.setItem(key(input.request_id), JSON.stringify(input)); } catch { /* Server receipts remain authoritative. */ }
       }
     } catch (failure) { setError((failure as Error).message); return; }
-    pending.current = true; setBusy(true); setError("");
-    const isCurrent = () => alive.current && task.current.projectId === projectId && task.current.draftId === draftId && task.current.testId === testId;
+    pending.current = input.request_id; pendingContext.current = taskIdentity; setBusy(true); setError("");
+    const isCurrent = () => alive.current && pending.current === input.request_id && task.current.projectId === projectId && task.current.draftId === draftId && task.current.testId === testId && task.current.operationId === input.request_id;
     navigate.current(projectJourneyPath(projectId, "confirm", { ...context, processingOperationId: input.request_id }), true);
     try {
       const value = await api.confirmProcessing(projectId, input);
@@ -62,7 +69,7 @@ export function JourneyConfirm({ projectId, draftId, testId, imageId, operationI
       if (value.phase === "started" && value.batch_id) navigate.current(projectBatchPath(projectId, value.batch_id), true);
       else setError(value.error ?? t("Processing did not start. Your saved sample is unchanged."));
     } catch (failure) { if (isCurrent()) setError((failure as Error).message); }
-    finally { pending.current = false; if (isCurrent()) setBusy(false); }
+    finally { if (isCurrent()) setBusy(false); if (pending.current === input.request_id) pending.current = undefined; }
   };
   return <section className="journey-scene" aria-label={t("Processing confirmation")}>
     <div className="journey-intro"><h2>{receipt?.phase === "published_start_failed" ? t("Plan saved. Processing has not started.") : preview ? t("Ready to process {count} images.", { count: preview.image_count }) : t("Checking your processing scope…")}</h2>
