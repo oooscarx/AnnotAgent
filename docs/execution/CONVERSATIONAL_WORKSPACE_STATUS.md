@@ -700,3 +700,36 @@ Application/server Clippy passed after fixing the new test's clone-on-Copy lint.
 Latest classification browser **1/1**, 3.3s / 8.4s total in
 `/tmp/annotagent-guided-e2e-88838`, regenerated the two viewport screenshots after
 canvas sizing adjustment. No full-workspace Rust or real-user usability claim is made.
+
+### Conversation bbox sample and shared label detection (M1/M2 increment)
+
+Conversation bounding-box seeds now use the same existing controlled Skill/Core
+composition as classification, rather than the legacy task-provider seed. All Schema
+labels survive synthesis. Per-label routes reference one normalized shared detection
+configuration; goal/exclusion rules remain in supported target-description fields.
+Each route retains its mandatory geometry Human Review node. Registry profile binding,
+Builder planning, authorization, sample runtime and terminal projection are reused.
+
+The three-label regression verifies one shared detector/model node and three distinct
+label routes with required review gates. Browser tests now cover both classification
+and bbox: actual HTTP TEST fixture inference, explicit consent, dropped successful POST
+response recovery, GET-only reload, sandbox edits, dirty-guard preservation and restored
+geometry. Bbox asserts exactly one inference receipt, zero ready terminal candidates
+and one review candidate; it does not count intermediate geometry as another result.
+The width assertion uses numeric tolerance because Rust f32 normalization produces
+96.0000038 SVG pixels for a requested 96-pixel width, not an exact string `96`.
+
+Evidence: Application all-features **95 passed / 1 billable ignored**, strict
+Application all-targets/all-features Clippy passed. Browser **2/2**, 11.7s total in
+`/tmp/annotagent-guided-e2e-89683`; production build passed with the existing >500 kB
+chunk warning. Inspected `sample-bbox.png` and `sample-bbox-390.png`: desktop split
+canvas and narrow-screen image view preserve editable geometry. These screenshots
+deliberately use the existing synthetic scene and scripted `cup` output, **not a real
+cup detector, Live quality validation, or real-user usability evidence**.
+
+Human Request/outbox/resume, subsequent-message intent routing, improvement loops and
+conversation processing/Review/export remain unfinished. Default rollout stays off.
+No real workspace mutation/restart, paid calls, push or remote changes occurred.
+
+Final increment checks: `cargo fmt --all --check`, Web typecheck and **106/106** Web
+unit tests passed. Unrelated previously regenerated screenshots remain unstaged.

@@ -193,29 +193,15 @@ impl LocalApplication {
             &models,
             &constraints,
         );
-        // A semantic classification task must use the executable Classification Skill,
-        // not the legacy task-provider projection. Preserve all declared categories.
-        if binding.task.kind == annotagent_core::TaskKind::Classification {
-            let label = binding
-                .task
-                .labels
-                .first()
-                .ok_or_else(|| anyhow!("Schema has no labels"))?;
-            let composition = crate::controlled_label_composition(
-                &input.project_schema,
-                binding.task.id.as_str(),
-                label,
-                &constraints,
-                &models,
-            )?;
-            seed.draft = composition.compile_draft(
-                project,
-                "Conversation classification plan",
-                input.project_schema.project.enabled_skill_versions(),
-                chrono::Utc::now(),
-            );
-            crate::bind_available_registry_models(&mut seed.draft, &input);
-        }
+        let composition =
+            conversation_composition(&input.project_schema, &binding, &constraints, &models)?;
+        seed.draft = composition.compile_draft(
+            project,
+            "Conversation annotation plan",
+            input.project_schema.project.enabled_skill_versions(),
+            chrono::Utc::now(),
+        );
+        crate::bind_available_registry_models(&mut seed.draft, &input);
         seed.draft.annotation_schema = Some(binding);
         let budget = self
             .store
@@ -254,5 +240,160 @@ impl LocalApplication {
         self.store
             .conversation_builder_operation(&owner, execution.task_id, execution.operation_id)?
             .ok_or_else(|| anyhow!("Builder receipt missing"))
+    }
+}
+
+/// Reuse the controlled Skill/Core grammar and preserve all Schema labels.
+/// Detection routes share the same model configuration; the geometry review gate stays intact.
+fn conversation_composition(
+    project: &annotagent_core::ProjectSchema,
+    binding: &WorkflowSchemaBinding,
+    constraints: &annotagent_core::WorkflowConstraints,
+    models: &annotagent_core::ModelRegistry,
+) -> Result<annotagent_core::LabelWorkflowComposition> {
+    let first = binding
+        .task
+        .labels
+        .first()
+        .ok_or_else(|| anyhow!("Schema has no labels"))?;
+    let mut result = crate::controlled_label_composition(
+        project,
+        binding.task.id.as_str(),
+        first,
+        constraints,
+        models,
+    )?;
+    if binding.task.kind == annotagent_core::TaskKind::Classification {
+        return Ok(result);
+    }
+    if binding.task.kind != annotagent_core::TaskKind::BoundingBox {
+        bail!("Conversation execution supports classification and bounding boxes");
+    }
+    let normalize = |composition: &mut annotagent_core::LabelWorkflowComposition| {
+        for step in composition
+            .shared_stages
+            .iter_mut()
+            .flat_map(|stage| &mut stage.steps)
+        {
+            for key in ["labels", "target_labels"] {
+                if step.parameters.contains_key(key) {
+                    step.parameters
+                        .insert(key.into(), serde_json::json!(binding.task.labels));
+                }
+            }
+            if step.parameters.contains_key("target_description") {
+                step.parameters.insert(
+                    "target_description".into(),
+                    serde_json::json!(format!(
+                        "{}\n{}",
+                        binding.goal,
+                        binding.boundary_rules.join("\n")
+                    )),
+                );
+            }
+            if step.parameters.contains_key("class_mapping") {
+                step.parameters.insert(
+                    "class_mapping".into(),
+                    serde_json::json!(
+                        binding
+                            .task
+                            .labels
+                            .iter()
+                            .map(|label| (label, label))
+                            .collect::<std::collections::BTreeMap<_, _>>()
+                    ),
+                );
+            }
+            if step.parameters.contains_key("queries") {
+                step.parameters.insert("queries".into(), serde_json::json!(binding.task.labels.iter().map(|label| serde_json::json!({"id":label,"text":label.replace(['_','-']," "),"target_label":label})).collect::<Vec<_>>()));
+            }
+        }
+    };
+    normalize(&mut result);
+    for label in binding.task.labels.iter().skip(1) {
+        let mut route = crate::controlled_label_composition(
+            project,
+            binding.task.id.as_str(),
+            label,
+            constraints,
+            models,
+        )?;
+        normalize(&mut route);
+        if route.shared_stages != result.shared_stages {
+            bail!("Label routes require incompatible shared model configurations");
+        }
+        result.label_pipelines.extend(route.label_pipelines);
+    }
+    Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn bounding_box_labels_share_one_detector_and_keep_each_geometry_review_route() {
+        let project: annotagent_core::ProjectSchema = serde_yaml::from_str("version: 1\nproject:\n  name: TEST shared conversation detector\ndataset:\n  root: images\nruntime: {}\ntasks:\n  - id: objects\n    kind: bounding_box\n    labels: [cup, can, plate]\n    required: true\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n").unwrap();
+        let binding = WorkflowSchemaBinding {
+            schema_draft_id: Uuid::new_v4().to_string(),
+            revision: 1,
+            goal: "Find cups, cans and plates, not bottles".into(),
+            task: project.tasks[0].clone(),
+            boundary_rules: vec!["Exclude bottles".into()],
+        };
+        let temporary = tempfile::tempdir().unwrap();
+        let app = LocalApplication::new(temporary.path()).unwrap();
+        let (_, models) = app
+            .workflow_catalog(&crate::load_settings(None).unwrap())
+            .unwrap();
+        let composition =
+            conversation_composition(&project, &binding, &WorkflowConstraints::default(), &models)
+                .unwrap();
+        assert_eq!(composition.shared_stages.len(), 1);
+        assert_eq!(composition.shared_stages[0].steps.len(), 1);
+        assert_eq!(composition.label_pipelines.len(), 3);
+        let shared = &composition.shared_stages[0].steps[0];
+        let labels = shared
+            .parameters
+            .get("labels")
+            .or_else(|| shared.parameters.get("target_labels"))
+            .unwrap();
+        assert_eq!(labels, &serde_json::json!(["cup", "can", "plate"]));
+        for (pipeline, label) in composition.label_pipelines.iter().zip(&binding.task.labels) {
+            assert_eq!(pipeline.target_label.as_str(), label);
+            assert!(
+                pipeline
+                    .steps
+                    .iter()
+                    .any(|step| step.node_type == "core.human_review" && step.review_gate.required)
+            );
+            assert!(
+                pipeline
+                    .steps
+                    .iter()
+                    .all(|step| step.model_binding.is_none())
+            );
+        }
+        let draft = composition.compile_draft(
+            "TEST",
+            "TEST shared detector",
+            project.project.enabled_skill_versions(),
+            chrono::Utc::now(),
+        );
+        assert_eq!(
+            draft
+                .nodes
+                .iter()
+                .filter(|node| node.model_binding.is_some())
+                .count(),
+            1
+        );
+        assert_eq!(
+            draft
+                .nodes
+                .iter()
+                .filter(|node| node.node_type == "core.human_review")
+                .count(),
+            3
+        );
     }
 }
