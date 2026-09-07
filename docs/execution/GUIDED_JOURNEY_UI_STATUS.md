@@ -1,5 +1,11 @@
 # Guided Journey UI — execution record
 
+## Authorized follow-up: local re-localization + SAM (2026-09-08)
+
+- User approved one further same-image trial with at most three VLM calls. Draft e595c7b1 revision 4 completed sample b3bbdc85: one whole-image call, two bounded crop calls, local SAM executed, zero failed images, two review candidates, no committed annotations. Duration 14.152s, 2172 input / 264 output tokens; remote price unknown, not free.
+- Scope GET returns current=true; original Draft and old tests remain intact. Browser opened the exact sample/image deep link and showed both editable sandbox candidates without triggering inference on navigation.
+- Geometry remains unsatisfactory: SAM refinements rejected for drift; retained local hypotheses left ~16.5x24px, right ~22.5x15px versus dataset references ~10x8 and ~29x24. Smaller boxes are not proof of higher accuracy; left remains tall, right risks incomplete coverage. End-to-end execution reached the review gate, not Commit. No publication or dataset processing.
+
 ## Yellow cylinder local re-localization trial (2026-09-08)
 
 - User-authorized new Draft e595c7b1 preserves original f3bba068. Image -> Qwen -> expanded crop -> 384px resize -> local Qwen -> coordinate projection -> merge -> SAM -> geometry review. No publication or full run.
