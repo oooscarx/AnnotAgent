@@ -2,28 +2,135 @@
   <img src="web/public/brand/core/readme-hero.svg" alt="AnnotAgent — composable annotation workflows for vision data" width="100%">
 </p>
 
-AnnotAgent turns model proposals into typed, auditable annotations. A vision model proposes
-geometry, registered tools gather bounded image evidence, deterministic validators and refiners
-check it, and a review policy commits, retries, or sends the result to a human. Model calls, tool
-calls, revisions, validation issues, tokens, cost, and state transitions are persisted.
+<p align="center">
+  让模型完成初步标注，让你掌握最终质量。
+</p>
 
-It combines open-vocabulary models, specialist detectors, domain validators, and human review into
-versioned annotation pipelines.
+<p align="center">
+  <a href="#从图片到数据集">产品体验</a> ·
+  <a href="#接入你自己的模型">模型接入</a> ·
+  <a href="#开始使用">开始使用</a> ·
+  <a href="docs/DEVELOPMENT.md">开发文档</a>
+</p>
 
-## Quick start
+AnnotAgent 是一个本地运行的 AI 辅助图像标注工作台。你定义要标注什么，
+让 Agent 帮你组织模型和处理步骤，先用少量图片检查效果，再批量运行、人工审核并导出数据集。
 
-The Web product is organized around one concrete Project journey:
+它适合需要反复调整标注方法的视觉项目：整图分类、目标检测，以及检测后的裁剪、分类和分割细化。
+你不必把所有任务交给同一个模型，也不必把模型给出的第一个结果直接当成正确答案。
 
-`Create -> Data -> Labels -> Automation -> Test & Activate -> Run -> Review -> Export`
+> 当前为 Alpha。工作台支持 English / 简体中文。下方是实际 B-Human 足球项目与本地
+> EfficientSAM 安装状态的界面截图，不是概念设计图，也不代表标注准确率评测。
 
-Global Home, Projects, Runs, and Review are discovery indexes. Once an owned object is opened,
-AnnotAgent uses a canonical Project URL such as `/projects/:projectId/runs/:runId`,
-`/projects/:projectId/batches/:batchId`, or `/projects/:projectId/review/:reviewId`. These URLs retain
-the Project shell and restore the same object after refresh, sharing, and browser Back/Forward.
-Project names and image list positions are display data; stable IDs carried by the server are the
-ownership boundary.
+## 为什么使用 AnnotAgent
 
-Start it from the repository root:
+- **从标注目标开始。** 在 Project 中管理图片与 Label；“标什么”和“用什么方法标”分别设置。
+- **让 Agent 帮你搭流程。** 根据标签、可用模型和约束提出可编辑草稿，最终是否启用由你决定。
+- **先看效果，再跑全量。** 用 1～10 张图片测试，检查结果、待审核项、耗时与模型用量。
+- **看得见每一步。** 不只看最终框，也能检查模型输入、裁剪图、分割结果和失败原因。
+- **把人工审核留在流程里。** 不确定的结果进入审核队列，可以修改、接受或拒绝。
+- **保留可追溯的版本。** 正式运行绑定已发布版本；修改草稿不会悄悄改变过去的运行。
+
+## 从图片到数据集
+
+### 1. 带上你的图片，建立一个专注的项目
+
+一个 Project 对应一项标注工作。导入本地 PNG / JPEG 图片后，在同一个项目内完成标签配置、
+自动化、测试、运行、审核和导出。项目首页会提示当前还缺什么、下一步该做什么。
+
+例如，RoboCup Ball 项目只关心足球：场上的机器人、白色鞋子和场线是需要区分的背景，
+不必为了标球同时定义所有场景对象。
+
+![真实 B-Human 足球项目的数据页面，已导入四张比赛场景图片](docs/product/bhuman-data.png)
+
+*真实场景：四张 B-Human 图片已进入项目；数据页展示图片预览和导入状态。*
+
+### 2. 定义你想得到的标注
+
+在 Labels 页面选择标注类型、填写类别。你可以让一个项目判断整张图片的类别，
+也可以要求输出指定目标的边界框。后续更换模型或调整处理顺序，不需要重新定义标签含义。
+
+![足球标签配置：ball 类别与 Bounding boxes 输出](docs/product/ball-labels.png)
+
+*这个项目的输出是 ball 的边界框，模型选择留在下一步 Automation。*
+
+### 3. 让 Agent 提出方法，你来决定
+
+进入 Automation，选择 Builder LLM、目标 Label，以及准确率、速度或成本方面的偏好，
+然后使用 **Ask AnnotAgent**。它会查询已登记的能力，尝试生成可编辑的 Pipeline Draft。
+
+Builder LLM 负责规划，真正处理图片的是流程中绑定的视觉模型。
+你可以查看计划中的模型调用、编辑支持的节点设置，也可以从已有模板开始。
+
+草稿不等于已发布流程。模型连接缺失、类型不兼容或验证不通过时，需要先解决问题；
+Agent 的建议不会自动成为正式运行版本。
+
+### 4. 先试几张，检查模型到底做了什么
+
+在 **Test & Activate** 里选取少量图片进行 Sample Test。测试不会写入正式标注。
+
+除了看最终结果，还可以检查每张图的中间产物：检测框、Crop、分类结果、
+分割 Mask，以及实际执行过的节点。哪里失败了、是否真的调用了某个模型，
+都应通过运行证据确认，而不是只看流程中有没有写上它的名字。
+
+确认效果后，激活草稿并发布固定版本，再从 Project 启动全量 Dataset Run。
+运行记录保留进度、错误、用量与版本信息；支持暂停、恢复和取消。
+
+### 5. 审核不确定结果，导出可用数据
+
+**Results** 用来查看最终结果，**Debug** 用来排查处理过程，**Review** 用来做人工决定。
+
+在审核画布里查看原图与标注，缩放检查边界，编辑支持的边界框，然后接受或拒绝。
+模型分数与框的几何质量分别展示：高置信度不意味着框一定准确。
+
+审核完成后，在 **Export** 选择与标签兼容的格式。支持 AnnotAgent Native，
+以及按 Schema 兼容性提供的 COCO、YOLO、LabelMe 导出；不能保留的信息会在兼容性报告中说明。
+
+## 接入你自己的模型
+
+AnnotAgent 把“规划流程”和“处理图像”分开。你可以组合使用不同模型，而不是绑定一个固定服务。
+
+| 角色 | 在产品里做什么 | 在哪里配置 |
+| --- | --- | --- |
+| Builder LLM | 理解标注目标、建议和修改流程草稿 | Settings → Providers / Models，再在 Automation 中选择 |
+| VLM / 视觉服务 | 理解图片、分类、提出检测候选 | 登记模型能力，在相应流程节点中绑定 |
+| 本地专家模型 | 执行支持的分割或检测任务 | Settings → Expert Model Plugins |
+
+Provider 支持预设和 OpenAI-compatible 接入；自定义模型需要声明实际能力，
+不能仅凭模型名字就当作支持视觉输入。
+
+密钥默认可保存在本地工作区的受限权限文件中，重启后仍可使用，不必存进系统钥匙串。
+工作区保存在本地，但**使用远程模型时，相关输入会发送给你配置的服务商**。
+
+### 例如：用 EfficientSAM 做提示分割
+
+![已真实安装并通过检查的 EfficientSAM-Ti 模型卡片](docs/product/efficientsam-ready.png)
+
+*实际安装状态：EfficientSAM-Ti ONNX 已 Ready；卡片也如实显示当前没有已发布流程引用它。*
+
+安装兼容 Plugin 和 Model Bundle，并通过检查后，模型才会变为可选的 Ready 状态。
+仓库不附带所有模型权重；各模型的平台支持、许可证和安装方式需要分别确认。
+
+**装好了 SAM，不等于每张图片都自动经过 SAM。** 还需要在流程中绑定相应分割节点，
+并提供有效的框或点提示。它能细化候选区域，但无法保证修复一个根本没有找到目标的错误框。
+VLM 的粗定位、局部检查、分割细化和人工审核应根据任务与实际证据组合。
+
+参阅 [真实 EfficientSAM 安装指南](docs/REAL_MODEL_RELEASE.md#gui-installation)、
+[模型接入](docs/PROVIDER_MODEL_REGISTRY.md)和[专家模型配置](docs/EXPERT_MODEL_ONBOARDING.md)。
+
+## 效果不好时，不必从头重来
+
+先用单张图片的节点证据定位问题：是模型没找到目标，裁剪范围不对，还是分割提示不可靠？
+
+你可以调整草稿，再做 Sample Test；也可以在满足前置条件时使用 **Improve Automation**，
+基于已审核证据生成改进草稿并进行对比。支持的节点 Replay 可以复用已保存的上游产物，
+减少排查时不必要的重复执行。改进仍需人工确认，不会自动发布，也不等于自动训练模型。
+
+了解[几何质量与 VLM 边界](docs/VLM_GEOMETRY_SAFETY.md)和[基于证据改进流程](docs/PIPELINE_SELF_IMPROVEMENT.md)。
+
+## 开始使用
+
+目前从源码启动，需要 stable Rust、Node.js 20+ 和 npm。在仓库根目录运行：
 
 ```bash
 npm --prefix web install
@@ -31,229 +138,29 @@ npm --prefix web run build
 cargo run -p annotagent -- serve --workspace ./workspace --open
 ```
 
-In the browser:
+打开 [本地工作台](http://127.0.0.1:8787)，然后：
 
-Use **Language / 语言** in the page header to switch between English and **简体中文**. The choice
-is saved in your browser and survives restarts. See [interface languages](docs/I18N.md).
+1. 在 **Settings → Providers / Models** 配置自己的模型连接。
+2. 在 **Projects → New project** 创建项目，导入图片并定义 Label。
+3. 在 **Automation** 创建草稿，检查模型绑定。
+4. **Test & Activate → Dataset Run → Review → Export**，完成第一轮标注。
 
-1. Open **Projects** and choose **New project**. The four-step wizard asks what to annotate, where the data is, which speed/accuracy priority matters, and which registered model connection to use. Internal IDs and generated YAML stay under Advanced.
-2. In **Data**, add workspace-local images. In **Labels**, define annotation semantics such as classification or bounding box labels.
-3. In **Automation**, preview a registry-bounded recommendation, apply it to the editable Draft, and adjust the readable Recipe or its node settings. The full typed graph remains in Expert mode.
-4. In **Test & Activate**, run 1–10 real images in the sandbox. Inspect image outcomes, Crops, Review workload, duration, and cost; then activate the tested Draft as an immutable Workflow Version.
-5. Return to the Project and choose the single server-recommended next action. Starting the Dataset opens its durable Dataset Run detail; active work is restored from backend state and duplicate Start is locked.
-6. Open an Image Run. **Results** shows only committed annotations, current review-final candidates, or a valid No Target outcome. **Debug** reveals intermediate detections, crops, masks, node inputs/outputs, configuration, usage, errors, and Replay. URL state preserves the exact Image, Node, and Artifact.
-7. Use **Review** as a decision Inbox. Edit if needed, then Accept & next or Reject & next; source Run links are bidirectional and the final item leads to Export.
-8. Open Project **Export**, resolve any readiness blocker, select a Schema-compatible format, and run the real exporter. The completion report and source fingerprint survive reload while the Project snapshot remains current.
+页头的 **Language / 语言** 可以切换中文，选择会保存在浏览器中。
+项目配置、草稿和运行记录保存在本地工作区；备份时请保留工作区和应用历史数据库。
 
-Provider and Model Profiles live under **Settings → Providers / Models**. Non-secret settings persist
-in SQLite. The default GUI credential path writes an owner-only file below the Git-ignored local
-workspace; environment-variable and process-only session references remain available, while native
-system credential storage is explicit opt-in. Secrets are never returned to the browser or stored
-in SQLite. Production startup and Pipeline Builder expose no Mock Provider; deterministic test
-doubles remain limited to explicit tests and offline demos.
+## 当前适用范围
 
-Start with [Guided Experience](docs/GUIDED_EXPERIENCE.md), [Project setup](docs/GUIDED_PROJECT_SETUP.md), [Run and Review UX](docs/RUN_AND_REVIEW_UX.md), the [offline demo](docs/DEMO_GUIDED_EXPERIENCE.md), or the [Provider Builder demo](docs/DEMO_PROVIDER_BUILDER.md). Acceptance screenshots are in [`docs/execution/screenshots`](docs/execution/screenshots), and the current Release Matrix is [`docs/execution/GUIDED_EXPERIENCE_ACCEPTANCE.md`](docs/execution/GUIDED_EXPERIENCE_ACCEPTANCE.md).
+AnnotAgent 目前面向本地、单用户的图像标注工作，不是多用户云协作平台。
+视频标注、模型训练和分布式调度不在当前 Alpha 范围内。
+部分 Mask 格式还不能在画布中绘制或编辑，专家模型也不是全部开箱即用。
 
-## 1. AnnotAgent Core
+模型可运行与标注准确是两件事。请用自己的代表性图片测试，并对关键数据保留人工审核。
+不要将本地服务直接暴露到公网。
 
-Core owns domain-neutral task types, checked geometry, the model/tool/validation loop, budgets, events, registries, persistence contracts, and frontend application use cases. It does not contain domain labels. CLI, TUI, and HTTP all call the same `LocalApplication` service.
+## 继续了解
 
-```text
-React Web GUI ─┐
-Ratatui TUI ───┼─> Application Service ─> Runtime ─> Review/Commit
-CLI ───────────┘             │                │
-                             ├─ Project       ├─ Model
-                             ├─ Workflow      └─ registered nodes
-                             └─ SQLite history
-```
-
-## 2. Project
-
-A Project is one concrete annotation effort. It owns a Dataset and Annotation Schema and selects zero or more Skills, immutable Workflow versions, model bindings, review policy, Runs, imports, and exports. Generic Projects require no RoboCup Skill; multi-Skill extension IDs are namespaced and visual precedence is deterministic.
-
-## 3. Workflow
-
-A Workflow is a typed graph of model, tool, validator/refiner, review, and output steps. The Web Workflow page supports registry-bound suggestions, persisted Draft editing, static validation, selected-image Dry Run, and immutable publication. An exact Published Version can be selected for an image Run or Dataset Batch; the product executes that DAG, persists typed Artifacts and node trace, and stores its restart checkpoint. Formal Runs fail closed until an exact Published Workflow Version is selected.
-
-## 4. Model
-
-Model bindings connect Workflow nodes to reusable Provider and Model Profiles. Settings offers
-Provider presets, capability-aware Model Profiles and installable Rust Expert Model Plugins.
-The default GUI credential path is an owner-only file under the Git-ignored workspace so a saved
-Provider survives restarts without using the OS Keychain. Environment-variable, session-only and
-native system credential references remain available. Worker health and capabilities are
-discovered live, and an unavailable Provider or Worker never blocks AnnotAgent startup.
-
-Native expert models are installed through **Settings → Expert Model Plugins** as deterministic
-`.annotplugin` code packages plus independent, data-only `.annotmodel` Bundles. AnnotAgent reviews
-permissions and exact licenses, verifies Catalog-pinned checksums, binds generic model-file roles,
-starts an isolated Rust process and requires ONNX Contract plus fixed smoke evidence before a
-publishable model becomes Ready. Existing manually configured HTTP Vision v1 endpoints remain under
-**Legacy HTTP** for historical compatibility, but new Workflows should use native plugins. See
-[Rust Model Plugins](docs/RUST_MODEL_PLUGINS.md), [Writing a Rust Plugin](docs/WRITING_A_RUST_MODEL_PLUGIN.md)
-and [Model Bundles](docs/MODEL_BUNDLES.md). The repository ships no third-party weights in Git; the
-built-in prompted-segmentation Fixture is non-publishable protocol evidence, not SAM or accuracy
-evidence. The separately generated real EfficientSAM-Ti Bundle and its exact installation and
-release identities are documented in [Real Model Release](docs/REAL_MODEL_RELEASE.md).
-
-## 5. Skill
-
-A Skill contributes domain nodes, validators, refiners, prompt resources, Workflow templates, correction taxonomy, and label visual mappings. It does not own a Dataset or the application shell. Rust implementations are registered through `DomainSkill`; the generic canvas consumes stable `annotation-1` through `annotation-8` slots through a `SkillVisualProfile`.
-
-The public Capability layer is deliberately small: `annotagent.classification`,
-`annotagent.detection`, and `annotagent.segmentation`. Detection covers closed-set detection,
-open-vocabulary detection, phrase grounding, and VLM grounding while each concrete implementation
-is a Model Backend. Classification covers whole images, Crops, candidate verification, and
-attributes. Segmentation declares semantic, prompted, and instance-mask contracts and remains
-unavailable until a healthy compatible backend is configured.
-
-OpenAI-compatible VLM, YOLO, RF-DETR, LocateAnything, PIDNet and SAM are Model Backends rather than
-top-level Skills. Native backends live in Settings → Expert Model Plugins and remain unavailable
-until exact package, checkpoint, contract and smoke evidence is complete. Pre-Lean Skill IDs remain hidden compatibility aliases so
-stored Projects and immutable versions can still be loaded. See
-[Open-vocabulary Detection](docs/OPEN_VOCABULARY_DETECTION.md),
-[Object Detection](docs/OBJECT_DETECTION.md), [LocateAnything Rust Plugin](docs/LOCATE_ANYTHING_RUST_PLUGIN.md),
-and [RF-DETR Rust Plugin](docs/RFDETR_RUST_PLUGIN.md).
-
-Detector outputs can be joined with the generic `core.match_detection_sets` node and routed by
-`core.evidence_gate`. The persisted decision report explains agreement, conflicts, missing scores,
-domain issues and fallback requests without blending incomparable confidence. See
-[Detection Evidence](docs/DETECTION_EVIDENCE.md),
-[Specialist Detection](docs/SPECIALIST_DETECTION.md), and
-[Hybrid Detection Workflows](docs/HYBRID_DETECTION_WORKFLOWS.md).
-
-## 6. Review
-
-Models select registered actions and may submit candidates or operate on stable Artifact references. Rust validation and review policy determine whether a candidate is committed, retried, completed empty, or queued. Human edits append revisions instead of overwriting history, and the trace exposes model/tool/Artifact events without hidden chain-of-thought.
-
-## 7. Example Application: RoboCup Ball
-
-The bundled `robocup` Pack and `robocup.ball` Domain Skill solve one annotation problem: football
-bounding boxes. Robots, people, field geometry and penalty marks are visual context or hard
-negatives; they are not output labels. Domain resources, checks, correction taxonomy and the ball
-visual slot live outside Core.
-
-The deterministic demo needs no GPU or API key:
-
-```bash
-cargo run -p annotagent -- demo generic-classification
-cargo run -p annotagent -- demo generic-detection-crop
-cargo run -p annotagent -- demo robocup-ball
-cargo run -p annotagent -- demo lean-agent-robocup
-```
-
-The Generic demos have no RoboCup dependency. The Ball demo covers the clean fast path, white-shoe
-rejection, penalty-mark review and a Correction Memory decision change entirely offline. The Lean
-Agent demo runs an audited invalid-Draft repair and two three-image sandbox Dry Runs, adds Crop
-Classification from measured Review evidence, and stops for human approval without publishing.
-
-The Runtime extension test also registers an independent `DummySkill` without changing Runtime:
-
-```bash
-cargo test -p annotagent-runtime --test skill_extension
-```
-
-RoboCup exposes one default Ball starter: `robocup.ball.vlm-bootstrap`. It binds one ready Detection
-backend, selects football candidates, applies Domain Validators, and routes through Decision to
-Commit or Human Review. The explicit specialist/fallback template remains a compatibility and
-advanced-deployment option, not a default recommendation.
-
-SAM, RF-DETR, LocateAnything, PIDNet and YOLO remain Model Backends until their separate Rust plugin,
-weights, health and capabilities are Ready. They are not RoboCup Skill actions and are never
-injected into the default Draft. See the [Rust Plugin Alpha demo](docs/DEMO_RUST_PLUGIN_ALPHA.md)
-or the [five-minute Lean Agent demo](docs/DEMO_LEAN_AGENT_ALPHA.md).
-
-Run the ground-truth-backed synthetic evaluation (no key or external weights required):
-
-```bash
-cargo run -p annotagent -- evaluate \
-  --ground-truth examples/robocup/evaluation/ground-truth.synthetic.json \
-  --predictions examples/robocup/evaluation/predictions.synthetic.json \
-  --bbox-iou-threshold 0.5
-```
-
-Unlabelled real datasets are rejected as accuracy inputs; their run telemetry remains available separately.
-
-## Install and start
-
-Requirements are stable Rust, Node.js 20+, and npm.
-
-```bash
-cargo build --workspace --all-features
-npm --prefix web install
-npm --prefix web run build
-```
-
-Start the product shell with an empty workspace:
-
-```bash
-cargo run -p annotagent -- serve --workspace ./workspace --open
-```
-
-Open the TUI with or without an initial Project:
-
-```bash
-cargo run -p annotagent -- tui
-cargo run -p annotagent -- tui --project examples/robocup/project.yaml
-```
-
-Create and run a Project:
-
-```bash
-cargo run -p annotagent -- init workspace/my-project --skill robocup
-cargo run -p annotagent -- run \
-  --project workspace/my-project/project.yaml \
-  --provider mock \
-  --limit 1
-```
-
-For a real compatible provider, copy an example configuration, enter the provider and model in Settings or set the configured environment variable, then select that saved binding for the run. Never commit local keys.
-
-## Repository guide
-
-- `crates/annotagent-core`: domain-neutral contracts and checked types.
-- `crates/annotagent-runtime`: bounded agent loop and Workflow execution compatibility layer.
-- `crates/annotagent-application`: Project/Workflow/Model DTOs and use cases.
-- `crates/annotagent-server`: local HTTP/SSE boundary.
-- `web`: product shell and review interface.
-- `skills/<id>` and `crates/annotagent-skill-*`: Skill resources and implementations.
-- `examples`: concrete Project examples.
-- `design/annotagent-visual-system`: canonical Core and Skill visual sources.
-
-See [Product hierarchy](docs/PRODUCT_HIERARCHY.md), [Project Guidance](docs/PROJECT_GUIDANCE.md), [Workflow model](docs/WORKFLOW_MODEL.md), [Workflow runtime](docs/WORKFLOW_RUNTIME.md), [Artifact model](docs/ARTIFACT_MODEL.md), [Batch coordinator](docs/BATCH_COORDINATOR.md), [Model backend protocol](docs/MODEL_BACKEND_PROTOCOL.md), [Real Model Release](docs/REAL_MODEL_RELEASE.md), [Open-vocabulary Detection](docs/OPEN_VOCABULARY_DETECTION.md), [Specialist Detection](docs/SPECIALIST_DETECTION.md), [RF-DETR Backend](docs/RFDETR_BACKEND.md), [Detection Evidence](docs/DETECTION_EVIDENCE.md), [Model License Metadata](docs/MODEL_LICENSE_METADATA.md), [Hybrid Detection Workflows](docs/HYBRID_DETECTION_WORKFLOWS.md), [five-minute Lean Agent demo](docs/DEMO_LEAN_AGENT_ALPHA.md), [Advisor](docs/WORKFLOW_ADVISOR.md), [Release acceptance](docs/RELEASE_ACCEPTANCE.md), and [Known limitations](docs/KNOWN_LIMITATIONS.md).
-
-## Verification
-
-```bash
-cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
-cargo build --workspace --all-features
-npm --prefix web run typecheck
-npm --prefix web test -- --run
-npm --prefix web run build
-npm --prefix web run test:e2e
-cargo run -p annotagent -- doctor
-cargo run -p annotagent -- demo generic-classification
-cargo run -p annotagent -- demo generic-detection-crop
-cargo run -p annotagent -- demo robocup-ball
-cargo run -p annotagent -- demo lean-agent-robocup
-```
-
-Security assumptions and disclosure guidance are in [SECURITY.md](SECURITY.md). The local server is designed for a trusted loopback workspace and has no authentication.
-
-## Geometry-safe detection and improvement
-
-AnnotAgent separates a model's semantic/detection score from measured box quality. VLM boxes are
-uncalibrated coarse proposals by default, so a high semantic score cannot directly authorize a
-training bbox Commit. Safe Pipelines use Human Review, measured prompted refinement, or exact
-Project/model/node calibration.
-
-Run Results and Review show score meaning, box source and geometry verification separately. From
-Project Overview, Run Results, Review or Automation, open **Improve Automation** to diagnose reviewed
-evidence, create a focused Patch Draft, compare it on independent holdout Runs, and apply selected
-changes. AnnotAgent never publishes the result automatically.
-
-Start with [VLM Geometry Safety](docs/VLM_GEOMETRY_SAFETY.md),
-[Geometry Calibration](docs/GEOMETRY_CALIBRATION.md), and
-[Pipeline Self-Improvement](docs/PIPELINE_SELF_IMPROVEMENT.md).
+- [完整使用流程](docs/GUIDED_EXPERIENCE.md) · [项目创建](docs/GUIDED_PROJECT_SETUP.md)
+- [运行与人工审核](docs/RUN_AND_REVIEW_UX.md) · [界面语言](docs/I18N.md)
+- [已知限制](docs/KNOWN_LIMITATIONS.md) · [安全说明](docs/SECURITY.md)
+- [开发、架构与测试](docs/DEVELOPMENT.md) · [插件开发](docs/WRITING_A_RUST_MODEL_PLUGIN.md)
+- [产品截图来源](docs/product/README.md)
