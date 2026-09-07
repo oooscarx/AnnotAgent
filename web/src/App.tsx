@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { LanguageSelector } from "./components/LanguageSelector";
 import { ApiRequestError, api, subscribeEvents } from "./api";
 import { AnnotationCanvas } from "./components/AnnotationCanvas";
+import { FirstResultEntry } from "./components/FirstResultEntry";
 import { ImproveAutomationPanel } from "./components/GeometrySafetyPanel";
 import { NotFoundPage } from "./features/notFound/NotFoundPage";
 import {
@@ -1981,23 +1982,9 @@ function Dashboard({
   const cost = runs.reduce((sum, run) => sum + Number(run.cost || 0), 0);
   return (
     <section className="page-stack">
-      <div className="hero-panel aa-dark">
-        <div>
-          <span className="kicker">{t("Guided annotation workspace")}</span>
-          <h2>{t("Move vision data from setup")}<br />
-            {" "}
-            <em>{t("to reviewed output.")}</em>
-          </h2>
-          <p>{t("Open a Project to import data, define Labels, build and test a Pipeline, run it, inspect its work, and review the result.")}</p>
-        </div>
-        <div className="hero-actions">
-          <button
-            className="primary"
-            onClick={onNewProject}
-          >{t("New project")}</button>
-          <button onClick={onRefresh}>{t("Refresh state")}</button>
-        </div>
-      </div>
+      <FirstResultEntry returning={projects.length > 0} onStart={onNewProject} />
+      {projects.length > 0 && <Panel title={t("Continue your work")} eyebrow={t("Recent projects")}><ProjectList projects={projects.slice(0, 5)} onSelect={onSelect} /></Panel>}
+      <details className="panel"><summary>{t("Workspace overview")}</summary>
       <div className="metrics-grid platform-metrics">
         <Metric
           label={t("Projects")}
@@ -2045,6 +2032,8 @@ function Dashboard({
           )}
         </Panel>
       </div>
+      <button onClick={onRefresh}>{t("Refresh state")}</button>
+      </details>
     </section>
   );
 }
