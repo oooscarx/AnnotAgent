@@ -10,8 +10,9 @@ use annotagent_application::{
     stable_project_id,
 };
 use annotagent_core::{
-    AgentSessionStatus, BindingMutationActor, InputModality, ModelBindingId, ModelBindingMatch,
-    ModelBindingRole, ModelCapability, ModelProfileId, ModelProfileStatus,
+    AgentSessionStatus, BindingMutationActor, InputModality, ManagementAction,
+    ManagementObjectKind, ManagementObjectRef, ManagementRequest, ModelBindingId,
+    ModelBindingMatch, ModelBindingRole, ModelCapability, ModelProfileId, ModelProfileStatus,
     PipelineBuilderConstraints, PipelineImprovementId, ProjectId, ProjectModelBinding,
     ProjectSchema, ProviderHealthStatus, ProviderId, RunEvent, RunEventPayload, RunStatus,
 };
@@ -92,6 +93,7 @@ struct TuiState {
     current_task: String,
     usage: String,
     active: Option<ActiveRun>,
+    pending_management: Option<ManagementRequest>,
     model_lines: Vec<String>,
     geometry_lines: Vec<String>,
     quit: bool,
@@ -120,6 +122,7 @@ impl TuiState {
             current_task: "-".to_owned(),
             usage: "input 0 · output 0 · cost 0".to_owned(),
             active: None,
+            pending_management: None,
             model_lines,
             geometry_lines,
             quit: false,
@@ -1045,6 +1048,167 @@ impl TuiState {
         Ok(())
     }
 
+    fn trash(&mut self, requested_kind: Option<&str>) -> Result<()> {
+        let project_id = self
+            .project_context
+            .as_ref()
+            .map(|project| project.id.clone())
+            .context("open a Project before viewing Trash")?;
+        let kind = requested_kind.map(parse_management_kind).transpose()?;
+        let entries = self.application.list_trash(&project_id, kind)?;
+        if entries.is_empty() {
+            self.push("Project Trash is empty.");
+            return Ok(());
+        }
+        self.push(format!("Project Trash · {} item(s)", entries.len()));
+        for entry in entries.into_iter().take(100) {
+            self.push(format!(
+                "{} · {} · deleted {} · operation {} · revision {}",
+                entry.object.kind.label(),
+                entry.display_name,
+                entry.deleted_at,
+                entry.deletion_operation_id,
+                entry.object.expected_revision,
+            ));
+        }
+        Ok(())
+    }
+
+    fn prepare_management(&mut self, args: &[&str]) -> Result<()> {
+        if args.len() < 3 {
+            anyhow::bail!(
+                "usage: /manage <delete|restore|purge|archive|unarchive|set-default|clear-default> <run|batch|draft|version|pipeline> <id> [version] [--clear-default]"
+            );
+        }
+        let project_id = self
+            .project_context
+            .as_ref()
+            .map(|project| project.id.clone())
+            .context("open a Project before managing lifecycle records")?;
+        let action = parse_management_action(args[0])?;
+        let kind = parse_management_kind(args[1])?;
+        let id = args[2].to_owned();
+        let version = if kind == ManagementObjectKind::WorkflowVersion {
+            Some(
+                args.get(3)
+                    .context("Published Version management requires its version number")?
+                    .parse::<u32>()
+                    .context("Published Version number must be an unsigned integer")?,
+            )
+        } else {
+            None
+        };
+        let clear_default =
+            args.contains(&"--clear-default") || action == ManagementAction::ClearDefault;
+        let expected_revision = match kind {
+            ManagementObjectKind::Run => {
+                let run_id = id.parse().context("invalid Run id")?;
+                self.application
+                    .store()
+                    .get_run_summary(run_id)?
+                    .lifecycle_revision
+            }
+            ManagementObjectKind::Batch => {
+                self.application.store().batch_lifecycle_metadata(&id)?.0
+            }
+            ManagementObjectKind::WorkflowDraft => self
+                .application
+                .list_pipeline_lifecycle(&project_id, true, true)?
+                .into_iter()
+                .flat_map(|pipeline| pipeline.drafts)
+                .find(|draft| draft.object.id == id)
+                .map(|draft| draft.object.expected_revision)
+                .context("Pipeline Draft was not found in this Project")?,
+            ManagementObjectKind::WorkflowVersion => self
+                .application
+                .list_pipeline_lifecycle(&project_id, true, true)?
+                .into_iter()
+                .flat_map(|pipeline| pipeline.versions)
+                .find(|published| published.object.id == id && published.object.version == version)
+                .map(|published| published.object.expected_revision)
+                .context("Published Version was not found in this Project")?,
+            ManagementObjectKind::Pipeline => self
+                .application
+                .list_pipeline_lifecycle(&project_id, true, true)?
+                .into_iter()
+                .find(|pipeline| pipeline.workflow_id == id)
+                .map(|pipeline| pipeline.lifecycle_revision)
+                .context("Pipeline was not found in this Project")?,
+        };
+        let mut request = ManagementRequest {
+            project_id,
+            objects: vec![ManagementObjectRef {
+                kind,
+                id,
+                version,
+                expected_revision,
+            }],
+            action,
+            replacement_default_version: None,
+            clear_default,
+            display_name: None,
+            idempotency_key: format!("tui-{}", uuid::Uuid::new_v4()),
+            confirmation_token: None,
+        };
+        let preview = self.application.preview_management(&request)?;
+        self.push(format!("Management preview · {}", preview.summary));
+        self.push(format!(
+            "impact · {} top-level · {} child Runs · {} Reviews hidden · {} confirmed annotations retained",
+            preview.impact.top_level_objects,
+            preview.impact.child_runs,
+            preview.impact.unresolved_reviews_hidden,
+            preview.impact.confirmed_annotations_retained,
+        ));
+        self.push(format!(
+            "storage · {} · estimated reclaimable {}",
+            preview.impact.estimate_note,
+            preview
+                .impact
+                .estimated_reclaimable_bytes
+                .map_or_else(|| "unknown".to_owned(), |bytes| format!("{bytes} bytes")),
+        ));
+        if !preview.blockers.is_empty() {
+            for blocker in preview.blockers {
+                self.push(format!("blocked · {} · {}", blocker.code, blocker.message));
+            }
+            self.pending_management = None;
+            return Ok(());
+        }
+        request.confirmation_token = Some(preview.confirmation_token);
+        self.pending_management = Some(request);
+        self.push("No changes made. Enter /confirm to execute this exact preview, or /discard.");
+        Ok(())
+    }
+
+    async fn confirm_management(&mut self) -> Result<()> {
+        let request = self
+            .pending_management
+            .clone()
+            .context("no pending management preview; use /manage first")?;
+        let receipt = self.application.execute_management_action(&request).await?;
+        self.pending_management = None;
+        self.push(format!(
+            "management {} · {:?} · {} object(s)",
+            receipt.operation_id,
+            receipt.status,
+            receipt.affected_objects.len(),
+        ));
+        if let Some(purge) = receipt.purge {
+            self.push(format!(
+                "cleanup · {} database rows · {} files · {} bytes · retained annotations {} · retained usage {}",
+                purge.database_rows_removed,
+                purge.files_removed,
+                purge.bytes_reclaimed,
+                purge.retained_annotation_records,
+                purge.retained_usage_records,
+            ));
+            for reason in purge.retained_reasons {
+                self.push(format!("retained · {reason}"));
+            }
+        }
+        Ok(())
+    }
+
     async fn command(&mut self, command: &str) -> Result<()> {
         let mut parts = command.split_whitespace();
         match parts.next().unwrap_or_default() {
@@ -1123,6 +1287,14 @@ impl TuiState {
                         }
                     }
                 }
+                Ok(())
+            }
+            "/trash" => self.trash(parts.next()),
+            "/manage" => self.prepare_management(&parts.collect::<Vec<_>>()),
+            "/confirm" => self.confirm_management().await,
+            "/discard" => {
+                self.pending_management = None;
+                self.push("Pending management preview discarded; no changes were made.");
                 Ok(())
             }
             "/inspect" => self.inspect_latest(),
@@ -1365,7 +1537,7 @@ impl TuiState {
                 Ok(())
             }
             "/help" | "?" => {
-                self.push("/open /init /skills /providers /providers show <id> /providers check <id> /models /models catalogs /models bundles /models instances /models references <bundle@version> /models doctor <instance-id> /models show <profile-id> /models compatible <capability> /models workers /models test <worker-id> /plugins /plugins models /plugins <enable|disable|references> <plugin-id> <version> /bindings /bind <role> <model-profile-id> /geometry /improvements [session-id] /advisor /advisor status /advisor cancel /run /pause /resume /cancel /replay [node] /artifacts /memory /history /trace /inspect /config /gui /help /quit");
+                self.push("/open /init /skills /providers /providers show <id> /providers check <id> /models /models catalogs /models bundles /models instances /models references <bundle@version> /models doctor <instance-id> /models show <profile-id> /models compatible <capability> /models workers /models test <worker-id> /plugins /plugins models /plugins <enable|disable|references> <plugin-id> <version> /bindings /bind <role> <model-profile-id> /geometry /improvements [session-id] /advisor /advisor status /advisor cancel /run /pause /resume /cancel /replay [node] /artifacts /memory /history /trash [kind] /manage <action> <kind> <id> [version] [--clear-default] /confirm /discard /trace /inspect /config /gui /help /quit");
                 Ok(())
             }
             "/quit" | "/q" => {
@@ -1390,6 +1562,34 @@ fn enum_label<T: serde::Serialize>(value: T) -> String {
         .ok()
         .and_then(|value| value.as_str().map(str::to_owned))
         .unwrap_or_else(|| "unknown".to_owned())
+}
+
+fn parse_management_action(value: &str) -> Result<ManagementAction> {
+    match value {
+        "delete" => Ok(ManagementAction::MoveToTrash),
+        "restore" => Ok(ManagementAction::Restore),
+        "purge" => Ok(ManagementAction::Purge),
+        "archive" => Ok(ManagementAction::Archive),
+        "unarchive" => Ok(ManagementAction::Unarchive),
+        "set-default" => Ok(ManagementAction::SetDefault),
+        "clear-default" => Ok(ManagementAction::ClearDefault),
+        _ => anyhow::bail!(
+            "unknown management action {value:?}; use delete, restore, purge, archive, unarchive, set-default, or clear-default"
+        ),
+    }
+}
+
+fn parse_management_kind(value: &str) -> Result<ManagementObjectKind> {
+    match value {
+        "run" => Ok(ManagementObjectKind::Run),
+        "batch" => Ok(ManagementObjectKind::Batch),
+        "draft" => Ok(ManagementObjectKind::WorkflowDraft),
+        "version" => Ok(ManagementObjectKind::WorkflowVersion),
+        "pipeline" => Ok(ManagementObjectKind::Pipeline),
+        _ => anyhow::bail!(
+            "unknown management object {value:?}; use run, batch, draft, version, or pipeline"
+        ),
+    }
 }
 
 fn parse_provider_id(value: &str) -> Result<ProviderId> {
@@ -1995,6 +2195,94 @@ mod tests {
                 .trace
                 .iter()
                 .all(|line| !line.to_ascii_lowercase().contains("authorization"))
+        );
+    }
+
+    #[tokio::test]
+    async fn lifecycle_commands_preview_before_using_the_shared_management_service() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = Arc::new(LocalApplication::new(temporary.path()).expect("application"));
+        let project_yaml = r"
+version: 1
+project:
+  name: TUI management fixture
+  language: en
+dataset:
+  root: images
+runtime: {}
+tasks: []
+review:
+  auto_accept_confidence: 0.9
+  force_review_below: 0.5
+export:
+  formats: [native]
+";
+        application
+            .create_project("manage", project_yaml)
+            .expect("Project");
+        let project_path = temporary.path().join("manage/project.yaml");
+        let run_id = annotagent_core::RunId::new();
+        annotagent_runtime::RuntimeStore::create_run(
+            application.store().as_ref(),
+            &annotagent_runtime::RunRecord {
+                id: run_id,
+                project_id: application
+                    .stable_project_scope_id("manage")
+                    .expect("stable Project scope"),
+                project_name: "TUI management fixture".to_owned(),
+                skill_id: "test".to_owned(),
+                provider: "offline".to_owned(),
+                model: "fixture".to_owned(),
+                status: RunStatus::Completed,
+                project_schema_json: project_yaml.to_owned(),
+                workflow_snapshot_json: None,
+            },
+        )
+        .await
+        .expect("terminal Run");
+        annotagent_runtime::RuntimeStore::set_run_status(
+            application.store().as_ref(),
+            run_id,
+            RunStatus::Completed,
+            None,
+        )
+        .await
+        .expect("terminal status");
+        let mut state = TuiState::new(Some(project_path), application.clone()).expect("TUI state");
+
+        state
+            .command(&format!("/manage delete run {run_id}"))
+            .await
+            .expect("management preview");
+        assert!(
+            state.pending_management.is_some(),
+            "trace={:#?}",
+            state.trace
+        );
+        assert!(
+            application
+                .store()
+                .get_run_summary(run_id)
+                .expect("Run before confirmation")
+                .deleted_at
+                .is_none()
+        );
+        state.command("/confirm").await.expect("confirmed deletion");
+        assert!(state.pending_management.is_none());
+        assert!(
+            application
+                .store()
+                .get_run_summary(run_id)
+                .expect("Run in Trash")
+                .deleted_at
+                .is_some()
+        );
+        state.command("/trash run").await.expect("Trash list");
+        assert!(
+            state
+                .trace
+                .iter()
+                .any(|line| line.contains("Project Trash · 1 item"))
         );
     }
 
