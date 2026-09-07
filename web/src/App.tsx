@@ -7693,6 +7693,15 @@ function PipelineManagementPanel({
       value: { workflow_id: version.object.id, version: version.object.version! },
     })));
   const key = (object: ManagementObjectRef) => `${object.kind}:${object.id}:${object.version ?? 0}`;
+  const selectableObjects = visible.flatMap((pipeline): ManagementObjectRef[] => [
+    { kind: "pipeline", id: pipeline.workflow_id, expected_revision: pipeline.lifecycle_revision },
+    ...pipeline.drafts.map((draft) => draft.object),
+    ...pipeline.versions.map((version) => version.object),
+  ]);
+  const allSelected = selectableObjects.length > 0 && selectableObjects.every((object) => selected.has(key(object)));
+  const selectAll = (checked: boolean) => setSelected(new Map(
+    checked ? selectableObjects.map((object) => [key(object), object]) : [],
+  ));
   const toggle = (object: ManagementObjectRef, checked: boolean) => setSelected((current) => {
     const next = new Map(current);
     if (checked) next.set(key(object), object);
@@ -7703,6 +7712,10 @@ function PipelineManagementPanel({
     (object.kind === "workflow_draft" && object.id === currentDraftId)
       || (object.kind === "pipeline" && object.id === currentDraftId));
   const openAction = (action: ManagementAction, objects: ManagementObjectRef[]) => {
+    const coveredChildren = new Set(pipelines
+      .filter((pipeline) => objects.some((object) => object.kind === "pipeline" && object.id === pipeline.workflow_id))
+      .flatMap((pipeline) => [...pipeline.drafts, ...pipeline.versions].map((child) => key(child.object))));
+    objects = objects.filter((object) => !coveredChildren.has(key(object)));
     if (!objects.length) return;
     if (blocksDirtyDraft(objects)) {
       onError("Save or discard the current Draft changes before removing its Draft or Pipeline.");
@@ -7751,10 +7764,14 @@ function PipelineManagementPanel({
   return <section className="panel pipeline-management" aria-labelledby="pipeline-management-title">
     <header className="pipeline-management-header">
       <div><span className="eyebrow">Saved work</span><h2 id="pipeline-management-title">Pipelines and Versions</h2><p>Manage display aliases and lifecycle state without changing immutable published content.</p></div>
-      <div className="button-row"><label className="checkbox-row"><input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />Show archived</label><button onClick={onOpenTrash}>Trash</button></div>
+      <div className="button-row"><label className="checkbox-row"><input type="checkbox" checked={showArchived} onChange={(event) => { setShowArchived(event.target.checked); setSelected(new Map()); }} />Show archived</label><button onClick={onOpenTrash}>Trash</button></div>
     </header>
     {receipt && <div className="operation-receipt" role="status"><span><strong>{receipt.action.replaceAll("_", " ")} completed</strong><small>Operation {receipt.operation_id.slice(0, 8)} is persisted.</small></span><button onClick={() => setReceipt(undefined)}>Dismiss</button></div>}
-    {selected.size > 0 && <div className="pipeline-selection-toolbar"><strong>{selected.size} lifecycle item{selected.size === 1 ? "" : "s"} selected</strong><button className="danger-button" onClick={() => openAction("move_to_trash", [...selected.values()])}>Move selected to Trash…</button><button onClick={() => setSelected(new Map())}>Clear</button></div>}
+    <div className="pipeline-selection-toolbar">
+      <label className="checkbox-row"><input type="checkbox" aria-label="Select all Pipelines and Versions" checked={allSelected} ref={(input) => { if (input) input.indeterminate = selected.size > 0 && !allSelected; }} disabled={selectableObjects.length === 0} onChange={(event) => selectAll(event.target.checked)} />Select all</label>
+      <strong>{selected.size} item{selected.size === 1 ? "" : "s"} selected</strong>
+      {selected.size > 0 && <><button className="danger-button" onClick={() => openAction("move_to_trash", [...selected.values()])}>Move selected to Trash…</button><button onClick={() => selectAll(false)}>Clear selection</button></>}
+    </div>
     <div className="pipeline-management-list">
       {visible.map((pipeline) => {
         const pipelineObject: ManagementObjectRef = { kind: "pipeline", id: pipeline.workflow_id, expected_revision: pipeline.lifecycle_revision };
