@@ -9502,6 +9502,12 @@ impl LocalApplication {
         for (_run_id, annotation, retained_revisions) in
             self.store.list_project_retained_annotations(stable_id)?
         {
+            if !matches!(
+                annotation.review_status,
+                ReviewStatus::AutoAccepted | ReviewStatus::HumanAccepted
+            ) {
+                continue;
+            }
             let Some(image_index) = image_indices.get(&annotation.image_id).copied() else {
                 continue;
             };

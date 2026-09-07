@@ -152,6 +152,7 @@ fn is_privileged_action(method: &Method, path: &str) -> bool {
         || path == "/api/model-bundles/import"
         || path == "/api/model-bundles/gc"
         || path == "/api/model-installations"
+        || path.ends_with("/management/actions")
         || (path.starts_with("/api/model-bundles/")
             && (path.ends_with("/verify")
                 || path.ends_with("/test")

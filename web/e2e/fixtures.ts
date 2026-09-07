@@ -20,6 +20,7 @@ function privilegedAction(method: string, path: string): string | undefined {
     || target === "/api/model-bundles/import"
     || target === "/api/model-bundles/gc"
     || target === "/api/model-installations"
+    || target.endsWith("/management/actions")
     || (target.startsWith("/api/model-bundles/") && ["/verify", "/test", "/enable", "/disable", "/license-acceptance"].some((suffix) => target.endsWith(suffix)))
     || (target.startsWith("/api/model-instances/") && target.endsWith("/test"))
     || target === "/api/plugins/packages/install"

@@ -1927,7 +1927,7 @@ test("Run lifecycle management survives refresh, restores, and preserves provena
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText("Storage is unchanged");
   await dialog.getByRole("button", { name: "Move to Trash" }).click();
-  await expect(page.getByRole("status")).toContainText("Moved to Trash");
+  await expect(page.getByRole("status").filter({ hasText: "Moved to Trash" })).toBeVisible();
   await page.reload();
   await expect(page.getByText(shortRunId)).toHaveCount(0);
 
@@ -1938,7 +1938,7 @@ test("Run lifecycle management survives refresh, restores, and preserves provena
   dialog = page.getByRole("dialog", { name: "Restore 1 item?" });
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Restore" }).click();
-  await expect(page.getByRole("status")).toContainText("restore completed");
+  await expect(page.getByRole("status").filter({ hasText: "restore completed" })).toBeVisible();
 
   await page.getByRole("button", { name: "Back to Runs" }).click();
   await page.getByLabel(`Select Run ${shortRunId}`).check();
@@ -1949,12 +1949,12 @@ test("Run lifecycle management survives refresh, restores, and preserves provena
   await page.reload();
   await expect(page.getByText(`Run ${shortRunId}`, { exact: true })).toBeVisible();
 
-  await page.getByRole("button", { name: "Clean up…" }).click();
+  await page.getByRole("button", { name: "Clean up…", exact: true }).click();
   dialog = page.getByRole("dialog", { name: "Permanently clean up 1 item?" });
   await expect(dialog).toContainText("Annotations retained");
   await dialog.getByLabel(/Type DELETE/).fill("DELETE");
   await dialog.getByRole("button", { name: "Permanently clean up" }).click();
-  await expect(page.getByRole("status")).toContainText("purge completed");
+  await expect(page.getByRole("status").filter({ hasText: "purge completed" })).toBeVisible();
   await expect(page.getByText(`Run ${shortRunId}`, { exact: true })).toHaveCount(0);
 
   const readinessAfter = await request.get(`/api/projects/${projectId}/export-readiness`);
