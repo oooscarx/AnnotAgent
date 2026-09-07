@@ -480,3 +480,24 @@ build passed, including Batch original-view refresh after the final URL changes.
 Screenshot visually inspected: actual fixture pixels, no technical success
 reason masquerading as a warning, and no offscreen skip-link artifact. The skip
 link remains focusable and becomes visible on keyboard focus.
+
+M4a commit: `9f87e67`.
+
+### M4b — changed plans keep honest old-sample context
+
+Found and fixed a real stale deep-link bug: a saved test with `current=false`
+was discarded, so its valid image link misleadingly reported “image unavailable”.
+The guided view now retains that exact immutable test as a read-only reference,
+shows “Sample Test is out of date”, and does not mount sample acceptance/adoption
+or correction actions. The original image is resolved by stable ID AND hash.
+Previous/next stay within the same test. “Review new sample scope” opens existing
+authorization for the current Draft; it does not run a model or reuse old consent.
+The management test page retains its existing out-of-date behavior.
+
+Isolated live-server/browser regression edits the tested working copy through
+the existing revision-checked PATCH API, reloads its exact test/image URL,
+verifies the retained image and absent adoption action, then checks fresh consent
+is unchecked and model-request count unchanged. Original parent Draft remains
+unchanged. The extended journey passed; typecheck and 89 unit tests passed.
+Screenshot: `guided-journey/sample-outdated.png`, synthetic Fixture only. Final
+full-suite and broader multi-tab freshness checks remain for the final regression.

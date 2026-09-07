@@ -1373,8 +1373,9 @@ function BuildTestPublish({
     )
       .then(({ sample_test: sampleTest, current }) => {
         if (generation !== sampleLoadGeneration.current) return;
-        if (sampleTest && current) {
+        if (sampleTest && (current || guided)) {
           setReport({ ...sampleTest.report, sample_inputs: sampleTest.inputs });
+          setStaleReport(!current);
           setRestoredAt(sampleTest.completed_at);
           setActiveSampleTest({ draftId, id: sampleTest.id });
           if (sampleTest.id !== selectedSampleTestId)
@@ -1501,6 +1502,16 @@ function BuildTestPublish({
   </div>;
   if (selectedSampleImageId && reportLoading) return <p role="status">{t("Restoring the saved Sample Test…")}</p>;
   if (selectedSampleImageId && !reportLoading && !inspectedSample) return <section role="alert"><h2>{t("Sample image unavailable")}</h2><p>{t("This image is not part of the selected saved Sample Test. No other result was substituted.")}</p><button onClick={() => setInspectedSampleIndex(undefined)}>{t("View all sample images")}</button></section>;
+  if (inspectedSample && staleReport) {
+    const image = sampleImage(inspectedSample);
+    const savedAnnotations: Annotation[] = image && inspectedSample.projection ? inspectedSample.outcomes.flatMap((outcome) => outcome.value ? [{ id: outcome.id, image_id: image.image_id, task_id: "sample", label: outcome.label, value: outcome.value, attributes: {}, source: "saved sample", review_status: "needs_review" as const, provenance: {}, created_at: "" }] : []) : [];
+    return <section className="journey-scene journey-results">
+      <div className="journey-intro"><h2>{t("Sample Test is out of date")}</h2><p role="alert">{t("This saved result belongs to an earlier plan. It remains visible for reference, but cannot authorize the changed plan. Review the current sample scope before testing again.")}</p></div>
+      <p>{inspectedSample.image_name} · {t("Sandbox sample")} · {inspectedPosition + 1}/{report?.samples.length}</p>
+      {image ? <AnnotationCanvas key={image.image_id} compactList imageUrl={image.url} annotations={savedAnnotations} readOnly onSelect={() => undefined} onChange={() => undefined} /> : <p>{t("The original image is unavailable. No substitute result is shown.")}</p>}
+      <footer className="journey-actions"><button disabled={inspectedPosition <= 0} onClick={() => setInspectedSampleIndex(report!.samples[inspectedPosition - 1].image_index)}>{t("Previous image")}</button><button disabled={inspectedPosition + 1 >= (report?.samples.length ?? 0)} onClick={() => setInspectedSampleIndex(report!.samples[inspectedPosition + 1].image_index)}>{t("Next image")}</button>{guided && <button className="primary" onClick={() => onSampleOperation?.(undefined)}>{t("Review new sample scope")}</button>}</footer>
+    </section>;
+  }
   if (inspectedSample) return <SampleAnnotationDialog key={`${activeSampleTest?.id}:${selectedSampleImageId}`}
     projectId={project.id} draftId={draftId} onImprove={onImprove} onKeepOriginal={(id, test, image) => onSelectTestContext(id, test, false, image)}
     onAdopt={guided && activeSampleTest ? () => onAdopt?.(draftId, activeSampleTest.id, selectedSampleImageId) : undefined}

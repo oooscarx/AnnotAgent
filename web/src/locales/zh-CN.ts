@@ -1044,6 +1044,8 @@ export const zhCN: Record<string, string> = {
   "Technical Artifacts": "技术产物",
   "Restoring the saved Sample Test…": "正在恢复保存的样本测试…",
   "Sample Test is out of date": "样本测试已过期",
+  "This saved result belongs to an earlier plan. It remains visible for reference, but cannot authorize the changed plan. Review the current sample scope before testing again.": "这是旧方案的已保存结果，仅供参考，不能用来确认修改后的方案。请先检查本次样例的范围，再重新测试。",
+  "Review new sample scope": "检查新样例的授权范围",
   "No Sample Test result": "没有样本测试结果",
   "Discard this Draft": "放弃此草稿",
   "Discard unpublished changes": "放弃未发布的更改",
