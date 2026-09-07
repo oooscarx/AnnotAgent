@@ -52,7 +52,7 @@ test("conditional model connection saves, verifies with consent, and returns wit
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
-    await page.screenshot({ path: `../docs/execution/guided-journey/model-${width}.png`, fullPage: true });
+    await page.screenshot({ path: `../docs/execution/guided-journey/model-${width}.png`, fullPage: true, animations: "disabled" });
   }
   await page.getByRole("button", { name: "Use connection and return", exact: true }).click();
   await expect(page).toHaveURL(`/projects/${projectId}/task/goal`);

@@ -1,6 +1,8 @@
 //! `SQLite` persistence for projects, auditable runs, revisions, and correction memory.
 
 mod batch;
+mod conversations;
+pub use conversations::{ConversationImageRef, ConversationMessage, ConversationMessageInput};
 mod management;
 mod processing_operations;
 mod sample_feedback;
@@ -76,6 +78,8 @@ const PIPELINE_LIFECYCLE_MIGRATION: &str =
 
 #[derive(Debug, Error)]
 pub enum StorageError {
+    #[error("invalid conversation operation: {0}")]
+    InvalidConversation(String),
     #[error("invalid sample operation: {0}")]
     InvalidSampleOperation(String),
     #[error("SQLite error: {0}")]
@@ -558,6 +562,10 @@ impl SqliteStore {
             connection.execute("INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (22, ?1, ?2)", params!["processing_operations", Utc::now().to_rfc3339()])?;
             connection.execute_batch(include_str!("../../../migrations/0023_sample_plan_revisions.sql"))?;
             connection.execute("INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (23, ?1, ?2)", params!["sample_plan_revisions", Utc::now().to_rfc3339()])?;
+            let transaction = connection.unchecked_transaction()?;
+            transaction.execute_batch(include_str!("../../../migrations/0024_project_conversations.sql"))?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (24, ?1, ?2)", params!["project_conversations", Utc::now().to_rfc3339()])?;
+            transaction.commit()?;
             Ok(())
         })
     }
