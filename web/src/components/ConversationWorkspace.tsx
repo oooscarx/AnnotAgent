@@ -5,10 +5,12 @@ import type { ConversationMessage, ConversationMessageInput, ImageItem, ProjectS
 import "./conversation-workspace.css";
 import { ConversationSchemaCard } from "./ConversationSchemaCard";
 import { ConversationSampleCanvas } from "./ConversationSampleCanvas";
+import type { HumanRequest } from "../conversation-human-api";
 
 /** The journal and image importer share the existing Project; neither starts inference. */
-export function ConversationWorkspace({ project, conversationId, imageId, draftId, sampleTestId, onNavigate, onNavigationGuardChange }: {
+export function ConversationWorkspace({ project, conversationId, imageId, draftId, sampleTestId, taskId, humanRequestId, onNavigate, onNavigationGuardChange }: {
   project: ProjectSummary; conversationId?: string; imageId?: string; draftId?:string; sampleTestId?:string;
+  taskId?:string; humanRequestId?:string;
   onNavigate: (path: string) => void;
   onNavigationGuardChange: (guard?: () => boolean) => void;
 }) {
@@ -22,6 +24,28 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   const [status, setStatus] = useState("");
   const [mobileView, setMobileView] = useState("conversation");
   const [width, setWidth] = useState(32);
+  const [requests,setRequests]=useState<HumanRequest[]>([]);
+  const [requestsReady,setRequestsReady]=useState(false);
+  const [requestRefresh,setRequestRefresh]=useState(0);
+  const activeRequest=requests.find(value=>value.input.id===humanRequestId && value.input.task_id===taskId);
+  useEffect(()=>{
+    const controller=new AbortController();setRequestsReady(false);
+    if(!conversation)return()=>controller.abort();
+    void api.conversationTasks(project.id,conversation,controller.signal).then(tasks=>Promise.all(tasks.map(task=>api.conversationHumanRequests(project.id,conversation,task.input.id,controller.signal)))).then(values=>{if(!controller.signal.aborted){setRequests(values.flat());setRequestsReady(true);}}).catch((error:Error)=>{if(!controller.signal.aborted)setError(error.message);});
+    return()=>controller.abort();
+  },[project.id,conversation,sampleTestId,requestRefresh]);
+  const updateRequest=(value:HumanRequest)=>setRequests(items=>items.map(item=>item.input.id===value.input.id ? value : item));
+  async function cancelRequest(value:HumanRequest){
+    if(value.input.id===humanRequestId && sampleDirty.current && !window.confirm("Discard unsaved correction and cancel this request?"))return;
+    try{updateRequest(await api.cancelHumanRequest(project.id,value));}catch(error){setError((error as Error).message);}
+  }
+  async function openRequest(value:HumanRequest){
+    const ticket=++sampleNavigation.current;
+    try{const operation=await api.sampleOperation(project.id,value.input.sample_test_id);
+      if(!alive.current || ticket!==sampleNavigation.current)return;
+      onNavigate(projectWorkPath(project.id,{conversationId:value.input.conversation_id,taskId:value.input.task_id,humanRequestId:value.input.id,draftId:operation.draft_id,sampleTestId:value.input.sample_test_id,imageId:value.input.image_id}));setMobileView("images");
+    }catch(error){if(alive.current)setError((error as Error).message);}
+  }
   const root = useRef<HTMLDivElement>(null);
   const pending = useRef(false);
   const selectingImage = useRef(false);
@@ -125,6 +149,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
             openImage(image.image_id);
           }}>Referenced image · {images.find((image) => image.image_id === message.input.image?.image_id)?.name ?? message.input.image.image_id}</button>}<small>Saved · {message.sequence}</small></li>)}
         </ol>
+        {conversation && <section aria-label="Human requests"><h3>Requests for your help</h3><button onClick={()=>{if(sampleDirty.current){setError("Save or undo this correction before refreshing requests.");return;}setRequestRefresh(value=>value+1);}}>Refresh requests</button>{requests.map(value=><article key={value.input.id} className="conversation-consent"><p>{value.input.question}</p><p>{value.status==="answered" ? "Correction saved · awaiting task continuation" : value.status}</p><button onClick={()=>void openRequest(value)}>Open requested result</button>{value.status==="pending" && <button onClick={()=>void cancelRequest(value)}>Cancel request</button>}</article>)}</section>}
         {conversation && messages[0] && <ConversationSchemaCard key={`${conversation}:${messages[0].input.id}`} project={project.id} conversation={conversation} message={messages[0].input.id} onDirtyChange={schemaDirtyChange} onSample={(draft,test,image)=>void openSample(draft,test,image)} />}
         <form onSubmit={(event) => { event.preventDefault(); void send(); }} className="conversation-composer">
           <label htmlFor="conversation-message">Your message</label>
@@ -139,7 +164,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
         onPointerMove={(event) => { if (!event.currentTarget.hasPointerCapture(event.pointerId)) return; const bounds = root.current?.getBoundingClientRect(); if (bounds) setWidth(Math.round(Math.max(25, Math.min(50, (event.clientX - bounds.left) / bounds.width * 100)))); }} />
       <section className="conversation-image-panel" aria-label="Project images">
         <div className="conversation-image-tools"><h2>{images.length ? `${images.length} images` : "Your images"}</h2><label className="conversation-upload">Add images<input type="file" accept="image/png,image/jpeg" multiple disabled={busy || !ready} onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; void upload(files); }} /></label></div>
-        {draftId && sampleTestId ? <ConversationSampleCanvas project={project.id} draft={draftId} test={sampleTestId} image={selected} onDirtyChange={sampleDirtyChange} onOpen={(draft,test,image)=>void openSample(draft,test,image)} /> : imageId && !selected && ready ? <p role="alert">This image is not available in this Project. Select an existing image below.</p> : selected ? <figure className="conversation-image"><img src={selected.url} alt={selected.name} /><figcaption>{selected.name} · Original image · No annotation overlay</figcaption></figure> : <div className="conversation-image-empty"><h3>Start with your own images</h3><p>PNG or JPEG · up to 25 MB per image. Files are uploaded to this AnnotAgent server, not sent to a model.</p></div>}
+        {humanRequestId && !activeRequest ? <p role="status">{requestsReady ? "Human request not found in this task. No other result was substituted." : "Loading saved human request…"}</p> : draftId && sampleTestId ? <ConversationSampleCanvas project={project.id} draft={draftId} test={sampleTestId} image={selected} humanRequest={activeRequest} onAnswered={updateRequest} onDirtyChange={sampleDirtyChange} onOpen={(draft,test,image)=>void openSample(draft,test,image)} /> : imageId && !selected && ready ? <p role="alert">This image is not available in this Project. Select an existing image below.</p> : selected ? <figure className="conversation-image"><img src={selected.url} alt={selected.name} /><figcaption>{selected.name} · Original image · No annotation overlay</figcaption></figure> : <div className="conversation-image-empty"><h3>Start with your own images</h3><p>PNG or JPEG · up to 25 MB per image. Files are uploaded to this AnnotAgent server, not sent to a model.</p></div>}
         <nav className="conversation-thumbnails" aria-label="Select image">{images.map((image) => <button key={image.image_id} aria-label={image.name} aria-current={image.image_id === selected?.image_id ? "true" : undefined} onClick={() => openImage(image.image_id)}><img loading="lazy" src={image.url} alt="" /><span>{image.name}</span></button>)}</nav>
       </section>
     </div>

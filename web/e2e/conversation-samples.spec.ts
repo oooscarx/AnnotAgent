@@ -88,8 +88,7 @@ test(`conversation ${kind} authorizes HTTP fixture samples and restores editable
   await page.getByRole("button",{name:/Images \(/}).click();
   await expect(page.getByLabel("Saved sample results",{exact:true})).toBeVisible();
   await page.screenshot({path:`../docs/execution/conversational-workspace/sample-${kind}-390.png`,fullPage:true});
-  // HTTP integration for durable human requests. This does not claim a request card
-  // or coordinator continuation exists yet; it exercises the real saved sample.
+  // A persisted request opens the existing canvas and saves through its atomic answer API.
   const imageId=new URL(page.url()).searchParams.get("image")!;
   const feedbackPath=`/api/workflow-sample-tests/${envelope.request_id}/images/${imageId}/feedback`;
   const revisions=(await (await request.get(feedbackPath)).json()).revisions;
@@ -103,10 +102,34 @@ test(`conversation ${kind} authorizes HTTP fixture samples and restores editable
   expect(created.ok(),await created.text()).toBe(true);
   expect((await created.json()).status).toBe("pending");
   expect((await request.post(humanRoot,{data:human})).ok()).toBe(true);
-  const answer={...previous,revision_id:randomUUID(),sequence:previous.sequence+1,note:"TEST structured human answer",created_at:new Date().toISOString()};
-  const answered=await request.post(`${humanRoot}/${human.id}/answer`,{data:{answer}});
-  expect(answered.ok(),await answered.text()).toBe(true);
-  expect((await answered.json()).status).toBe("answered");
+  await page.setViewportSize({width:1280,height:800});
+  await page.getByRole("button",{name:"Refresh requests",exact:true}).click();
+  await page.getByRole("button",{name:"Open requested result",exact:true}).click();
+  await expect(page.getByRole("button",{name:"Submit correction",exact:true})).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("request")).toBe(human.id);
+  expect(new URL(page.url()).searchParams.get("task")).toBe(human.task_id);
+  await page.reload();
+  await expect(page.getByRole("button",{name:"Submit correction",exact:true})).toBeVisible();
+  await page.getByLabel("Correct label",{exact:true}).fill(kind==="classification" ? "室内" : "cup");
+  if(kind==="bbox"){await page.getByText("Result needs attention",{exact:true}).click();await page.getByRole("spinbutton",{name:"width",exact:true}).fill("0.12");}
+  await page.locator(".conversation-panel").evaluate(element=>{const card=element.querySelector<HTMLElement>('[aria-label="Human requests"]');if(card)element.scrollTop=card.offsetTop-element.getBoundingClientRect().top;});
+  await page.locator(".conversation-image-panel").evaluate(element=>element.scrollTop=0);
+  await page.screenshot({path:`../docs/execution/conversational-workspace/human-request-${kind}.png`,fullPage:true});
+  await page.setViewportSize({width:390,height:844});
+  await page.getByRole("button",{name:/Images \(/}).click();
+  await expect(page.getByRole("button",{name:"Submit correction",exact:true})).toBeVisible();
+  await page.screenshot({path:`../docs/execution/conversational-workspace/human-request-${kind}-390.png`,fullPage:true});
+  await page.setViewportSize({width:1280,height:800});
+  let answer:any;
+  await page.route(`**${humanRoot}/${human.id}/answer`,async route=>{answer=route.request().postDataJSON().answer;await route.fetch();await route.abort("failed");},{times:1});
+  await page.getByRole("button",{name:"Submit correction",exact:true}).click();
+  await expect(page.locator(".sample-confirm-action [role=alert]")).toBeVisible();
+  if(kind==="bbox")await expect(page.getByRole("spinbutton",{name:"width",exact:true})).toHaveValue("0.12");
+  else await expect(page.getByLabel("Correct label",{exact:true})).toHaveValue("室内");
+  await page.getByRole("button",{name:"Submit correction",exact:true}).click();
+  await expect(page.getByText("Correction saved. Task continuation is pending; no new model call was started.",{exact:true})).toBeVisible();
+  expect(answer.outcome_id).toBe(human.outcome_id);
+  expect(answer.sequence).toBe(previous.sequence+1);
   expect((await request.post(`${humanRoot}/${human.id}/answer`,{data:{answer}})).ok()).toBe(true);
   expect((await request.post(`${humanRoot}/${human.id}/answer`,{data:{answer:{...answer,note:"changed retry"}}})).ok()).toBe(false);
   expect((await (await request.get(feedbackPath)).json()).revisions).toHaveLength(revisions.length+1);

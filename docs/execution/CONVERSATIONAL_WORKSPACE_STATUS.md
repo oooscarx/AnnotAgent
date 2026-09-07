@@ -821,3 +821,52 @@ No live model test, real workspace change, push or remote modification occurred.
 
 Final increment regression: Server all-features **36/36** passed after cancellation
 was added; workspace rustfmt check passed.
+
+### Human Request cards and bound canvas submission (M2 increment)
+
+The conversation now reads saved task requests, shows their actual state/question,
+opens their exact sample image and supports explicit cancellation. Typed work routes
+retain `task` and `request` alongside Draft/Test/Image; missing or mismatched requests
+cannot silently select another result. Reading/refreshing requests sends no mutation.
+Explicit refresh currently discovers new requests; automatic coordinator notification
+is still pending. Refresh is blocked while a correction is dirty; cancelling that
+active request requires discarding edits explicitly.
+
+SampleFeedbackEditor has a scoped human-submission adapter, not another annotation
+editor. It preselects and locks the requested outcome, restores that object's prior
+feedback, keeps normalized geometry/classification editing and Undo, and submits the
+same validated feedback shape through the atomic answer command. Missing-target and
+whole-image actions are not misapplied to a single-object request. The existing editor
+remains unchanged outside this mode. The button says **Submit correction**, not
+Submit-and-continue: there is still no durable coordinator consumer. Answered cards
+truthfully say correction saved / continuation pending, and ordinary Sandbox edits
+remain distinct from formal annotation acceptance.
+
+Browser tests now click Refresh requests → Open requested result → reload exact route
+→ edit the requested label/bbox → Submit correction. The test drops the successful
+answer response; local edits remain, explicit retry reuses the revision key, and only
+one feedback revision appears. Both classification and bbox complete, and their task
+call histories remain unchanged. Existing mismatched-task, cross-origin, conflicting
+retry and late-after-cancel HTTP checks remain. These requests are created explicitly
+by the test, not autonomous LLM-request-generation evidence.
+
+Inspected desktop and 390px screenshots `human-request-{classification,bbox}.png` and
+`human-request-{classification,bbox}-390.png`. They show scripted TEST outputs on the
+existing synthetic scene, not real cup-detection quality. Narrow-screen panels and
+submit controls work; no 200% or real-user usability claim is made. Last focused run
+was **2/2** in `/tmp/annotagent-guided-e2e-91904`, 13.1s total; Web unit tests **107/107**
+and typecheck passed. Production build retains the known chunk-size warning.
+
+Remaining: automatic Human Request generation/notification, answer consumer and repair
+resume, other request kinds, multi-message routing, bounded improvement and full
+conversation processing/Review/export. Default rollout stays off. No real workspace
+restart, paid call, push or remote change occurred.
+
+Final combined browser run `/tmp/annotagent-guided-e2e-92062`: **3/4 passed** (both
+sample/request tests plus Schema/Builder). The journal case hit the real shared-server
+mutation-rate window; its route handler was waiting on `mutation_rate_limited` while
+the UI assertion expired after 10s. Fresh isolated journal rerun in
+`/tmp/annotagent-guided-e2e-92142`: **1/1 passed**, 836ms / 5.9s total. Production rate
+limits were not changed. This does not claim a fully green combined suite; test-server
+isolation/rate-window coordination remains a harness limitation. Final Web checks:
+typecheck, **107/107** unit tests and `git diff --check` passed.
