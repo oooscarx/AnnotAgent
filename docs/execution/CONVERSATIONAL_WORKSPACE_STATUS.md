@@ -398,3 +398,39 @@ action spacing. These remain TEST goal-before-upload screens, not live visual qu
 evidence. Production build has the existing large-chunk warning. Full workspace
 regression, actual Pipeline schema binding, human requests and complete golden paths
 remain pending. No real workspace data, remote or server restart was changed.
+
+### Frozen Workflow semantics binding (M2, continued)
+
+WorkflowDraft now carries an optional semantic-only Schema binding (source draft,
+exact revision, goal, task and boundary rules). Absent bindings are omitted from
+serialization and both custom hash materials, preserving legacy content identity.
+Present bindings participate in authoring and publication snapshot hashes. Loading
+an editable binding verifies ownership and equality to its immutable stored Schema
+revision; injected task definitions are rejected. A bounded Application binding
+command uses existing Workflow optimistic saves, never Project YAML mutation.
+
+Existing save/label compilation, static/geometry validation and label-pipeline sample
+execution resolve the bound schema. Published DAG execution applies its frozen copy
+to the per-image Project request, without changing dataset, review policy or runtime
+settings. Retry/Improve Existing Builder contexts consume those semantics; Builder
+identity patches and label recompilation preserve the binding. Boundary rules are
+included in the effective annotation goal. Older editors omitting the optional field
+cannot silently clear it. Existing workflow ownership cannot be changed on save.
+
+Regression proves Schema revision 2 does not modify a Workflow bound to revision 1,
+binding changes alter content hash, frozen snapshots retain old semantics, forged
+and foreign bindings fail, and an older editor round trip preserves binding.
+Project labels and safety policy remain unchanged. This is backend integration,
+not yet the complete conversation→authorized Builder→sample golden path: initial
+workflow creation from conversation and the shared multi-phase allowance are still
+pending. No UI button claims that path works yet. Dedicated bound-schema model-input
+inference evidence must still be added beyond the current binding regression.
+
+Evidence: `cargo check --workspace --all-features`, strict workspace/all-targets/
+all-features Clippy, workspace/all-features tests and build passed. Existing opt-in
+Live/real-weight tests remain ignored (SAM, YOLOX, PIDNet, RF-DETR and environment-
+dependent application smoke), not claimed as inference verification. After the final
+old-editor/compilation preservation edits, Application/all-features tests reran:
+**89 passed, 1 ignored**, and targeted Schema **4/4** plus strict Application Clippy
+passed. No new screenshots: this change is backend-only. Full goal remains active;
+no push, remote edits, real-data writes or real-user usability testing.

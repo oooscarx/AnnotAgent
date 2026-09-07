@@ -101,6 +101,7 @@ fn published(nodes: Vec<WorkflowDraftNode>, edges: Vec<WorkflowEdge>) -> Publish
         runtime_policies: BTreeMap::new(),
         allow_unvalidated_commit: false,
         geometry_risk_acceptance: None,
+        annotation_schema: None,
         label_pipeline: None,
         created_at: now,
         updated_at: now,

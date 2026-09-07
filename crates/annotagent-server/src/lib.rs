@@ -12860,6 +12860,7 @@ export:
             runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: true,
             geometry_risk_acceptance: None,
+            annotation_schema: None,
             label_pipeline: None,
             created_at: now,
             updated_at: now,

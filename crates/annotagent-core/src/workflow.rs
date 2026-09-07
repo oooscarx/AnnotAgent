@@ -177,8 +177,38 @@ impl WorkflowDraftNode {
     }
 }
 
+/// Frozen annotation semantics only; cannot override dataset, credentials or review policy.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowSchemaBinding {
+    pub schema_draft_id: String,
+    pub revision: u64,
+    pub goal: String,
+    pub task: crate::TaskConfig,
+    pub boundary_rules: Vec<String>,
+}
+
+impl WorkflowSchemaBinding {
+    pub fn apply_to(&self, project: &mut crate::ProjectSchema) {
+        project.tasks = vec![self.task.clone()];
+        project.project.annotation_goal.clone_from(&self.goal);
+        if !self.boundary_rules.is_empty() {
+            project
+                .project
+                .annotation_goal
+                .push_str("\nAnnotation boundary rules:\n");
+            project
+                .project
+                .annotation_goal
+                .push_str(&self.boundary_rules.join("\n"));
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkflowDraft {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotation_schema: Option<WorkflowSchemaBinding>,
     #[serde(default = "default_workflow_schema_version")]
     pub schema_version: u32,
     pub id: String,
@@ -231,6 +261,8 @@ impl WorkflowDraft {
             runtime_policies: &'a BTreeMap<String, serde_json::Value>,
             allow_unvalidated_commit: bool,
             geometry_risk_acceptance: &'a Option<GeometryRiskAcceptance>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            annotation_schema: &'a Option<WorkflowSchemaBinding>,
             label_pipeline: &'a Option<crate::LabelWorkflowComposition>,
         }
         serde_json::to_vec(&Material {
@@ -244,6 +276,7 @@ impl WorkflowDraft {
             runtime_policies: &self.runtime_policies,
             allow_unvalidated_commit: self.allow_unvalidated_commit,
             geometry_risk_acceptance: &self.geometry_risk_acceptance,
+            annotation_schema: &self.annotation_schema,
             label_pipeline: &self.label_pipeline,
         })
     }
@@ -288,6 +321,7 @@ impl WorkflowTemplate {
             runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: self.allow_unvalidated_commit,
             geometry_risk_acceptance: None,
+            annotation_schema: None,
             label_pipeline: None,
             created_at: now,
             updated_at: now,
@@ -806,6 +840,8 @@ impl WorkflowSnapshot {
             runtime_policies: &'a BTreeMap<String, serde_json::Value>,
             allow_unvalidated_commit: bool,
             geometry_risk_acceptance: &'a Option<GeometryRiskAcceptance>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            annotation_schema: &'a Option<WorkflowSchemaBinding>,
             label_pipeline: &'a Option<crate::LabelWorkflowComposition>,
             models: &'a [VisionModelDescriptor],
             model_profiles: &'a [crate::ModelProfileSnapshot],
@@ -826,6 +862,7 @@ impl WorkflowSnapshot {
             runtime_policies: &draft.runtime_policies,
             allow_unvalidated_commit: draft.allow_unvalidated_commit,
             geometry_risk_acceptance: &draft.geometry_risk_acceptance,
+            annotation_schema: &draft.annotation_schema,
             label_pipeline: &draft.label_pipeline,
             models: &self.models,
             model_profiles: &self.model_profiles,
@@ -1082,6 +1119,7 @@ impl WorkflowAdvisor for RegistryWorkflowAdvisor {
                 runtime_policies: BTreeMap::new(),
                 allow_unvalidated_commit: false,
                 geometry_risk_acceptance: None,
+                annotation_schema: None,
                 label_pipeline: None,
                 created_at: now,
                 updated_at: now,
@@ -1478,6 +1516,7 @@ fn suggest_detection_workflow(
             runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: false,
             geometry_risk_acceptance: None,
+            annotation_schema: None,
             label_pipeline: None,
             created_at: now,
             updated_at: now,
@@ -3136,6 +3175,7 @@ mod tests {
             runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: true,
             geometry_risk_acceptance: None,
+            annotation_schema: None,
             label_pipeline: None,
             created_at: now,
             updated_at: now,

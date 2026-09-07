@@ -1144,6 +1144,9 @@ impl PipelineDraftDiff {
 }
 
 fn applied_identity(base: &WorkflowDraft, mut proposed: WorkflowDraft) -> WorkflowDraft {
+    proposed
+        .annotation_schema
+        .clone_from(&base.annotation_schema);
     proposed.id.clone_from(&base.id);
     proposed.project_id.clone_from(&base.project_id);
     proposed.revision = base.revision;
@@ -3359,6 +3362,7 @@ mod tests {
             runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: false,
             geometry_risk_acceptance: None,
+            annotation_schema: None,
             label_pipeline: None,
             created_at: now,
             updated_at: now,
@@ -4048,6 +4052,7 @@ mod tests {
             runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: false,
             geometry_risk_acceptance: None,
+            annotation_schema: None,
             label_pipeline: None,
             created_at: now,
             updated_at: now,
@@ -4269,6 +4274,7 @@ mod tests {
             runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: false,
             geometry_risk_acceptance: None,
+            annotation_schema: None,
             label_pipeline: None,
             created_at: now,
             updated_at: now,

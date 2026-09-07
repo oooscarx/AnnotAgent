@@ -42,6 +42,54 @@ impl Drop for CallCancellationGuard<'_> {
 }
 
 impl crate::LocalApplication {
+    pub(crate) fn workflow_project_schema(
+        &self,
+        draft: &annotagent_core::WorkflowDraft,
+    ) -> Result<annotagent_core::ProjectSchema> {
+        let path = self.project_path(&draft.project_id)?;
+        let (mut project, _) = crate::load_project_schema_with_registry(&path, &self.skills)?;
+        if let Some(binding) = &draft.annotation_schema {
+            let schema = self.conversation_schema_draft(
+                &draft.project_id,
+                Uuid::parse_str(&binding.schema_draft_id)?,
+                Some(binding.revision),
+            )?;
+            if binding.task != schema.definition.task
+                || binding.goal != schema.definition.goal
+                || binding.boundary_rules != schema.definition.boundary_rules
+            {
+                bail!("Workflow Schema binding differs from its saved revision");
+            }
+            binding.apply_to(&mut project);
+        }
+        Ok(project)
+    }
+
+    pub fn bind_conversation_schema_to_workflow(
+        &self,
+        project: &str,
+        workflow: &str,
+        expected_revision: u64,
+        schema_id: Uuid,
+        schema_revision: u64,
+    ) -> Result<annotagent_core::WorkflowDraft> {
+        let schema = self.conversation_schema_draft(project, schema_id, Some(schema_revision))?;
+        let mut draft = self.store.get_workflow_draft(workflow)?;
+        if draft.project_id != project {
+            bail!("Workflow does not belong to this Project");
+        }
+        if draft.revision != expected_revision {
+            bail!("Workflow changed; reload before binding Schema");
+        }
+        draft.annotation_schema = Some(annotagent_core::WorkflowSchemaBinding {
+            schema_draft_id: schema.id.to_string(),
+            revision: schema.revision,
+            goal: schema.definition.goal,
+            task: schema.definition.task,
+            boundary_rules: schema.definition.boundary_rules,
+        });
+        self.save_workflow_draft(draft)
+    }
     pub fn conversation_schema_for_call(
         &self,
         project: &str,
@@ -822,6 +870,91 @@ mod tests {
                 .is_err()
         );
         let after_edit_restart = crate::LocalApplication::new(temp.path()).unwrap();
+        let settings = crate::load_settings(None).unwrap();
+        let workflow = reopened
+            .create_workflow_draft("schema-test", &settings, false)
+            .unwrap();
+        let legacy_material = workflow.content_hash_material().unwrap();
+        assert!(
+            serde_json::from_slice::<serde_json::Value>(&legacy_material)
+                .unwrap()
+                .get("annotation_schema")
+                .is_none()
+        );
+        let bound = reopened
+            .bind_conversation_schema_to_workflow(
+                "schema-test",
+                &workflow.id,
+                workflow.revision,
+                schema_draft.id,
+                1,
+            )
+            .unwrap();
+        assert_ne!(bound.content_hash, workflow.content_hash);
+        let effective = reopened.workflow_project_schema(&bound).unwrap();
+        assert_eq!(effective.tasks[0].labels, vec!["cup"]);
+        assert_eq!(effective.dataset.root.to_string_lossy(), "images");
+        assert!((effective.review.auto_accept_confidence - 0.9).abs() < f32::EPSILON);
+        assert_eq!(
+            reopened
+                .conversation_schema_draft("schema-test", schema_draft.id, None)
+                .unwrap()
+                .definition
+                .task
+                .labels,
+            vec!["mug"]
+        );
+        let snapshot = annotagent_core::WorkflowSnapshot::frozen(
+            &bound,
+            &annotagent_core::ModelRegistry::default(),
+            BTreeMap::default(),
+        );
+        let old_snapshot_material = snapshot.content_hash_material().unwrap();
+        let mut forged = bound.clone();
+        forged.annotation_schema.as_mut().unwrap().task.labels = vec!["injected".into()];
+        assert!(reopened.save_workflow_draft(forged).is_err());
+        let rebound = reopened
+            .bind_conversation_schema_to_workflow(
+                "schema-test",
+                &bound.id,
+                bound.revision,
+                schema_draft.id,
+                2,
+            )
+            .unwrap();
+        assert_ne!(rebound.content_hash, bound.content_hash);
+        let mut older_editor = rebound.clone();
+        older_editor.annotation_schema = None;
+        older_editor.name.push_str(" edited");
+        let preserved = reopened.save_workflow_draft(older_editor).unwrap();
+        assert_eq!(preserved.annotation_schema, rebound.annotation_schema);
+        assert_eq!(
+            snapshot.content_hash_material().unwrap(),
+            old_snapshot_material
+        );
+        assert_eq!(
+            snapshot
+                .draft
+                .as_ref()
+                .unwrap()
+                .annotation_schema
+                .as_ref()
+                .unwrap()
+                .task
+                .labels,
+            vec!["cup"]
+        );
+        assert!(
+            reopened
+                .bind_conversation_schema_to_workflow(
+                    "foreign-schema",
+                    &bound.id,
+                    rebound.revision,
+                    schema_draft.id,
+                    2
+                )
+                .is_err()
+        );
         assert_eq!(
             after_edit_restart
                 .conversation_schema_draft("schema-test", schema_draft.id, None)

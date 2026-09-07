@@ -2777,6 +2777,7 @@ fn refresh_plan_candidates(
             runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: false,
             geometry_risk_acceptance: None,
+            annotation_schema: None,
             label_pipeline: None,
             created_at: candidate.created_at,
             updated_at: chrono::Utc::now(),
@@ -6033,7 +6034,10 @@ fn compile_label_projection(draft: WorkflowDraft, project: &ProjectSchema) -> Wo
     );
     compiled.id = draft.id;
     compiled.status = draft.status;
+    compiled.revision = draft.revision;
+    compiled.content_hash = draft.content_hash;
     compiled.resource_versions = draft.resource_versions;
+    compiled.annotation_schema = draft.annotation_schema;
     compiled.allow_unvalidated_commit = draft.allow_unvalidated_commit;
     compiled.created_at = draft.created_at;
     compiled.updated_at = draft.updated_at;
@@ -11126,6 +11130,7 @@ impl LocalApplication {
                 runtime_policies: BTreeMap::new(),
                 allow_unvalidated_commit: false,
                 geometry_risk_acceptance: None,
+                annotation_schema: None,
                 label_pipeline: None,
                 created_at: now,
                 updated_at: now,
@@ -12050,7 +12055,7 @@ impl LocalApplication {
         build_mode: annotagent_core::PipelineBuildMode,
         cancellation: CancellationToken,
     ) -> Result<WorkflowAdvisorAgentReport> {
-        let input = self.workflow_advisor_input_for_label(
+        let mut input = self.workflow_advisor_input_for_label(
             project_id,
             settings,
             constraints.clone(),
@@ -12062,6 +12067,7 @@ impl LocalApplication {
             if draft.project_id != project_id {
                 bail!("retry Draft does not belong to the requested Project");
             }
+            input.project_schema = self.workflow_project_schema(&draft)?;
             if matches!(
                 draft.status,
                 WorkflowDraftStatus::Published | WorkflowDraftStatus::Archived
@@ -12111,6 +12117,9 @@ impl LocalApplication {
                 .get_published_workflow_version(workflow_id, version)?;
             if published.project_id != project_id {
                 bail!("base Workflow Version does not belong to the requested Project");
+            }
+            if let Some(binding) = &published.draft.annotation_schema {
+                binding.apply_to(&mut input.project_schema);
             }
             WorkflowSuggestion {
                 estimated_model_calls_per_image: published
@@ -15913,20 +15922,28 @@ impl LocalApplication {
     }
 
     pub fn save_workflow_draft(&self, mut draft: WorkflowDraft) -> Result<WorkflowDraft> {
-        let project_path = self.project_path(&draft.project_id)?;
         let existing = self.store.get_workflow_draft_optional(&draft.id)?;
+        // Older editors omit this optional field; omission must not unbind saved semantics.
+        if draft.annotation_schema.is_none() {
+            draft.annotation_schema = existing
+                .as_ref()
+                .and_then(|saved| saved.annotation_schema.clone());
+        }
+        let project = self.workflow_project_schema(&draft)?;
         if existing.is_none() {
             draft.status = WorkflowDraftStatus::Editing;
             draft.updated_at = chrono::Utc::now();
             migrate_legacy_expert_workflow(&mut draft)?;
             if draft.label_pipeline.is_some() {
-                let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
                 draft = compile_label_projection(draft, &project);
             }
             self.store.save_workflow_draft(&draft)?;
             return self.store.get_workflow_draft(&draft.id).map_err(Into::into);
         }
         let existing = existing.expect("checked above");
+        if existing.project_id != draft.project_id {
+            bail!("Workflow Project ownership cannot change");
+        }
         if matches!(
             existing.status,
             WorkflowDraftStatus::Published | WorkflowDraftStatus::Archived
@@ -15944,7 +15961,6 @@ impl LocalApplication {
         draft.updated_at = chrono::Utc::now();
         migrate_legacy_expert_workflow(&mut draft)?;
         if draft.label_pipeline.is_some() {
-            let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
             draft = compile_label_projection(draft, &project);
         }
         self.store
@@ -16087,8 +16103,7 @@ impl LocalApplication {
         settings: &Settings,
         require_publish_ready: bool,
     ) -> Result<WorkflowValidationReport> {
-        let project_path = self.project_path(&draft.project_id)?;
-        let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
+        let project = self.workflow_project_schema(draft)?;
         let (nodes, models) = self.workflow_catalog(settings)?;
         let enabled_skills = draft
             .enabled_skills
@@ -16676,7 +16691,7 @@ impl LocalApplication {
         runtime_provider: DryRunRuntimeProvider<'_>,
     ) -> Result<WorkflowDryRunReport> {
         let project_path = self.project_path(&draft.project_id)?;
-        let (project, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
+        let project = self.workflow_project_schema(&draft)?;
         let (_, models) = self.workflow_catalog(settings)?;
         let model_profiles = self.freeze_registry_model_profiles(&mut draft)?;
         let plugin_models = self.freeze_plugin_models(&draft)?;
@@ -20574,6 +20589,7 @@ export:
             runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: false,
             geometry_risk_acceptance: None,
+            annotation_schema: None,
             label_pipeline: None,
             created_at: now,
             updated_at: now,
@@ -22102,6 +22118,7 @@ export:
             runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: false,
             geometry_risk_acceptance: None,
+            annotation_schema: None,
             label_pipeline: None,
             created_at: now,
             updated_at: now,
@@ -22919,6 +22936,7 @@ export:
             runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: true,
             geometry_risk_acceptance: None,
+            annotation_schema: None,
             label_pipeline: None,
             created_at: now,
             updated_at: now,
@@ -23234,6 +23252,7 @@ export:
             runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: false,
             geometry_risk_acceptance: None,
+            annotation_schema: None,
             label_pipeline: None,
             created_at: now,
             updated_at: now,
@@ -23410,6 +23429,7 @@ export:
             runtime_policies: BTreeMap::new(),
             allow_unvalidated_commit: false,
             geometry_risk_acceptance: None,
+            annotation_schema: None,
             label_pipeline: None,
             created_at: now,
             updated_at: now,

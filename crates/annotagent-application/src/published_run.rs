@@ -1012,6 +1012,10 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
     }
 
     async fn run_image(&self, request: ImageRunRequest) -> Result<ImageRunResult> {
+        let mut request = request;
+        if let Some(binding) = &self.workflow.draft.annotation_schema {
+            binding.apply_to(Arc::make_mut(&mut request.project));
+        }
         let snapshot = json!({
             "schema_version": 1,
             "engine": "published_dag_runtime",
