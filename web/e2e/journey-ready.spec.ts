@@ -6,14 +6,14 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   const provider = await (await request.post("/api/providers", { data: { display_name: "Journey TEST fixture", adapter: "open_ai_compatible", base_url: "http://127.0.0.1:8796/openai/v1" } })).json();
   expect((await request.post(`/api/providers/${provider.id}/credential`, { data: { source: "workspace_file", secret: "guided-e2e-protocol-fixture" } })).ok()).toBeTruthy();
   const model = await (await request.post("/api/model-profiles", { data: {
-    provider_id: provider.id, display_name: "Journey TEST model", remote_model_id: "e2e-pipeline-builder",
+    provider_id: provider.id, display_name: "Journey TEST model", remote_model_id: "e2e-slow-sample",
     input_modalities: ["text", "image"], task_capabilities: ["text_generation", "vision_language", "image_classification"], protocol_features: { tool_calls: true, structured_output: true },
   } })).json();
   expect((await request.post(`/api/providers/${provider.id}/active-probe`, { data: { model_profile_id: model.id, confirmed_billable: true } })).ok()).toBeTruthy();
   const defaults = await (await request.get("/api/agent-model-bindings")).json();
   expect((await request.put("/api/agent-model-bindings", { data: { ...defaults, pipeline_builder: model.id } })).ok()).toBeTruthy();
   const sampleRequests: unknown[] = [];
-  page.on("request", (req) => { if (req.method() === "POST" && req.url().endsWith("/dry-run")) sampleRequests.push(req.postDataJSON()); });
+  page.on("request", (req) => { if (req.method() === "POST" && req.url().endsWith("/sample-operations")) sampleRequests.push(req.postDataJSON()); });
   await page.goto("/projects?new=1");
   await page.getByLabel("Choose images", { exact: true }).setInputFiles(resolve("../examples/robocup/images/synthetic-robocup.png"));
   await page.getByRole("button", { name: "Continue", exact: true }).click();
@@ -45,6 +45,21 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   expect(stale.status()).toBe(400);
   await page.getByRole("checkbox", { name: "I reviewed the sample scope" }).check();
   await page.getByRole("button", { name: "Test samples", exact: true }).click();
+  await expect(page).toHaveURL(/operation=/);
+  await expect(page.getByRole("button", { name: "Stop sample test", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Sample input previews" }).getByRole("img")).toBeVisible();
+  const operationUrl = page.url();
+  await page.screenshot({ path: "../docs/execution/guided-journey/sample-running.png", fullPage: true });
+  const operationId = new URL(operationUrl).searchParams.get("operation")!;
+  const duplicate = await request.post(`/api/projects/${projectId}/sample-operations`, { data: sampleRequests[0] });
+  expect(duplicate.ok()).toBe(true);
+  expect((await duplicate.json()).id).toBe(operationId);
+  const sameRequest = sampleRequests[0] as Record<string, unknown>;
+  expect((await request.post(`/api/projects/${projectId}/sample-operations`, { data: { ...sameRequest, expected_revision: Number(sameRequest.expected_revision) + 1 } })).status()).toBe(400);
+  expect((await request.post(`/api/projects/${projectId}/sample-operations`, { data: { ...sameRequest, request_id: crypto.randomUUID(), authorization_fingerprint: "changed-scope" } })).status()).toBe(400);
+  expect((await request.get(`/api/projects/wrong-project/sample-operations/${operationId}`)).status()).toBe(404);
+  await page.reload();
+  expect(sampleRequests).toHaveLength(1);
   await expect(page.getByRole("heading", { name: "Does this result match what you need?" })).toBeVisible();
   expect(sampleRequests).toHaveLength(1);
   await expect(page.locator(".sample-feedback-image svg image")).toBeVisible();
@@ -72,4 +87,31 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   await expect(page.getByRole("alert")).toContainText("This planning task does not exist in this Project");
   await expect(page).toHaveURL(/session=missing-session/);
   expect(planningRequests).toEqual([]);
+  // A second explicitly authorized test can be stopped without advancing or formal writes.
+  const nextPreview = await (await request.get(`/api/workflow-drafts/${draftId}/sample-preview`)).json();
+  const stoppedId = crypto.randomUUID();
+  const stopInput = { request_id: stoppedId, draft_id: draftId, image_indices: [0], expected_revision: nextPreview.revision, authorization_fingerprint: nextPreview.authorization_fingerprint };
+  expect((await request.post(`/api/projects/${projectId}/sample-operations`, { data: stopInput })).ok()).toBe(true);
+  await page.goto(`/projects/${projectId}/task/samples?draft=${draftId}&operation=${stoppedId}`);
+  await page.getByRole("button", { name: "Stop sample test", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: /^Stopped$/ })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("status").filter({ hasText: /^Stopped$/ })).toBeVisible();
+  const replayStopped = await (await request.post(`/api/projects/${projectId}/sample-operations`, { data: stopInput })).json();
+  expect(replayStopped.status).toBe("cancelled");
+  await page.screenshot({ path: "../docs/execution/guided-journey/sample-stopped.png", fullPage: true });
+  await page.getByRole("button", { name: "Review scope for a new test", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Sample authorization" })).toBeVisible();
+  // A lost outgoing POST keeps the same non-secret request key across refresh.
+  await page.route(`**/api/projects/${projectId}/sample-operations`, (route) => route.abort("failed"), { times: 1 });
+  await page.getByRole("checkbox", { name: "I reviewed the sample scope" }).check();
+  const lostRequest = page.waitForEvent("requestfailed", (req) => req.method() === "POST" && req.url().endsWith("/sample-operations"));
+  await page.getByRole("button", { name: "Test samples", exact: true }).click();
+  await lostRequest;
+  await expect(page).toHaveURL(/operation=/);
+  const pendingId = new URL(page.url()).searchParams.get("operation");
+  await page.reload();
+  await page.getByRole("button", { name: "Retry this authorized request", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Does this result match what you need?" })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("test")).toBe(pendingId);
 });

@@ -11,7 +11,7 @@ export type WorkspaceRoute =
   | { kind: "home"; canonicalPath: string }
   | { kind: "projects"; canonicalPath: string; create?: boolean }
   | { kind: "project"; canonicalPath: string; projectId: string }
-  | { kind: "journey"; canonicalPath: string; projectId: string; scene: "images" | "goal" | "samples" | "model"; draftId?: string; sampleTestId?: string; imageId?: string; agentSessionId?: string }
+  | { kind: "journey"; canonicalPath: string; projectId: string; scene: "images" | "goal" | "samples" | "model"; draftId?: string; sampleTestId?: string; imageId?: string; agentSessionId?: string; sampleOperationId?: string; sampleView?: "authorize" }
   | { kind: "export"; canonicalPath: string; projectId: string }
   | {
       kind: "build";
@@ -72,6 +72,8 @@ type RunUrlContext = {
 };
 
 export type BuildUrlContext = {
+  sampleView?: "authorize";
+  sampleOperationId?: string;
   draftId?: string;
   workflowId?: string;
   workflowVersion?: number;
@@ -150,6 +152,8 @@ export function projectBuildPath(
 
 export function projectJourneyPath(projectId: string, scene: "images" | "goal" | "samples" | "model", context: BuildUrlContext = {}): string {
   const params = new URLSearchParams();
+  if (context.sampleOperationId) params.set("operation", context.sampleOperationId);
+  if (scene === "samples" && context.sampleView === "authorize") params.set("view", "authorize");
   if (context.agentSessionId) params.set("session", context.agentSessionId);
   if (context.draftId) params.set("draft", context.draftId);
   if (context.sampleTestId) params.set("test", context.sampleTestId);
@@ -292,8 +296,9 @@ export function parseWorkspaceRoute(
     const projectId = decodePathSegment(journey[1]);
     if (!projectId) return { kind: "notFound", canonicalPath: `${clean}${search}`, invalidPath: `${clean}${search}` };
     const scene = journey[2] as "images" | "goal" | "samples" | "model";
-    const context = { draftId: params.get("draft") ?? undefined, sampleTestId: params.get("test") ?? undefined, imageId: params.get("image") ?? undefined, agentSessionId: params.get("session") ?? undefined };
-    return { kind: "journey", projectId, scene, ...context, canonicalPath: projectJourneyPath(projectId, scene, context) };
+    const context = { draftId: params.get("draft") ?? undefined, sampleTestId: params.get("test") ?? undefined, imageId: params.get("image") ?? undefined, agentSessionId: params.get("session") ?? undefined, sampleOperationId: params.get("operation") ?? undefined };
+    const sampleView = scene === "samples" && params.get("view") === "authorize" ? "authorize" as const : undefined;
+    return { kind: "journey", projectId, scene, ...context, sampleView, canonicalPath: projectJourneyPath(projectId, scene, { ...context, sampleView }) };
   }
   const projectRun = clean.match(/^\/projects\/([^/]+)\/runs\/([^/]+)$/);
   if (projectRun) {

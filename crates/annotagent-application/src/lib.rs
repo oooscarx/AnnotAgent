@@ -6964,6 +6964,33 @@ pub struct LocalApplication {
     project_schema_writes: Mutex<()>,
 }
 
+/// Release a scoped execution lease even during cancellation or unwinding.
+struct ReleaseOnDrop<F: FnOnce()>(Option<F>);
+impl<F: FnOnce()> Drop for ReleaseOnDrop<F> {
+    fn drop(&mut self) {
+        if let Some(release) = self.0.take() {
+            release();
+        }
+    }
+}
+
+/// Lifecycle of one existing sandbox invocation, not a separate execution engine.
+pub struct SampleExecutionControl {
+    pub id: String,
+    pub cancellation: CancellationToken,
+    pub check_scope: Option<Arc<dyn Fn() -> Result<()> + Send + Sync>>,
+}
+
+impl Default for SampleExecutionControl {
+    fn default() -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            cancellation: CancellationToken::new(),
+            check_scope: None,
+        }
+    }
+}
+
 /// Persist a terminal state even when an advisor future returns early or is dropped.
 struct AgentExecutionGuard<'a> {
     application: &'a LocalApplication,
@@ -6993,6 +7020,7 @@ impl Drop for AgentExecutionGuard<'_> {
 
 #[derive(Clone, Copy)]
 struct DryRunRuntimeProvider<'a> {
+    control: &'a SampleExecutionControl,
     kind: &'a str,
     api_key: Option<&'a str>,
 }
@@ -7055,6 +7083,7 @@ impl LocalApplication {
         let database_path = database_path.as_ref().to_path_buf();
         let store = Arc::new(SqliteStore::open(&database_path)?);
         store.reconcile_interrupted_runs()?;
+        store.recover_sample_operations()?;
         for mut session in store.list_agent_sessions(None)? {
             if session.kind == AgentKind::PipelineBuilder
                 && session.status == AgentSessionStatus::Running
@@ -15999,6 +16028,26 @@ impl LocalApplication {
         provider_kind: &str,
         temporary_api_key: Option<&str>,
     ) -> Result<(WorkflowDryRunReport, WorkflowSampleTest)> {
+        self.dry_run_workflow_samples_controlled(
+            draft_id,
+            settings,
+            image_indices,
+            provider_kind,
+            temporary_api_key,
+            SampleExecutionControl::default(),
+        )
+        .await
+    }
+
+    pub async fn dry_run_workflow_samples_controlled(
+        &self,
+        draft_id: &str,
+        settings: &Settings,
+        image_indices: &[usize],
+        provider_kind: &str,
+        temporary_api_key: Option<&str>,
+        control: SampleExecutionControl,
+    ) -> Result<(WorkflowDryRunReport, WorkflowSampleTest)> {
         let draft = self.store.get_workflow_draft(draft_id)?;
         let scope = self.management_scope(&draft.project_id)?;
         let object = annotagent_core::ManagementObjectRef {
@@ -16007,7 +16056,7 @@ impl LocalApplication {
             version: None,
             expected_revision: 1,
         };
-        let owner = uuid::Uuid::new_v4().to_string();
+        let owner = control.id.clone();
         self.store.acquire_management_lease(
             &scope,
             &object,
@@ -16015,18 +16064,28 @@ impl LocalApplication {
             &owner,
             chrono::Duration::hours(2),
         )?;
-        let result = self
-            .dry_run_workflow_samples_with_provider_record_unleased(
+        // Release even if the worker panics or its future is dropped.
+        let mut lease_guard = ReleaseOnDrop(Some(|| {
+            let _ = self
+                .store
+                .release_management_lease(&scope, &object, "sample_test", &owner);
+        }));
+        let result = tokio::select! {
+            biased;
+            () = control.cancellation.cancelled() => Err(anyhow!("Sample task stopped locally; a remote service may still complete or bill an already sent request.")),
+            result = Box::pin(self.dry_run_workflow_samples_with_provider_record_unleased(
                 draft_id,
                 settings,
                 image_indices,
                 provider_kind,
                 temporary_api_key,
-            )
-            .await;
+                &control,
+            )) => result,
+        };
         let release = self
             .store
             .release_management_lease(&scope, &object, "sample_test", &owner);
+        lease_guard.0 = None;
         match (result, release) {
             (Ok(value), Ok(())) => Ok(value),
             (Err(error), _) => Err(error),
@@ -16041,7 +16100,11 @@ impl LocalApplication {
         image_indices: &[usize],
         provider_kind: &str,
         temporary_api_key: Option<&str>,
+        control: &SampleExecutionControl,
     ) -> Result<(WorkflowDryRunReport, WorkflowSampleTest)> {
+        if let Some(check) = &control.check_scope {
+            check()?;
+        }
         let started_at = chrono::Utc::now();
         let started = std::time::Instant::now();
         let (draft, mut validation) = self.prepare_workflow_dry_run(draft_id, settings)?;
@@ -16066,13 +16129,15 @@ impl LocalApplication {
                     &selected,
                     started,
                     DryRunRuntimeProvider {
+                        control,
                         kind: provider_kind,
                         api_key: temporary_api_key,
                     },
                 )
                 .await?;
-            let sample_test =
+            let mut sample_test =
                 self.workflow_sample_test_record(&draft, &selected, report.clone(), started_at)?;
+            sample_test.id.clone_from(&control.id);
             self.store.save_workflow_sample_test(&sample_test)?;
             return Ok((report, sample_test));
         }
@@ -16240,8 +16305,9 @@ impl LocalApplication {
             total_latency_ms,
             estimated_cost: "0".to_owned(),
         };
-        let sample_test =
+        let mut sample_test =
             self.workflow_sample_test_record(&draft, &selected, report.clone(), started_at)?;
+        sample_test.id.clone_from(&control.id);
         self.store.save_workflow_sample_test(&sample_test)?;
         Ok((report, sample_test))
     }
@@ -16400,6 +16466,9 @@ impl LocalApplication {
         let mut summary = SampleTestSummary::default();
         let mut total_cost = rust_decimal::Decimal::ZERO;
         for index in selected {
+            if let Some(check) = &runtime_provider.control.check_scope {
+                check()?;
+            }
             let path = images
                 .get(*index)
                 .ok_or_else(|| anyhow!("image index {index} was not found"))?;
@@ -26443,6 +26512,67 @@ export:
                 .annotation_schema
                 .iter()
                 .any(|task| { task.id == "quality_check" && task.display_name == "Quality Check" })
+        );
+    }
+
+    #[tokio::test]
+    async fn stopped_sample_releases_its_lease_without_executing_or_saving_test() {
+        let temporary = tempfile::tempdir().unwrap();
+        let application = LocalApplication::new(temporary.path()).unwrap();
+        application
+            .create_project(
+                "stopped-sample",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .unwrap();
+        let settings = load_settings(None).unwrap();
+        let draft = application
+            .create_workflow_draft_with_template(
+                "stopped-sample",
+                &settings,
+                false,
+                Some("robocup.ball.small-object-recovery"),
+            )
+            .unwrap();
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        let id = uuid::Uuid::new_v4().to_string();
+        let control = SampleExecutionControl {
+            id: id.clone(),
+            cancellation,
+            check_scope: Some(Arc::new(|| panic!("a stopped task must not execute"))),
+        };
+        let result = application
+            .dry_run_workflow_samples_controlled(&draft.id, &settings, &[0], "mock", None, control)
+            .await;
+        assert!(result.unwrap_err().to_string().contains("stopped locally"));
+        let scope = application.management_scope("stopped-sample").unwrap();
+        let object = annotagent_core::ManagementObjectRef {
+            kind: annotagent_core::ManagementObjectKind::WorkflowDraft,
+            id: draft.id,
+            version: None,
+            expected_revision: 1,
+        };
+        application
+            .store
+            .acquire_management_lease(
+                &scope,
+                &object,
+                "sample_test",
+                "next-task",
+                chrono::Duration::minutes(1),
+            )
+            .unwrap();
+        application
+            .store
+            .release_management_lease(&scope, &object, "sample_test", "next-task")
+            .unwrap();
+        assert!(
+            application
+                .store
+                .get_workflow_sample_test_by_id(&id)
+                .unwrap()
+                .is_none()
         );
     }
 

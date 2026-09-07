@@ -1,3 +1,9 @@
+export type SampleOperation = {
+  id: string; project_id: string; draft_id: string;
+  status: "queued" | "running" | "cancelling" | "cancelled" | "interrupted" | "failed" | "succeeded";
+  error?: string | null;
+};
+
 import type {
   Annotation,
   AnnotationRevision,
@@ -835,6 +841,9 @@ export const api = {
       signal,
     }),
   samplePreview: (draftId: string) => request<{ project_id: string; revision: number; image_count: number; models: { name: string; destination: string; id: string; revision: number }[]; other_bindings: string[]; estimated_cost: null; request_limit: number; sandbox: true; supported: boolean; authorization_fingerprint: string }>(`/api/workflow-drafts/${encodeURIComponent(draftId)}/sample-preview`),
+  startSampleOperation: (projectId: string, input: { request_id: string; draft_id: string; image_indices: number[]; expected_revision: number; authorization_fingerprint: string }) => request<SampleOperation>(`/api/projects/${encodeURIComponent(projectId)}/sample-operations`, { method: "POST", body: JSON.stringify(input) }),
+  sampleOperation: (projectId: string, id: string, signal?: AbortSignal) => request<SampleOperation>(`/api/projects/${encodeURIComponent(projectId)}/sample-operations/${encodeURIComponent(id)}`, { signal }),
+  cancelSampleOperation: (projectId: string, id: string) => request<SampleOperation>(`/api/projects/${encodeURIComponent(projectId)}/sample-operations/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
   dryRunWorkflow: (draftId: string, imageIndices: number[] = [], expectedRevision?: number, authorizationFingerprint?: string) =>
     request<WorkflowDryRunReport>(`/api/workflow-drafts/${draftId}/dry-run`, {
       method: "POST",

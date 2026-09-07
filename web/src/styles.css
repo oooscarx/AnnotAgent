@@ -57,6 +57,8 @@ code, pre { font-family: var(--aa-font-mono); }
 .journey-image-grid figure { margin: 0; min-width: 0; }
 .journey-image-grid img { width: 100%; height: 160px; object-fit: contain; background: var(--aa-surface-muted); border-radius: 10px; }
 .journey-image-grid figcaption { display: flex; gap: 8px; align-items: center; justify-content: space-between; overflow-wrap: anywhere; font-size: 13px; padding-top: 8px; }
+.journey-sample-inputs { max-width: 880px; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); }
+.journey-sample-inputs img { height: clamp(160px, 30vh, 280px); }
 .journey-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-top: auto; padding-top: 24px; }
 .journey-actions > span { color: var(--aa-text-muted); font-size: 14px; }
 .journey-actions .primary { min-width: 160px; padding: 13px 22px; margin-left: auto; }

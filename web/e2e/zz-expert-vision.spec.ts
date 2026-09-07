@@ -164,7 +164,28 @@ test("guided SAM registration requires discovery, immutable identity, and a type
 
   const sampleDialog = page.getByRole("dialog", { name: "Run a selected-image sample" });
   await expect(sampleDialog).toContainText(`Expert Vision E2E ${stamp}`);
-  await clickSettingsAction("Run sample test");
+  const sampleAttempt = async () => {
+    // This action saves settings, re-discovers, then tests. Observe all stages,
+    // not only the first successful settings PUT; suite-wide admission can reject discovery.
+    const finished = page.waitForResponse((response) => /\/api\/models\/[^/]+\/(test|sample-test)$/.test(response.url())
+      && (response.status() >= 400 || response.url().endsWith("/sample-test")));
+    await clickSettingsAction("Run sample test");
+    return finished;
+  };
+  const sampleResponse = await sampleAttempt();
+  if (sampleResponse.status() === 429) {
+    expect((await sampleResponse.json()).code).toBe("mutation_rate_limited");
+    // Only retry the explicit pre-execution admission rejection, in this fixture workspace.
+    await expect.poll(async () => {
+      const response = await sampleAttempt();
+      if (response.status() === 429) {
+        expect((await response.json()).code).toBe("mutation_rate_limited");
+        return false;
+      }
+      expect(response.ok(), await response.text()).toBe(true);
+      return true;
+    }, { timeout: 65_000, intervals: [1000] }).toBe(true);
+  } else expect(sampleResponse.ok(), await sampleResponse.text()).toBe(true);
   await expect(sampleDialog).toContainText("Sample conversion passed");
   await expect(sampleDialog).toContainText("refined geometry");
   await sampleDialog.getByText("Converted Artifact and coordinates").click();

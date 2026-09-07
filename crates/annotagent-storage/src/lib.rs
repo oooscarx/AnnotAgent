@@ -3,6 +3,8 @@
 mod batch;
 mod management;
 mod sample_feedback;
+mod sample_operations;
+pub use sample_operations::SampleOperation;
 mod summary;
 pub use sample_feedback::{SampleFeedbackReason, SampleFeedbackRevision};
 
@@ -73,6 +75,8 @@ const PIPELINE_LIFECYCLE_MIGRATION: &str =
 
 #[derive(Debug, Error)]
 pub enum StorageError {
+    #[error("invalid sample operation: {0}")]
+    InvalidSampleOperation(String),
     #[error("SQLite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
     #[error("history serialization error: {0}")]
@@ -541,6 +545,8 @@ impl SqliteStore {
             }
             connection.execute_batch(include_str!("../../../migrations/0020_sample_feedback.sql"))?;
             connection.execute("INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (20, ?1, ?2)", params!["sample_feedback", Utc::now().to_rfc3339()])?;
+            connection.execute_batch(include_str!("../../../migrations/0021_sample_operations.sql"))?;
+            connection.execute("INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (21, ?1, ?2)", params!["sample_operations", Utc::now().to_rfc3339()])?;
             Ok(())
         })
     }

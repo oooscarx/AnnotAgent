@@ -1,5 +1,6 @@
 //! Thin HTTP/SSE adapter over the shared application service.
 
+mod sample_operations;
 mod security;
 mod workspace_routes;
 
@@ -115,6 +116,7 @@ pub struct ServerState {
     credential_reference: Arc<RwLock<CredentialReference>>,
     default_write_reference: Arc<CredentialReference>,
     model_install_operations: Arc<RwLock<BTreeMap<uuid::Uuid, ModelInstallOperation>>>,
+    sample_cancellations: Arc<RwLock<BTreeMap<String, CancellationToken>>>,
     security: security::LocalSecurity,
 }
 
@@ -220,6 +222,7 @@ impl ServerState {
             credential_reference: Arc::new(RwLock::new(credential_reference)),
             default_write_reference: Arc::new(default_write_reference),
             model_install_operations: Arc::new(RwLock::new(BTreeMap::new())),
+            sample_cancellations: Arc::new(RwLock::new(BTreeMap::new())),
             security: security::LocalSecurity::default(),
         })
     }
@@ -4060,7 +4063,7 @@ async fn get_workflow_sample_model_input(
     Ok(response)
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct DryRunWorkflowRequest {
     #[serde(default)]
     image_indices: Vec<usize>,

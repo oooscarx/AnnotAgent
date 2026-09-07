@@ -18,6 +18,15 @@ describe("guided task presentation", () => {
   it("does not interpret unknown task scenes as another project", () => {
     expect(parseWorkspaceRoute("/projects/p/task/publish").kind).toBe("notFound");
   });
+  it("restores a durable sample operation without changing workspace focus", () => {
+    const path = projectJourneyPath("p1", "samples", { draftId: "d1", sampleOperationId: "op1" });
+    const url = new URL(path, "http://localhost");
+    const route = parseWorkspaceRoute(url.pathname, url.search);
+    expect(route).toMatchObject({ kind: "journey", projectId: "p1", draftId: "d1", sampleOperationId: "op1", canonicalPath: path });
+    expect(routeFocusKey(route)).toBe("journey:p1:samples");
+    expect(parseWorkspaceRoute("/projects/p1/task/samples", "?draft=d1&view=authorize")).toMatchObject({ sampleView: "authorize" });
+    expect(parseWorkspaceRoute("/projects/p1/task/goal", "?view=authorize")).not.toHaveProperty("sampleView", "authorize");
+  });
   it("restores a planning session without changing page focus or accepting an external return", () => {
     const path = projectJourneyPath("p1", "goal", { agentSessionId: "session1" });
     expect(parseWorkspaceRoute("/projects/p1/task/goal", "?session=session1&return_to=https://example.com")).toMatchObject({ kind: "journey", agentSessionId: "session1", canonicalPath: path });

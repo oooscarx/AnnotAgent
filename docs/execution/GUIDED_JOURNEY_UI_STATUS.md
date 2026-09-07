@@ -192,3 +192,79 @@ and automated tests do not substitute for these checks.
 No push, remote edits, history rewrites or real workspace data writes. The
 original fourteen user-modified screenshots remain outside task commits. The
 task does not restart the real workspace server; isolated E2E servers are used.
+
+## M2 continuation — durable sample lifecycle (2026-09-07)
+
+Implemented the guided Sample Test lifecycle adapter around the existing sandbox
+executor. This is not a new inference engine or a second Workflow representation.
+
+- POST `/api/projects/:project/sample-operations` reserves a durable SQLite receipt
+  and returns promptly. Its UUID becomes the persisted Sample Test ID. Identical
+  requests read the same receipt; changed scope under the same key is rejected.
+  Admission permits one active sample operation per Project and two globally.
+- `/task/samples?draft=…&operation=…` restores queued/running/terminal status using
+  GET only. Completion opens the existing final-result canvas with the exact Test
+  ID. It does not publish or accept formal annotations.
+- Stop remains directly visible. It records cancellation, drops local execution,
+  and releases the management lease (also on worker unwinding). Already submitted
+  remote work can still be billed; the UI states this explicitly.
+- Startup marks unfinished receipts interrupted, or completed when their Test
+  was already persisted. It never automatically retries a model request.
+- A non-secret pending request envelope in sessionStorage supports explicit
+  same-key retry when a POST response is lost; mount, refresh and polling do not
+  replay it. Server scope validation remains authoritative.
+- The original 1–3-image/12-logical-call authorization remains in force. Scope is
+  checked before preparation and image execution. Internal preparation may update
+  Draft status/revision; later checks retain the captured authorization baseline.
+  Fully atomic freezing across concurrent Registry/Schema edits is **not** claimed.
+
+Regression coverage: storage deduplication, concurrency/admission and reopen
+recovery; application cancellation before execution with lease release/no Sample
+Test write; deterministic HTTP browser fixture for running refresh, duplicate
+POST, wrong-owner rejection, stop/refresh and uncertain-request recovery. Fixture
+latency is explicitly named `e2e-slow-sample`, not a production model or Live proof.
+
+Two findings from browser testing were fixed:
+
+1. Re-authorizing after cancellation briefly opened the consent scene, then the
+   latest-result lookup redirected back to the old canvas. `view=authorize` now
+   records this explicit intent; it does not trigger a POST and survives refresh.
+2. Full-suite SAM setup hit a real `mutation_rate_limited` 429 on its discovery
+   request after a successful settings PUT. Trace evidence identified the exact
+   rejected stage. The fixture test now awaits discovery/sample completion and
+   retries only that explicit pre-execution rejection. Product rate limits and
+   model retry behavior were not relaxed. Its three isolated protocol tests passed;
+   the initial full runs recorded 59 passed, one failed and two skipped by serial
+   test ordering, rather than being described as successful full runs.
+
+Current Rust checks: fmt, strict all-target/all-feature clippy and all-feature
+build pass. Full Rust suite: **507 passed, 5 ignored**, no failures; ignored
+cases require explicitly provided real-model assets. Web typecheck, production
+build and **82 unit tests** pass. The pre-existing large JS chunk warning remains.
+Final full browser suite: **62/62 passed**, including Run/Pipeline management,
+restoration, Review, export, security and the corrected SAM fixture test.
+The running/stopped scene also reuses Project image previews, explicitly labeled
+as inputs rather than model results; it does not manufacture percentages or boxes.
+Its final targeted visual/lifecycle check is logged in
+`/tmp/annotagent-journey-m2-visual-final.log`: **1/1 passed**, including real
+fixture HTTP execution, running refresh, cancellation and lost-POST same-key retry.
+The final Web unit rerun remains **82/82 passed**.
+
+Logs: `/tmp/annotagent-journey-m2-final-rust.log`,
+`/tmp/annotagent-sample-clippy.log`, `/tmp/annotagent-sample-build.log`,
+`/tmp/annotagent-journey-m2-final-unit.log`,
+`/tmp/annotagent-journey-m2-final-build-web.log` and
+`/tmp/annotagent-journey-m2-verified-e2e.log`.
+Screenshots: `guided-journey/sample-running.png`, `sample-stopped.png`, and
+`sample-{1440,1280,1024,390}.png`, all deterministic isolated fixtures.
+
+Remaining: M2 partial connection-save recovery and atomic scope freezing; M3
+exact-revision adoption/publish/start receipt and guided processing/Review/export;
+M4 full default-path and assistive-technology validation. Real-model accuracy,
+native 200% zoom, OS IME/screen reader and real-person usability are not tested.
+
+Local handoff: branch `main`; no push, remote edits or real-workspace operations.
+All three older screenshot directories were restored byte-for-byte to the saved
+pre-task baseline, preserving the user's fourteen existing screenshot changes.
+Only the Guided Journey evidence and this phase's source/test files enter the
+local milestone commit (`feat(journey): persist and recover bounded sample tasks`).

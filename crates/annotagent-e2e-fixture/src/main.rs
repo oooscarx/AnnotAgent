@@ -336,6 +336,12 @@ async fn openai_completion(
     State(_state): State<FixtureState>,
     Json(request): Json<Value>,
 ) -> Json<Value> {
+    // Explicitly named deterministic test fixture for refresh/cancel lifecycle tests.
+    if request["model"] == "e2e-slow-sample"
+        && request["messages"].to_string().contains("image_url")
+    {
+        tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+    }
     if let Some(response) = grounding_completion(&request) {
         return Json(response);
     }

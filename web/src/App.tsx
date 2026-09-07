@@ -11,7 +11,7 @@ import { FocusHeader, usesFocusLayout } from "./components/FocusHeader";
 import { JourneyImages } from "./components/JourneyImages";
 import { JourneyGoal } from "./components/JourneyGoal";
 import { JourneyModel } from "./components/JourneyModel";
-import { JourneySampleStart } from "./components/JourneySampleStart";
+import { JourneySampleTask } from "./components/JourneySampleTask";
 import { ImproveAutomationPanel } from "./components/GeometrySafetyPanel";
 import { NotFoundPage } from "./features/notFound/NotFoundPage";
 import {
@@ -677,6 +677,9 @@ export function App() {
           : route.scene === "goal" ? <JourneyGoal key={route.projectId} project={selectedProject} sessionId={route.agentSessionId} onNavigate={navigate} onRefresh={refresh} onNavigationGuardChange={setNavigationGuard} />
           : route.scene === "model" ? <JourneyModel key={route.projectId} project={selectedProject} onNavigate={navigate} />
           : <BuildTestPublish key={route.projectId} project={selectedProject} guided selectedDraftId={route.draftId} selectedSampleTestId={route.sampleTestId} selectedSampleImageId={route.imageId}
+            sampleOperationId={route.sampleOperationId}
+            requestNewSample={route.sampleView === "authorize"}
+            onSampleOperation={(sampleOperationId) => navigate(projectJourneyPath(route.projectId, "samples", { draftId: route.draftId, sampleOperationId, sampleView: sampleOperationId ? undefined : "authorize" }), true)}
             onNavigationGuardChange={setNavigationGuard}
             onSelectTestContext={(draftId, sampleTestId, replace, imageId) => navigate(projectJourneyPath(route.projectId, "samples", { draftId, sampleTestId, imageId }), replace)}
             onNavigate={() => navigate(projectJourneyPath(route.projectId, "goal"))}
@@ -1246,6 +1249,9 @@ function BuildLabels({
 function BuildTestPublish({
   project,
   guided = false,
+  sampleOperationId,
+  requestNewSample = false,
+  onSampleOperation,
   selectedDraftId,
   selectedSampleTestId,
   selectedSampleImageId,
@@ -1258,6 +1264,9 @@ function BuildTestPublish({
 }: {
   project: ProjectSummary;
   guided?: boolean;
+  sampleOperationId?: string;
+  requestNewSample?: boolean;
+  onSampleOperation?: (id?: string) => void;
   selectedDraftId?: string;
   selectedSampleTestId?: string;
   selectedSampleImageId?: string;
@@ -1338,7 +1347,7 @@ function BuildTestPublish({
     setReport(undefined);
     setRestoredAt(undefined);
     setStaleReport(false);
-    if (!draftId) {
+    if (!draftId || (guided && (sampleOperationId || requestNewSample))) {
       setReportLoading(false);
       return;
     }
@@ -1368,11 +1377,11 @@ function BuildTestPublish({
         if (generation === sampleLoadGeneration.current) setReportLoading(false);
       });
     return () => workspaceQueries.abort(key);
-  }, [draftId, selectedSampleTestId]);
+  }, [draftId, selectedSampleTestId, guided, sampleOperationId, requestNewSample]);
   useEffect(() => {
-    if (guided && report && !selectedSampleImageId && report.sample_inputs?.[0])
+    if (guided && !sampleOperationId && !requestNewSample && report && !selectedSampleImageId && report.sample_inputs?.[0])
       onSelectTestContext(draftId, activeSampleTest?.id, true, report.sample_inputs[0].image_id);
-  }, [guided, report, selectedSampleImageId, draftId, activeSampleTest?.id]);
+  }, [guided, report, selectedSampleImageId, draftId, activeSampleTest?.id, sampleOperationId, requestNewSample]);
   const test = (expectedRevision?: number, count = sampleCount, authorizationFingerprint?: string) => {
     if (!draftId || testPending.current) return;
     testPending.current = true;
@@ -1488,7 +1497,7 @@ function BuildTestPublish({
     onPrevious={inspectedPosition > 0 ? () => setInspectedSampleIndex(report!.samples[inspectedPosition - 1].image_index) : undefined}
     onNext={inspectedPosition + 1 < (report?.samples.length ?? 0) ? () => setInspectedSampleIndex(report!.samples[inspectedPosition + 1].image_index) : undefined}
   />;
-  if (guided) return reportLoading ? <p role="status">{t("Restoring the saved Sample Test…")}</p> : <JourneySampleStart projectId={project.id} draftId={draftId} busy={busy} stale={staleReport} onTest={test} onBack={() => onNavigate("labels", draftId)} />;
+  if (guided) return reportLoading ? <p role="status">{t("Restoring the saved Sample Test…")}</p> : <JourneySampleTask projectId={project.id} draftId={draftId} operationId={sampleOperationId} images={images} stale={staleReport} onOperation={(id) => onSampleOperation?.(id)} onComplete={(id) => onSelectTestContext(draftId, id, true)} onBack={() => onNavigate("labels", draftId)} />;
   return (
     <>
       <div className="toolbar-panel sample-test-toolbar">

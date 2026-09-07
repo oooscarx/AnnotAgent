@@ -30,6 +30,18 @@ use super::{
 pub(super) fn routes() -> Router<ServerState> {
     Router::new()
         .route(
+            "/api/projects/{project_id}/sample-operations",
+            post(super::sample_operations::start_operation),
+        )
+        .route(
+            "/api/projects/{project_id}/sample-operations/{operation_id}",
+            get(super::sample_operations::get_operation),
+        )
+        .route(
+            "/api/projects/{project_id}/sample-operations/{operation_id}/cancel",
+            post(super::sample_operations::cancel_operation),
+        )
+        .route(
             "/api/projects/{project_id}/goal",
             get(super::get_project_goal).put(super::put_project_goal),
         )
