@@ -162,3 +162,29 @@ pub(super) async fn receipt(
         .map(Json)
         .ok_or_else(|| ApiError::not_found("Schema call receipt not found"))
 }
+
+pub(super) async fn history(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+) -> ApiResult<Json<Vec<ConversationCallReceipt>>> {
+    state
+        .application
+        .conversation_schema_calls(&project, conversation, task)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+pub(super) async fn cancel(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task, call)): AxumPath<(
+        String,
+        uuid::Uuid,
+        uuid::Uuid,
+        uuid::Uuid,
+    )>,
+) -> ApiResult<Json<ConversationCallReceipt>> {
+    state
+        .application
+        .cancel_conversation_schema(&project, conversation, task, call)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}

@@ -19,6 +19,11 @@
 .conversation-upload input { max-width: 100%; }
 .conversation-upload input::file-selector-button { border: 0; border-radius: var(--aa-radius-sm); background: var(--aa-surface-muted); color: var(--aa-text); padding: 8px 12px; margin-inline-end: 10px; font: inherit; cursor: pointer; }
 .conversation-status { padding: 8px clamp(12px,2vw,24px); margin: 0; }
+.conversation-schema-card, .conversation-consent, .conversation-proposal-result { display: grid; gap: 12px; min-width: 0; overflow-wrap: anywhere; }
+.conversation-schema-card { padding-block: 16px; border-block-start: 1px solid var(--aa-border); }
+.conversation-schema-card h3 { margin: 0; }
+.conversation-consent label { display: flex; align-items: start; gap: 10px; }
+.conversation-consent input[type=checkbox] { flex-shrink: 0; margin-top: 3px; }
 .conversation-image { margin: 18px 0; display: grid; gap: 10px; }
 .conversation-image img { display: block; width: 100%; max-height: 64vh; object-fit: contain; }
 .conversation-image figcaption { overflow-wrap: anywhere; font-size: .85rem; }

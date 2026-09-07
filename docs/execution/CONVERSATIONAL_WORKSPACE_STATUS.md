@@ -278,3 +278,37 @@ unfinished; they are not substituted by this HTTP slice.
 No live Provider validation, new UI usability claim, accuracy claim or human-user
 testing has been performed. Native zoom and OS assistive-technology checks remain
 unexecuted. No new model, Python Worker, autonomous install or permissive tool API.
+
+### Conversation consent/result cards and stop control (M2, continued)
+
+The opt-in workspace now restores the first goal message's admitted task and real
+call history. Explicit prepare resolves the existing Registry preview; a separate
+unchecked consent box gates the single text request. The response card is rendered
+from the saved receipt's validated decision, not assistant prose. Reload/mount only
+GETs task/call state and does not invoke the Provider. Rejected admission is not
+displayed as running. This remains an integration view: it explicitly says the
+proposal has not changed Project labels or started annotation.
+
+Added Project-owned call history and cancel endpoints plus a distinct cancellation
+token registry (not shared IDs with Builder sessions). Active call cancellation
+revokes further allowance and signals the existing Provider token. A post-reservation
+grant check closes cancellation between reservation and token registration; cancelled
+before-send work does not invoke the Provider. Interrupted reservations become
+`in_doubt` during Application startup without model replay. GET does not reconcile
+or mutate state. Leaving the component does not cancel the server request.
+
+Limits still requiring hardening: cancel before a server reservation exists returns
+not-found rather than recording a durable cancellation intent; an abandoned request
+whose handler disappears without server restart can remain reserved. These cases
+must be fixed before default rollout. The current active-token cancellation test
+does not prove those edge cases. No durable Human Request/outbox exists yet.
+
+Evidence: two isolated browser tests **2/2 passed**, 20.0s, workspace
+`/tmp/annotagent-guided-e2e-78745`. They exercise the actual consent checkbox→HTTP
+Provider→saved card→reload path plus journal/upload/idempotency regression. Updated
+`journal-*` and added `schema-{1440,390}.png`; desktop/mobile Schema captures inspected.
+The empty image panel in Schema captures deliberately tests goal-before-upload,
+not a finished annotation result. Application Schema **4/4** tests now also verify
+active Provider cancellation yields retained unknown-outcome evidence and removes
+the token handle. Web **105/105**, strict storage/Application/server Clippy and
+format checks passed. No Live credentials/models, real workspace restart or push.

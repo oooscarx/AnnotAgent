@@ -82,6 +82,59 @@ fn receipt(
 }
 
 impl SqliteStore {
+    /// Startup recovery never resends an indeterminate Provider request.
+    pub fn recover_conversation_calls(&self) -> Result<(), StorageError> {
+        self.with_connection(|db| {
+            db.execute("UPDATE conversation_model_calls SET status='in_doubt',evidence_json=?1 WHERE status='reserved'", [serde_json::json!({"error":"The server stopped before this call was settled. Remote outcome and cost are unknown; no automatic retry was started."}).to_string()])?;
+            Ok(())
+        })
+    }
+    pub fn conversation_calls_active(
+        &self,
+        project: &str,
+        task: Uuid,
+    ) -> Result<bool, StorageError> {
+        self.with_connection(|db| {
+            owner(db, project, task)?;
+            let grant: Option<(bool, String)> = db
+                .query_row(
+                    "SELECT revoked,expires_at FROM conversation_call_grants WHERE task_id=?1",
+                    [task.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            Ok(grant.is_some_and(|(revoked, expires)| {
+                !revoked
+                    && DateTime::parse_from_rfc3339(&expires)
+                        .is_ok_and(|expiry| expiry > Utc::now())
+            }))
+        })
+    }
+
+    pub fn conversation_call_history(
+        &self,
+        project: &str,
+        task: Uuid,
+    ) -> Result<Vec<ConversationCallReceipt>, StorageError> {
+        self.with_connection(|db| {
+            owner(db, project, task)?;
+            let mut query = db.prepare(
+                "SELECT id FROM conversation_model_calls WHERE task_id=?1 ORDER BY created_at,id",
+            )?;
+            let ids = query
+                .query_map([task.to_string()], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            ids.into_iter()
+                .map(|id| {
+                    receipt(
+                        db,
+                        Uuid::parse_str(&id).map_err(|_| invalid("invalid call identity"))?,
+                    )?
+                    .ok_or_else(|| invalid("call receipt missing"))
+                })
+                .collect()
+        })
+    }
     pub fn conversation_call(
         &self,
         project: &str,

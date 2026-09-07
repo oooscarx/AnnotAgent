@@ -3,6 +3,7 @@ import { api } from "../api";
 import { projectWorkPath } from "../navigation";
 import type { ConversationMessage, ConversationMessageInput, ImageItem, ProjectSummary } from "../types";
 import "./conversation-workspace.css";
+import { ConversationSchemaCard } from "./ConversationSchemaCard";
 
 /** The journal and image importer share the existing Project; neither starts inference. */
 export function ConversationWorkspace({ project, conversationId, imageId, onNavigate, onNavigationGuardChange }: {
@@ -97,7 +98,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, onNavi
       <section className="conversation-panel" aria-label="Project conversation">
         <h2>What would you like to annotate?</h2>
         <p className="muted">Describe your goal before or after uploading images.</p>
-        <p className="conversation-development-note">Workspace integration in progress: messages are saved, but automatic planning is not connected yet.</p>
+        <p className="conversation-development-note">Workspace integration in progress: saved goals can produce a Schema proposal after authorization. Pipeline execution is not connected here yet.</p>
         <ol className="conversation-messages" aria-label="Saved messages">
           {messages.map((message) => <li key={message.input.id}><p>{message.input.text}</p>{message.input.image && <button onClick={() => {
             const reference = message.input.image;
@@ -106,6 +107,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, onNavi
             openImage(image.image_id);
           }}>Referenced image · {images.find((image) => image.image_id === message.input.image?.image_id)?.name ?? message.input.image.image_id}</button>}<small>Saved · {message.sequence}</small></li>)}
         </ol>
+        {conversation && messages[0] && <ConversationSchemaCard key={`${conversation}:${messages[0].input.id}`} project={project.id} conversation={conversation} message={messages[0].input.id} />}
         <form onSubmit={(event) => { event.preventDefault(); void send(); }} className="conversation-composer">
           <label htmlFor="conversation-message">Your message</label>
           <textarea id="conversation-message" value={text} disabled={busy || Boolean(frozen.current)} rows={3} placeholder="Find cups, but not bottles" onChange={(event) => { unsent.current = event.target.value; setText(event.target.value); }} />

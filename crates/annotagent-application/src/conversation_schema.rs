@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+#[derive(Clone)]
 pub struct ConversationSchemaExecution {
     pub conversation_id: Uuid,
     pub task_id: Uuid,
@@ -20,7 +21,60 @@ pub struct ConversationSchemaExecution {
     pub scope_hash: String,
 }
 
+struct CallCancellationGuard<'a> {
+    application: &'a crate::LocalApplication,
+    id: Uuid,
+}
+impl Drop for CallCancellationGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut calls) = self.application.conversation_cancellations.lock() {
+            if let Some(token) = calls.remove(&self.id) {
+                token.cancel();
+            }
+        }
+    }
+}
+
 impl crate::LocalApplication {
+    pub fn conversation_schema_calls(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+    ) -> Result<Vec<annotagent_storage::ConversationCallReceipt>> {
+        if !self
+            .conversation_tasks(project, conversation)?
+            .iter()
+            .any(|item| item.input.id == task)
+        {
+            bail!("task does not belong to this conversation");
+        }
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self.store.conversation_call_history(&owner, task)?)
+    }
+
+    pub fn cancel_conversation_schema(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        call: Uuid,
+    ) -> Result<annotagent_storage::ConversationCallReceipt> {
+        let receipt = self
+            .conversation_call_receipt(project, conversation, task, call)?
+            .ok_or_else(|| anyhow::anyhow!("call receipt not found"))?;
+        let owner = self.conversation_project_identity(project)?;
+        self.store.revoke_conversation_calls(&owner, task)?;
+        if let Some(token) = self
+            .conversation_cancellations
+            .lock()
+            .map_err(|_| anyhow::anyhow!("conversation cancellation registry unavailable"))?
+            .get(&call)
+        {
+            token.cancel();
+        }
+        Ok(receipt)
+    }
     /// Caller resolves the approved Registry binding and its complete scope digest.
     /// A receipt is not a schema acceptance, publish permission or human annotation.
     pub async fn execute_conversation_schema(
@@ -65,6 +119,30 @@ impl crate::LocalApplication {
         )? {
             ConversationCallAdmission::Existing(receipt) => return Ok(receipt),
             ConversationCallAdmission::Admitted => {}
+        }
+        self.conversation_cancellations
+            .lock()
+            .map_err(|_| anyhow::anyhow!("conversation cancellation registry unavailable"))?
+            .insert(execution.call_id, cancellation.clone());
+        let _guard = CallCancellationGuard {
+            application: self,
+            id: execution.call_id,
+        };
+        // Close cancellation's reservation→registration race before any network call.
+        if !self
+            .store
+            .conversation_calls_active(&owner, execution.task_id)?
+        {
+            cancellation.cancel();
+        }
+        if cancellation.is_cancelled() {
+            return Ok(self.store.finish_conversation_call(
+                &owner,
+                execution.task_id,
+                execution.call_id,
+                ConversationCallStatus::Failed,
+                json!({"error":"Cancelled before sending the Schema request"}),
+            )?);
         }
         let attempt = propose_conversation_schema(
             provider,
@@ -292,6 +370,7 @@ mod tests {
     struct TestProvider {
         requests: Mutex<Vec<ModelRequest>>,
         response: ModelResponse,
+        wait_for_cancel: bool,
     }
     #[async_trait::async_trait]
     impl VisionModelProvider for TestProvider {
@@ -310,15 +389,22 @@ mod tests {
         async fn complete(
             &self,
             request: ModelRequest,
-            _: CancellationToken,
+            cancellation: CancellationToken,
         ) -> CoreResult<ModelResponse> {
             self.requests.lock().unwrap().push(request);
+            if self.wait_for_cancel {
+                cancellation.cancelled().await;
+                return Err(annotagent_core::CoreError::Provider(
+                    "TEST cancelled transport".into(),
+                ));
+            }
             Ok(self.response.clone())
         }
     }
     fn provider(arguments: serde_json::Value) -> TestProvider {
         TestProvider {
             requests: Mutex::new(Vec::new()),
+            wait_for_cancel: false,
             response: ModelResponse {
                 content: None,
                 tool_calls: vec![ModelToolCall {
@@ -527,7 +613,7 @@ mod tests {
         );
         let different_call = ConversationSchemaExecution {
             call_id: Uuid::new_v4(),
-            ..execution
+            ..execution.clone()
         };
         assert!(
             reopened
@@ -541,5 +627,84 @@ mod tests {
                 .is_err()
         );
         assert_eq!(provider.requests.lock().unwrap().len(), 1);
+        let message = ConversationMessageInput {
+            id: Uuid::new_v4(),
+            text: "TEST cancellation".into(),
+            image: None,
+        };
+        reopened
+            .append_project_conversation_message("schema-test", conversation, &message)
+            .unwrap();
+        let second_task = Uuid::new_v4();
+        reopened
+            .begin_conversation_task(
+                "schema-test",
+                conversation,
+                &BeginConversationTask {
+                    id: second_task,
+                    source_message_id: message.id,
+                    schema_revision: reopened.project_goal("schema-test").unwrap()["revision"]
+                        .as_str()
+                        .unwrap()
+                        .into(),
+                },
+            )
+            .unwrap();
+        let stopped = ConversationSchemaExecution {
+            task_id: second_task,
+            call_id: Uuid::new_v4(),
+            ..execution
+        };
+        reopened
+            .store
+            .authorize_conversation_calls(
+                &owner,
+                &ConversationCallGrant {
+                    id: Uuid::new_v4(),
+                    task_id: second_task,
+                    scope_hash: stopped.scope_hash.clone(),
+                    maximum_calls: 1,
+                    expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+                },
+            )
+            .unwrap();
+        let waiting = TestProvider {
+            requests: Mutex::new(Vec::new()),
+            response: provider.response.clone(),
+            wait_for_cancel: true,
+        };
+        let run = reopened.execute_conversation_schema(
+            "schema-test",
+            &stopped,
+            &waiting,
+            CancellationToken::default(),
+        );
+        let cancel = async {
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                while waiting.requests.lock().unwrap().is_empty() {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            reopened
+                .cancel_conversation_schema(
+                    "schema-test",
+                    conversation,
+                    second_task,
+                    stopped.call_id,
+                )
+                .unwrap();
+        };
+        let (result, ()) = tokio::join!(run, cancel);
+        assert_eq!(result.unwrap().status, ConversationCallStatus::InDoubt);
+        assert_eq!(waiting.requests.lock().unwrap().len(), 1);
+        assert!(
+            reopened
+                .conversation_cancellations
+                .lock()
+                .unwrap()
+                .is_empty()
+        );
     }
 }

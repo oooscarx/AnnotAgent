@@ -7022,6 +7022,7 @@ pub struct LocalApplication {
     event_sender: broadcast::Sender<RunEvent>,
     active: Mutex<HashMap<RunId, ManagedRun>>,
     agent_cancellations: Mutex<HashMap<uuid::Uuid, CancellationToken>>,
+    conversation_cancellations: Mutex<HashMap<uuid::Uuid, CancellationToken>>,
     project_schema_writes: Mutex<()>,
 }
 
@@ -7163,6 +7164,7 @@ impl LocalApplication {
         let store = Arc::new(SqliteStore::open(&database_path)?);
         store.reconcile_interrupted_runs()?;
         store.recover_sample_operations()?;
+        store.recover_conversation_calls()?;
         for mut session in store.list_agent_sessions(None)? {
             if session.kind == AgentKind::PipelineBuilder
                 && session.status == AgentSessionStatus::Running
@@ -7229,6 +7231,7 @@ impl LocalApplication {
             event_sender,
             active: Mutex::new(HashMap::new()),
             agent_cancellations: Mutex::new(HashMap::new()),
+            conversation_cancellations: Mutex::new(HashMap::new()),
             project_schema_writes: Mutex::new(()),
         };
         application.reconcile_legacy_project_ownership()?;

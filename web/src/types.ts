@@ -1861,6 +1861,21 @@ export interface ConversationMessageInput {
   text: string;
   image: { image_id: string; sha256: string } | null;
 }
+
+export interface ConversationTask {
+  conversation_id: string;
+  input: { id: string; source_message_id: string; schema_revision: string };
+  created_at: string;
+}
+export interface ConversationSchemaPreview {
+  model_id: string; model_name: string; remote_model: string; destination: string;
+  scope_hash: string; maximum_calls: number; image_count: number; estimated_cost: null;
+  expires_at: string; maximum_output_tokens: number; data_scope: string; operation: string;
+}
+export interface ConversationCallReceipt {
+  id: string; task_id: string; status: "reserved" | "completed" | "failed" | "in_doubt";
+  evidence?: { error?: string; decision?: { Err?: string; Ok?: { decision: "draft" | "clarify"; kind?: string; labels?: string[]; question?: string; rationale: string; boundary_rules?: string[] } } };
+}
 export interface ConversationMessage {
   conversation_id: string;
   sequence: number;
