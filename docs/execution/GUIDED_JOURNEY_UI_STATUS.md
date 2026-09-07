@@ -395,3 +395,54 @@ dry runs. This is an entry-time validation, not a lock on all subsequent Project
 edits. Isolated browser regression tested five rejected scopes, unchanged session
 inventory, then the authorized planning → samples → processing path (1/1 passed).
 No live Provider was used. Check: `cargo check --workspace` passed.
+
+Planning authorization local commit: `d984162`.
+
+### M3c — feedback, preserved revision and same-image comparison
+
+Sample feedback now leads to a task-scoped revision scene, not the Pipeline
+editor. The explicit adjustment action makes an exact-tested-revision copy via
+the existing Draft storage; its original Draft and immutable Sample Test stay
+unchanged. The copy and frozen feedback lineage commit in one SQLite transaction.
+The copy UUID is an idempotency key and cannot overwrite another Draft. Subsequent
+feedback does not silently change the frozen evidence for an in-progress revision.
+
+The revision scene explains the selected planning destination, the feedback it
+receives and bounded planning budget. Explicit authorization calls the existing
+Builder in RepairDraft mode with zero image dry runs. Feedback is supplied as
+untrusted user evidence, not tool permissions or proof of accuracy. The existing
+management lease prevents concurrent repair/testing/publication of this copy;
+normal completion/cancellation releases it, startup recovery does not restart it.
+Reload only reads the same Draft lineage and Agent session. Stop remains visible.
+
+A ready proposal leads to the existing separately authorized Sample Operation.
+Two saved tests can be compared only when stable image ID AND content hash match
+and the old test has a terminal projection. Original/result/before views share
+the canvas; no generated perfect "after" is substituted. Keep original returns
+to its exact Draft/Test/Image context; adopting the candidate uses the existing
+confirmation boundary. Neither action accepts future formal annotations.
+
+Verification so far: extended isolated journey E2E passed (1/1), covering feedback
+save, copy identity, refresh before/after planning, no implicit image calls,
+separate test consent, same-image comparison and unchanged parent Draft. Storage
+regression passed for no-feedback, wrong-owner, conflicting-copy, stale-parent,
+retry-with-progress and frozen-feedback cases. Web unit tests: 87/87; Clippy with
+warnings denied passed. Full browser suite is being rerun. Screenshot:
+`guided-journey/sample-comparison.png` (synthetic protocol Fixture, not live model
+accuracy or human usability evidence).
+
+Still open: ordinary Run/default legacy Batch presentation, task-native model
+provisioning return flow, wider sample editing support and final M4 coverage.
+The feedback-driven model can propose an unchanged or unsuitable plan; this
+implementation does not claim any quality improvement without evaluation.
+
+Release checks for this increment: full browser suite **62/62**; the final
+two journey cases **2/2** after adding a fixture assertion that RepairDraft
+actually receives saved feedback AND bounded original outcome summaries. The
+summaries contain IDs, labels, status, semantic scores, failure classes and box
+coordinates—not image bytes or mask payloads—and are disclosed in the consent.
+Full Rust tests **510 passed / 5 ignored** (real-model file requirements), fmt,
+all-feature build and Clippy passed. Web typecheck and **87** unit tests passed;
+production build was performed by Playwright. No real model or person evaluated
+accuracy/usability. The missing-model test now isolates by created model IDs and
+matches query-bearing catalog URLs; it no longer depends on suite ordering.

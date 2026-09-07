@@ -556,6 +556,8 @@ impl SqliteStore {
             connection.execute("INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (21, ?1, ?2)", params!["sample_operations", Utc::now().to_rfc3339()])?;
             connection.execute_batch(include_str!("../../../migrations/0022_processing_operations.sql"))?;
             connection.execute("INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (22, ?1, ?2)", params!["processing_operations", Utc::now().to_rfc3339()])?;
+            connection.execute_batch(include_str!("../../../migrations/0023_sample_plan_revisions.sql"))?;
+            connection.execute("INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (23, ?1, ?2)", params!["sample_plan_revisions", Utc::now().to_rfc3339()])?;
             Ok(())
         })
     }

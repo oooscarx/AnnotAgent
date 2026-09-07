@@ -93,6 +93,7 @@ impl SqliteStore {
     pub fn recover_sample_operations(&self) -> Result<(), StorageError> {
         self.with_connection(|connection| {
             let transaction = connection.unchecked_transaction()?;
+            transaction.execute("DELETE FROM management_entity_leases WHERE lease_kind='sample_plan_revision'", [])?;
             transaction.execute("DELETE FROM management_entity_leases WHERE lease_kind='sample_test' AND owner IN (SELECT id FROM sample_operations WHERE status IN ('queued','running','cancelling'))", [])?;
             transaction.execute("UPDATE sample_operations SET status=CASE WHEN status='cancelling' THEN 'cancelled' WHEN EXISTS(SELECT 1 FROM workflow_sample_tests WHERE workflow_sample_tests.id=sample_operations.id) THEN 'succeeded' ELSE 'interrupted' END,error=CASE WHEN status='cancelling' OR EXISTS(SELECT 1 FROM workflow_sample_tests WHERE workflow_sample_tests.id=sample_operations.id) THEN NULL ELSE 'The server stopped before this sample task completed. Saved evidence remains; no automatic retry was started.' END,updated_at=?1 WHERE status IN ('queued','running','cancelling')", [Utc::now().to_rfc3339()])?;
             transaction.commit()?;

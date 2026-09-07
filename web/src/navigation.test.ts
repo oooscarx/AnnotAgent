@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseWorkspaceRoute,
   projectBuildPath,
+  projectJourneyPath,
   projectBatchPath,
   projectReviewPath,
   projectRunPath,
@@ -11,6 +12,11 @@ import {
 } from "./navigation";
 
 describe("guided workspace routing", () => {
+  it("restores a sample revision scene without inventing a new owner", () => {
+    const path = projectJourneyPath("project a", "revise", { draftId: "copy", sampleTestId: "baseline", imageId: "image" });
+    const url = new URL(path, "http://localhost");
+    expect(parseWorkspaceRoute(url.pathname, `${url.search}&return_to=https://outside.invalid`)).toMatchObject({ kind: "journey", scene: "revise", projectId: "project a", draftId: "copy", sampleTestId: "baseline", imageId: "image", canonicalPath: path });
+  });
   it("keeps review audit and Batch filters in explicit canonical context", () => {
     const audit = projectReviewPath("project", "review", "audit");
     expect(parseWorkspaceRoute("/review/review", "?project_id=project&view=audit").canonicalPath).toBe(audit);

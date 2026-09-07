@@ -756,6 +756,7 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
             get(list_workflow_drafts).post(create_workflow_draft),
         )
         .route("/api/workflow-drafts/suggest", post(suggest_workflow))
+        .route("/api/projects/{project_id}/sample-plan-copies/{copy_id}", post(copy_sample_plan).get(get_sample_plan_evidence))
         .route("/api/workflow-drafts/diff", post(diff_workflow_drafts))
         .route(
             "/api/workflow-drafts/{draft_id}",
@@ -3493,6 +3494,61 @@ struct CreateWorkflowDraftRequest {
     #[serde(default)]
     from_template: bool,
     template_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CopySamplePlanRequest {
+    sample_test_id: String,
+}
+
+async fn copy_sample_plan(
+    State(state): State<ServerState>,
+    AxumPath((project, copy)): AxumPath<(String, uuid::Uuid)>,
+    Json(request): Json<CopySamplePlanRequest>,
+) -> ApiResult<Json<Value>> {
+    let _guard = state.processing_gate.lock().await;
+    state
+        .application
+        .project_goal(&project)
+        .map_err(ApiError::bad_request)?;
+    let draft = state
+        .application
+        .store()
+        .copy_sample_plan(&request.sample_test_id, &project, &copy.to_string())
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!(draft)))
+}
+
+async fn get_sample_plan_evidence(
+    State(state): State<ServerState>,
+    AxumPath((project, copy)): AxumPath<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    let mut evidence = state
+        .application
+        .store()
+        .sample_plan_evidence(&copy)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::not_found("Sample plan copy not found"))?;
+    if evidence["project_id"] != project {
+        return Err(ApiError::not_found(
+            "Sample plan copy not found in this Project",
+        ));
+    }
+    let baseline = state
+        .application
+        .store()
+        .get_workflow_sample_test_by_id(evidence["sample_test_id"].as_str().unwrap_or_default())
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::not_found("Original Sample Test no longer exists"))?;
+    evidence["baseline_draft_id"] = json!(baseline.draft_id);
+    // A deleted copy is not made accessible through the lineage endpoint.
+    state
+        .application
+        .store()
+        .get_workflow_draft(&copy)
+        .map_err(ApiError::not_found)?;
+    Ok(Json(evidence))
 }
 
 async fn create_workflow_draft(

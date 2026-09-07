@@ -11,7 +11,7 @@ export type WorkspaceRoute =
   | { kind: "home"; canonicalPath: string }
   | { kind: "projects"; canonicalPath: string; create?: boolean }
   | { kind: "project"; canonicalPath: string; projectId: string }
-  | { kind: "journey"; canonicalPath: string; projectId: string; scene: "images" | "goal" | "samples" | "model" | "confirm"; draftId?: string; sampleTestId?: string; imageId?: string; agentSessionId?: string; sampleOperationId?: string; processingOperationId?: string; sampleView?: "authorize"; modelPurpose?: "vision" }
+  | { kind: "journey"; canonicalPath: string; projectId: string; scene: "images" | "goal" | "samples" | "model" | "confirm" | "revise"; draftId?: string; sampleTestId?: string; imageId?: string; agentSessionId?: string; sampleOperationId?: string; processingOperationId?: string; sampleView?: "authorize"; modelPurpose?: "vision" }
   | { kind: "export"; canonicalPath: string; projectId: string }
   | {
       kind: "build";
@@ -156,7 +156,7 @@ export function projectBuildPath(
   return `/projects/${encodeURIComponent(projectId)}/build/${step}${suffix}`;
 }
 
-export function projectJourneyPath(projectId: string, scene: "images" | "goal" | "samples" | "model" | "confirm", context: BuildUrlContext = {}): string {
+export function projectJourneyPath(projectId: string, scene: "images" | "goal" | "samples" | "model" | "confirm" | "revise", context: BuildUrlContext = {}): string {
   const params = new URLSearchParams();
   if (scene === "model" && context.modelPurpose === "vision") params.set("purpose", "vision");
   if (context.sampleOperationId) params.set("operation", context.sampleOperationId);
@@ -299,11 +299,11 @@ export function parseWorkspaceRoute(
       canonicalPath: params.get("new") === "1" ? "/projects?new=1" : "/projects",
     };
 
-  const journey = clean.match(/^\/projects\/([^/]+)\/task\/(images|goal|samples|model|confirm)$/);
+  const journey = clean.match(/^\/projects\/([^/]+)\/task\/(images|goal|samples|model|confirm|revise)$/);
   if (journey) {
     const projectId = decodePathSegment(journey[1]);
     if (!projectId) return { kind: "notFound", canonicalPath: `${clean}${search}`, invalidPath: `${clean}${search}` };
-    const scene = journey[2] as "images" | "goal" | "samples" | "model" | "confirm";
+    const scene = journey[2] as "images" | "goal" | "samples" | "model" | "confirm" | "revise";
     const context = { draftId: params.get("draft") ?? undefined, sampleTestId: params.get("test") ?? undefined, imageId: params.get("image") ?? undefined, agentSessionId: params.get("session") ?? undefined, sampleOperationId: scene !== "confirm" ? params.get("operation") ?? undefined : undefined, processingOperationId: scene === "confirm" ? params.get("operation") ?? undefined : undefined };
     const sampleView = scene === "samples" && params.get("view") === "authorize" ? "authorize" as const : undefined;
     const modelPurpose = scene === "model" && params.get("purpose") === "vision" ? "vision" as const : undefined;

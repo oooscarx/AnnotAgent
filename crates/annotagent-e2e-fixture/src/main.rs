@@ -342,6 +342,33 @@ async fn openai_completion(
     {
         tokio::time::sleep(std::time::Duration::from_secs(4)).await;
     }
+    // The guided revision fixture must receive actual saved feedback and outcome context,
+    // not merely a UI claiming to improve a plan. This does not simulate improved accuracy.
+    if request["model"] == "e2e-slow-sample" {
+        let contents = request["messages"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|message| message["content"].as_str())
+            .filter_map(|content| serde_json::from_str::<Value>(content).ok())
+            .collect::<Vec<_>>();
+        if contents
+            .iter()
+            .any(|value| value["build_mode"]["kind"] == "repair_draft")
+            && !contents.iter().any(|value| {
+                value["sample_evidence"]["feedback"]
+                    .as_array()
+                    .is_some_and(|items| !items.is_empty())
+                    && value["saved_sample_observations"]
+                        .as_array()
+                        .is_some_and(|items| !items.is_empty())
+            })
+        {
+            return Json(
+                json!({"error": "TEST fixture: sample repair requires saved feedback and observed outcomes"}),
+            );
+        }
+    }
     if let Some(response) = grounding_completion(&request) {
         return Json(response);
     }

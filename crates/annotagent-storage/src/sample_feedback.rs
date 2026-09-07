@@ -73,6 +73,83 @@ mod tests {
     }
 
     #[test]
+    fn sample_plan_copy_preserves_parent_feedback_and_retry_progress() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let feedback = fixture(&store);
+        let draft: annotagent_core::WorkflowDraft = serde_json::from_value(serde_json::json!({
+            "id":"draft-1", "project_id":"project-1", "name":"Original", "status":"editing",
+            "nodes":[], "created_at":Utc::now(), "updated_at":Utc::now()
+        }))
+        .unwrap();
+        store.save_workflow_draft(&draft).unwrap();
+        let parent = store.get_workflow_draft("draft-1").unwrap();
+        // The saved test fixture is immutable; create a separate exact-revision sample.
+        let mut sample = store
+            .get_workflow_sample_test_by_id("test-1")
+            .unwrap()
+            .unwrap();
+        sample.id = "exact-test".into();
+        sample.draft_content_hash = parent.content_hash.clone();
+        sample.draft_revision = parent.revision;
+        store.save_workflow_sample_test(&sample).unwrap();
+        assert!(
+            store
+                .copy_sample_plan("exact-test", "project-1", "copy")
+                .is_err()
+        );
+        let mut feedback = feedback;
+        feedback.sample_test_id = "exact-test".into();
+        store.save_sample_feedback(&feedback).unwrap();
+        assert!(
+            store
+                .copy_sample_plan("exact-test", "wrong-project", "copy")
+                .is_err()
+        );
+        assert!(
+            store
+                .copy_sample_plan("exact-test", "project-1", "draft-1")
+                .is_err()
+        );
+        let mut copy = store
+            .copy_sample_plan("exact-test", "project-1", "copy")
+            .unwrap();
+        assert_eq!(copy.nodes, parent.nodes);
+        let evidence = store.sample_plan_evidence("copy").unwrap().unwrap();
+        copy.name = "Revised by Builder".into();
+        store.save_workflow_draft(&copy).unwrap();
+        let revised = store.get_workflow_draft("copy").unwrap();
+        assert_eq!(
+            store
+                .copy_sample_plan("exact-test", "project-1", "copy")
+                .unwrap(),
+            revised
+        );
+        feedback.sequence += 1;
+        feedback.revision_id = "later-feedback".into();
+        feedback.note = "Subsequent evidence".into();
+        store.save_sample_feedback(&feedback).unwrap();
+        assert_eq!(
+            store.sample_plan_evidence("copy").unwrap().unwrap(),
+            evidence
+        );
+        assert_eq!(store.get_workflow_draft("draft-1").unwrap(), parent);
+        let mut changed = parent;
+        changed.name = "Concurrent edit".into();
+        store.save_workflow_draft(&changed).unwrap();
+        assert!(
+            store
+                .copy_sample_plan("exact-test", "project-1", "new-copy")
+                .is_err()
+        );
+        assert!(
+            store
+                .get_workflow_draft_optional("new-copy")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
     fn sample_feedback_persists_revisions_without_mutating_predictions() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("feedback.sqlite");
@@ -152,6 +229,91 @@ pub struct SampleFeedbackRevision {
 }
 
 impl SqliteStore {
+    /// Frozen authoring evidence, not a claim that the model improved its predictions.
+    pub fn sample_plan_evidence(
+        &self,
+        draft_id: &str,
+    ) -> Result<Option<serde_json::Value>, StorageError> {
+        self.with_connection(|connection| {
+            let value: Option<(String, String, String)> = connection.query_row(
+                "SELECT project_id,sample_test_id,feedback_json FROM sample_plan_revisions WHERE draft_id=?1", [draft_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            ).optional()?;
+            value.map(|(project, test, feedback)| Ok(serde_json::json!({"project_id": project, "sample_test_id": test, "feedback": serde_json::from_str::<serde_json::Value>(&feedback)?}))).transpose()
+        })
+    }
+
+    /// Preserve a tested plan before invoking the existing Builder in repair mode.
+    /// The UUID is an idempotency key; retries never overwrite the working copy.
+    pub fn copy_sample_plan(
+        &self,
+        test_id: &str,
+        project_id: &str,
+        copy_id: &str,
+    ) -> Result<annotagent_core::WorkflowDraft, StorageError> {
+        let test = self
+            .get_workflow_sample_test_by_id(test_id)?
+            .ok_or_else(|| StorageError::InvalidEnum("Sample Test not found".into()))?;
+        if test.project_id != project_id {
+            return Err(StorageError::InvalidEnum(
+                "Sample Test belongs to another Project".into(),
+            ));
+        }
+        if let Some(evidence) = self.sample_plan_evidence(copy_id)? {
+            if evidence["sample_test_id"] != test_id || evidence["project_id"] != project_id {
+                return Err(StorageError::InvalidEnum(
+                    "Copy key belongs to another sample".into(),
+                ));
+            }
+            return self.get_workflow_draft(copy_id);
+        }
+        let mut draft = self.get_workflow_draft(&test.draft_id)?;
+        if draft.revision != test.draft_revision || draft.content_hash != test.draft_content_hash {
+            return Err(StorageError::InvalidEnum(
+                "The sample plan changed; test its current revision before improving it".into(),
+            ));
+        }
+        let mut feedback = Vec::new();
+        for image in &test.inputs {
+            feedback.extend(self.sample_feedback(test_id, &image.image_id)?);
+        }
+        if feedback.is_empty() {
+            return Err(StorageError::InvalidEnum(
+                "Save sample feedback before requesting an improvement".into(),
+            ));
+        }
+        let evidence = serde_json::to_string(&feedback)?;
+        if evidence.len() > 32_000 {
+            return Err(StorageError::InvalidEnum(
+                "Sample feedback is too large for bounded planning; use a smaller Sample Test"
+                    .into(),
+            ));
+        }
+        copy_id.clone_into(&mut draft.id);
+        draft.name = format!("{} · sample revision", draft.name);
+        draft.status = annotagent_core::WorkflowDraftStatus::Editing;
+        draft.revision = 1;
+        draft.content_hash.clear();
+        draft.geometry_risk_acceptance = None;
+        draft.created_at = Utc::now();
+        draft.updated_at = draft.created_at;
+        let draft = super::persisted_workflow_draft(&draft, None)?;
+        let expected_revision = i64::try_from(test.draft_revision).map_err(|_| {
+            StorageError::InvalidEnum("Sample revision exceeds storage range".into())
+        })?;
+        self.with_connection(|connection| {
+            let transaction = connection.unchecked_transaction()?;
+            let valid: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM workflow_drafts WHERE id=?1 AND project_id=?2 AND revision=?3 AND content_hash=?4 AND deleted_at IS NULL AND archived_at IS NULL)", params![test.draft_id, project_id, expected_revision, test.draft_content_hash], |row| row.get(0))?;
+            if !valid { return Err(StorageError::InvalidEnum("The original sample plan is no longer current".into())); }
+            transaction.execute("INSERT INTO workflow_drafts (id,project_id,status,draft_json,created_at,updated_at,revision,content_hash) VALUES (?1,?2,'editing',?3,?4,?4,1,?5)", params![copy_id,project_id,serde_json::to_string(&draft)?,draft.created_at.to_rfc3339(),draft.content_hash])?;
+            transaction.execute("INSERT INTO workflow_pipelines (workflow_id,project_id,display_name,lifecycle_revision,created_at,updated_at) VALUES (?1,?2,?3,1,?4,?4)",params![copy_id,project_id,draft.name,draft.created_at.to_rfc3339()])?;
+            transaction.execute("INSERT INTO sample_plan_revisions VALUES (?1,?2,?3,?4,?5)", params![copy_id,project_id,test_id,evidence,Utc::now().to_rfc3339()])?;
+            transaction.commit()?;
+            Ok(())
+        })?;
+        self.get_workflow_draft(copy_id)
+    }
+
     pub fn sample_feedback(
         &self,
         test_id: &str,

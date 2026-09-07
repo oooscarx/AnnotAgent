@@ -4,14 +4,21 @@ import { expect, test } from "./fixtures";
 test("conditional model connection saves, verifies with consent, and returns without inference", async ({ page, request }) => {
   const charged: string[] = [];
   const createdProviders: string[] = [];
+  const createdModelIds = new Set<string>();
   page.on("request", (req) => { if (req.method() === "POST" && req.url().endsWith("/api/providers")) createdProviders.push(req.url()); });
   page.on("request", (req) => { if (req.method() === "POST" && /active-probe|suggest|dry-run/.test(req.url())) charged.push(req.url()); });
   await page.route("**/api/agent-model-bindings", (route) => route.fulfill({ json: {} }));
   // Isolate the catalog presented to this test from other suite-created connections.
-  await page.route("**/api/model-profiles", async (route) => {
+  await page.route(/\/api\/model-profiles(?:\?.*)?$/, async (route) => {
+    if (route.request().method() === "POST") {
+      const response = await route.fetch();
+      const body = await response.json();
+      if (response.ok()) createdModelIds.add(body.id);
+      return route.fulfill({ response, json: body });
+    }
     if (route.request().method() !== "GET") return route.continue();
     const response = await route.fetch(); const body = await response.json();
-    await route.fulfill({ json: { ...body, models: body.models.filter((model: { display_name: string }) => ["e2e-pipeline-builder", "e2e-journey-classifier"].includes(model.display_name)) } });
+    await route.fulfill({ json: { ...body, models: body.models.filter((model: { id: string }) => createdModelIds.has(model.id)) } });
   });
   await page.goto("/projects?new=1");
   await page.getByLabel("Choose images", { exact: true }).setInputFiles(resolve("../examples/robocup/images/synthetic-robocup.png"));

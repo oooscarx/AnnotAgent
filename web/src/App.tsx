@@ -14,6 +14,7 @@ import { JourneyGoal } from "./components/JourneyGoal";
 import { JourneyModel } from "./components/JourneyModel";
 import { JourneySampleTask } from "./components/JourneySampleTask";
 import { JourneyConfirm } from "./components/JourneyConfirm";
+import { JourneyRevision } from "./components/JourneyRevision";
 import { ImproveAutomationPanel } from "./components/GeometrySafetyPanel";
 import { NotFoundPage } from "./features/notFound/NotFoundPage";
 import {
@@ -679,10 +680,12 @@ export function App() {
           : route.scene === "goal" ? <JourneyGoal key={route.projectId} project={selectedProject} sessionId={route.agentSessionId} onNavigate={navigate} onRefresh={refresh} onNavigationGuardChange={setNavigationGuard} />
           : route.scene === "model" ? <JourneyModel key={`${route.projectId}:${route.modelPurpose ?? "planning"}`} project={selectedProject} purpose={route.modelPurpose ?? "planning"} onNavigate={navigate} />
           : route.scene === "confirm" ? <JourneyConfirm key={route.projectId} projectId={route.projectId} draftId={route.draftId} testId={route.sampleTestId} imageId={route.imageId} operationId={route.processingOperationId} onNavigate={navigate} />
+          : route.scene === "revise" ? <JourneyRevision key={`${route.projectId}:${route.draftId}`} projectId={route.projectId} draftId={route.draftId} testId={route.sampleTestId} imageId={route.imageId} onNavigate={navigate} />
           : <BuildTestPublish key={route.projectId} project={selectedProject} guided selectedDraftId={route.draftId} selectedSampleTestId={route.sampleTestId} selectedSampleImageId={route.imageId}
             sampleOperationId={route.sampleOperationId}
             requestNewSample={route.sampleView === "authorize"}
             onAdopt={(draftId, sampleTestId, imageId) => navigate(projectJourneyPath(route.projectId, "confirm", { draftId, sampleTestId, imageId }))}
+            onImprove={(draftId, sampleTestId, imageId) => navigate(projectJourneyPath(route.projectId, "revise", { draftId, sampleTestId, imageId }))}
             onSampleOperation={(sampleOperationId) => navigate(projectJourneyPath(route.projectId, "samples", { draftId: route.draftId, sampleOperationId, sampleView: sampleOperationId ? undefined : "authorize" }), true)}
             onNavigationGuardChange={setNavigationGuard}
             onSelectTestContext={(draftId, sampleTestId, replace, imageId) => navigate(projectJourneyPath(route.projectId, "samples", { draftId, sampleTestId, imageId }), replace)}
@@ -1256,6 +1259,7 @@ function BuildTestPublish({
   sampleOperationId,
   requestNewSample = false,
   onAdopt,
+  onImprove,
   onSampleOperation,
   selectedDraftId,
   selectedSampleTestId,
@@ -1272,6 +1276,7 @@ function BuildTestPublish({
   sampleOperationId?: string;
   requestNewSample?: boolean;
   onAdopt?: (draftId: string, testId: string, imageId?: string) => void;
+  onImprove?: (draftId: string, testId: string, imageId?: string) => void;
   onSampleOperation?: (id?: string) => void;
   selectedDraftId?: string;
   selectedSampleTestId?: string;
@@ -1495,6 +1500,7 @@ function BuildTestPublish({
   if (selectedSampleImageId && reportLoading) return <p role="status">{t("Restoring the saved Sample Test…")}</p>;
   if (selectedSampleImageId && !reportLoading && !inspectedSample) return <section role="alert"><h2>{t("Sample image unavailable")}</h2><p>{t("This image is not part of the selected saved Sample Test. No other result was substituted.")}</p><button onClick={() => setInspectedSampleIndex(undefined)}>{t("View all sample images")}</button></section>;
   if (inspectedSample) return <SampleAnnotationDialog key={`${activeSampleTest?.id}:${selectedSampleImageId}`}
+    projectId={project.id} draftId={draftId} onImprove={onImprove} onKeepOriginal={(id, test, image) => onSelectTestContext(id, test, false, image)}
     onAdopt={guided && activeSampleTest ? () => onAdopt?.(draftId, activeSampleTest.id, selectedSampleImageId) : undefined}
     guided={guided}
     sample={inspectedSample} image={sampleImage(inspectedSample)} configuredRefiners={configuredRefiners}
@@ -1888,6 +1894,10 @@ function SampleResultCard({
 
 function SampleAnnotationDialog({
   sample,
+  projectId,
+  draftId,
+  onKeepOriginal,
+  onImprove,
   guided = false,
   onAdopt,
   image,
@@ -1897,6 +1907,10 @@ function SampleAnnotationDialog({
   onNavigationGuardChange, position, count, onPrevious, onNext,
 }: {
   sample: WorkflowDryRunReport["samples"][number];
+  projectId: string;
+  draftId: string;
+  onKeepOriginal: (draftId: string, testId: string, imageId?: string) => void;
+  onImprove?: (draftId: string, testId: string, imageId?: string) => void;
   guided?: boolean;
   onAdopt?: () => void;
   image?: ImageItem;
@@ -1942,7 +1956,7 @@ function SampleAnnotationDialog({
       </header>
       <p className="sample-risk-notice">{t("Model confidence is not boundary accuracy. Sample decisions do not accept formal annotations.")}</p>
       {!sample.projection && <p role="alert">{t("This legacy test has no final-result projection. Test the Draft again before confirming its annotations.")}</p>}
-      {selectedStage === "final" && image && sampleTestId && <SampleFeedbackEditor onAdopt={onAdopt} sample={sample} image={image} testId={sampleTestId} onDirtyChange={setFeedbackDirty} onConfirmed={onNext ? () => { onNavigationGuardChange(undefined); onNext(); } : undefined} navigation={guided && count > 1 ? <nav className="button-row" aria-label={t("Sample images")}><button disabled={!onPrevious} onClick={onPrevious}>{t("Previous image")}</button><span>{position}/{count}</span><button disabled={!onNext} onClick={onNext}>{t("Next image")}</button></nav> : undefined} />}
+      {selectedStage === "final" && image && sampleTestId && <SampleFeedbackEditor projectId={projectId} draftId={draftId} onKeepOriginal={onKeepOriginal} onImprove={onImprove} onAdopt={onAdopt} sample={sample} image={image} testId={sampleTestId} onDirtyChange={setFeedbackDirty} onConfirmed={onNext ? () => { onNavigationGuardChange(undefined); onNext(); } : undefined} navigation={guided && count > 1 ? <nav className="button-row" aria-label={t("Sample images")}><button disabled={!onPrevious} onClick={onPrevious}>{t("Previous image")}</button><span>{position}/{count}</span><button disabled={!onNext} onClick={onNext}>{t("Next image")}</button></nav> : undefined} />}
       {!guided && <details className="sample-technical-details"><summary>{t("View execution details")}</summary>
       <nav className="sample-preview-stage-tabs" aria-label={t("Annotation stages")}>
         {availableStages.map((stage) => <button key={stage} type="button" className={selectedStage === stage ? "active" : ""} aria-pressed={selectedStage === stage} onClick={() => { if (stage === selectedStage || !feedbackDirty || window.confirm(t("Discard unsaved sample feedback?"))) setSelectedStage(stage); }}>{stage === "search_region" ? t("Search region") : stage === "prompt_coverage" ? t("Prompt coverage") : stage[0].toUpperCase() + stage.slice(1)}</button>)}

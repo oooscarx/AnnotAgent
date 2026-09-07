@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { api } from "../api";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { api, ApiRequestError } from "../api";
 import { t } from "../i18n";
 import type { Annotation, ImageItem, SampleFeedbackRevision, WorkflowDryRunReport } from "../types";
 import { AnnotationCanvas } from "./AnnotationCanvas";
@@ -10,11 +10,15 @@ const reasons: [SampleFeedbackRevision["reason"], string][] = [
   ["cannot_judge", "Cannot judge yet"],
 ];
 
-export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onConfirmed, navigation, onAdopt }: {
+export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onConfirmed, navigation, onAdopt, projectId, draftId, onImprove, onKeepOriginal }: {
   sample: WorkflowDryRunReport["samples"][number]; image: ImageItem; testId: string;
   onDirtyChange: (dirty: boolean) => void;
   onConfirmed?: () => void;
   onAdopt?: () => void;
+  projectId: string;
+  draftId: string;
+  onKeepOriginal: (draftId: string, testId: string, imageId?: string) => void;
+  onImprove?: (draftId: string, testId: string, imageId?: string) => void;
   navigation?: ReactNode;
 }) {
   const original: Annotation[] = (sample.projection ? sample.outcomes : []).flatMap((outcome) => outcome.value ? [{
@@ -34,7 +38,26 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   const [showOriginal, setShowOriginal] = useState(false);
+  const [before, setBefore] = useState<{annotations: Annotation[]; draftId:string; testId:string}>();
+  const [showBefore, setShowBefore] = useState(false);
+  const mounted = useRef(true);
+  const copyKey = useRef(crypto.randomUUID());
+  const copying = useRef(false);
+  useEffect(() => {
+    let current = true; mounted.current = true;
+    void api.samplePlanEvidence(projectId, draftId).then(async (evidence) => {
+      const { sample_test: baseline } = await api.workflowSampleTest(evidence.baseline_draft_id, undefined, evidence.sample_test_id);
+      if (!current) return;
+      if (!baseline || baseline.project_id !== projectId) throw new Error(t("The original sample is unavailable for comparison."));
+      const position = baseline.inputs.findIndex((input) => input.image_id === image.image_id && input.content_hash === image.content_hash);
+      const originalSample = baseline.report.samples[position];
+      if (!originalSample?.projection) return;
+      setBefore({ draftId: baseline.draft_id, testId: baseline.id, annotations: originalSample.outcomes.flatMap((outcome) => outcome.value ? [{ id: outcome.id, image_id: image.image_id, task_id: "sample", label: outcome.label, value: outcome.value, attributes: {}, source: "original sample", review_status: "needs_review" as const, provenance: {}, created_at: "" }] : []) });
+    }).catch((error: Error) => { if (current && !(error instanceof ApiRequestError && error.status === 404)) setError(error.message); });
+    return () => { current = false; mounted.current = false; };
+  }, [projectId, draftId, image.image_id, image.content_hash]);
   const [hint, setHint] = useState(true);
+  const [attentionOpen, setAttentionOpen] = useState(false);
   const selectedAnnotation = annotations.find((item) => item.id === selected);
   useEffect(() => {
     let current = true;
@@ -60,36 +83,39 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
     return () => window.removeEventListener("beforeunload", guard);
   }, [dirty]);
   const edit = (annotation: Annotation) => {
-    if (!loaded || busy || showOriginal || annotation.id !== selected || annotation.value.kind !== "bounding_box") return;
+    if (!loaded || busy || showOriginal || showBefore || annotation.id !== selected || annotation.value.kind !== "bounding_box") return;
     setAnnotations((items) => items.map((item) => item.id === annotation.id ? annotation : item));
-    setDirty(true); setSaved(false); setReason("poor_boundary");
+    setDirty(true); setSaved(false); setReason("poor_boundary"); setAttentionOpen(true);
   };
   const save = async (confirm = false) => {
-    if (busy || !loaded) return;
+    if (busy || !loaded || showBefore) return;
     setBusy(true); setError("");
     const revision: SampleFeedbackRevision = {
       revision_id: crypto.randomUUID(), sample_test_id: testId, image_id: image.image_id,
       sequence: (revisions.at(-1)?.sequence ?? 0) + 1, reason: confirm ? "correct" : reason, note,
-      outcome_id: reason === "missing_target" ? null : selected,
-      corrected_value: reason !== "missing_target" && selectedAnnotation?.value.kind === "bounding_box" ? selectedAnnotation.value : null,
+      outcome_id: !confirm && reason === "missing_target" ? null : selected,
+      corrected_value: (confirm || reason !== "missing_target") && selectedAnnotation?.value.kind === "bounding_box" ? selectedAnnotation.value : null,
       created_at: new Date().toISOString(),
     };
     try {
       const value = await api.saveSampleFeedback(revision);
+      if (!mounted.current) return;
       setRevisions((items) => [...items, value.revision]); setDirty(false); setSaved(true); setHistory([]);
       if (confirm) { setReason("correct"); onDirtyChange(false); if (!selected) onConfirmed?.(); }
-    } catch (error) { setError((error as Error).message); }
-    finally { setBusy(false); }
+    } catch (error) { if (mounted.current) setError((error as Error).message); }
+    finally { if (mounted.current) setBusy(false); }
   };
   return <div className="sample-feedback-workspace">
     <section className="sample-feedback-image">
-      <div className="button-row"><button aria-pressed={showOriginal} onClick={() => setShowOriginal(true)}>{t("Original image")}</button><button aria-pressed={!showOriginal} onClick={() => setShowOriginal(false)}>{t("Current candidates")}</button></div>
-      <AnnotationCanvas compactList imageUrl={image.url} annotations={showOriginal ? [] : annotations} selectedId={selected} readOnly={!loaded || busy || selectedAnnotation?.value.kind !== "bounding_box"} onSelect={(id) => {
+      <div className="button-row"><button aria-pressed={showOriginal} onClick={() => { setShowOriginal(true); setShowBefore(false); }}>{t("Original image")}</button>{before && <button aria-pressed={showBefore} onClick={() => { setShowOriginal(false); setShowBefore(true); }}>{t("Before adjustment")}</button>}<button aria-pressed={!showOriginal && !showBefore} onClick={() => { setShowOriginal(false); setShowBefore(false); }}>{t("Current candidates")}</button></div>
+      {before && <p>{t("Compare two saved tests of this same image. A proposed change is not proof of improved accuracy.")}</p>}
+      <AnnotationCanvas compactList imageUrl={image.url} annotations={showOriginal ? [] : showBefore ? before?.annotations ?? [] : annotations} selectedId={showBefore ? undefined : selected} readOnly={!loaded || busy || showBefore || selectedAnnotation?.value.kind !== "bounding_box"} onSelect={(id) => {
+        if (showBefore) return;
         if (dirty && selected !== id) { setError(t("Save or undo this correction before selecting another result.")); return; }
         setSelected(id);
       }} onEditStart={() => setHistory((items) => [...items, annotations])} onChange={edit} />
     </section>
-    <details className="sample-feedback-decision" open={dirty || undefined}>
+    <details className="sample-feedback-decision" open={attentionOpen} onToggle={(event) => setAttentionOpen(event.currentTarget.open)}>
       <summary>{t("Result needs attention")}</summary>
       <div className="sample-feedback-fields">
       <h3>{t("Your decision on this image")}</h3>
@@ -106,8 +132,22 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
       <label>{t("Feedback note")}<textarea aria-label={t("Feedback note")} maxLength={4000} disabled={!loaded || busy} value={note} onChange={(event) => { setNote(event.target.value); setDirty(true); setSaved(false); }} /></label>
       <div className="button-row"><button disabled={!loaded || busy} onClick={() => void save()}>{t("Save sample feedback")}</button><button disabled={!history.length || busy} onClick={() => { setAnnotations(history.at(-1)!); setHistory((items) => items.slice(0, -1)); setDirty(true); }}>{t("Undo edit")}</button></div>
       {reason !== "correct" && <p>{t("This records a quality issue, not a promised improvement. Review the existing Pipeline or correct the result manually; a new model test requires separate authorization.")}</p>}
+      {onImprove && <button disabled={!loaded || busy || dirty || !revisions.length} onClick={() => {
+        if (copying.current) return;
+        copying.current = true;
+        setBusy(true); setError("");
+        void api.copySamplePlan(projectId, copyKey.current, testId).then((draft) => { if (mounted.current) onImprove(draft.id, testId, image.image_id); }).catch((error: Error) => { if (mounted.current) setError(error.message); }).finally(() => { copying.current = false; if (mounted.current) setBusy(false); });
+      }}>{t("Review an adjustment using saved feedback")}</button>}
       </div>
     </details>
-    <div className="sample-confirm-action">{navigation}<span>{t(selected ? "This decision applies only to the selected result." : "This decision applies to this sample image only.")}</span><button className={onAdopt ? undefined : "primary"} disabled={!loaded || busy || !sample.projection} onClick={() => void save(true)}>{t(selected ? "Confirm selected result" : onConfirmed ? "Confirm sample and next" : "Confirm this sample")}</button>{onAdopt && <button className="primary" disabled={!loaded || busy || dirty || !sample.projection} onClick={onAdopt}>{t("Continue with this plan")}</button>}{saved && <span role="status">{t("Sample feedback saved")}</span>}{error && <p role="alert">{error}</p>}</div>
+    <div className="sample-confirm-action">
+      {navigation}
+      {before && <button disabled={busy || dirty} onClick={() => onKeepOriginal(before.draftId, before.testId, image.image_id)}>{t("Keep original plan")}</button>}
+      <span>{t(selected ? "This decision applies only to the selected result." : "This decision applies to this sample image only.")}</span>
+      <button className={onAdopt ? undefined : "primary"} disabled={!loaded || busy || showBefore || !sample.projection} onClick={() => void save(true)}>{t(selected ? "Confirm selected result" : onConfirmed ? "Confirm sample and next" : "Confirm this sample")}</button>
+      {onAdopt && <button className="primary" disabled={!loaded || busy || dirty || showBefore || !sample.projection} onClick={onAdopt}>{t("Continue with this plan")}</button>}
+      {saved && <span role="status">{t("Sample feedback saved")}</span>}
+      {error && <p role="alert">{error}</p>}
+    </div>
   </div>;
 }

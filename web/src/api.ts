@@ -613,6 +613,8 @@ export const api = {
     }),
   uploadImage: (projectId: string, file: File) => upload<{ imported: number; duplicates: number; corrupt: { name: string; message: string }[] }>(`/api/projects/${encodeURIComponent(projectId)}/image-upload?name=${encodeURIComponent(file.name)}`, file),
   sampleFeedback: (testId: string, imageId: string) => request<{ revisions: import("./types").SampleFeedbackRevision[] }>(`/api/workflow-sample-tests/${encodeURIComponent(testId)}/images/${encodeURIComponent(imageId)}/feedback`),
+  copySamplePlan: (projectId: string, copyId: string, testId: string) => request<WorkflowDraft>(`/api/projects/${encodeURIComponent(projectId)}/sample-plan-copies/${encodeURIComponent(copyId)}`, { method: "POST", body: JSON.stringify({ sample_test_id: testId }) }),
+  samplePlanEvidence: (projectId: string, copyId: string) => request<{project_id:string; sample_test_id:string; baseline_draft_id:string; feedback:import("./types").SampleFeedbackRevision[]}>(`/api/projects/${encodeURIComponent(projectId)}/sample-plan-copies/${encodeURIComponent(copyId)}`),
   saveSampleFeedback: (revision: import("./types").SampleFeedbackRevision) => request<{ revision: import("./types").SampleFeedbackRevision }>(`/api/workflow-sample-tests/${encodeURIComponent(revision.sample_test_id)}/images/${encodeURIComponent(revision.image_id)}/feedback`, { method: "POST", body: JSON.stringify(revision) }),
   startRun: (
     projectId: string,
