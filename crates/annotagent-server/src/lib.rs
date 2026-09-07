@@ -763,6 +763,7 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
             "/api/workflow-drafts/{draft_id}/dry-run",
             post(dry_run_workflow),
         )
+        .route("/api/workflow-drafts/{draft_id}/sample-preview", get(preview_workflow_samples))
         .route(
             "/api/workflow-drafts/{draft_id}/sample-test",
             get(get_workflow_sample_test),
@@ -3792,17 +3793,118 @@ async fn apply_workflow_draft_diff(
     Ok(Json(json!(report)))
 }
 
+fn guided_sample_fingerprint(
+    state: &ServerState,
+    draft: &WorkflowDraft,
+    models: &[ModelProfileSnapshot],
+) -> ApiResult<String> {
+    let images = state
+        .application
+        .list_project_image_summaries(&draft.project_id)
+        .map_err(ApiError::bad_request)?;
+    let goal = state
+        .application
+        .project_goal(&draft.project_id)
+        .map_err(ApiError::bad_request)?;
+    let scope = json!({ "draft": draft, "models": models,
+        "images": images.iter().take(3).map(|image| (&image.image_id, &image.content_hash)).collect::<Vec<_>>(),
+        "schema_revision": goal["revision"], "max_model_calls": 12 });
+    Ok(annotagent_image_tools::sha256(
+        &serde_json::to_vec(&scope).map_err(ApiError::internal)?,
+    ))
+}
+
+async fn preview_workflow_samples(
+    State(state): State<ServerState>,
+    AxumPath(draft_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    let (draft, profiles) = state
+        .application
+        .resolved_workflow_draft_model_profiles(&draft_id)
+        .map_err(ApiError::bad_request)?;
+    reject_unresolved_registry_model_nodes(&draft)?;
+    let authorization_fingerprint = guided_sample_fingerprint(&state, &draft, &profiles)?;
+    let image_count = state
+        .application
+        .get_project(&draft.project_id)
+        .map_err(ApiError::not_found)?
+        .image_count
+        .min(3);
+    let models = profiles
+        .iter()
+        .map(|model| {
+            json!({
+                "name": model.remote_model_id, "destination": model.provider_base_url,
+                "id": model.model_profile_id, "revision": model.revision,
+            })
+        })
+        .collect::<Vec<_>>();
+    // Explicitly report non-Registry bindings; never guess their data destination.
+    let other_bindings = draft
+        .nodes
+        .iter()
+        .filter(|node| node.model_profile_binding.is_none())
+        .filter_map(|node| node.model_binding.as_ref())
+        .collect::<BTreeSet<_>>();
+    Ok(Json(
+        json!({ "project_id": draft.project_id, "revision": draft.revision,
+        "image_count": image_count, "models": models, "other_bindings": other_bindings, "authorization_fingerprint": authorization_fingerprint,
+        "estimated_cost": null, "request_limit": 12, "sandbox": true,
+        "supported": draft.label_pipeline.is_some() && other_bindings.is_empty() }),
+    ))
+}
+
 async fn dry_run_workflow(
     State(state): State<ServerState>,
     AxumPath(draft_id): AxumPath<String>,
     payload: Option<Json<DryRunWorkflowRequest>>,
 ) -> ApiResult<Json<Value>> {
-    let settings = state.settings.read().await.clone();
+    let mut settings = state.settings.read().await.clone();
     let (draft, model_profiles) = state
         .application
         .resolved_workflow_draft_model_profiles(&draft_id)
         .map_err(ApiError::bad_request)?;
     reject_unresolved_registry_model_nodes(&draft)?;
+    if let Some(Json(request)) = &payload {
+        if request
+            .expected_revision
+            .is_some_and(|revision| revision != draft.revision)
+        {
+            return Err(ApiError::bad_request(
+                "The plan changed after sample authorization. Review it before testing.",
+            ));
+        }
+        if request.expected_revision.is_some() {
+            if request.authorization_fingerprint.as_deref()
+                != Some(guided_sample_fingerprint(&state, &draft, &model_profiles)?.as_str())
+            {
+                return Err(ApiError::bad_request(
+                    "The image, goal or model scope changed after authorization. Review the updated sample scope.",
+                ));
+            }
+            if draft.label_pipeline.is_none()
+                || draft.nodes.iter().any(|node| {
+                    node.model_binding.is_some() && node.model_profile_binding.is_none()
+                })
+            {
+                return Err(ApiError::bad_request(
+                    "This plan contains bindings not yet supported by bounded guided sampling. No inference was started.",
+                ));
+            }
+            let count = state
+                .application
+                .get_project(&draft.project_id)
+                .map_err(ApiError::bad_request)?
+                .image_count
+                .min(3);
+            if request.image_indices != (0..count).collect::<Vec<_>>() || count == 0 {
+                return Err(ApiError::bad_request(
+                    "Guided sampling requires an explicit selection of 1–3 images.",
+                ));
+            }
+            settings.budget.max_requests = Some(12);
+        }
+    }
     let (provider_kind, temporary_api_key) =
         resolve_runtime_model_profiles(&state, &model_profiles, workflow_uses_model(&draft))
             .await?;
@@ -3962,6 +4064,10 @@ async fn get_workflow_sample_model_input(
 struct DryRunWorkflowRequest {
     #[serde(default)]
     image_indices: Vec<usize>,
+    #[serde(default)]
+    expected_revision: Option<u64>,
+    #[serde(default)]
+    authorization_fingerprint: Option<String>,
 }
 
 async fn publish_workflow(
@@ -4883,6 +4989,44 @@ async fn get_project(
         .map_err(ApiError::not_found)?;
     project.model_bindings = project_registry_model_bindings(&state, &project_id)?;
     Ok(Json(json!(project)))
+}
+
+async fn get_project_goal(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+) -> ApiResult<Json<Value>> {
+    state
+        .application
+        .project_goal(&project_id)
+        .map(Json)
+        .map_err(ApiError::not_found)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SaveProjectGoalRequest {
+    expected_revision: String,
+    goal: String,
+    kind: TaskKind,
+    labels: Vec<String>,
+}
+
+async fn put_project_goal(
+    State(state): State<ServerState>,
+    AxumPath(project_id): AxumPath<String>,
+    Json(request): Json<SaveProjectGoalRequest>,
+) -> ApiResult<Json<Value>> {
+    state
+        .application
+        .save_project_goal(
+            &project_id,
+            &request.expected_revision,
+            &request.goal,
+            request.kind,
+            request.labels,
+        )
+        .map(Json)
+        .map_err(ApiError::bad_request)
 }
 
 async fn guidance_context(state: &ServerState, project_id: &str) -> ApiResult<(Settings, bool)> {

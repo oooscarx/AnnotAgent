@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { resolve } from "node:path";
 
 test("Chinese selection persists across refresh and synchronizes without losing an unsaved form", async ({ page, context }) => {
   await page.goto("/");
@@ -8,14 +9,14 @@ test("Chinese selection persists across refresh and synchronizes without losing 
   await page.reload();
   await expect(page.getByLabel("Language / 语言", { exact: true })).toHaveValue("zh-CN");
   await page.getByRole("button", { name: "新建标注项目", exact: true }).click();
-  await page.getByLabel("项目名称", { exact: true }).fill("Unsaved 中文 project");
+  await page.getByLabel("选择图片", { exact: false }).setInputFiles(resolve("../examples/robocup/images/synthetic-robocup.png"));
   const formUrl = page.url();
   const secondTab = await context.newPage();
   await secondTab.goto("/");
   await expect(secondTab.getByLabel("Language / 语言", { exact: true })).toHaveValue("zh-CN");
   await secondTab.getByLabel("Language / 语言", { exact: true }).selectOption("en");
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
-  await expect(page.getByLabel("Project name", { exact: true })).toHaveValue("Unsaved 中文 project");
+  await expect(page.getByAltText("synthetic-robocup.png", { exact: true })).toBeVisible();
   await expect(page).toHaveURL(formUrl);
   await secondTab.close();
 });

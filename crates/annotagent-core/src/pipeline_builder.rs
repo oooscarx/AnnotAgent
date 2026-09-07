@@ -1256,13 +1256,9 @@ impl Default for PipelineBuilderConstraints {
 
 impl PipelineBuilderConstraints {
     pub fn validate(&self) -> CoreResult<()> {
-        if self.maximum_agent_turns == 0
-            || self.maximum_tool_calls == 0
-            || self.maximum_dry_runs == 0
-        {
+        if self.maximum_agent_turns == 0 || self.maximum_tool_calls == 0 {
             return Err(CoreError::Validation(
-                "Pipeline Builder turn, tool-call, and Dry Run limits must be greater than zero"
-                    .to_owned(),
+                "Pipeline Builder turn and tool-call limits must be greater than zero".to_owned(),
             ));
         }
         if self.maximum_agent_cost < Decimal::ZERO
@@ -3826,6 +3822,36 @@ mod tests {
             Some(PipelineBuilderStopReason::DraftReadyForHumanReview)
         );
         assert_eq!(approval.audit.status, AgentSessionStatus::WaitingForHuman);
+    }
+
+    #[test]
+    fn planning_only_budget_allows_zero_image_tests() {
+        let constraints = PipelineBuilderConstraints {
+            maximum_dry_runs: 0,
+            ..Default::default()
+        };
+        constraints
+            .validate()
+            .expect("planning without image permission");
+        let mut session = PipelineBuilderSession::start(
+            "project",
+            "draft",
+            "fixture",
+            PipelineAdvisorBackend::ScriptedMock,
+            constraints,
+        )
+        .unwrap();
+        assert!(
+            session
+                .record_tool(
+                    "dry_run_pipeline",
+                    serde_json::json!({}),
+                    AgentToolResult::summary("must not execute", serde_json::json!({})),
+                    true
+                )
+                .is_err()
+        );
+        assert_eq!(session.dry_runs, 0);
     }
 
     #[test]

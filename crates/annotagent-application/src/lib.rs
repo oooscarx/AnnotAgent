@@ -4,6 +4,7 @@ mod guidance;
 mod management;
 mod published_run;
 mod result_projection;
+mod sample_limits;
 mod workspace_summary;
 
 pub use guidance::{
@@ -6950,6 +6951,7 @@ pub struct LocalApplication {
     event_sender: broadcast::Sender<RunEvent>,
     active: Mutex<HashMap<RunId, ManagedRun>>,
     agent_cancellations: Mutex<HashMap<uuid::Uuid, CancellationToken>>,
+    project_schema_writes: Mutex<()>,
 }
 
 /// Persist a terminal state even when an advisor future returns early or is dropped.
@@ -7109,6 +7111,7 @@ impl LocalApplication {
             event_sender,
             active: Mutex::new(HashMap::new()),
             agent_cancellations: Mutex::new(HashMap::new()),
+            project_schema_writes: Mutex::new(()),
         };
         application.reconcile_legacy_project_ownership()?;
         Ok(application)
@@ -8956,6 +8959,10 @@ impl LocalApplication {
         task_id: &str,
         label: &str,
     ) -> Result<ProjectSummary> {
+        let _guard = self
+            .project_schema_writes
+            .lock()
+            .map_err(|_| anyhow!("project schema lock poisoned"))?;
         let path = self.project_path(project_id)?;
         let (mut project, _) = load_project_schema_with_registry(&path, &self.skills)?;
         let task = project
@@ -8978,6 +8985,10 @@ impl LocalApplication {
         project_id: &str,
         enabled_skills: Vec<EnabledSkillConfig>,
     ) -> Result<ProjectSummary> {
+        let _guard = self
+            .project_schema_writes
+            .lock()
+            .map_err(|_| anyhow!("project schema lock poisoned"))?;
         let path = self.project_path(project_id)?;
         let yaml = std::fs::read_to_string(&path)?;
         let mut project = ProjectSchema::from_yaml(&yaml).map_err(|error| anyhow!(error))?;
@@ -8997,6 +9008,10 @@ impl LocalApplication {
         labels: Vec<String>,
         attributes: BTreeMap<String, AttributeDefinition>,
     ) -> Result<ProjectSummary> {
+        let _guard = self
+            .project_schema_writes
+            .lock()
+            .map_err(|_| anyhow!("project schema lock poisoned"))?;
         let display_name = display_name.trim();
         if display_name.is_empty() {
             bail!("Label group display name cannot be empty");
@@ -9043,6 +9058,90 @@ impl LocalApplication {
         resolve_project_skills(&project, &self.skills)?;
         std::fs::write(&path, serde_yaml::to_string(&project)?)?;
         self.get_project(project_id)
+    }
+
+    /// The guided goal edits the existing Schema, never a parallel workflow store.
+    pub fn project_goal(&self, project_id: &str) -> Result<serde_json::Value> {
+        let yaml = std::fs::read(self.project_path(project_id)?)?;
+        let project = ProjectSchema::from_yaml(std::str::from_utf8(&yaml)?)
+            .map_err(|error| anyhow!(error))?;
+        let editable = project.tasks.is_empty()
+            || (project.tasks.len() == 1
+                && project.tasks[0].id.as_str() == "journey_labels"
+                && project.tasks[0].attributes.is_empty()
+                && project.tasks[0].depends_on.is_empty());
+        Ok(
+            json!({ "revision": sha256(&yaml), "goal": project.project.annotation_goal,
+            "kind": project.tasks.first().map(|task| task.kind),
+            "labels": project.tasks.first().map(|task| &task.labels), "editable": editable }),
+        )
+    }
+
+    pub fn save_project_goal(
+        &self,
+        project_id: &str,
+        expected_revision: &str,
+        goal: &str,
+        kind: TaskKind,
+        labels: Vec<String>,
+    ) -> Result<serde_json::Value> {
+        let _guard = self
+            .project_schema_writes
+            .lock()
+            .map_err(|_| anyhow!("project schema lock poisoned"))?;
+        let current = self.project_goal(project_id)?;
+        if current["revision"].as_str() != Some(expected_revision) {
+            bail!(
+                "Project goal changed in another tab. Reload before saving; your input has not been applied."
+            );
+        }
+        if current["editable"] != true {
+            bail!(
+                "This Project has a richer Schema. Its tasks are preserved; edit them in Project management."
+            );
+        }
+        if goal.len() > 16_000
+            || labels.is_empty()
+            || labels.len() > 50
+            || labels
+                .iter()
+                .any(|label| label.trim().is_empty() || label.len() > 256)
+            || labels.iter().collect::<BTreeSet<_>>().len() != labels.len()
+        {
+            bail!(
+                "Provide 1–50 distinct, non-empty labels (up to 256 bytes each) and a goal up to 16000 bytes."
+            );
+        }
+        if !matches!(
+            kind,
+            TaskKind::BoundingBox | TaskKind::Classification | TaskKind::SemanticMask
+        ) {
+            bail!("This task type is not supported by the guided goal editor.");
+        }
+        let path = self.project_path(project_id)?;
+        let (mut project, _) = load_project_schema_with_registry(&path, &self.skills)?;
+        goal.trim().clone_into(&mut project.project.annotation_goal);
+        let mut task: TaskConfig = serde_json::from_value(json!({
+            "id": "journey_labels", "display_name": "Annotation targets", "kind": kind,
+            "labels": labels, "required": true
+        }))?;
+        // Preserve existing validators, refiners and attributes when changing wording.
+        if let Some(previous) = project.tasks.first() {
+            task = previous.clone();
+            task.kind = kind;
+            task.labels = labels;
+        }
+        project.tasks = vec![task];
+        resolve_project_skills(&project, &self.skills)?;
+        let yaml = serde_yaml::to_string(&project)?;
+        // Atomic replacement: a failed write must not truncate the saved Schema.
+        let temp = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+        std::fs::write(&temp, yaml)?;
+        if let Err(error) = std::fs::rename(&temp, &path) {
+            let _ = std::fs::remove_file(&temp);
+            return Err(error.into());
+        }
+        self.project_goal(project_id)
     }
 
     pub fn get_project(&self, project_id: &str) -> Result<ProjectSummary> {
@@ -16245,7 +16344,8 @@ impl LocalApplication {
             refiners,
             self.plugin_registry.clone(),
             self.model_bundle_registry.clone(),
-        )?;
+        )?
+        .with_sample_request_limit(settings.budget.max_requests.unwrap_or(500));
         let project = Arc::new(project);
         let project_root = project_path
             .parent()
@@ -26163,6 +26263,71 @@ export:
             .await
             .expect_err("foreign image must be rejected");
         assert!(error.to_string().contains("does not belong to this Run"));
+    }
+
+    #[test]
+    fn guided_goal_preserves_multiple_labels_and_rejects_stale_and_complex_edits() {
+        let temporary = tempfile::tempdir().unwrap();
+        let app = LocalApplication::new(temporary.path()).unwrap();
+        app.create_project("goal-test", "version: 1\nproject:\n  name: Test only\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n").unwrap();
+        let before = app.project_goal("goal-test").unwrap();
+        let saved = app
+            .save_project_goal(
+                "goal-test",
+                before["revision"].as_str().unwrap(),
+                "Cups and plates, not bottles",
+                TaskKind::BoundingBox,
+                vec!["cup".into(), "plate".into()],
+            )
+            .unwrap();
+        assert_eq!(saved["labels"], json!(["cup", "plate"]));
+        assert_eq!(
+            app.get_project("goal-test")
+                .unwrap()
+                .annotation_schema
+                .len(),
+            1
+        );
+        assert!(
+            app.save_project_goal(
+                "goal-test",
+                before["revision"].as_str().unwrap(),
+                "stale",
+                TaskKind::Classification,
+                vec!["wrong".into()]
+            )
+            .is_err()
+        );
+        assert_eq!(app.project_goal("goal-test").unwrap(), saved);
+        let restarted = LocalApplication::new(temporary.path()).unwrap();
+        assert_eq!(restarted.project_goal("goal-test").unwrap(), saved);
+        app.add_project_task(
+            "goal-test",
+            "Other user task",
+            TaskKind::Classification,
+            vec!["other".into()],
+            BTreeMap::new(),
+        )
+        .unwrap();
+        let complex = app.project_goal("goal-test").unwrap();
+        assert_eq!(complex["editable"], false);
+        assert!(
+            app.save_project_goal(
+                "goal-test",
+                complex["revision"].as_str().unwrap(),
+                "overwrite",
+                TaskKind::BoundingBox,
+                vec!["bad".into()]
+            )
+            .is_err()
+        );
+        assert_eq!(
+            app.get_project("goal-test")
+                .unwrap()
+                .annotation_schema
+                .len(),
+            2
+        );
     }
 
     #[test]

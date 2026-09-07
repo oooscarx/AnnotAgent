@@ -26,12 +26,14 @@ for (const [width, height] of [[1440, 900], [1280, 720], [1024, 768], [390, 844]
     await page.setViewportSize({ width, height });
     await page.goto("/projects?new=1");
     const prepare = page.getByRole("region", { name: "Create Project", exact: true });
-    await expect(prepare.getByLabel("Describe your goal", { exact: true })).toBeVisible();
-    await expect(prepare.getByLabel("Choose images", { exact: true })).toBeAttached();
+    await expect(prepare.getByLabel("Describe your goal", { exact: true })).toHaveCount(0);
+    await expect(prepare.getByLabel("Project name", { exact: true })).toHaveCount(0);
+    await expect(page.locator(".focus-project-menu")).toHaveCount(0);
+    await expect(prepare.getByLabel("Choose images", { exact: false })).toBeAttached();
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
-    await prepare.getByRole("button", { name: "Save goal and images", exact: true }).scrollIntoViewIfNeeded();
-    await expect(prepare.getByRole("button", { name: "Save goal and images", exact: true })).toBeVisible();
+    await prepare.getByRole("button", { name: "Continue", exact: true }).scrollIntoViewIfNeeded();
+    await expect(prepare.getByRole("button", { name: "Continue", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Back to projects", exact: true }).scrollIntoViewIfNeeded();
-    await page.screenshot({ path: `../docs/execution/focus-workspace/prepare-${width}.png`, fullPage: true });
+    await page.screenshot({ path: `../docs/execution/guided-journey/images-${width}.png`, fullPage: true });
   });
 }

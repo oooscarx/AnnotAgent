@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../api";
 import { t } from "../i18n";
 import type { Annotation, ImageItem, SampleFeedbackRevision, WorkflowDryRunReport } from "../types";
@@ -10,10 +10,11 @@ const reasons: [SampleFeedbackRevision["reason"], string][] = [
   ["cannot_judge", "Cannot judge yet"],
 ];
 
-export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onConfirmed }: {
+export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onConfirmed, navigation }: {
   sample: WorkflowDryRunReport["samples"][number]; image: ImageItem; testId: string;
   onDirtyChange: (dirty: boolean) => void;
   onConfirmed?: () => void;
+  navigation?: ReactNode;
 }) {
   const original: Annotation[] = (sample.projection ? sample.outcomes : []).flatMap((outcome) => outcome.value ? [{
     id: outcome.id, image_id: image.image_id, task_id: "sample", label: outcome.label,
@@ -106,6 +107,6 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
       {reason !== "correct" && <p>{t("This records a quality issue, not a promised improvement. Review the existing Pipeline or correct the result manually; a new model test requires separate authorization.")}</p>}
       </div>
     </details>
-    <div className="sample-confirm-action"><span>{t(selected ? "This decision applies only to the selected result." : "This decision applies to this sample image only.")}</span><button className="primary" disabled={!loaded || busy || !sample.projection} onClick={() => void save(true)}>{t(selected ? "Confirm selected result" : onConfirmed ? "Confirm sample and next" : "Confirm this sample")}</button>{saved && <span role="status">{t("Sample feedback saved")}</span>}{error && <p role="alert">{error}</p>}</div>
+    <div className="sample-confirm-action">{navigation}<span>{t(selected ? "This decision applies only to the selected result." : "This decision applies to this sample image only.")}</span><button className="primary" disabled={!loaded || busy || !sample.projection} onClick={() => void save(true)}>{t(selected ? "Confirm selected result" : onConfirmed ? "Confirm sample and next" : "Confirm this sample")}</button>{saved && <span role="status">{t("Sample feedback saved")}</span>}{error && <p role="alert">{error}</p>}</div>
   </div>;
 }

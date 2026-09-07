@@ -548,6 +548,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ id, yaml }),
     }),
+  projectGoal: (projectId: string, signal?: AbortSignal) => request<{
+    revision: string; goal: string; kind: string | null; labels: string[] | null; editable: boolean;
+  }>(`/api/projects/${encodeURIComponent(projectId)}/goal`, { signal }),
+  saveProjectGoal: (projectId: string, value: { expected_revision: string; goal: string; kind: string; labels: string[] }) =>
+    request<{ revision: string; goal: string; kind: string | null; labels: string[] | null; editable: boolean }>(`/api/projects/${encodeURIComponent(projectId)}/goal`, { method: "PUT", body: JSON.stringify(value) }),
   projectSummary: (projectId: string, signal?: AbortSignal) =>
     request<ProjectWorkspaceSummary>(`/api/projects/${projectId}/summary`, { signal }),
   projectModelBindings: (projectId: string) =>
@@ -829,10 +834,11 @@ export const api = {
       body: JSON.stringify(draft),
       signal,
     }),
-  dryRunWorkflow: (draftId: string, imageIndices: number[] = []) =>
+  samplePreview: (draftId: string) => request<{ project_id: string; revision: number; image_count: number; models: { name: string; destination: string; id: string; revision: number }[]; other_bindings: string[]; estimated_cost: null; request_limit: number; sandbox: true; supported: boolean; authorization_fingerprint: string }>(`/api/workflow-drafts/${encodeURIComponent(draftId)}/sample-preview`),
+  dryRunWorkflow: (draftId: string, imageIndices: number[] = [], expectedRevision?: number, authorizationFingerprint?: string) =>
     request<WorkflowDryRunReport>(`/api/workflow-drafts/${draftId}/dry-run`, {
       method: "POST",
-      body: JSON.stringify({ image_indices: imageIndices }),
+      body: JSON.stringify({ image_indices: imageIndices, expected_revision: expectedRevision, authorization_fingerprint: authorizationFingerprint }),
     }),
   workflowSampleTest: (draftId: string, signal?: AbortSignal, sampleTestId?: string) =>
     request<{

@@ -1,5 +1,6 @@
 import { type APIRequestContext, type Page, type Route } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test } from "./fixtures";
 
@@ -272,19 +273,23 @@ test("create and open a generic Project", async ({ page, request }) => {
   await page.goto("/projects?new=1");
   const dialog = page.getByRole("region", { name: "Create Project" });
   await expect(dialog).toBeVisible();
-  await dialog.getByLabel("Choose images", { exact: true }).setInputFiles(resolve("../examples/robocup/images/synthetic-robocup.png"));
-  await dialog.getByLabel("Project name", { exact: true }).fill(projectName);
-  await dialog.getByLabel("Object name", { exact: true }).fill("Day");
-  await dialog.getByLabel("Describe your goal", { exact: true }).fill("Classify this scene as day or night.");
-  await dialog.getByLabel("What you will get", { exact: true }).selectOption("classification");
+  await dialog.getByLabel("Choose images", { exact: false }).setInputFiles({ name: `${projectName}.png`, mimeType: "image/png", buffer: readFileSync(resolve("../examples/robocup/images/synthetic-robocup.png")) });
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(page).toHaveURL(/\/task\/goal$/);
+  const goal = page.getByRole("region", { name: "Annotation goal", exact: true });
+  await goal.getByLabel("Categories to keep", { exact: false }).fill("day");
+  await goal.getByLabel("Describe your goal", { exact: true }).fill("Classify this scene as day or night.");
+  await goal.getByRole("radio", { name: /Image categories/ }).check();
   await page.setViewportSize({ width: 1024, height: 900 });
   await page.screenshot({ path: `${screenshots}/02-guided-project-wizard.png` });
   await page.setViewportSize({ width: 720, height: 450 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
-  await dialog.getByRole("button", { name: "Save goal and images", exact: true }).click();
-  await expect(dialog).toBeHidden();
+  await goal.getByRole("button", { name: "Prepare sample results", exact: true }).click();
+  await expect(goal.getByText("Goal saved", { exact: true })).toBeVisible();
   const state = await dashboard(request);
   projectId = state.projects.find((project: { name: string }) => project.name === projectName).id;
+  // This suite continues testing the existing management editor independently of the Journey.
+  expect((await request.post("/api/workflow-drafts", { data: { project_id: projectId } })).ok()).toBeTruthy();
   const bound = await request.put(`/api/projects/${projectId}/model-bindings`, {
     data: {
       bindings: [{
@@ -1267,11 +1272,8 @@ test("feature-truth surfaces are read-only, capability-safe, and explicit about 
 
   await page.goto("/projects?new=1");
   const dialog = page.getByRole("region", { name: "Create Project" });
-  await dialog.getByLabel("What you will get", { exact: true }).selectOption("bounding_box");
-  await dialog.getByLabel("Project name").fill("Geometry-safe recommendation");
-  await dialog.getByLabel("Object name").fill("ball");
-  await expect(dialog.getByLabel("Choose images", { exact: true })).toBeVisible();
-  await expect(dialog).toContainText("A confident prediction is not geometry proof");
+  await expect(dialog.getByLabel("Choose images", { exact: false })).toBeVisible();
+  await expect(dialog.getByLabel("Project name")).toHaveCount(0);
   await expect(dialog).toContainText("No model is called");
   await expect(dialog).not.toContainText("Automatically accept high-confidence results");
 });

@@ -8,6 +8,9 @@ import { AnnotationCanvas } from "./components/AnnotationCanvas";
 import { FirstResultEntry } from "./components/FirstResultEntry";
 import { SampleFeedbackEditor } from "./components/SampleFeedbackEditor";
 import { FocusHeader, usesFocusLayout } from "./components/FocusHeader";
+import { JourneyImages } from "./components/JourneyImages";
+import { JourneyGoal } from "./components/JourneyGoal";
+import { JourneySampleStart } from "./components/JourneySampleStart";
 import { ImproveAutomationPanel } from "./components/GeometrySafetyPanel";
 import { NotFoundPage } from "./features/notFound/NotFoundPage";
 import {
@@ -21,6 +24,7 @@ import { projectForReview, projectForRun, runsForContext } from "./workspaceCont
 import {
   parseWorkspaceRoute,
   projectBuildPath,
+  projectJourneyPath,
   projectBatchPath,
   projectReviewPath,
   projectRunPath,
@@ -461,6 +465,7 @@ export function App() {
   const routeProjectId = (() => {
     switch (route.kind) {
       case "project":
+      case "journey":
       case "build":
       case "export":
       case "projectRuns":
@@ -538,7 +543,7 @@ export function App() {
       ? "runs"
       : route.kind === "projectReview"
         ? "review"
-        : route.kind;
+        : route.kind === "journey" ? "project" : route.kind;
 
   const focusLayout = usesFocusLayout(route);
   return (
@@ -663,6 +668,7 @@ export function App() {
             onError={setError}
           />
         )}
+        {loaded && route.kind === "journey" && (!selectedProject ? <NotFoundPage invalidPath={route.canonicalPath} onNavigate={navigate} /> : route.scene === "images" ? <JourneyImages project={selectedProject} onNavigationGuardChange={setNavigationGuard} onContinue={async (id) => { setNavigationGuard(undefined); await refresh(); navigate(projectJourneyPath(id, "goal")); }} /> : route.scene === "goal" ? <JourneyGoal project={selectedProject} onNavigate={navigate} onRefresh={refresh} onNavigationGuardChange={setNavigationGuard} /> : <BuildTestPublish project={selectedProject} guided selectedDraftId={route.draftId} selectedSampleTestId={route.sampleTestId} selectedSampleImageId={route.imageId} onNavigationGuardChange={setNavigationGuard} onSelectTestContext={(draftId, sampleTestId, replace, imageId) => navigate(projectJourneyPath(route.projectId, "samples", { draftId, sampleTestId, imageId }), replace)} onNavigate={() => navigate(projectJourneyPath(route.projectId, "goal"))} onOpenRuns={(batchId) => navigate(batchId ? projectBatchPath(route.projectId, batchId) : projectRunsPath(route.projectId))} onRefresh={refresh} onError={setError} />)}
         {loaded && route.kind === "project" && (
           <ProjectPage
             project={selectedProject}
@@ -1225,6 +1231,7 @@ function BuildLabels({
 
 function BuildTestPublish({
   project,
+  guided = false,
   selectedDraftId,
   selectedSampleTestId,
   selectedSampleImageId,
@@ -1236,6 +1243,7 @@ function BuildTestPublish({
   onError,
 }: {
   project: ProjectSummary;
+  guided?: boolean;
   selectedDraftId?: string;
   selectedSampleTestId?: string;
   selectedSampleImageId?: string;
@@ -1269,6 +1277,9 @@ function BuildTestPublish({
     onSelectTestContext(draftId, activeSampleTest?.id, false, imageId);
   };
   const sampleLoadGeneration = useRef(0);
+  const testPending = useRef(false);
+  const testPageMounted = useRef(true);
+  useEffect(() => { testPageMounted.current = true; return () => { testPageMounted.current = false; }; }, [project.id]);
   const load = (selectFallback = true) => workspaceQueries.load(
     queryKeys.workflowDrafts(project.id),
     (signal) => api.workflowDrafts(project.id, signal),
@@ -1282,7 +1293,7 @@ function BuildTestPublish({
       const restored = available.find(
         (draft) => draft.id === value.latest_current_sample_test_draft_id,
       )?.id;
-      return requested ?? retained ?? (selectFallback ? restored ?? available[0]?.id ?? "" : "");
+      return requested ?? (guided ? "" : retained ?? (selectFallback ? restored ?? available[0]?.id ?? "" : ""));
     });
   });
   useEffect(() => {
@@ -1344,11 +1355,17 @@ function BuildTestPublish({
       });
     return () => workspaceQueries.abort(key);
   }, [draftId, selectedSampleTestId]);
-  const test = () => {
-    if (!draftId) return;
+  useEffect(() => {
+    if (guided && report && !selectedSampleImageId && report.sample_inputs?.[0])
+      onSelectTestContext(draftId, activeSampleTest?.id, true, report.sample_inputs[0].image_id);
+  }, [guided, report, selectedSampleImageId, draftId, activeSampleTest?.id]);
+  const test = (expectedRevision?: number, count = sampleCount, authorizationFingerprint?: string) => {
+    if (!draftId || testPending.current) return;
+    testPending.current = true;
     setBusy(true);
-    void api.dryRunWorkflow(draftId, Array.from({ length: sampleCount }, (_, index) => index))
+    void api.dryRunWorkflow(draftId, Array.from({ length: count }, (_, index) => index), expectedRevision, authorizationFingerprint)
       .then((value) => {
+        if (!testPageMounted.current) return;
         setActivated(undefined);
         setReport(value);
         setRestoredAt(undefined);
@@ -1358,9 +1375,9 @@ function BuildTestPublish({
           onSelectTestContext(draftId, value.sample_test_id, true);
         }
       })
-      .then(() => load())
-      .catch((error: Error) => onError(error.message))
-      .finally(() => setBusy(false));
+      .then(() => testPageMounted.current ? load() : undefined)
+      .catch((error: Error) => { if (testPageMounted.current) onError(error.message); })
+      .finally(() => { testPending.current = false; setBusy(false); });
   };
   const publish = () => {
     if (!draftId || !report?.validation.valid || drafts.find((draft) => draft.id === draftId)?.status === "published") return;
@@ -1443,12 +1460,13 @@ function BuildTestPublish({
   const draftControls = <div className="sample-test-controls" aria-label={t("Sample Test controls")}>
     <label className="sample-test-field"><span>{t("Automation Draft")}</span><select aria-label={t("Current Draft")} value={draftId} onChange={(event) => chooseDraft(event.target.value)}><option value="">{t("Choose Current Draft…")}</option>{drafts.filter((draft) => draft.status !== "archived").map((draft) => <option key={draft.id} value={draft.id}>{draft.name} · {draft.status === "published" ? t("Activated") : draft.status.replaceAll("_", " ")}</option>)}</select></label>
     <label className="sample-test-field"><span>{t("Sample images")}</span><input type="number" min="1" max={Math.max(1, sampleLimit)} value={sampleCount} disabled={sampleLimit === 0} aria-describedby="sample-image-limit" onChange={(event) => setSampleCount(Math.max(1, Math.min(Math.max(1, sampleLimit), Number(event.target.value))))} /><small id="sample-image-limit">{sampleLimit ? t("Up to {count} available Project images", { count: sampleLimit }) : t("No Project images are available")}</small></label>
-    <button className={!report && sampleLimit > 0 ? "primary" : ""} onClick={test} disabled={busy || reportLoading || !draftId || isActivated || sampleLimit === 0}>{busy ? t("Testing…") : isActivated ? t("Already activated") : sampleLimit === 0 ? t("Add images first") : report ? t("Test again") : t("Test samples")}</button>
+    <button className={!report && sampleLimit > 0 ? "primary" : ""} onClick={() => test()} disabled={busy || reportLoading || !draftId || isActivated || sampleLimit === 0}>{busy ? t("Testing…") : isActivated ? t("Already activated") : sampleLimit === 0 ? t("Add images first") : report ? t("Test again") : t("Test samples")}</button>
     {sampleLimit === 0 && <button onClick={() => onNavigate("data")}>{t("Open Data step")}</button>}
   </div>;
   if (selectedSampleImageId && reportLoading) return <p role="status">{t("Restoring the saved Sample Test…")}</p>;
   if (selectedSampleImageId && !reportLoading && !inspectedSample) return <section role="alert"><h2>{t("Sample image unavailable")}</h2><p>{t("This image is not part of the selected saved Sample Test. No other result was substituted.")}</p><button onClick={() => setInspectedSampleIndex(undefined)}>{t("View all sample images")}</button></section>;
   if (inspectedSample) return <SampleAnnotationDialog key={`${activeSampleTest?.id}:${selectedSampleImageId}`}
+    guided={guided}
     sample={inspectedSample} image={sampleImage(inspectedSample)} configuredRefiners={configuredRefiners}
     sampleTestId={activeSampleTest?.draftId === draftId ? activeSampleTest.id : undefined}
     onClose={() => setInspectedSampleIndex(undefined)} onNavigationGuardChange={onNavigationGuardChange}
@@ -1456,6 +1474,7 @@ function BuildTestPublish({
     onPrevious={inspectedPosition > 0 ? () => setInspectedSampleIndex(report!.samples[inspectedPosition - 1].image_index) : undefined}
     onNext={inspectedPosition + 1 < (report?.samples.length ?? 0) ? () => setInspectedSampleIndex(report!.samples[inspectedPosition + 1].image_index) : undefined}
   />;
+  if (guided) return reportLoading ? <p role="status">{t("Restoring the saved Sample Test…")}</p> : <JourneySampleStart projectId={project.id} draftId={draftId} busy={busy} stale={staleReport} onTest={test} onBack={() => onNavigate("labels", draftId)} />;
   return (
     <>
       <div className="toolbar-panel sample-test-toolbar">
@@ -1839,6 +1858,7 @@ function SampleResultCard({
 
 function SampleAnnotationDialog({
   sample,
+  guided = false,
   image,
   configuredRefiners,
   sampleTestId,
@@ -1846,6 +1866,7 @@ function SampleAnnotationDialog({
   onNavigationGuardChange, position, count, onPrevious, onNext,
 }: {
   sample: WorkflowDryRunReport["samples"][number];
+  guided?: boolean;
   image?: ImageItem;
   configuredRefiners: WorkflowDraftNode[];
   sampleTestId?: string;
@@ -1882,15 +1903,15 @@ function SampleAnnotationDialog({
     const trace = asModelInputTrace(node);
     return trace ? [{ node, trace }] : [];
   });
-  return <section className="sample-preview-workspace" aria-labelledby="sample-preview-title">
+  return <section className={`sample-preview-workspace${guided ? " journey-samples" : ""}`} aria-labelledby="sample-preview-title">
       <header className="sample-preview-header">
-        <div><span>{t("Sandbox sample")} · {position}/{count}</span><h2 id="sample-preview-title">{sample.image_name}</h2></div>
-        <button type="button" onClick={onClose} aria-label={t("Close annotation preview")}>{t("View all sample images")}</button>
+        <div><span>{t("Sandbox sample")} · {position}/{count} · {sample.image_name}</span><h2 id="sample-preview-title">{guided ? t("Does this result match what you need?") : sample.image_name}</h2></div>
+        {!guided && <button type="button" onClick={onClose} aria-label={t("Close annotation preview")}>{t("View all sample images")}</button>}
       </header>
       <p className="sample-risk-notice">{t("Model confidence is not boundary accuracy. Sample decisions do not accept formal annotations.")}</p>
       {!sample.projection && <p role="alert">{t("This legacy test has no final-result projection. Test the Draft again before confirming its annotations.")}</p>}
-      {selectedStage === "final" && image && sampleTestId && <SampleFeedbackEditor sample={sample} image={image} testId={sampleTestId} onDirtyChange={setFeedbackDirty} onConfirmed={onNext ? () => { onNavigationGuardChange(undefined); onNext(); } : undefined} />}
-      <details className="sample-technical-details"><summary>{t("View execution details")}</summary>
+      {selectedStage === "final" && image && sampleTestId && <SampleFeedbackEditor sample={sample} image={image} testId={sampleTestId} onDirtyChange={setFeedbackDirty} onConfirmed={onNext ? () => { onNavigationGuardChange(undefined); onNext(); } : undefined} navigation={guided && count > 1 ? <nav className="button-row" aria-label={t("Sample images")}><button disabled={!onPrevious} onClick={onPrevious}>{t("Previous image")}</button><span>{position}/{count}</span><button disabled={!onNext} onClick={onNext}>{t("Next image")}</button></nav> : undefined} />}
+      {!guided && <details className="sample-technical-details"><summary>{t("View execution details")}</summary>
       <nav className="sample-preview-stage-tabs" aria-label={t("Annotation stages")}>
         {availableStages.map((stage) => <button key={stage} type="button" className={selectedStage === stage ? "active" : ""} aria-pressed={selectedStage === stage} onClick={() => { if (stage === selectedStage || !feedbackDirty || window.confirm(t("Discard unsaved sample feedback?"))) setSelectedStage(stage); }}>{stage === "search_region" ? t("Search region") : stage === "prompt_coverage" ? t("Prompt coverage") : stage[0].toUpperCase() + stage.slice(1)}</button>)}
       </nav>
@@ -1923,7 +1944,8 @@ function SampleAnnotationDialog({
       </div>
       </details>
       </details>
-      <footer className="task-action-bar"><button disabled={!onPrevious} onClick={onPrevious}>{t("Previous image")}</button><span>{position}/{count} · {t("Sandbox only")}</span><button disabled={!onNext} onClick={onNext}>{t("Next image")}</button></footer>
+      }
+      {!guided && <footer className="task-action-bar"><button disabled={!onPrevious} onClick={onPrevious}>{t("Previous image")}</button><span>{position}/{count} · {t("Sandbox only")}</span><button disabled={!onNext} onClick={onNext}>{t("Next image")}</button></footer>}
     </section>
   ;
 }
@@ -1997,10 +2019,10 @@ function ProjectsPage({
   onNavigationGuardChange: (guard?: () => boolean) => void;
 }) {
   const [search, setSearch] = useState("");
-  if (createOnOpen) return <CreateProject onClose={() => onNavigate("/projects")} onNavigationGuardChange={onNavigationGuardChange} onCreated={(id) => {
+  if (createOnOpen) return <JourneyImages onNavigationGuardChange={onNavigationGuardChange} onContinue={async (id) => {
     onNavigationGuardChange(undefined);
-    void onRefresh().then(() => onSelect(id));
-  }} onError={onError} />;
+    await onRefresh(); onNavigate(projectJourneyPath(id, "goal"));
+  }} />;
   return (
     <section className="page-stack">
       <div className="toolbar-panel">
@@ -10667,163 +10689,6 @@ function SettingsPage({ view, onError }: { view: "workers" | "storage"; onError:
       </div>
     </section>
   );
-}
-
-type GuidedPriority = "faster" | "balanced" | "accuracy";
-
-function guidedId(value: string, fallback: string): string {
-  const normalized = value
-    .normalize("NFKD")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 48);
-  return normalized || fallback;
-}
-
-function guidedProjectYaml({
-  name,
-  taskDisplayName,
-  taskId,
-  labelId,
-  kind,
-  priority,
-  goal = "",
-}: {
-  name: string;
-  taskDisplayName: string;
-  taskId: string;
-  labelId: string;
-  kind: string;
-  priority: GuidedPriority;
-  goal?: string;
-}): string {
-  const parallel = priority === "faster" ? 4 : priority === "accuracy" ? 1 : 2;
-  const autoAccept = priority === "faster" ? 0.82 : priority === "accuracy" ? 0.94 : 0.9;
-  const formats =
-    kind === "bounding_box"
-      ? "[native, coco, yolo]"
-      : kind === "semantic_mask"
-        ? "[native, coco, yolo_segmentation]"
-        : "[native]";
-  return `version: 1
-project:
-  name: ${JSON.stringify(name)}
-  annotation_goal: ${JSON.stringify(goal)}
-  language: en
-dataset:
-  root: images
-runtime:
-  max_parallel_images: ${parallel}
-tasks:
-  - id: ${taskId}
-    display_name: ${JSON.stringify(taskDisplayName)}
-    kind: ${kind}
-    labels: [${JSON.stringify(labelId)}]
-    required: true
-review:
-  auto_accept_confidence: ${autoAccept}
-  force_review_below: 0.5
-export:
-  formats: ${formats}
-`;
-}
-
-function CreateProject({
-  onClose, onCreated, onError, onNavigationGuardChange,
-}: {
-  onClose: () => void;
-  onCreated: (projectId: string, customize: boolean) => void;
-  onError: (value: string) => void;
-  onNavigationGuardChange: (guard?: () => boolean) => void;
-}) {
-  const [projectName, setProjectName] = useState("");
-  const [labelName, setLabelName] = useState("");
-  const [goal, setGoal] = useState("");
-  const [kind, setKind] = useState("bounding_box");
-  const [files, setFiles] = useState<File[]>([]);
-  const [previews, setPreviews] = useState<string[]>([]);
-  const [modelsReady, setModelsReady] = useState<boolean>();
-  const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState("");
-  const identity = useRef("project-" + crypto.randomUUID());
-  const created = useRef(false);
-  const draftCreated = useRef(false);
-  const completed = useRef(false);
-  useEffect(() => {
-    void api.models().then((result) => setModelsReady(result.models.some((model) => model.enabled && model.availability_group === "ready"))).catch(() => setModelsReady(false));
-  }, []);
-  useEffect(() => {
-    const urls = files.map((file) => URL.createObjectURL(file));
-    setPreviews(urls);
-    return () => urls.forEach((url) => URL.revokeObjectURL(url));
-  }, [files]);
-  useEffect(() => {
-    const dirty = Boolean(files.length || goal || projectName || labelName || kind !== "bounding_box");
-    onNavigationGuardChange(() => completed.current || (!busy && (!dirty || window.confirm(t("Discard unsaved project input?")))));
-    const guard = (event: BeforeUnloadEvent) => { if (dirty || busy) event.preventDefault(); };
-    window.addEventListener("beforeunload", guard);
-    return () => { onNavigationGuardChange(undefined); window.removeEventListener("beforeunload", guard); };
-  }, [files.length, goal, projectName, labelName, kind, busy, onNavigationGuardChange]);
-  const close = () => {
-    if (busy) return;
-    onClose();
-  };
-  const finish = async () => {
-    if (busy || !projectName.trim() || !labelName.trim() || !files.length) return;
-    setBusy(true);
-    try {
-      const labelId = guidedId(labelName, "target");
-      if (!created.current) {
-        setProgress(t("Saving your goal…"));
-        await api.createProject(identity.current, guidedProjectYaml({
-          name: projectName.trim(), taskDisplayName: labelName.trim(),
-          taskId: labelId + "-task", labelId, kind, priority: "balanced", goal: goal.trim(),
-        }));
-        created.current = true;
-      }
-      for (const [index, file] of files.entries()) {
-        setProgress(t("Uploading image {current} of {total}", { current: index + 1, total: files.length }));
-        const result = await api.uploadImage(identity.current, file);
-        if (result.corrupt.length) throw new Error(result.corrupt.map((issue) => issue.name + ": " + issue.message).join("; "));
-      }
-      if (!draftCreated.current) {
-        await api.createWorkflowDraft(identity.current);
-        draftCreated.current = true;
-      }
-      completed.current = true;
-      onCreated(identity.current, false);
-    } catch (error) {
-      onError((error as Error).message);
-      setProgress(t("Your saved Project and imported images are retained. Retry resumes importing; matching image content is skipped."));
-    } finally { setBusy(false); }
-  };
-  return <section className="focus-preparation" aria-label={t("Create Project")}>
-    <div className="first-result-example-grid">
-      <section className="first-result-input-images">
-        <label>{t("Choose images")}<input type="file" accept="image/png,image/jpeg" multiple disabled={busy || created.current} onChange={(event) => setFiles(Array.from(event.target.files ?? []))} /></label>
-        <small>{t("PNG or JPEG · up to 25 MB per image · uploaded to this AnnotAgent server")}</small>
-        <p className="unsaved-file-notice">{t("Selected files are local previews until you save. Reloading now requires selecting them again.")}</p>
-        <div className="first-result-thumbnails">{files.map((file, index) => <figure key={index}><img src={previews[index]} alt={file.name} /><figcaption>{file.name}</figcaption></figure>)}</div>
-      </section>
-      <section className="first-result-decision">
-        <label>{t("Project name")}<input value={projectName} disabled={busy || created.current} onChange={(event) => setProjectName(event.target.value)} /></label>
-        <label>{t("Describe your goal")}<textarea value={goal} disabled={busy || created.current} maxLength={4000} onChange={(event) => setGoal(event.target.value)} placeholder={t("Find cups, but not bottles.")} /></label>
-        <button disabled={busy || created.current} onClick={() => { setGoal(t("Find cups, but not bottles.")); setLabelName(t("Cup")); }}>{t("Try a goal example")}</button>
-        <label>{t("Object name")}<input value={labelName} disabled={busy || created.current} onChange={(event) => setLabelName(event.target.value)} /></label>
-        <label>{t("What you will get")}<select aria-label={t("What you will get")} value={kind} disabled={busy || created.current} onChange={(event) => setKind(event.target.value)}><option value="bounding_box">{t("Find objects")}</option><option value="classification">{t("Classify images")}</option><option value="semantic_mask">{t("Segment regions")}</option></select></label>
-        <figure className="task-output-example" aria-label={t("Output example")}>
-          <svg viewBox="0 0 100 70" aria-hidden="true"><path d="M30 22h30v28a8 8 0 0 1-8 8H38a8 8 0 0 1-8-8z M60 27h8a9 9 0 0 1 0 18h-8" fill="none" stroke="currentColor" strokeWidth="2" />{kind === "bounding_box" && <rect x="24" y="16" width="55" height="48" rx="2" fill="none" stroke="var(--aa-primary)" strokeWidth="2" />}{kind === "semantic_mask" && <path d="M30 22h30v28a8 8 0 0 1-8 8H38a8 8 0 0 1-8-8z" fill="var(--aa-primary)" opacity="0.35" />}{kind === "classification" && <rect x="8" y="4" width="45" height="8" rx="4" fill="var(--aa-primary)" />}</svg>
-          <figcaption><strong>{t(kind === "classification" ? "One category per image" : kind === "bounding_box" ? "A box around each object" : "A region defined by pixels")}</strong><small>{t("Output example only, not a model result.")}</small></figcaption>
-        </figure>
-        <p>{t("Saving defines the label and an editable Draft. No model is called; the goal is not automatically parsed.")}</p>
-        {kind === "bounding_box" && <p>{t("A confident prediction is not geometry proof. Initial boxes still require the Project's review and calibration policy.")}</p>}
-        {modelsReady === false && <p role="status">{t("No Ready model is configured. You can save your images and goal now; connect a compatible model before testing.")}</p>}
-        {progress && <p role="status">{progress}</p>}
-      </section>
-    </div>
-    <footer className="task-action-bar"><span>{t("No model call when saving this goal.")}</span><button onClick={close} disabled={busy}>{t("Cancel")}</button><button className="primary" disabled={busy || !files.length || !projectName.trim() || !labelName.trim()} onClick={() => void finish()}>{t("Save goal and images")}</button></footer>
-  </section>;
 }
 
 function Panel({

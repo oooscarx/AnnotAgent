@@ -11,6 +11,7 @@ export type WorkspaceRoute =
   | { kind: "home"; canonicalPath: string }
   | { kind: "projects"; canonicalPath: string; create?: boolean }
   | { kind: "project"; canonicalPath: string; projectId: string }
+  | { kind: "journey"; canonicalPath: string; projectId: string; scene: "images" | "goal" | "samples"; draftId?: string; sampleTestId?: string; imageId?: string }
   | { kind: "export"; canonicalPath: string; projectId: string }
   | {
       kind: "build";
@@ -147,12 +148,22 @@ export function projectBuildPath(
   return `/projects/${encodeURIComponent(projectId)}/build/${step}${suffix}`;
 }
 
+export function projectJourneyPath(projectId: string, scene: "images" | "goal" | "samples", context: BuildUrlContext = {}): string {
+  const params = new URLSearchParams();
+  if (context.draftId) params.set("draft", context.draftId);
+  if (context.sampleTestId) params.set("test", context.sampleTestId);
+  if (context.imageId) params.set("image", context.imageId);
+  return `/projects/${encodeURIComponent(projectId)}/task/${scene}${params.size ? `?${canonicalSearch(params)}` : ""}`;
+}
+
 export function routeFocusKey(route: WorkspaceRoute): string {
   switch (route.kind) {
     case "projects":
       return route.create ? "project-create" : "projects";
     case "build":
       return `build:${route.projectId}:${route.step}`;
+    case "journey":
+      return `journey:${route.projectId}:${route.scene}`;
     case "projectRun":
       return `project-run:${route.projectId}:${route.runId}`;
     case "runs":
@@ -275,6 +286,14 @@ export function parseWorkspaceRoute(
       canonicalPath: params.get("new") === "1" ? "/projects?new=1" : "/projects",
     };
 
+  const journey = clean.match(/^\/projects\/([^/]+)\/task\/(images|goal|samples)$/);
+  if (journey) {
+    const projectId = decodePathSegment(journey[1]);
+    if (!projectId) return { kind: "notFound", canonicalPath: `${clean}${search}`, invalidPath: `${clean}${search}` };
+    const scene = journey[2] as "images" | "goal" | "samples";
+    const context = { draftId: params.get("draft") ?? undefined, sampleTestId: params.get("test") ?? undefined, imageId: params.get("image") ?? undefined };
+    return { kind: "journey", projectId, scene, ...context, canonicalPath: projectJourneyPath(projectId, scene, context) };
+  }
   const projectRun = clean.match(/^\/projects\/([^/]+)\/runs\/([^/]+)$/);
   if (projectRun) {
     const projectId = decodePathSegment(projectRun[1]);

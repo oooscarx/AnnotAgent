@@ -115,6 +115,23 @@ struct ModelExecution {
 }
 
 impl PublishedWorkflowRuntime {
+    pub(crate) fn with_sample_request_limit(mut self, limit: u64) -> Self {
+        let calls = crate::sample_limits::SampleCalls::new(limit);
+        self.external_backend = self.external_backend.map(|inner| calls.backend(inner));
+        self.pipeline_provider = self.pipeline_provider.map(|inner| calls.provider(inner));
+        for execution in self.profile_executions.values_mut() {
+            execution.external_backend = execution
+                .external_backend
+                .take()
+                .map(|inner| calls.backend(inner));
+            execution.pipeline_provider = execution
+                .pipeline_provider
+                .take()
+                .map(|inner| calls.provider(inner));
+        }
+        self
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         workflow: PublishedWorkflowVersion,

@@ -29,6 +29,10 @@ use super::{
 
 pub(super) fn routes() -> Router<ServerState> {
     Router::new()
+        .route(
+            "/api/projects/{project_id}/goal",
+            get(super::get_project_goal).put(super::put_project_goal),
+        )
         .route("/api/runs", get(list_run_summaries))
         .route("/api/projects/{project_id}", get(get_project))
         .route(
