@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { t } from "../i18n";
 import { projectJourneyPath } from "../navigation";
-import { journeyConnectionReady, journeyModelMatches } from "../journeyConnections";
-import type { AgentSession, ImageItem, ProjectSummary, RegistryModelProfile } from "../types";
+import { journeyConnectionReady, journeyLocalModelMatches, journeyModelMatches, journeyReadyLocalModels } from "../journeyConnections";
+import type { AgentSession, ImageItem, ModelInstanceProfile, ProjectSummary, RegistryModelProfile } from "../types";
 
 export function splitGoalLabels(value: string): string[] {
   return [...new Set(value.split(/[,，\n]/).map((label) => label.trim()).filter(Boolean))];
@@ -36,6 +36,7 @@ export function JourneyGoal({ project, sessionId, onNavigate, onRefresh, onNavig
   const [model, setModel] = useState<RegistryModelProfile>();
   const [destination, setDestination] = useState("");
   const [visionModels, setVisionModels] = useState<RegistryModelProfile[]>([]);
+  const [localModels, setLocalModels] = useState<ModelInstanceProfile[]>([]);
   const [busy, setBusy] = useState(false);
   const [planning, setPlanning] = useState(false);
   const [session, setSession] = useState<AgentSession>();
@@ -45,19 +46,20 @@ export function JourneyGoal({ project, sessionId, onNavigate, onRefresh, onNavig
   const mounted = useRef(true);
   const leaving = useRef(false);
   const started = useRef("");
-  const visionReady = visionModels.some((profile) => journeyModelMatches(profile, "vision", kind));
+  const visionReady = visionModels.some((profile) => journeyModelMatches(profile, "vision", kind)) || localModels.some((profile) => journeyLocalModelMatches(profile, kind));
   const dirty = Boolean(saved && (goal !== saved.goal || kind !== (saved.kind ?? "bounding_box") || JSON.stringify(splitGoalLabels(labels)) !== JSON.stringify(saved.labels ?? [])));
   useEffect(() => {
     mounted.current = true;
     let current = true;
     const controller = new AbortController();
-    void Promise.all([api.projectGoal(project.id, controller.signal), api.images(project.id, controller.signal), api.agentModelBindings(), api.modelProfiles(), api.providers(), api.projectModelBindings(project.id)]).then(([value, images, defaults, profiles, providers, bindings]) => {
+    void Promise.all([api.projectGoal(project.id, controller.signal), api.images(project.id, controller.signal), api.agentModelBindings(), api.modelProfiles(), api.providers(), api.projectModelBindings(project.id), api.modelInstances(), api.expertPlugins(), api.modelBundles()]).then(([value, images, defaults, profiles, providers, bindings, native, plugins, bundles]) => {
       if (!current) return;
       setSaved(value); setGoal(value.goal); setKind(value.kind ?? "bounding_box"); setLabels((value.labels ?? []).join(", ")); setImages(images.images);
       const plannerId = bindings.bindings.find((item) => item.role === "pipeline_builder")?.model_profile_id ?? defaults.pipeline_builder;
       const planner = profiles.models.find((item) => item.id === plannerId && item.enabled && item.status === "available" && item.input_modalities.includes("text") && item.task_capabilities.includes("text_generation") && item.protocol_features.tool_calls && item.protocol_features.structured_output && providers.providers.some((provider) => provider.id === item.provider_id && provider.enabled && provider.credential_configured && ["available", "configured"].includes(provider.health.status)));
       setModel(planner);
       setVisionModels(profiles.models.filter((profile) => journeyConnectionReady(profile, providers.providers)));
+      setLocalModels(journeyReadyLocalModels(native.model_profiles, native.instances, plugins.installations, bundles.bundles));
       setDestination(providers.providers.find((provider) => provider.id === planner?.provider_id)?.base_url ?? "");
     }).catch((error: Error) => { if (current) setError(error.message); });
     return () => { mounted.current = false; current = false; controller.abort(); };

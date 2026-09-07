@@ -1,23 +1,9 @@
 import { dirname, resolve } from "node:path";
 import { renameSync } from "node:fs";
-import { expect, test } from "./fixtures";
+import { expect, fetchWithinMutationLimit, test } from "./fixtures";
 
 test("ready fixture journey plans without image calls then authorizes a bounded sandbox test", async ({ page, request }, testInfo) => {
   test.setTimeout(120_000);
-  // This long acceptance path shares the isolated server's real 120-write/minute
-  // guard with preceding cases. Pace only its proven pre-execution rejection;
-  // do not retry provider failures, network errors or possibly executed actions.
-  await page.route("**/api/**", async (route) => {
-    if (["GET", "HEAD", "OPTIONS"].includes(route.request().method())) return route.fallback();
-    const deadline = Date.now() + 45_000;
-    while (true) {
-      const response = await route.fetch();
-      if (response.status() !== 429 || Date.now() >= deadline) return route.fulfill({ response });
-      const body = await response.json().catch(() => ({}));
-      if (body.code !== "mutation_rate_limited") return route.fulfill({ response });
-      await new Promise((resolve) => setTimeout(resolve, 1_000));
-    }
-  });
   const provider = await (await request.post("/api/providers", { data: { display_name: "Journey TEST fixture", adapter: "open_ai_compatible", base_url: "http://127.0.0.1:8796/openai/v1" } })).json();
   expect((await request.post(`/api/providers/${provider.id}/credential`, { data: { source: "workspace_file", secret: "guided-e2e-protocol-fixture" } })).ok()).toBeTruthy();
   const model = await (await request.post("/api/model-profiles", { data: {
@@ -132,7 +118,7 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   const feedbackRequests: unknown[] = [];
   page.on("request", (req) => { if (req.method() === "POST" && /\/workflow-sample-tests\/.*\/feedback$/.test(req.url())) feedbackRequests.push(req.postDataJSON()); });
   await page.route("**/api/workflow-sample-tests/*/images/*/feedback", async (route) => {
-    const saved = await route.fetch(); expect(saved.ok()).toBe(true);
+    const saved = await fetchWithinMutationLimit(route); expect(saved.ok(), await saved.text()).toBe(true);
     await route.abort("failed"); // Save happened; only its response was lost.
   }, { times: 1 });
   await page.getByRole("button", { name: "Save sample feedback", exact: true }).click();

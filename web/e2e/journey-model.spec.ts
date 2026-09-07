@@ -61,7 +61,23 @@ test("conditional model connection saves, verifies with consent, and returns wit
   await page.getByRole("button", { name: "Connect an image model", exact: true }).click();
   await expect(page).toHaveURL(/\/task\/model\?purpose=vision$/);
   await expect(page.getByRole("radio", { name: /e2e-pipeline-builder/ })).toHaveCount(0);
-  await page.getByRole("button", { name: "Back to saved goal", exact: true }).click();
+  await page.getByRole("button", { name: "Prepare a local image model", exact: true }).click();
+  await expect(page.getByText(/^No verified local model for this output/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Install this local model", exact: true })).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Prepare a model on this computer", exact: true })).toBeVisible();
+  await expect(page.getByText(/^No verified local model for this output/)).toBeVisible();
+  await expect(page.locator(".sidebar, .plugin-card-grid, .model-profile-form, .registry-table")).toHaveCount(0);
+  for (const [width, height] of [[1440, 900], [390, 844]]) {
+    await page.setViewportSize({ width, height });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await page.screenshot({ path: `../docs/execution/guided-journey/local-model-unavailable-${width}.png`, fullPage: true, animations: "disabled" });
+  }
+  await page.getByRole("button", { name: "Connect a model service", exact: true }).click();
+  await expect(page.getByLabel("Service URL", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Cancel connection", exact: true }).click();
+  await page.getByRole("button", { name: "Prepare a local image model", exact: true }).click();
+  await page.getByRole("button", { name: "Back to saved task", exact: true }).click();
   await expect(page.getByLabel("Categories to keep", { exact: true })).toHaveValue("day, night");
   expect(charged).toHaveLength(1);
   await page.getByRole("button", { name: "Connect an image model", exact: true }).click();

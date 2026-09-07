@@ -3,7 +3,8 @@ import { api } from "../api";
 import { t } from "../i18n";
 import { projectJourneyPath } from "../navigation";
 import type { ModelBindingRole, ModelCapability, ProjectSummary, ProviderProfile, RegistryModelProfile } from "../types";
-import { journeyConnectionReady, journeyModelMatches, journeyVisionCapabilities, type JourneyConnectionPurpose } from "../journeyConnections";
+import { journeyConnectionReady, journeyLocalModelMatches, journeyModelMatches, journeyReadyLocalModels, journeyVisionCapabilities, type JourneyConnectionPurpose } from "../journeyConnections";
+import { JourneyLocalModel } from "./JourneyLocalModel";
 
 // Presentation over the existing Registry. Credentials never enter URL/storage here.
 export function JourneyModel({ project, purpose = "planning", revisionReturn, onNavigate }: {
@@ -15,6 +16,9 @@ export function JourneyModel({ project, purpose = "planning", revisionReturn, on
   const [providers, setProviders] = useState<ProviderProfile[]>([]);
   const [selected, setSelected] = useState("");
   const [connecting, setConnecting] = useState(false);
+  const localSetupKey = `annotagent.local-setup-open:${project.id}:${purpose}`;
+  const [localSetup, setLocalSetup] = useState(() => { try { return purpose === "vision" && localStorage.getItem(localSetupKey) === "true"; } catch { return false; } });
+  const openLocalSetup = (open: boolean) => { setLocalSetup(open); try { if (open) localStorage.setItem(localSetupKey, "true"); else localStorage.removeItem(localSetupKey); } catch { /* Presentation preference only. */ } };
   const [endpoint, setEndpoint] = useState("");
   const [remoteModel, setRemoteModel] = useState("");
   const [secret, setSecret] = useState("");
@@ -130,12 +134,23 @@ export function JourneyModel({ project, purpose = "planning", revisionReturn, on
       if (active.current) leave();
     });
   }
+  if (localSetup && loaded && returnReady && purpose === "vision") return <JourneyLocalModel projectId={project.id} kind={kind} onBack={() => openLocalSetup(false)} onCancel={() => { openLocalSetup(false); leave(); }} onConnectService={() => { openLocalSetup(false); setConnecting(true); }} onReady={async () => {
+    const [goal, native, plugins, bundles] = await Promise.all([api.projectGoal(project.id), api.modelInstances(), api.expertPlugins(), api.modelBundles()]);
+    if ((goal.kind ?? "bounding_box") !== kind) throw new Error(t("The annotation goal changed during setup. Return to the saved task and check its required connection again."));
+    if (!journeyReadyLocalModels(native.model_profiles, native.instances, plugins.installations, bundles.bundles).some((model) => journeyLocalModelMatches(model, kind))) throw new Error(t("This model is no longer available. Choose another connection."));
+    if (revisionReturn) {
+      const evidence = await api.samplePlanEvidence(project.id, revisionReturn.draftId);
+      if (evidence.project_id !== project.id || evidence.sample_test_id !== revisionReturn.sampleTestId) throw new Error(t("This revision does not belong to the selected sample."));
+    }
+    openLocalSetup(false); leave();
+  }} />;
   return <section className="journey-scene journey-model" aria-label={t(purpose === "planning" ? "Connect a planning model" : "Connect an image model")}>
     <div className="journey-intro"><h2>{t("One connection before we prepare your samples.")}</h2><p>{t(purpose === "planning" ? "Your images and goal are saved. This connection prepares a plan; image processing is authorized separately." : "Your goal is saved. Choose a model that can process images for this task; connecting it does not run your images.")}</p></div>
     {!loaded && !error && <p role="status">{t("Checking configured connections…")}</p>}
     {!connecting ? <>
       {options.length > 0 ? <fieldset className="journey-output-types" disabled={busy}><legend>{t(purpose === "planning" ? "Choose a configured planning model" : "Choose a compatible image model")}</legend>{options.map((model) => <label key={model.id}><input type="radio" name="planning-connection" checked={selected === model.id} onChange={() => { setSelected(model.id); setProbeConsent(false); }} /><span><strong>{model.display_name}</strong><small>{providerFor(model)?.base_url} · {t(model.status === "available" ? "Available" : "Connection needs verification")}</small></span></label>)}</fieldset> : loaded && <p>{t(purpose === "planning" ? "No configured planning connection is available yet." : "No compatible image connection is available yet.")}</p>}
       <button disabled={busy || !returnReady} onClick={() => setConnecting(true)}>{t("Connect a model service")}</button>
+      {purpose === "vision" && <button disabled={busy || !returnReady || !loaded} onClick={() => openLocalSetup(true)}>{t("Prepare a local image model")}</button>}
       {providerId && <button disabled={busy} onClick={() => {
         setProviderId(""); setCreatedModel(""); setSelected(""); setEndpoint(""); setRemoteModel(""); setSecret(""); setDeclared(false); setProbeConsent(false); setConnecting(true);
         try { localStorage.removeItem(savedSetupKey); } catch { /* Existing Registry records are deliberately retained. */ }

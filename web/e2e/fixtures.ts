@@ -3,12 +3,34 @@ import {
   test as base,
   type APIRequestContext,
   type APIResponse,
+  type Route,
 } from "@playwright/test";
 
 type RequestOptions = Parameters<APIRequestContext["post"]>[1];
 
 function cleanPath(path: string) {
   return path.split("?", 1)[0];
+}
+
+export async function fetchWithinMutationLimit(route: Route): Promise<APIResponse> {
+  const deadline = Date.now() + 45_000;
+  const original = route.request();
+  let headers = original.headers();
+  while (true) {
+    const response = await route.fetch({ headers });
+    if (response.status() !== 429 || Date.now() >= deadline) return response;
+    if ((await response.json().catch(() => ({}))).code !== "mutation_rate_limited") return response;
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    // This is a proven pre-execution rejection. Renew the short-lived nonce
+    // rather than replay an expired one after the real rate window clears.
+    const url = new URL(original.url());
+    const action = privilegedAction(original.method(), url.pathname);
+    if (action && headers["x-annotagent-csrf"]) {
+      const confirmation = await original.frame().page().request.post(`${url.origin}/api/session/privileged-confirmation`, { headers: { "x-annotagent-csrf": headers["x-annotagent-csrf"] }, data: { action, confirmed: true } });
+      if (confirmation.ok()) headers = { ...headers, "x-annotagent-privileged-confirmation": (await confirmation.json()).confirmation_token };
+      else if (confirmation.status() !== 429 || (await confirmation.json().catch(() => ({}))).code !== "mutation_rate_limited") return confirmation;
+    }
+  }
 }
 
 function privilegedAction(method: string, path: string): string | undefined {
@@ -86,6 +108,16 @@ function protectedRequestContext(request: APIRequestContext): APIRequestContext 
 }
 
 export const test = base.extend({
+  page: async ({ page }, use) => {
+    // Test-only pacing for the shared isolated server. Security tests import
+    // Playwright directly and still exercise the unmodified rejection paths.
+    await page.route("**/api/**", async (route) => {
+      if (["GET", "HEAD", "OPTIONS"].includes(route.request().method())) return route.fallback();
+      const response = await fetchWithinMutationLimit(route);
+      return route.fulfill({ response });
+    });
+    await use(page);
+  },
   request: async ({ request }, use) => {
     await use(protectedRequestContext(request));
   },

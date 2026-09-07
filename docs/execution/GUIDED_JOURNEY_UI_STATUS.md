@@ -723,3 +723,71 @@ previous handler-focused rerun also passed. Web typecheck, production build and
 90 unit tests passed. Rust code is unchanged in this increment; preceding native
 scope regression remains 514 passed / 5 ignored. The full E2E suite has not yet
 been rerun after these two narrowly verified freshness increments.
+
+Open-tab editing increment: `3419f4a`.
+
+### Conditional local model preparation
+
+Goal availability now includes existing native Model Instances, not just remote
+Provider profiles. A local model must have a selectable available profile, matching
+revision, Ready instance, valid contract/passed smoke result, matching enabled
+plugin package, and matching enabled publishable non-Fixture bundle. The same
+task capability filter is used for remote and local models; prompted segmentation
+alone remains insufficient for whole-image object discovery or classification.
+
+The existing conditional model page now opens a task-specific local preparation
+scene on the same typed Project route. It queries the existing compatible catalog
+API (which checks the installed immutable plugin and platform), shows source,
+publisher, license/download scope, and calls the existing license and installation
+operation endpoints only after explicit consent. It does not install plugin code,
+copy Workflow state, create another Runtime, or execute Project images. Unknown
+platform/missing compatible bundles produce an explicit limitation, not an ONNX
+file hunt or fabricated Install button. Native readiness does not replace the
+required text planning connection.
+
+The optional scene and selected catalog identity survive refresh as non-secret
+preferences; installed state, readiness and running operations come from the
+server. Consent never survives reload. Active operation reads/polling cannot
+start another installation. Known jobs remain visible if their catalog choice
+becomes unavailable. Poll failures expose a read-only retry. Cancel returns to
+the saved task without deleting models; leaving a running installation is
+explicitly distinct from cancellation. The existing installation service has no
+cancel API and keeps progress in server memory: server restart can interrupt it,
+which the task UI explicitly states. Installed bundle/instance data persists.
+Returning after success rechecks task kind, local availability and any controlled
+sample-revision return context; no image or planning call is automatically made.
+
+Evidence: 91 Web unit tests pass, including disabled/digest-mismatched plugin,
+disabled/non-publishable/Fixture bundle, stale profile revision, failed instance
+and SAM-as-detector rejection. Conditional unavailable-model screenshots at
+1440 and 390 are actual rendered isolated fixture-workspace pages. The new
+successful-install UI test simulates only delivery metadata/HTTP responses and
+is labeled TEST throughout; real Project upload and goal persistence remain on
+the isolated server. It proves consent, one license/one install request, restored
+progress, task return and zero image/planning calls, not real weight download,
+native inference or model quality. Its first run read the URL before project
+creation navigation completed; it now waits for the actual canonical task route.
+Focused delivery and connection E2E **2/2 passed**. Full browser rerun follows.
+
+The first full run hit the actual server's mutation-rate guard: the lost-response
+feedback interceptor bypassed the older case-local pacing adapter, and a later
+Provider credential save also received `429 mutation_rate_limited` (verified in
+the browser trace). Shared browser fixtures now pace only that exact pre-execution
+rejection, preserving method/body and renewing the short-lived privileged nonce
+when applicable. The deliberate response-loss interceptor uses the same helper.
+Security tests still import raw Playwright and exercise unmodified guards. No
+Provider errors, network ambiguity or executed action are retried automatically.
+The product rate/security limits are unchanged.
+
+Full rerun **63/63 E2E passed** (1.7 minutes), with **91 Web unit tests**,
+typecheck and production build passing. Visual inspection of the real 390px empty
+local-model scene led to one final small refinement: its main action now opens the
+existing service connection form directly, with a separate cancel back to the
+saved task. Captures now disable animation to avoid documenting a faded transition
+frame. A focused final check covers this refinement before commit.
+
+Final focused check **2/2 passed** (12.9 seconds), including direct service repair
+and local-setup cancellation back to the original persisted labels/goal. No real
+model or plugin was installed. Remaining work is the final requirement audit,
+including missed-target correction from non-Review Run/Batch results, and explicit
+records of unexecuted native zoom/assistive-technology/human usability checks.
