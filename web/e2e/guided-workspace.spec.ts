@@ -567,12 +567,21 @@ test("Pipeline Builder setup outcome restores its Draft and exposes recovery nav
   await expect(trace).toContainText("44 remaining · 6 reserved");
   await expect(trace.getByRole("button", { name: "Open blocked Draft" })).toBeVisible();
   await expect(trace.getByRole("button", { name: "Retry from current Draft" })).toBeVisible();
+  await expect(page).toHaveURL(/\/build\/pipeline\?draft=/);
+  const draftUrl = page.url();
   await trace.getByRole("button", { name: "Configure Provider" }).click();
-  await expect(page).toHaveURL(/\/settings$/);
+  const preparation = page.getByRole("region", { name: "Task model preparation", exact: true });
+  await expect(preparation.getByRole("heading", { name: "Providers", exact: true })).toBeVisible();
+  expect(page.url()).toBe(draftUrl);
+  await preparation.getByRole("button", { name: "Return to this Draft", exact: true }).click();
+  await expect(preparation).not.toBeVisible();
 
-  await page.goto(`/projects/${projectId}/build/pipeline`);
   await page.getByLabel("pipeline_builder Agent trace").getByRole("button", { name: "Configure Model" }).click();
-  await expect(page).toHaveURL(/\/settings\/models$/);
+  await expect(preparation.getByRole("heading", { name: "Models", exact: true })).toBeVisible();
+  expect(page.url()).toBe(draftUrl);
+  await preparation.getByRole("button", { name: "Return to this Draft", exact: true }).click();
+  await expect(preparation).not.toBeVisible();
+  expect(page.url()).toBe(draftUrl);
 });
 
 test("Pipeline Builder applies a structured Draft Diff and restores it with Undo", async ({ page, request }, testInfo) => {

@@ -2148,6 +2148,14 @@ button[aria-disabled="true"] { cursor: not-allowed; opacity: .55; }
 .first-result-entry.returning h2 { font-size: 1.65rem; }
 .first-result-intro p, .first-result-example p { margin: 0; line-height: 1.6; }
 .first-result-logo { width: 40px; height: 40px; }
+.task-model-preparation { display: grid; gap: 1rem; min-width: 0; scroll-margin-top: 1rem; overflow-anchor: none; }
+.task-model-preparation > .section-heading { align-items: flex-start; gap: 1rem; flex-wrap: wrap; position: sticky; top: 0; z-index: 2; background: var(--aa-surface); padding-block: 0.5rem; }
+.task-model-preparation > .section-heading > div { flex: 1 1 260px; min-width: 0; }
+.task-model-preparation > .section-heading > button { flex: 0 0 auto; }
+.task-model-preparation > .section-heading p { max-width: 72ch; margin-top: 0.65rem; line-height: 1.6; }
+.task-model-preparation > .inline-notice { margin: 0; }
+.task-model-preparation > nav { flex-wrap: wrap; }
+.task-model-preparation > nav [aria-pressed="true"] { background: var(--aa-primary-soft); border-color: var(--aa-primary); }
 .first-result-cover { margin: 0; min-width: 0; }
 .first-result-cover img, .first-result-image-stage > img { display: block; width: 100%; object-fit: contain; }
 .first-result-cover figcaption { padding: 0.75rem 0; font-size: 0.85rem; }

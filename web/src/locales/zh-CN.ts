@@ -1545,5 +1545,16 @@ export const zhCN: Record<string, string> = {
   "Runs only when the gate requests another search. These are not additional steps for every image.": "仅在检查节点要求再次搜索时执行，不会让每张图片都多跑一遍。",
   "Stage count is not a per-image request estimate. Crops can fan out; recovery is conditional.": "这里是模型阶段数量，不是每图请求数；多个裁剪区域可能产生多次调用，恢复分支按条件执行。",
   "Alternative plans and selection details": "备选方案与选择依据",
-  "Alternatives are not extra pipelines being executed. Structural ranking does not measure annotation accuracy.": "备选方案不是额外执行的流程。结构评分不代表实际标注准确率。"
+  "Alternatives are not extra pipelines being executed. Structural ranking does not measure annotation accuracy.": "备选方案不是额外执行的流程。结构评分不代表实际标注准确率。",
+  "Task model preparation": "当前任务的模型准备",
+  "Prepare models without leaving your task": "留在当前任务中准备模型",
+  "These are the same Registry forms as Settings. Your Project, images and Draft stay in place. Returning only refreshes availability; it does not start inference.": "这里复用设置页的模型注册表单。项目、图片和草稿保持不变；返回只刷新可用状态，不会开始推理。",
+  "Return to this Draft": "返回此草稿",
+  "Model preparation options": "模型准备选项",
+  "Reuse configured models": "复用已配置模型",
+  "Provider connections": "连接服务商",
+  "Local model availability": "本地模型可用性",
+  "Saving configuration is not authorization to test images. Connection checks, billable probes and downloads remain separate explicit actions. Local installation is available only when the Registry lists a compatible real Bundle.": "保存配置不代表授权测试图片。检查连接、付费探测和下载仍需分别操作；注册表中存在兼容的真实模型包时才可安装。",
+  "Pipeline Builder needs an available text model with Tool Calls and Structured Output. Your images and goal are already saved; you can prepare a model here or return later.": "流程规划需要支持工具调用与结构化输出的可用文本模型。图片和目标已保存，可以在此准备模型，也可以稍后回来。",
+  "Prepare models in this task": "在当前任务中准备模型"
 };

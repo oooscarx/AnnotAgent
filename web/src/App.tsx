@@ -722,9 +722,6 @@ export function App() {
             }
             onOpenProjects={() => navigate("/projects")}
             onOpenProject={() => openProject(route.projectId)}
-            onOpenProviders={() => navigate("/settings")}
-            onOpenModels={() => navigate("/settings/models")}
-            onOpenPlugins={() => navigate("/settings/plugins")}
             onOpenTrash={() => navigate(projectTrashPath(route.projectId, "pipeline"))}
             onError={setError}
           />
@@ -2797,235 +2794,40 @@ function ProjectExportPage({
   );
 }
 
-function InlineProviderSetup({
-  onOpenProviders,
-  onOpenModels,
-  onReady,
-  onError,
-}: {
-  onOpenProviders: () => void;
-  onOpenModels: () => void;
-  onReady: () => Promise<void>;
+type TaskPreparationSection = "models" | "providers" | "plugins";
+
+function TaskModelPreparation({ section, onSelect, onClose, onError }: {
+  section: TaskPreparationSection;
+  onSelect: (section: TaskPreparationSection) => void;
+  onClose: () => Promise<void>;
   onError: (value: string) => void;
 }) {
-  const [presets, setPresets] = useState<ProviderPresetProfile[]>([]);
-  const [presetId, setPresetId] = useState("");
-  const [displayName, setDisplayName] = useState("");
-  const [modelId, setModelId] = useState("");
-  const [credentialSource, setCredentialSource] = useState<
-    "environment_variable" | "workspace_file" | "session_only"
-  >("workspace_file");
-  const [environmentVariable, setEnvironmentVariable] =
-    useState("ANNOTAGENT_PROVIDER_API_KEY");
-  const [secret, setSecret] = useState("");
-  const [busy, setBusy] = useState<"connect" | "probe" | "">("");
-  const [created, setCreated] = useState<{
-    provider: ProviderProfile;
-    model: RegistryModelProfile;
-  }>();
+  const [returning, setReturning] = useState(false);
+  const panel = useRef<HTMLElement>(null);
   useEffect(() => {
-    void api
-      .providerPresets()
-      .then(({ presets: values }) => {
-        const available = values.filter(
-          (preset) => preset.adapter === "open_ai_compatible",
-        );
-        setPresets(available);
-        const first = available[0];
-        if (first) {
-          setPresetId(first.id);
-          setDisplayName(first.display_name);
-          setModelId(first.suggested_models[0] ?? "");
-        }
-      })
-      .catch((error: Error) => onError(error.message));
+    const trigger = document.activeElement;
+    panel.current?.scrollIntoView({ block: "start", behavior: "instant" });
+    panel.current?.focus({ preventScroll: true });
+    return () => { if (trigger instanceof HTMLElement && trigger.isConnected) trigger.focus(); };
   }, []);
-  const choosePreset = (id: string) => {
-    const preset = presets.find((candidate) => candidate.id === id);
-    setPresetId(id);
-    if (preset) {
-      setDisplayName(preset.display_name);
-      setModelId(preset.suggested_models[0] ?? "");
-    }
-  };
-  const connect = async () => {
-    const preset = presets.find((candidate) => candidate.id === presetId);
-    if (!preset) return onError("Choose a Provider preset first.");
-    if (!displayName.trim() || !modelId.trim())
-      return onError("Enter a Provider name and exact model ID.");
-    if (
-      credentialSource === "environment_variable" &&
-      !isEnvironmentVariableName(environmentVariable)
-    )
-      return onError(
-        "Enter an environment variable name such as DASHSCOPE_API_KEY, not the API key itself. To paste a key directly, choose Local workspace file.",
-      );
-    if (credentialSource !== "environment_variable" && !secret)
-      return onError("Enter the API key.");
-    setBusy("connect");
-    try {
-      const provider = await api.createProvider({
-        display_name: displayName.trim(),
-        preset_id: preset.id,
-        adapter: "open_ai_compatible",
-        base_url: preset.base_url,
-      });
-      await api.saveProviderCredential(provider.id, {
-        source: credentialSource,
-        ...(credentialSource === "environment_variable"
-          ? { environment_variable: environmentVariable.trim() }
-          : { secret }),
-      });
-      const model = await api.createModelProfile({
-        provider_id: provider.id,
-        display_name: modelId.trim(),
-        remote_model_id: modelId.trim(),
-        input_modalities: ["text"],
-        task_capabilities: ["text_generation"],
-        protocol_features: {
-          tool_calls: true,
-          parallel_tool_calls: false,
-          structured_output: true,
-          json_schema: false,
-          usage_reporting: true,
-          streaming: false,
-          reasoning_controls: false,
-        },
-      });
-      await api.checkProvider(provider.id);
-      setSecret("");
-      setCreated({ provider, model });
-    } catch (error) {
-      onError((error as Error).message);
-    } finally {
-      setBusy("");
-    }
-  };
-  const probe = async () => {
-    if (!created) return;
-    if (
-      !window.confirm(
-        "This sends one minimal generation request and may incur Provider charges. Continue?",
-      )
-    )
-      return;
-    setBusy("probe");
-    try {
-      await api.activeProbe(created.provider.id, created.model.id);
-      await onReady();
-    } catch (error) {
-      onError((error as Error).message);
-    } finally {
-      setBusy("");
-    }
-  };
-  return (
-    <details className="inline-provider-setup" open>
-      <summary>{t("Provider setup required")}</summary>
-      <p>
-        Pipeline Builder needs an Available text model with Tool Calls and
-        Structured Output. This setup keeps the current Draft and returns here
-        after verification.
-      </p>
-      {!created ? (
-        <div className="inline-provider-form">
-          <label>{t("Provider preset")}<select
-              value={presetId}
-              onChange={(event) => choosePreset(event.target.value)}
-            >
-              {presets.map((preset) => (
-                <option key={preset.id} value={preset.id}>
-                  {preset.display_name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>{t("Connection name")}<input
-              value={displayName}
-              onChange={(event) => setDisplayName(event.target.value)}
-            />
-          </label>
-          <label>{t("Agent model")}<input
-              value={modelId}
-              onChange={(event) => setModelId(event.target.value)}
-              placeholder={t("Exact Provider model ID")}
-            />
-          </label>
-          <label>{t("Credential source")}<select
-              value={credentialSource}
-              onChange={(event) =>
-                setCredentialSource(
-                  event.target.value as
-                    | "environment_variable"
-                    | "workspace_file"
-                    | "session_only",
-                )
-              }
-            >
-              <option value="workspace_file">{t("Local workspace file")}</option>
-              <option value="environment_variable">{t("Server environment variable")}</option>
-              <option value="session_only">{t("This server session only")}</option>
-            </select>
-          </label>
-          {credentialSource === "environment_variable" ? (
-            <label>{t("Environment variable name")}<input
-                value={environmentVariable}
-                onChange={(event) =>
-                  setEnvironmentVariable(event.target.value)
-                }
-                placeholder="ANNOTAGENT_PROVIDER_API_KEY"
-              />
-            </label>
-          ) : (
-            <label>{t("API key")}<input
-                type="password"
-                autoComplete="off"
-                value={secret}
-                onChange={(event) => setSecret(event.target.value)}
-              />
-            </label>
-          )}
-          <small>
-            Local workspace file persists across restarts under the Git-ignored
-            .annotagent/credentials directory. Environment variable mode accepts
-            only a variable name set before the server starts. Session-only
-            values disappear when the server stops. Credentials are never placed
-            in browser storage or the OS keychain.
-          </small>
-          <button
-            disabled={busy === "connect" || !presets.length}
-            onClick={() => void connect()}
-          >
-            {busy === "connect"
-              ? t("Saving and checking…")
-              : t("Save and check connection")}
-          </button>
-        </div>
-      ) : (
-        <div className="inline-provider-verified">
-          <Status status="configured" />
-          <span>
-            <strong>{created.model.display_name}</strong>
-            <small>via {created.provider.display_name}</small>
-          </span>
-          <p>
-            The non-billable Provider check passed. One explicit model test is
-            required before this Profile becomes Available.
-          </p>
-          <button
-            disabled={busy === "probe"}
-            onClick={() => void probe()}
-          >
-            {busy === "probe" ? t("Testing model…") : t("Run billable model test")}
-          </button>
-        </div>
-      )}
-      <div className="button-row">
-        <button onClick={onOpenProviders}>{t("Open Provider settings")}</button>
-        <button onClick={onOpenModels}>{t("Open Model settings")}</button>
-      </div>
-    </details>
-  );
+  useEffect(() => { panel.current?.scrollIntoView({ block: "start", behavior: "instant" }); }, [section]);
+  return <section ref={panel} tabIndex={-1} className="task-model-preparation panel" aria-label={t("Task model preparation")}>
+    <header className="section-heading"><div><h2>{t("Prepare models without leaving your task")}</h2><p>{t("These are the same Registry forms as Settings. Your Project, images and Draft stay in place. Returning only refreshes availability; it does not start inference.")}</p></div>
+      <button disabled={returning} onClick={() => {
+        setReturning(true);
+        void onClose().catch((error: Error) => onError(error.message)).finally(() => setReturning(false));
+      }}>{t("Return to this Draft")}</button>
+    </header>
+    <nav className="button-row" aria-label={t("Model preparation options")}>
+      <button aria-pressed={section === "models"} onClick={() => onSelect("models")}>{t("Reuse configured models")}</button>
+      <button aria-pressed={section === "providers"} onClick={() => onSelect("providers")}>{t("Provider connections")}</button>
+      <button aria-pressed={section === "plugins"} onClick={() => onSelect("plugins")}>{t("Local model availability")}</button>
+    </nav>
+    <p className="inline-notice">{t("Saving configuration is not authorization to test images. Connection checks, billable probes and downloads remain separate explicit actions. Local installation is available only when the Registry lists a compatible real Bundle.")}</p>
+    {section === "models" && <ModelRegistryPage onOpenProviders={() => onSelect("providers")} onError={onError} />}
+    {section === "providers" && <ProviderRegistryPage onOpenModels={() => onSelect("models")} onError={onError} />}
+    {section === "plugins" && <ExpertModelPluginsPage onError={onError} />}
+  </section>;
 }
 
 function WorkflowsPage({
@@ -3042,9 +2844,6 @@ function WorkflowsPage({
   onSelectContext,
   onOpenProjects,
   onOpenProject,
-  onOpenProviders,
-  onOpenModels,
-  onOpenPlugins,
   onOpenTrash,
   onError,
 }: {
@@ -3070,9 +2869,6 @@ function WorkflowsPage({
   ) => void;
   onOpenProjects: () => void;
   onOpenProject: () => void;
-  onOpenProviders: () => void;
-  onOpenModels: () => void;
-  onOpenPlugins: () => void;
   onOpenTrash: () => void;
   onError: (value: string) => void;
 }) {
@@ -3118,6 +2914,10 @@ function WorkflowsPage({
   const [compareRight, setCompareRight] = useState("");
   const advisorKind = "llm" as const;
   const [registryProviders, setRegistryProviders] = useState<ProviderProfile[]>([]);
+  const [preparation, setPreparation] = useState<TaskPreparationSection>();
+  const onOpenProviders = () => setPreparation("providers");
+  const onOpenModels = () => setPreparation("models");
+  const onOpenPlugins = () => setPreparation("plugins");
   const [compatibleModels, setCompatibleModels] = useState<
     Partial<Record<ModelBindingRole, RegistryModelProfile[]>>
   >({});
@@ -3980,6 +3780,10 @@ function WorkflowsPage({
     <section className="page-stack">
       <ProjectBreadcrumb project={activeProject} current="Build" onOpenProjects={onOpenProjects} onOpenProject={onOpenProject} />
       <BuildNavigation step="pipeline" guidance={buildSummary?.guidance} onNavigate={(step) => onNavigate(step, step === "test" ? draft?.id : undefined)} />
+      {preparation && <TaskModelPreparation section={preparation} onSelect={setPreparation} onError={onError} onClose={async () => {
+        await refreshModelChoices();
+        setPreparation(undefined);
+      }} />}
       <div className="toolbar-panel workflow-designer-header">
         <div>
           <span className="eyebrow">{t("Step 3 · Automation")}</span>
@@ -4140,12 +3944,11 @@ function WorkflowsPage({
                 />{t("Lock this Project choice so the Agent cannot replace it")}</label>
             </fieldset>
           ) : (
-            <InlineProviderSetup
-              onOpenProviders={onOpenProviders}
-              onOpenModels={onOpenModels}
-              onReady={refreshModelChoices}
-              onError={onError}
-            />
+            <div className="inline-provider-setup">
+              <h4>{t("Provider setup required")}</h4>
+              <p>{t("Pipeline Builder needs an available text model with Tool Calls and Structured Output. Your images and goal are already saved; you can prepare a model here or return later.")}</p>
+              <button className="primary" onClick={onOpenModels}>{t("Prepare models in this task")}</button>
+            </div>
           )}
           <fieldset className="agent-objective agent-objective-primary" aria-label={t("Pipeline Builder objective")}>
             <legend>{t("Annotation goal")}</legend>

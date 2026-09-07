@@ -2,7 +2,7 @@
 
 ## Scope and status
 
-Started 2026-09-07. M0 complete (`7bc6aa0`); M1's images/goal → existing Builder/sample → persisted feedback vertical slice delivered. M2–M5 remain open. This is the only ledger for this task. This is not a release-complete claim.
+Started 2026-09-07. M0 complete (`7bc6aa0`); M1's images/goal → existing Builder/sample → persisted feedback vertical slice delivered (`e6bee47`). M2's inline preparation branch is implemented; its authorization/budget work and M3–M5 remain open. This is the only ledger for this task. This is not a release-complete claim.
 Base commit: `734d1e3`. Fourteen existing acceptance PNG modifications are unrelated and preserved.
 No push, remote change, reset, rebase, amend, real-workspace cleanup, or paid inference is authorized
 by this implementation. Tests use isolated workspaces and explicitly labelled protocol fixtures.
@@ -52,7 +52,7 @@ The three-screen prototype uses the existing AnnotationCanvas and an explicitly 
 
 | Persona | Current verified route | Remaining work |
 | --- | --- | --- |
-| No model | Home → images/goal form → saved Project + Draft; no Provider call | Same-task model setup and scoped authorization: M2 |
+| No model | Home → images/goal form → saved Project + Draft → inline Registry preparation → same Draft; no implicit Provider call | Scoped authorization and post-setup static revalidation: M2 |
 | Ready model | images/goal → Project → existing Automation/explicit Ask → exact Draft Test → final preview → persisted feedback → reload | Three-stage presentation, bounded local repair authorization, combined publish/start receipt: M2–M4 |
 | Returning | Home's Project list → Project guidance → existing Run/Review/Export/Data/management | More focused scope-specific continuation: M3 |
 
@@ -92,6 +92,28 @@ Five-person usability study has not been performed and cannot be substituted wit
 Real external inference is not authorized for this turn; protocol-fixture results must not be
 presented as model accuracy. No before/after improvement comparison may be fabricated.
 
+### M2 partial: same-task model preparation
+
+- Removed the separate simplified Provider/credential/model creation form from Automation. The preparation panel mounts the exact `ProviderRegistryPage`, `ModelRegistryPage` and `ExpertModelPluginsPage` components used by Settings, with local tab callbacks instead of navigation to global Settings.
+- No-model state has one primary Prepare models action; alternative Provider and local Bundle paths are inside the same panel. Existing Agent failure recovery and advanced configuration actions also open this panel.
+- Project/Draft URL remains unchanged. Closing refreshes compatible model choices and restores focus; it does not suggest, test, download, publish or start a Run. Existing explicit probes/download confirmations are unchanged, not a substitute for scoped inference authorization.
+- Red-first E2E: failed on missing Prepare models in this task. Now verifies no-model form, Provider panel, exact Draft URL, return and zero inference requests. Existing setup-recovery E2E now checks both embedded Provider and Model forms instead of expecting a global Settings redirect.
+- After the inline preparation change: full Web E2E **54/54 passed**, Web unit **70/70 passed**, typecheck/build passed. Rust code is unchanged from the M1 full-workspace verification above.
+- Additional screenshot: `docs/execution/first-result/no-model-preparation.png` (isolated workspace, no configured Provider). No fake Ready model or hardcoded model-family recommendation was added.
+- Remaining M2 blockers are implementation gaps, not missing API keys: immutable inference scope, sample replacement, enforceable aggregate call/token/time/cost budgets, persisted authorization, cancellation semantics and revalidation after setup. Current sandbox execution creates its own runtime control; a confirmation dialog alone cannot safely provide these guarantees. No M2-complete claim.
+
+### Human usability study protocol (planned, not executed)
+
+Recruit five people who have not used AnnotAgent and are not project authors. Give each the same three-image task, including an image without the target; provide an already configured test environment, and separately time the no-model setup branch. Do not give click-by-click help.
+
+Ask each participant to import images, describe a target, explain sample results, record/correct one error, authorize processing, locate pending review and no-target images, export, leave and return to the same task. Record help requests, wrong turns, lost context, outcome and confidence that the export is actually available.
+
+Time active interaction, model/server wait and installation/download wait separately. Ask which service received data and whether every output was human-confirmed. Proposed release gate: at least 4/5 complete the core journey and correctly answer both safety questions. Automated fixtures and author walkthroughs do not count as participants. Do not execute this study as release acceptance until M2/M3's authorization and recovery gaps are closed.
+
+### Local handoff
+
+The existing localhost server was restarted with the new binary after verifying no active Run, Batch or running Agent session. `/api/health` reports `status=ok`, `workspace_ready=true`; the Chinese returning-user Home rendered in the in-app browser. Startup applies the additive sample-feedback migration; no real Project, Run, Pipeline, annotation or credential was deleted or used for test inference. The browser exposes viewport overrides, but a real 200% zoom was not established; this remains unverified.
+
 ## Next
 
-Next: M2's server-enforced inference scope, accurate cost/budget disclosure, sample selection/cancellation, and inline existing Registry forms. M3 must add a durable publish/start receipt and exact scope; M4 the unified three-stage presentation and complete accessibility; M5 remaining release evidence and five-person study plan. Existing explicit Ask/Test buttons are not yet the new bounded first-result authorization design. The browser vertical evidence currently uses a one-image fixture; a three-distinct-image first-result walkthrough remains required.
+Next: finish M2's server-enforced inference scope, accurate cost/budget disclosure, sample selection/cancellation and post-setup validation. M3 must add a durable publish/start receipt and exact scope; M4 the unified three-stage presentation and complete accessibility; M5 remaining release evidence and actual usability study. Existing explicit Ask/Test buttons are not yet the new bounded first-result authorization design. The browser vertical evidence currently uses a one-image fixture; a three-distinct-image first-result walkthrough remains required. The exact Review identity, scoped fee confirmation and sample cancellation/recovery evidence are still missing; the screenshots and existing regression suite do not fill these gaps.
