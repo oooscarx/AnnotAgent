@@ -1876,6 +1876,7 @@ export interface ConversationCallReceipt {
   id: string; task_id: string; status: "reserved" | "completed" | "failed" | "in_doubt";
   evidence?: { error?: string; decision?: { Err?: string; Ok?: { decision: "draft" | "clarify"; kind?: string; labels?: string[]; question?: string; rationale: string; boundary_rules?: string[] } } };
 }
+export interface ConversationCallCancellation { call_id: string; task_id: string; requested_at: string }
 export interface ConversationMessage {
   conversation_id: string;
   sequence: number;

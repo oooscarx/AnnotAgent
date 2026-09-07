@@ -56,4 +56,27 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
     expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     await page.screenshot({path:`../docs/execution/conversational-workspace/schema-${width}.png`,fullPage:true,animations:"disabled"});
   }
+  const cancelProject = `${uiProject}-cancel`;
+  expect((await request.post("/api/projects",{data:{id:cancelProject,yaml}})).ok()).toBeTruthy();
+  await page.setViewportSize({width:1440,height:900});
+  await page.goto(`/projects/${cancelProject}/work`);
+  await page.getByLabel("Your message",{exact:true}).fill("TEST cancel before sending");
+  await page.getByRole("button",{name:"Save message",exact:true}).click();
+  await page.getByRole("button",{name:"Prepare label proposal",exact:true}).click();
+  await page.getByRole("checkbox",{name:/Allow this text request/}).check();
+  let release!: () => void;
+  const held = new Promise<void>((resolve)=>{release=resolve;});
+  await page.route("**/schema-proposals",async(route)=>{await held;await route.continue();},{times:1});
+  const submitted = page.waitForRequest((req)=>req.method()==="POST" && req.url().endsWith("/schema-proposals"));
+  await page.getByRole("button",{name:"Generate label proposal",exact:true}).click();
+  const pending = await submitted;
+  await page.getByRole("button",{name:"Stop Schema request",exact:true}).click();
+  await expect(page.getByText(/^Cancellation saved/)).toBeVisible();
+  const rejected = page.waitForResponse((res)=>res.url()===pending.url());
+  release(); expect((await rejected).status()).toBe(400);
+  await page.reload();
+  await expect(page.getByText(/^Cancellation saved/)).toBeVisible();
+  await expect(page.getByRole("button",{name:"Prepare label proposal",exact:true})).toHaveCount(0);
+  await expect(page.getByText("Schema proposal saved",{exact:true})).toHaveCount(0);
+  await page.screenshot({path:"../docs/execution/conversational-workspace/schema-cancelled.png",fullPage:true,animations:"disabled"});
 });

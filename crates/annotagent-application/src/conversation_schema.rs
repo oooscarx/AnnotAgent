@@ -24,9 +24,15 @@ pub struct ConversationSchemaExecution {
 struct CallCancellationGuard<'a> {
     application: &'a crate::LocalApplication,
     id: Uuid,
+    project: String,
+    task: Uuid,
 }
 impl Drop for CallCancellationGuard<'_> {
     fn drop(&mut self) {
+        let _ = self
+            .application
+            .store
+            .abandon_conversation_call(&self.project, self.task, self.id);
         if let Ok(mut calls) = self.application.conversation_cancellations.lock() {
             if let Some(token) = calls.remove(&self.id) {
                 token.cancel();
@@ -36,6 +42,22 @@ impl Drop for CallCancellationGuard<'_> {
 }
 
 impl crate::LocalApplication {
+    pub fn conversation_schema_cancellations(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+    ) -> Result<Vec<annotagent_storage::ConversationCallCancellation>> {
+        if !self
+            .conversation_tasks(project, conversation)?
+            .iter()
+            .any(|item| item.input.id == task)
+        {
+            bail!("task does not belong to this conversation");
+        }
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self.store.conversation_call_cancellations(&owner, task)?)
+    }
     pub fn conversation_schema_calls(
         &self,
         project: &str,
@@ -59,12 +81,18 @@ impl crate::LocalApplication {
         conversation: Uuid,
         task: Uuid,
         call: Uuid,
-    ) -> Result<annotagent_storage::ConversationCallReceipt> {
-        let receipt = self
-            .conversation_call_receipt(project, conversation, task, call)?
-            .ok_or_else(|| anyhow::anyhow!("call receipt not found"))?;
+    ) -> Result<annotagent_storage::ConversationCallCancellation> {
+        if !self
+            .conversation_tasks(project, conversation)?
+            .iter()
+            .any(|item| item.input.id == task)
+        {
+            bail!("task does not belong to this conversation");
+        }
         let owner = self.conversation_project_identity(project)?;
-        self.store.revoke_conversation_calls(&owner, task)?;
+        let cancellation = self
+            .store
+            .request_conversation_call_cancel(&owner, task, call)?;
         if let Some(token) = self
             .conversation_cancellations
             .lock()
@@ -73,7 +101,7 @@ impl crate::LocalApplication {
         {
             token.cancel();
         }
-        Ok(receipt)
+        Ok(cancellation)
     }
     /// Caller resolves the approved Registry binding and its complete scope digest.
     /// A receipt is not a schema acceptance, publish permission or human annotation.
@@ -120,18 +148,25 @@ impl crate::LocalApplication {
             ConversationCallAdmission::Existing(receipt) => return Ok(receipt),
             ConversationCallAdmission::Admitted => {}
         }
+        let _guard = CallCancellationGuard {
+            application: self,
+            id: execution.call_id,
+            project: owner.clone(),
+            task: execution.task_id,
+        };
         self.conversation_cancellations
             .lock()
             .map_err(|_| anyhow::anyhow!("conversation cancellation registry unavailable"))?
             .insert(execution.call_id, cancellation.clone());
-        let _guard = CallCancellationGuard {
-            application: self,
-            id: execution.call_id,
-        };
         // Close cancellation's reservation→registration race before any network call.
-        if !self
+        if self
             .store
-            .conversation_calls_active(&owner, execution.task_id)?
+            .conversation_call_cancellations(&owner, execution.task_id)?
+            .iter()
+            .any(|item| item.call_id == execution.call_id)
+            || !self
+                .store
+                .conversation_calls_active(&owner, execution.task_id)?
         {
             cancellation.cancel();
         }
@@ -699,6 +734,75 @@ mod tests {
         let (result, ()) = tokio::join!(run, cancel);
         assert_eq!(result.unwrap().status, ConversationCallStatus::InDoubt);
         assert_eq!(waiting.requests.lock().unwrap().len(), 1);
+        assert!(
+            reopened
+                .conversation_cancellations
+                .lock()
+                .unwrap()
+                .is_empty()
+        );
+        let orphan_message = ConversationMessageInput {
+            id: Uuid::new_v4(),
+            text: "TEST dropped handler".into(),
+            image: None,
+        };
+        reopened
+            .append_project_conversation_message("schema-test", conversation, &orphan_message)
+            .unwrap();
+        let orphan_task = Uuid::new_v4();
+        reopened
+            .begin_conversation_task(
+                "schema-test",
+                conversation,
+                &BeginConversationTask {
+                    id: orphan_task,
+                    source_message_id: orphan_message.id,
+                    schema_revision: reopened.project_goal("schema-test").unwrap()["revision"]
+                        .as_str()
+                        .unwrap()
+                        .into(),
+                },
+            )
+            .unwrap();
+        let orphan = ConversationSchemaExecution {
+            task_id: orphan_task,
+            call_id: Uuid::new_v4(),
+            ..stopped
+        };
+        reopened
+            .store
+            .authorize_conversation_calls(
+                &owner,
+                &ConversationCallGrant {
+                    id: Uuid::new_v4(),
+                    task_id: orphan_task,
+                    scope_hash: orphan.scope_hash.clone(),
+                    maximum_calls: 1,
+                    expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+                },
+            )
+            .unwrap();
+        {
+            let mut operation = Box::pin(reopened.execute_conversation_schema(
+                "schema-test",
+                &orphan,
+                &waiting,
+                CancellationToken::default(),
+            ));
+            tokio::select! {
+                result = &mut operation => panic!("TEST pending call unexpectedly completed: {result:?}"),
+                () = async { while waiting.requests.lock().unwrap().len() < 2 { tokio::task::yield_now().await; } } => {}
+            }
+            // Drop an unfinished handler without restarting the server.
+        }
+        assert_eq!(
+            reopened
+                .conversation_call_receipt("schema-test", conversation, orphan_task, orphan.call_id)
+                .unwrap()
+                .unwrap()
+                .status,
+            ConversationCallStatus::InDoubt
+        );
         assert!(
             reopened
                 .conversation_cancellations

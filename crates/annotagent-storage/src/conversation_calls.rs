@@ -43,6 +43,13 @@ pub enum ConversationCallAdmission {
     Existing(ConversationCallReceipt),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConversationCallCancellation {
+    pub call_id: Uuid,
+    pub task_id: Uuid,
+    pub requested_at: String,
+}
+
 fn invalid(message: &str) -> StorageError {
     StorageError::InvalidConversation(message.into())
 }
@@ -82,6 +89,54 @@ fn receipt(
 }
 
 impl SqliteStore {
+    /// Durable cancellation may precede HTTP admission; it is not a fake call receipt.
+    pub fn request_conversation_call_cancel(
+        &self,
+        project: &str,
+        task: Uuid,
+        call: Uuid,
+    ) -> Result<ConversationCallCancellation, StorageError> {
+        self.with_connection(|db| {
+            let tx = db.unchecked_transaction()?;
+            owner(&tx,project,task)?;
+            if receipt(&tx,call)?.is_some_and(|saved| saved.task_id != task) { return Err(invalid("call belongs to another task")); }
+            let existing: Option<(String,String)> = tx.query_row("SELECT task_id,requested_at FROM conversation_call_cancellations WHERE call_id=?1", [call.to_string()], |row| Ok((row.get(0)?,row.get(1)?))).optional()?;
+            if let Some((saved_task,requested_at)) = existing {
+                if saved_task != task.to_string() { return Err(invalid("cancellation belongs to another task")); }
+                return Ok(ConversationCallCancellation { call_id:call,task_id:task,requested_at });
+            }
+            let requested_at = Utc::now().to_rfc3339();
+            tx.execute("INSERT INTO conversation_call_cancellations(call_id,task_id,requested_at) VALUES(?1,?2,?3)", params![call.to_string(),task.to_string(),requested_at])?;
+            tx.commit()?; Ok(ConversationCallCancellation { call_id:call,task_id:task,requested_at })
+        })
+    }
+
+    pub fn conversation_call_cancellations(
+        &self,
+        project: &str,
+        task: Uuid,
+    ) -> Result<Vec<ConversationCallCancellation>, StorageError> {
+        self.with_connection(|db| {
+            owner(db,project,task)?;
+            let mut query = db.prepare("SELECT call_id,requested_at FROM conversation_call_cancellations WHERE task_id=?1 ORDER BY requested_at,call_id")?;
+            query.query_map([task.to_string()],|row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?)))?.map(|row| {
+                let (call,date) = row?; Ok(ConversationCallCancellation { call_id:Uuid::parse_str(&call).map_err(|_| invalid("invalid cancellation ID"))?,task_id:task,requested_at:date })
+            }).collect()
+        })
+    }
+
+    pub fn abandon_conversation_call(
+        &self,
+        project: &str,
+        task: Uuid,
+        call: Uuid,
+    ) -> Result<(), StorageError> {
+        self.with_connection(|db| {
+            owner(db,project,task)?;
+            db.execute("UPDATE conversation_model_calls SET status='in_doubt',evidence_json=?3 WHERE id=?1 AND task_id=?2 AND status='reserved'",params![call.to_string(),task.to_string(),serde_json::json!({"error":"The call handler ended before saving its response. Remote outcome and cost are unknown; no automatic retry was started."}).to_string()])?;
+            Ok(())
+        })
+    }
     /// Startup recovery never resends an indeterminate Provider request.
     pub fn recover_conversation_calls(&self) -> Result<(), StorageError> {
         self.with_connection(|db| {
@@ -193,6 +248,8 @@ impl SqliteStore {
                 if original_scope != scope_hash { return Err(invalid("call scope changed")); }
                 return Ok(ConversationCallAdmission::Existing(saved));
             }
+            let cancelled: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_call_cancellations WHERE call_id=?1)", [id.to_string()], |row| row.get(0))?;
+            if cancelled { return Err(invalid("call cancelled before admission; no request sent")); }
             let grant: Option<(String,u32,String,bool)> = tx.query_row("SELECT scope_hash,maximum_calls,expires_at,revoked FROM conversation_call_grants WHERE task_id=?1", [task.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).optional()?;
             let Some((scope,maximum,expires,revoked)) = grant else { return Err(invalid("explicit task authorization required")); };
             if scope != scope_hash || revoked || DateTime::parse_from_rfc3339(&expires).map_err(|_| invalid("invalid authorization expiry"))? <= Utc::now() { return Err(invalid("task authorization changed, expired or was revoked")); }
@@ -305,9 +362,35 @@ mod tests {
             maximum_calls: 2,
             expires_at: Utc::now() + Duration::minutes(10),
         };
+        let preempted = Uuid::new_v4();
+        let cancellation = store
+            .request_conversation_call_cancel(&project, task, preempted)
+            .unwrap();
+        assert_eq!(
+            store
+                .request_conversation_call_cancel(&project, task, preempted)
+                .unwrap(),
+            cancellation
+        );
+        assert!(
+            store
+                .request_conversation_call_cancel("foreign", task, preempted)
+                .is_err()
+        );
         store
             .authorize_conversation_calls(&project, &grant)
             .unwrap();
+        assert!(
+            store
+                .reserve_conversation_call(&project, task, preempted, &scope, &request)
+                .is_err()
+        );
+        assert!(
+            store
+                .conversation_call(&project, task, preempted)
+                .unwrap()
+                .is_none()
+        );
         assert!(
             store
                 .authorize_conversation_calls("foreign", &grant)
@@ -340,6 +423,12 @@ mod tests {
         );
         drop(store);
         let store = SqliteStore::open(&path).unwrap();
+        assert_eq!(
+            store
+                .conversation_call_cancellations(&project, task)
+                .unwrap(),
+            vec![cancellation]
+        );
         assert!(matches!(
             store
                 .reserve_conversation_call(&project, task, call, &scope, &request)

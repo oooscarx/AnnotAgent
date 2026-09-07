@@ -312,3 +312,31 @@ not a finished annotation result. Application Schema **4/4** tests now also veri
 active Provider cancellation yields retained unknown-outcome evidence and removes
 the token handle. Web **105/105**, strict storage/Application/server Clippy and
 format checks passed. No Live credentials/models, real workspace restart or push.
+
+### Cancellation race closure (M2, continued)
+
+The two cancellation gaps above are now addressed. Migration 27 persists an
+owned cancellation intent independently of a call receipt. Cancellation may arrive
+before admission; the eventual same-ID request is rejected before reserving/sending.
+The intent endpoint never manufactures a model receipt or an inference result.
+Intent retries are idempotent and survive reopen. Cancelling an individual call
+does not revoke unrelated future task phases; the per-call intent plus live token
+controls this operation. After reservation, registration checks the saved intent.
+
+The handler guard now conditionally settles only still-reserved calls as `in_doubt`
+when its future is dropped; completed evidence is untouched. This covers an abandoned
+handler without requiring a server restart. Crash startup recovery remains in place.
+UI restores cancellation intents separately from call results, stops implying an
+unregistered request is running, and does not offer a cancelled nonce as a new call.
+It still cannot resume/extend an explicitly cancelled task into Builder; that phase
+needs the planned task-level authorization revision rather than bypassing this guard.
+
+Evidence: targeted storage ledger test passed (pre-admission cancellation, identical
+intent retry, foreign rejection and reopen); Application Schema **4/4** passed with
+an added dropped-pending-future case and active cancellation regression. Strict
+storage/Application/server Clippy passed. `conversation-schema.spec.ts` **1/1**,
+19.6s, workspace `/tmp/annotagent-guided-e2e-79690`, now holds the real outgoing POST,
+cancels before server admission, releases it to a verified 400 and reloads the saved
+cancellation without a proposal. `schema-cancelled.png` captured and inspected.
+Existing bbox/classification consent→result browser checks also passed in that test.
+No Live calls, real workspace changes, default navigation switch or push.

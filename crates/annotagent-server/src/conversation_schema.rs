@@ -181,10 +181,21 @@ pub(super) async fn cancel(
         uuid::Uuid,
         uuid::Uuid,
     )>,
-) -> ApiResult<Json<ConversationCallReceipt>> {
+) -> ApiResult<Json<annotagent_storage::ConversationCallCancellation>> {
     state
         .application
         .cancel_conversation_schema(&project, conversation, task, call)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
+pub(super) async fn cancellations(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+) -> ApiResult<Json<Vec<annotagent_storage::ConversationCallCancellation>>> {
+    state
+        .application
+        .conversation_schema_cancellations(&project, conversation, task)
         .map(Json)
         .map_err(ApiError::bad_request)
 }
