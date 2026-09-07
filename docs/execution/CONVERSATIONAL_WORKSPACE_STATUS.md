@@ -870,3 +870,32 @@ the UI assertion expired after 10s. Fresh isolated journal rerun in
 limits were not changed. This does not claim a fully green combined suite; test-server
 isolation/rate-window coordination remains a harness limitation. Final Web checks:
 typecheck, **107/107** unit tests and `git diff --check` passed.
+
+### Deterministic correction resume service and exact feedback scope (M2 increment)
+
+Added an Application continuation command for an Answered/Applied Human Request. It
+uses the saved checkpoint UUID as the existing sample-plan copy's idempotency key,
+prepares an editable Workflow Draft and only then acknowledges the durable resume
+event. The original Draft and Sample Test remain unchanged. This stage **prepares
+repair context**, not an improved/tested plan; it does not call Builder, a vision
+model, Publish or Run. HTTP automatic delivery and the UI link to the resulting Draft
+are still pending, so existing pages continue to state that continuation is pending.
+
+The existing copy service collected every saved correction from the Sample Test.
+Added a scoped variant selecting the exact answer revision so later/unrelated edits
+cannot silently widen this request's evidence. Existing general copy callers retain
+their behavior. A retry using the same copy ID but a different answer revision fails.
+The actual existing sample-plan evidence store remains the sole repair-context source.
+
+Application tests now simulate changed current pixels (copy refused, event retained),
+then restore pixels, add a later correction, create the copy, close/reopen the real
+temporary Application and resume the still-undelivered event. The same copy is returned,
+exactly the original answer is included, another delivery is idempotent, the original
+Draft is byte-equivalent as a deserialized object and model-call history remains empty.
+This verifies the copy/ack crash gap; it does not prove automatic daemon delivery or
+LLM repair. Targeted correction tests **2/2**, Storage all-features **51 unit + 16
+integration** passed; strict Application/Storage Clippy passed. No real workspace
+restart/mutation, paid call, push or remote change occurred.
+
+Final resume-service regression: Application all-features **97 passed / 1 billable
+ignored**; workspace rustfmt and diff checks passed.

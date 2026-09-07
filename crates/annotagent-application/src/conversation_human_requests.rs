@@ -53,6 +53,53 @@ fn validate_subject(
 }
 
 impl LocalApplication {
+    /// Deterministic continuation of a saved correction: prepare an editable copy with
+    /// exactly that answer's evidence, then acknowledge delivery. No model/Publish/Run.
+    pub fn resume_conversation_correction(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+    ) -> Result<annotagent_core::WorkflowDraft> {
+        let request = self
+            .conversation_human_requests(project, conversation, task)?
+            .into_iter()
+            .find(|request| request.input.id == id)
+            .context("Human request not found in this task")?;
+        if !matches!(
+            request.status,
+            annotagent_storage::ConversationHumanRequestStatus::Answered
+                | annotagent_storage::ConversationHumanRequestStatus::Applied
+        ) {
+            bail!("Human correction is not ready to resume");
+        }
+        let answer = request
+            .answer
+            .as_ref()
+            .context("Human request has no saved answer")?;
+        let owner = self.conversation_project_identity(project)?;
+        let event = annotagent_storage::ConversationResumeEvent {
+            request_id: id,
+            task_id: task,
+            checkpoint_ref: request.input.resume_checkpoint_ref,
+            feedback_revision_id: answer.revision_id.clone(),
+        };
+        let copy_id = event.checkpoint_ref.to_string();
+        // After a crash between copy and acknowledgment, retain the existing copy and
+        // its frozen evidence even if the image or original Draft subsequently changed.
+        if self.store.sample_plan_evidence(&copy_id)?.is_none() {
+            self.validate_conversation_correction_subject(project, &request.input)?;
+        }
+        let draft = self.store.copy_sample_plan_for_feedback(
+            &request.input.sample_test_id,
+            project,
+            &copy_id,
+            &answer.revision_id,
+        )?;
+        self.store.acknowledge_conversation_resume(&owner, &event)?;
+        Ok(draft)
+    }
     pub fn cancel_conversation_human_request(
         &self,
         project: &str,
@@ -231,6 +278,11 @@ mod tests {
             .unwrap();
         let (mut sample, mut input) = fixture();
         sample.project_id = project.into();
+        let baseline:annotagent_core::WorkflowDraft=serde_json::from_value(serde_json::json!({"id":sample.draft_id,"project_id":project,"name":"TEST baseline","status":"editing","nodes":[],"created_at":chrono::Utc::now(),"updated_at":chrono::Utc::now()})).unwrap();
+        app.store.save_workflow_draft(&baseline).unwrap();
+        let baseline = app.store.get_workflow_draft(&sample.draft_id).unwrap();
+        sample.draft_revision = baseline.revision;
+        sample.draft_content_hash = baseline.content_hash.clone();
         sample.inputs[0].image_id = image.image_id.to_string();
         sample.inputs[0].content_hash = image.content_hash.clone();
         let outcome = sample.report.samples[0].projection.final_candidates[0]
@@ -309,6 +361,74 @@ mod tests {
             .is_err()
         );
         let owner = app.conversation_project_identity(project).unwrap();
+        assert!(
+            app.store
+                .conversation_call_history(&owner, task.id)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            app.resume_conversation_correction(project, conversation, task.id, input.id)
+                .is_err()
+        );
+        assert_eq!(
+            app.store
+                .pending_conversation_resumes(&owner, conversation, task.id)
+                .unwrap()
+                .len(),
+            1
+        );
+        std::fs::write(&path, &original).unwrap();
+        // Simulate the crash gap: the copy exists but outbox delivery was not acknowledged.
+        let mut later = answer.clone();
+        later.revision_id = Uuid::new_v4().to_string();
+        later.sequence += 1;
+        later.note = "TEST later correction outside this checkpoint".into();
+        app.store.save_sample_feedback(&later).unwrap();
+        let copy = app
+            .store
+            .copy_sample_plan_for_feedback(
+                &input.sample_test_id,
+                project,
+                &input.resume_checkpoint_ref.to_string(),
+                &answer.revision_id,
+            )
+            .unwrap();
+        let evidence = app.store.sample_plan_evidence(&copy.id).unwrap().unwrap();
+        let included: Vec<SampleFeedbackRevision> =
+            serde_json::from_value(evidence["feedback"].clone()).unwrap();
+        assert_eq!(included, vec![answer.clone()]);
+        assert!(
+            app.store
+                .copy_sample_plan_for_feedback(
+                    &input.sample_test_id,
+                    project,
+                    &copy.id,
+                    &later.revision_id
+                )
+                .is_err()
+        );
+        drop(app);
+        let app = LocalApplication::new(temporary.path()).unwrap();
+        let resumed = app
+            .resume_conversation_correction(project, conversation, task.id, input.id)
+            .unwrap();
+        assert_eq!(copy, resumed);
+        assert_eq!(
+            app.resume_conversation_correction(project, conversation, task.id, input.id)
+                .unwrap(),
+            resumed
+        );
+        assert!(
+            app.store
+                .pending_conversation_resumes(&owner, conversation, task.id)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            app.store.get_workflow_draft(&baseline.id).unwrap(),
+            baseline
+        );
         assert!(
             app.store
                 .conversation_call_history(&owner, task.id)

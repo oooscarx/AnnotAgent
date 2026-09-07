@@ -348,6 +348,32 @@ impl SqliteStore {
         project_id: &str,
         copy_id: &str,
     ) -> Result<annotagent_core::WorkflowDraft, StorageError> {
+        self.copy_sample_plan_with_feedback(test_id, project_id, copy_id, None)
+    }
+
+    /// An answered human checkpoint must not absorb unrelated later image corrections.
+    pub fn copy_sample_plan_for_feedback(
+        &self,
+        test_id: &str,
+        project_id: &str,
+        copy_id: &str,
+        feedback_revision_id: &str,
+    ) -> Result<annotagent_core::WorkflowDraft, StorageError> {
+        self.copy_sample_plan_with_feedback(
+            test_id,
+            project_id,
+            copy_id,
+            Some(feedback_revision_id),
+        )
+    }
+
+    fn copy_sample_plan_with_feedback(
+        &self,
+        test_id: &str,
+        project_id: &str,
+        copy_id: &str,
+        feedback_revision_id: Option<&str>,
+    ) -> Result<annotagent_core::WorkflowDraft, StorageError> {
         let test = self
             .get_workflow_sample_test_by_id(test_id)?
             .ok_or_else(|| StorageError::InvalidEnum("Sample Test not found".into()))?;
@@ -362,6 +388,15 @@ impl SqliteStore {
                     "Copy key belongs to another sample".into(),
                 ));
             }
+            if let Some(revision) = feedback_revision_id {
+                let saved: Vec<SampleFeedbackRevision> =
+                    serde_json::from_value(evidence["feedback"].clone())?;
+                if saved.len() != 1 || saved[0].revision_id != revision {
+                    return Err(StorageError::InvalidEnum(
+                        "Copy key belongs to a different human feedback scope".into(),
+                    ));
+                }
+            }
             return self.get_workflow_draft(copy_id);
         }
         let mut draft = self.get_workflow_draft(&test.draft_id)?;
@@ -373,6 +408,9 @@ impl SqliteStore {
         let mut feedback = Vec::new();
         for image in &test.inputs {
             feedback.extend(self.sample_feedback(test_id, &image.image_id)?);
+        }
+        if let Some(revision) = feedback_revision_id {
+            feedback.retain(|item| item.revision_id == revision);
         }
         if feedback.is_empty() {
             return Err(StorageError::InvalidEnum(
