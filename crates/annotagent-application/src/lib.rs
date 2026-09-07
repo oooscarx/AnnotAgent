@@ -2,7 +2,9 @@
 
 mod conversation_builder;
 mod conversation_provider;
+mod conversation_vision_calls;
 pub use conversation_builder::ConversationBuilderExecution;
+pub use conversation_vision_calls::ConversationVisionCalls;
 mod conversation_schema;
 pub use conversation_provider::ConversationTaskProvider;
 mod guidance;

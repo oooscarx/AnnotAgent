@@ -568,3 +568,28 @@ current "another build" is explicitly a new Draft request, not a resumed repair.
 Active in-flight Provider cancellation still needs dedicated browser verification.
 No real workspace restart/data changes, push, remote changes or real-user usability
 test occurred. The full objective remains active.
+
+### Durable vision-call accounting adapters (M2, continued)
+
+Added `ConversationVisionCalls` over the existing sample Provider, HTTP Vision Backend
+and native Pipeline Backend wrappers. Admission uses the same SQLite task ledger as
+Schema/Builder calls. Only request digests and compact receipts are added; image/mask
+payloads are not duplicated into conversation evidence. Successful calls complete their
+receipts; failures and dropped futures remain consumed with unknown outcome/cost.
+Pre-cancelled requests now fail before admission for all existing sample wrappers.
+
+This is accounting infrastructure, **not a new execution authorization or a connected
+conversation Sample Test endpoint**. The caller still must freeze and validate exact
+Draft/model/image scope and disable transport retries. Existing sandbox and Batch
+paths keep their current allowance; no real workspace configuration was changed.
+The next integration must compose per-test caps with this cumulative allowance and
+cover late-created native adapters, not overwrite one allowance with another.
+
+Evidence: two new isolated Rust regressions cover 12 concurrent native requests with
+only two remaining calls, pre-admission cancellation, durable reopen/exhaustion,
+unknown non-refunded outcomes, wrong scope and revocation. Application all-features
+tests: **91 passed, 1 explicitly billable smoke ignored**. Application/server strict
+all-targets/all-features Clippy passed. Existing sample allowance tests passed.
+No browser changes or new screenshots this increment; no Live inference, real-user
+usability validation, push or remote modification. Sample canvas, human requests/outbox
+and the processing/review/export conversation flow remain incomplete.

@@ -20,8 +20,31 @@ enum CallAllowance {
         Arc<annotagent_storage::SqliteStore>,
         annotagent_core::BatchId,
     ),
+    Conversation(crate::conversation_vision_calls::ConversationVisionCalls),
 }
 impl SampleCalls {
+    pub(crate) fn conversation(
+        calls: crate::conversation_vision_calls::ConversationVisionCalls,
+    ) -> Self {
+        Self(Arc::new(CallAllowance::Conversation(calls)))
+    }
+    fn begin(
+        &self,
+        request: &impl serde::Serialize,
+        cancellation: &CancellationToken,
+    ) -> CoreResult<Option<crate::conversation_vision_calls::VisionCallReceipt>> {
+        if cancellation.is_cancelled() {
+            return Err(CoreError::Validation(
+                "Sample cancelled before model admission".into(),
+            ));
+        }
+        if let CallAllowance::Conversation(calls) = self.0.as_ref() {
+            calls.begin(request).map(Some)
+        } else {
+            self.reserve()?;
+            Ok(None)
+        }
+    }
     pub(crate) fn pipeline(
         &self,
         inner: Arc<dyn PipelineModelBackend>,
@@ -42,6 +65,11 @@ impl SampleCalls {
     }
     fn reserve(&self) -> CoreResult<()> {
         let remaining = match self.0.as_ref() {
+            CallAllowance::Conversation(_) => {
+                return Err(CoreError::Validation(
+                    "Conversation calls require a frozen request receipt".into(),
+                ));
+            }
             CallAllowance::Batch(store, id) => {
                 return store
                     .reserve_batch_model_call(*id)
@@ -97,8 +125,12 @@ impl PipelineModelBackend for LimitedPipeline {
         request: PipelineInferenceRequest,
         cancellation: CancellationToken,
     ) -> CoreResult<PipelineInferenceResponse> {
-        self.calls.reserve()?;
-        self.inner.infer_pipeline(request, cancellation).await
+        let receipt = self.calls.begin(&request, &cancellation)?;
+        let result = self.inner.infer_pipeline(request, cancellation).await;
+        if let Some(receipt) = receipt {
+            receipt.finish(result.is_ok())?;
+        }
+        result
     }
 }
 struct LimitedProvider {
@@ -118,8 +150,12 @@ impl VisionModelProvider for LimitedProvider {
         request: ModelRequest,
         cancellation: CancellationToken,
     ) -> CoreResult<ModelResponse> {
-        self.calls.reserve()?;
-        self.inner.complete(request, cancellation).await
+        let receipt = self.calls.begin(&request, &cancellation)?;
+        let result = self.inner.complete(request, cancellation).await;
+        if let Some(receipt) = receipt {
+            receipt.finish(result.is_ok())?;
+        }
+        result
     }
 }
 struct LimitedBackend {
@@ -142,8 +178,12 @@ impl VisionModelBackend for LimitedBackend {
         request: VisionInferenceRequest,
         cancellation: CancellationToken,
     ) -> CoreResult<VisionInferenceResponse> {
-        self.calls.reserve()?;
-        self.inner.infer(request, cancellation).await
+        let receipt = self.calls.begin(&request, &cancellation)?;
+        let result = self.inner.infer(request, cancellation).await;
+        if let Some(receipt) = receipt {
+            receipt.finish(result.is_ok())?;
+        }
+        result
     }
 }
 
