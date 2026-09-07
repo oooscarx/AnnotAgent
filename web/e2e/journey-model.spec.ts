@@ -1,0 +1,52 @@
+import { resolve } from "node:path";
+import { expect, test } from "./fixtures";
+
+test("conditional model connection saves, verifies with consent, and returns without inference", async ({ page, request }) => {
+  const charged: string[] = [];
+  page.on("request", (req) => { if (req.method() === "POST" && /active-probe|suggest|dry-run/.test(req.url())) charged.push(req.url()); });
+  await page.route("**/api/agent-model-bindings", (route) => route.fulfill({ json: {} }));
+  await page.goto("/projects?new=1");
+  await page.getByLabel("Choose images", { exact: true }).setInputFiles(resolve("../examples/robocup/images/synthetic-robocup.png"));
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(page).toHaveURL(/\/task\/goal$/);
+  const projectId = new URL(page.url()).pathname.split("/")[2];
+  await page.getByLabel("Describe your goal", { exact: true }).fill("TEST classify day scenes");
+  await page.getByLabel("Categories to keep", { exact: true }).fill("day, night");
+  await page.getByRole("radio", { name: /Image categories/ }).check();
+  await page.getByRole("button", { name: "Save goal and connect model", exact: true }).click();
+  await expect(page).toHaveURL(/\/task\/model$/);
+  await page.getByRole("button", { name: "Connect a model service", exact: true }).click();
+  await page.getByLabel("Service URL", { exact: true }).fill("http://127.0.0.1:8796/openai/v1");
+  await page.getByLabel("Model name from your service", { exact: true }).fill("e2e-pipeline-builder");
+  await page.getByLabel("API key", { exact: true }).fill("journey-test-only-fixture-credential");
+  await page.getByRole("checkbox", { name: "This text model supports tool calls and structured responses" }).check();
+  await page.getByRole("button", { name: "Save connection", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Connection verification", exact: true })).toBeVisible();
+  expect(charged).toEqual([]);
+  await expect(page.getByRole("button", { name: "Use connection and return", exact: true })).toBeDisabled();
+  await page.getByRole("checkbox", { name: "Allow the text verification request", exact: true }).check();
+  await page.getByRole("button", { name: "Verify connection", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Use connection and return", exact: true })).toBeEnabled();
+  expect(charged).toHaveLength(1);
+  const modelSelection = page.getByRole("radio", { checked: true });
+  await expect(modelSelection).toHaveCount(1);
+  await page.reload();
+  // The saved connection survives refresh, but a GET never silently chooses or probes it.
+  await page.getByRole("radio", { name: /e2e-pipeline-builder/ }).last().check();
+  expect(charged).toHaveLength(1);
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await page.screenshot({ path: `../docs/execution/guided-journey/model-${width}.png`, fullPage: true });
+  }
+  await page.getByRole("button", { name: "Use connection and return", exact: true }).click();
+  await expect(page).toHaveURL(`/projects/${projectId}/task/goal`);
+  await expect(page.getByLabel("Categories to keep", { exact: true })).toHaveValue("day, night");
+  await expect(page.getByRole("button", { name: "Prepare sample results", exact: true })).toBeEnabled();
+  await page.reload();
+  await expect(page.getByLabel("Describe your goal", { exact: true })).toHaveValue("TEST classify day scenes");
+  const bindings = await (await request.get(`/api/projects/${projectId}/model-bindings`)).json();
+  expect(bindings.bindings.some((binding: { role: string }) => binding.role === "pipeline_builder")).toBe(true);
+  expect(charged).toHaveLength(1);
+  await expect(page.locator(".sidebar, .provider-table, .workflow-edit-details, .focus-project-menu")).toHaveCount(0);
+});

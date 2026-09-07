@@ -798,9 +798,11 @@ unapplied Alternatives with a setup action. Never invent a capability, score, he
 Validator, Refiner, model, or node. The compact context snapshot is authoritative for Project, Label, \
 Skill, Node, Model, Draft, template, and capability summaries. When evidence is insufficient, prefer \
 mandatory Review instead of fabricated geometry confidence. Modify only the persisted editable Draft \
-through bounded tools. Validate with Rust, run a \
-non-committing Dry Run, inspect failure classes and geometry quality, revise only from that structured \
-evidence, then submit for explicit human approval. An unresolved binding must never reach Dry Run or \
+through bounded tools. Validate with Rust. When maximum_dry_runs is zero, image execution is not \
+authorized: submit the statically validated editable Draft for human review without a Dry Run, clearly \
+state that samples are untested and require separate authorization, and make no runtime-quality claims. \
+Otherwise run a non-committing Dry Run, inspect failure classes and geometry quality, revise only from \
+that structured evidence, then submit for explicit human approval. An unresolved binding must never reach Dry Run or \
 Publish. A VisionLanguage profile with image input and structured output or Tool Calls may bind only to \
 a VLM Detection node that declares DetectionSet output; it is not a native ObjectDetection model unless \
 that capability is separately declared. Every proposal remains an editable Draft. Never publish, start a formal Run, set credentials, \
@@ -1383,6 +1385,10 @@ fn pipeline_builder_visible_tools(
     use annotagent_core::PipelineBuilderPhase as Phase;
 
     let phase = session.phase.unwrap_or(Phase::ContextLoading);
+    let planning_only = session
+        .builder_constraints
+        .as_ref()
+        .is_some_and(|constraints| constraints.maximum_dry_runs == 0);
     let remaining = session.remaining_builder_tool_calls();
     let finalization_reserve = session
         .builder_budget
@@ -1401,6 +1407,9 @@ fn pipeline_builder_visible_tools(
             let Ok(tool) = PipelineBuilderToolRegistry.resolve(&definition.name) else {
                 return false;
             };
+            if planning_only && tool == PipelineBuilderTool::DryRunPipeline {
+                return false;
+            }
             let finalization = matches!(
                 tool,
                 PipelineBuilderTool::CreateBlockedDraft
@@ -1511,7 +1520,8 @@ fn pipeline_builder_visible_tools(
                         )
                 }
                 Phase::Validating => {
-                    (tool.mutates_draft() && !creates_draft)
+                    (planning_only && tool == PipelineBuilderTool::SubmitDraftForHumanApproval)
+                        || (tool.mutates_draft() && !creates_draft)
                         || matches!(
                             tool,
                             PipelineBuilderTool::ValidatePipeline
@@ -14547,7 +14557,8 @@ impl LocalApplication {
                                 "valid": report.valid,
                                 "issues": report.issues,
                                 "execution_order": report.execution_order,
-                                "next_required_tool": if report.valid { "dry_run_pipeline" } else { "repair_the_reported_issues_then_validate_pipeline" },
+                                "next_required_tool": if !report.valid { "repair_the_reported_issues_then_validate_pipeline" } else if builder_constraints.maximum_dry_runs == 0 { "submit_draft_for_human_approval" } else { "dry_run_pipeline" },
+                                "sample_testing_authorized": builder_constraints.maximum_dry_runs > 0,
                                 "add_or_rewire_before_initial_dry_run": false,
                             }),
                         );
@@ -15177,7 +15188,7 @@ impl LocalApplication {
                         if !validation.as_ref().is_some_and(|report| report.valid) {
                             bail!("a valid static report is required before human approval");
                         }
-                        if dry_run.is_none() {
+                        if dry_run.is_none() && builder_constraints.maximum_dry_runs > 0 {
                             bail!("a sandbox Dry Run is required before human approval");
                         }
                         let suggestion = current
@@ -15196,6 +15207,11 @@ impl LocalApplication {
                         suggestion
                             .warnings
                             .extend(string_array_argument(&call.arguments, "warnings"));
+                        if builder_constraints.maximum_dry_runs == 0 {
+                            suggestion.warnings.push(
+                                "Planning only: no images were tested. Sample testing requires separate authorization before processing the dataset.".to_owned(),
+                            );
+                        }
                         suggestion
                             .alternatives
                             .extend(string_array_argument(&call.arguments, "alternatives"));
@@ -15207,7 +15223,7 @@ impl LocalApplication {
                         self.store.save_workflow_draft(&suggestion.draft)?;
                         Ok(annotagent_core::AgentToolResult::summary(
                             "Draft is ready for explicit human approval",
-                            json!({"draft_id": suggestion.draft.id, "published": false, "formal_run_started": false, "requires_human": true}),
+                            json!({"draft_id": suggestion.draft.id, "published": false, "formal_run_started": false, "requires_human": true, "samples_tested": dry_run.is_some(), "sample_authorization_required": builder_constraints.maximum_dry_runs == 0}),
                         ))
                     }
                     Ok(PipelineBuilderTool::FinishAgentSession) => {
@@ -15474,7 +15490,11 @@ impl LocalApplication {
                     session
                         .transition_builder_phase(
                             annotagent_core::PipelineBuilderPhase::Finalizing,
-                            "Present the tested editable Draft",
+                            if builder_constraints.maximum_dry_runs == 0 {
+                                "Present the statically validated Draft; sample authorization is still required"
+                            } else {
+                                "Present the tested editable Draft"
+                            },
                         )
                         .map_err(anyhow::Error::msg)?;
                     session.complete_builder(
@@ -20687,6 +20707,18 @@ export:
         assert!(!validation_tools.contains(PipelineBuilderTool::CreatePipelineDraft.as_str()));
         assert!(!validation_tools.contains(PipelineBuilderTool::CreateDraftFromTemplate.as_str()));
         assert!(!validation_tools.contains(PipelineBuilderTool::CreateBlockedDraft.as_str()));
+        let mut planning_session = session.clone();
+        planning_session.builder_constraints = Some(PipelineBuilderConstraints {
+            maximum_dry_runs: 0,
+            ..PipelineBuilderConstraints::default()
+        });
+        let planning_tools = pipeline_builder_visible_tools(&tools, &planning_session)
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect::<BTreeSet<_>>();
+        assert!(!planning_tools.contains(PipelineBuilderTool::DryRunPipeline.as_str()));
+        assert!(planning_tools.contains(PipelineBuilderTool::SubmitDraftForHumanApproval.as_str()));
+        assert!(planning_tools.contains(PipelineBuilderTool::ValidatePipeline.as_str()));
         for index in 0..5 {
             session
                 .record_tool("bounded_test", json!({"index": index}), json!({}), true)

@@ -19,6 +19,11 @@ export function JourneyImages({ project, onContinue, onNavigationGuardChange }: 
   const created = useRef(Boolean(project));
   const finished = useRef(false);
   const pending = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   useEffect(() => {
     const urls = files.map((file) => URL.createObjectURL(file));
     setPreviews(urls);
@@ -51,8 +56,10 @@ export function JourneyImages({ project, onContinue, onNavigationGuardChange }: 
         const result = await api.uploadImage(identity.current, file);
         if (result.corrupt.length) throw new Error(result.corrupt.map((item) => `${item.name}: ${item.message}`).join("; "));
       }
-      setFiles([]); finished.current = true;
+      if (!mounted.current) return;
+      finished.current = true;
       await onContinue(identity.current);
+      setFiles([]);
     } catch (error) {
       finished.current = false;
       setError((error as Error).message);
@@ -61,7 +68,10 @@ export function JourneyImages({ project, onContinue, onNavigationGuardChange }: 
   }
   return <section className="journey-scene" aria-label={t("Create Project")}>
     <div className="journey-intro"><h2>{t("Start with the images you want to annotate.")}</h2><p>{t("Choose your own images. We will define what to find next.")}</p></div>
-    <label className="journey-upload"><span>{t("Choose images")}</span><input aria-label={t("Choose images")} type="file" accept="image/png,image/jpeg" multiple disabled={busy} onChange={(event) => { const selected = Array.from(event.currentTarget.files ?? []); setFiles((current) => [...current, ...selected]); event.currentTarget.value = ""; }} /><small>{t("PNG or JPEG · up to 25 MB per image · uploaded to this AnnotAgent server")}</small></label>
+    <label className="journey-upload" onDragOver={(event) => { if (!busy && event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={(event) => {
+      event.preventDefault();
+      if (!busy) { const dropped = Array.from(event.dataTransfer.files); setFiles((current) => [...current, ...dropped]); }
+    }}><span>{t("Choose images")}</span><input aria-label={t("Choose images")} type="file" accept="image/png,image/jpeg" multiple disabled={busy} onChange={(event) => { const selected = Array.from(event.currentTarget.files ?? []); setFiles((current) => [...current, ...selected]); event.currentTarget.value = ""; }} /><small>{t("Choose files or drop images here.")}</small><small>{t("PNG or JPEG · up to 25 MB per image · uploaded to this AnnotAgent server")}</small></label>
     {(files.length > 0 || images.length > 0) && <div className="journey-image-grid">
       {images.map((image) => <figure key={image.image_id}><img src={image.url} alt={image.name} /><figcaption>{image.name}<small>{t("Saved")}</small></figcaption></figure>)}
       {files.map((file, index) => <figure key={`${file.name}:${index}`}><img src={previews[index]} alt={file.name} /><figcaption>{file.name}<button disabled={busy} aria-label={t("Remove selected image {name}", { name: file.name })} onClick={() => setFiles((items) => items.filter((_, position) => position !== index))}>{t("Remove")}</button></figcaption></figure>)}

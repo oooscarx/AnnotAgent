@@ -10,6 +10,7 @@ import { SampleFeedbackEditor } from "./components/SampleFeedbackEditor";
 import { FocusHeader, usesFocusLayout } from "./components/FocusHeader";
 import { JourneyImages } from "./components/JourneyImages";
 import { JourneyGoal } from "./components/JourneyGoal";
+import { JourneyModel } from "./components/JourneyModel";
 import { JourneySampleStart } from "./components/JourneySampleStart";
 import { ImproveAutomationPanel } from "./components/GeometrySafetyPanel";
 import { NotFoundPage } from "./features/notFound/NotFoundPage";
@@ -668,7 +669,20 @@ export function App() {
             onError={setError}
           />
         )}
-        {loaded && route.kind === "journey" && (!selectedProject ? <NotFoundPage invalidPath={route.canonicalPath} onNavigate={navigate} /> : route.scene === "images" ? <JourneyImages project={selectedProject} onNavigationGuardChange={setNavigationGuard} onContinue={async (id) => { setNavigationGuard(undefined); await refresh(); navigate(projectJourneyPath(id, "goal")); }} /> : route.scene === "goal" ? <JourneyGoal project={selectedProject} onNavigate={navigate} onRefresh={refresh} onNavigationGuardChange={setNavigationGuard} /> : <BuildTestPublish project={selectedProject} guided selectedDraftId={route.draftId} selectedSampleTestId={route.sampleTestId} selectedSampleImageId={route.imageId} onNavigationGuardChange={setNavigationGuard} onSelectTestContext={(draftId, sampleTestId, replace, imageId) => navigate(projectJourneyPath(route.projectId, "samples", { draftId, sampleTestId, imageId }), replace)} onNavigate={() => navigate(projectJourneyPath(route.projectId, "goal"))} onOpenRuns={(batchId) => navigate(batchId ? projectBatchPath(route.projectId, batchId) : projectRunsPath(route.projectId))} onRefresh={refresh} onError={setError} />)}
+        {loaded && route.kind === "journey" && (
+          !selectedProject ? <NotFoundPage invalidPath={route.canonicalPath} onNavigate={navigate} />
+          : route.scene === "images" ? <JourneyImages key={route.projectId} project={selectedProject} onNavigationGuardChange={setNavigationGuard} onContinue={async (id) => {
+            setNavigationGuard(undefined); await refresh(); navigate(projectJourneyPath(id, "goal"));
+          }} />
+          : route.scene === "goal" ? <JourneyGoal key={route.projectId} project={selectedProject} sessionId={route.agentSessionId} onNavigate={navigate} onRefresh={refresh} onNavigationGuardChange={setNavigationGuard} />
+          : route.scene === "model" ? <JourneyModel key={route.projectId} project={selectedProject} onNavigate={navigate} />
+          : <BuildTestPublish key={route.projectId} project={selectedProject} guided selectedDraftId={route.draftId} selectedSampleTestId={route.sampleTestId} selectedSampleImageId={route.imageId}
+            onNavigationGuardChange={setNavigationGuard}
+            onSelectTestContext={(draftId, sampleTestId, replace, imageId) => navigate(projectJourneyPath(route.projectId, "samples", { draftId, sampleTestId, imageId }), replace)}
+            onNavigate={() => navigate(projectJourneyPath(route.projectId, "goal"))}
+            onOpenRuns={(batchId) => navigate(batchId ? projectBatchPath(route.projectId, batchId) : projectRunsPath(route.projectId))}
+            onRefresh={refresh} onError={setError} />
+        )}
         {loaded && route.kind === "project" && (
           <ProjectPage
             project={selectedProject}

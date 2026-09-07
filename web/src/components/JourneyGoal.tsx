@@ -8,8 +8,23 @@ export function splitGoalLabels(value: string): string[] {
   return [...new Set(value.split(/[,，\n]/).map((label) => label.trim()).filter(Boolean))];
 }
 
-export function JourneyGoal({ project, onNavigate, onRefresh, onNavigationGuardChange }: {
-  project: ProjectSummary; onNavigate: (path: string) => void; onRefresh: () => Promise<void>;
+export function journeyPlanningPhase(phase: AgentSession["phase"]): string {
+  switch (phase) {
+    case "context_loading": return "Checking your project";
+    case "feasibility_analysis": case "candidate_selection": return "Choosing a compatible method";
+    case "drafting": case "draft_salvage": case "revising": return "Preparing the annotation plan";
+    case "validating": return "Checking the plan";
+    case "dry_running": return "Testing the plan";
+    case "finalizing": return "Saving the prepared plan";
+    case "waiting_for_human": case "completed": return "The plan is ready for your review";
+    case "cancelled": return "Planning cancelled";
+    case "failed": return "Planning needs attention";
+    default: return "Waiting for the planning service…";
+  }
+}
+
+export function JourneyGoal({ project, sessionId, onNavigate, onRefresh, onNavigationGuardChange }: {
+  project: ProjectSummary; sessionId?: string; onNavigate: (path: string, replace?: boolean) => void; onRefresh: () => Promise<void>;
   onNavigationGuardChange: (guard?: () => boolean) => void;
 }) {
   const [saved, setSaved] = useState<Awaited<ReturnType<typeof api.projectGoal>>>();
@@ -33,10 +48,11 @@ export function JourneyGoal({ project, onNavigate, onRefresh, onNavigationGuardC
     mounted.current = true;
     let current = true;
     const controller = new AbortController();
-    void Promise.all([api.projectGoal(project.id, controller.signal), api.images(project.id, controller.signal), api.agentModelBindings(), api.modelProfiles(), api.providers()]).then(([value, images, defaults, profiles, providers]) => {
+    void Promise.all([api.projectGoal(project.id, controller.signal), api.images(project.id, controller.signal), api.agentModelBindings(), api.modelProfiles(), api.providers(), api.projectModelBindings(project.id)]).then(([value, images, defaults, profiles, providers, bindings]) => {
       if (!current) return;
       setSaved(value); setGoal(value.goal); setKind(value.kind ?? "bounding_box"); setLabels((value.labels ?? []).join(", ")); setImages(images.images);
-      const planner = profiles.models.find((item) => item.id === defaults.pipeline_builder && item.enabled && item.status === "available" && item.task_capabilities.includes("text_generation") && item.protocol_features.tool_calls);
+      const plannerId = bindings.bindings.find((item) => item.role === "pipeline_builder")?.model_profile_id ?? defaults.pipeline_builder;
+      const planner = profiles.models.find((item) => item.id === plannerId && item.enabled && item.status === "available" && item.input_modalities.includes("text") && item.task_capabilities.includes("text_generation") && item.protocol_features.tool_calls && item.protocol_features.structured_output && providers.providers.some((provider) => provider.id === item.provider_id && provider.enabled && provider.credential_configured && ["available", "configured"].includes(provider.health.status)));
       setModel(planner);
       setDestination(providers.providers.find((provider) => provider.id === planner?.provider_id)?.base_url ?? "");
     }).catch((error: Error) => { if (current) setError(error.message); });
@@ -49,14 +65,24 @@ export function JourneyGoal({ project, onNavigate, onRefresh, onNavigationGuardC
     return () => { onNavigationGuardChange(undefined); window.removeEventListener("beforeunload", unload); };
   }, [dirty, onNavigationGuardChange]);
   useEffect(() => {
-    if (!planning) return;
+    if (!planning && !sessionId) return;
     let active = true;
     const poll = () => void api.agentSessions(project.id).then(({ sessions }) => {
-      if (active) setSession(sessions.find((item) => item.created_at >= started.current && item.kind === "pipeline_builder"));
-    }).catch(() => undefined);
+      if (!active) return;
+      const current = sessions.find((item) => item.kind === "pipeline_builder" && (sessionId ? item.id === sessionId : item.created_at >= started.current));
+      setSession(current);
+      if (!current) { if (sessionId) setError(t("This planning task does not exist in this Project. Your saved goal is unchanged.")); return; }
+      if (!sessionId) onNavigate(projectJourneyPath(project.id, "goal", { agentSessionId: current.id }), true);
+      if (!pending.current && current.status !== "running") {
+        const draftId = current.builder_proposal?.draft.id ?? current.draft_id;
+        if (draftId && current.outcome === "draft_ready_for_human_review") {
+          onNavigate(projectJourneyPath(project.id, "samples", { draftId }), true);
+        }
+      }
+    }).catch((error: Error) => { if (active) setError(error.message); });
     poll(); const timer = window.setInterval(poll, 1200);
     return () => { active = false; window.clearInterval(timer); };
-  }, [planning, project.id]);
+  }, [planning, project.id, sessionId, onNavigate]);
   async function save() {
     if (!saved || !saved.editable || pending.current || !splitGoalLabels(labels).length) return undefined;
     pending.current = true; setBusy(true); setError("");
@@ -71,6 +97,10 @@ export function JourneyGoal({ project, onNavigate, onRefresh, onNavigationGuardC
   async function prepare() {
     const next = await save();
     if (next && model) setConsent(true);
+    else if (next) {
+      leaving.current = true; onNavigationGuardChange(undefined);
+      onNavigate(projectJourneyPath(project.id, "model"));
+    }
   }
   async function build() {
     if (pending.current || !model || !consent) return;
@@ -85,14 +115,22 @@ export function JourneyGoal({ project, onNavigate, onRefresh, onNavigationGuardC
       }, model.id);
       if (!mounted.current) return;
       leaving.current = true; onNavigationGuardChange(undefined);
+      if (proposal.agent_session && proposal.agent_session.outcome !== "draft_ready_for_human_review") {
+        setSession(proposal.agent_session);
+        setError(proposal.agent_session.next_action ?? t("Planning needs attention"));
+        onNavigate(projectJourneyPath(project.id, "goal", { agentSessionId: proposal.agent_session.id }), true);
+        return;
+      }
       onNavigate(projectJourneyPath(project.id, "samples", { draftId: proposal.draft.id }));
     } catch (error) { setError((error as Error).message); }
     finally { pending.current = false; setPlanning(false); }
   }
-  if (planning) return <section className="journey-scene" aria-label={t("Preparing samples")}>
-    <div className="journey-intro"><h2>{t("Preparing your annotation plan.")}</h2><p role="status">{session?.phase ? t(session.phase.replaceAll("_", " ")) : t("Waiting for the planning service…")}</p></div>
-    <p>{t("Your images and goal are saved. Image inference has not been authorized yet.")}</p>
-    <footer className="journey-actions"><button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}`)}>{t("Return to project; planning continues")}</button>{session?.status === "running" && <button onClick={() => void api.cancelAgentSession(session.id).then((value) => setSession(value.session)).catch((error: Error) => setError(error.message))}>{t("Stop planning")}</button>}</footer>
+  if (planning || sessionId) return <section className="journey-scene" aria-label={t("Preparing samples")}>
+    <div className="journey-intro"><h2>{t("Preparing your annotation plan.")}</h2><p role="status">{t(journeyPlanningPhase(session?.phase))}</p></div>
+    <p>{t(session && session.builder_constraints?.maximum_dry_runs !== 0 ? "Your saved planning task is restored. No additional requests are started by opening this page." : "Your images and goal are saved. Image inference has not been authorized yet.")}</p>
+    <footer className="journey-actions"><button onClick={() => onNavigate(`/projects/${encodeURIComponent(project.id)}`)}>{t(session?.status === "running" ? "Return to project; planning continues" : "Back to project")}</button>{session?.status === "running" && <button onClick={() => void api.cancelAgentSession(session.id).then((value) => setSession(value.session)).catch((error: Error) => setError(error.message))}>{t("Stop planning")}</button>}</footer>
+    {session && session.status !== "running" && <p role="status">{t("Planning has stopped. No dataset processing was started.")} {session.next_action}</p>}
+    {(!session || session.status !== "running") && !planning && <button onClick={() => { setSession(undefined); setError(""); onNavigate(projectJourneyPath(project.id, "goal"), true); }}>{t("Back to saved goal")}</button>}
     {error && <p role="alert">{error}</p>}
   </section>;
   return <section className="journey-scene journey-goal" aria-label={t("Annotation goal")}>
@@ -109,7 +147,7 @@ export function JourneyGoal({ project, onNavigate, onRefresh, onNavigationGuardC
       <p role="status">{t(busy ? "Saving your goal…" : dirty ? "Unsaved goal changes" : "Goal saved")}</p>
       {!model && <p className="journey-notice">{t("Your goal can be saved without a language model. No available planning model is connected yet; no inference will start.")}</p>}
       {consent && <section className="journey-consent" aria-label={t("Planning authorization")}><h3>{t("First, prepare the plan")}</h3><p>{model?.display_name} · {destination}</p><p>{t("Only your goal, labels and model catalog are sent in this step. Up to 16 planning turns and a $1 reported-usage budget. Actual cost is unknown when the service does not report prices. No image testing is permitted in this planning step.")}</p><p>{t("Before testing images, you will confirm the actual services and sample scope separately. This does not publish or process your dataset.")}</p><div className="button-row"><button onClick={() => setConsent(false)}>{t("Back to goal")}</button><button className="primary" onClick={() => void build()}>{t("Authorize planning")}</button></div></section>}
-      {!consent && <footer className="journey-actions"><button disabled={busy} onClick={() => onNavigate(projectJourneyPath(project.id, "images"))}>{t("Back to images")}</button><button className="primary" disabled={busy || !splitGoalLabels(labels).length || !images.length} onClick={() => void prepare()}>{t(model ? "Prepare sample results" : "Save goal")}</button></footer>}
+      {!consent && <footer className="journey-actions"><button disabled={busy} onClick={() => onNavigate(projectJourneyPath(project.id, "images"))}>{t("Back to images")}</button><button className="primary" disabled={busy || !splitGoalLabels(labels).length || !images.length} onClick={() => void prepare()}>{t(model ? "Prepare sample results" : "Save goal and connect model")}</button></footer>}
     </>}
     {error && <p role="alert">{error}</p>}
   </section>;

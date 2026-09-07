@@ -117,6 +117,31 @@ test.afterAll(async ({ request }) => {
 });
 
 test("guided SAM registration requires discovery, immutable identity, and a typed Artifact conversion", async ({ page, request }) => {
+  test.setTimeout(90_000);
+  const clickSettingsAction = async (name: string) => {
+    const click = async () => {
+      const [response] = await Promise.all([
+        page.waitForResponse((response) => (response.url().endsWith("/api/settings") && response.request().method() === "PUT") || (response.url().endsWith("/api/session/privileged-confirmation") && response.status() >= 400)),
+        page.getByRole("button", { name, exact: true }).click(),
+      ]);
+      return response;
+    };
+    const response = await click();
+    if (response.status() === 429) {
+      // Only the server's exact pre-execution rejection permits repeating this action.
+      // Clicking again obtains a fresh nonce (the old nonce expires after 30 seconds).
+      expect((await response.json()).code).toBe("mutation_rate_limited");
+      await expect.poll(async () => {
+        const retried = await click();
+        if (retried.status() === 429) {
+          expect((await retried.json()).code).toBe("mutation_rate_limited");
+          return false;
+        }
+        expect(retried.ok()).toBeTruthy();
+        return true;
+      }, { timeout: 65_000, intervals: [1000] }).toBe(true);
+    } else expect(response.ok()).toBeTruthy();
+  };
   await page.goto("/settings/vision-workers");
   await expect(page.getByRole("heading", { name: "Legacy HTTP models" })).toBeVisible();
 
@@ -126,7 +151,7 @@ test("guided SAM registration requires discovery, immutable identity, and a type
   await expect(dialog.locator("label", { hasText: /^Preset/ }).locator("select")).toHaveValue("sam");
   await dialog.getByRole("button", { name: "Continue" }).click();
   await page.getByLabel("Endpoint", { exact: true }).fill(workerUrl);
-  await page.getByRole("button", { name: "Save and discover" }).click();
+  await clickSettingsAction("Save and discover");
 
   await expect(page.getByRole("dialog", { name: "Discover live capabilities" })).toContainText("Discovery passed");
   await expect(page.getByRole("dialog", { name: "Discover live capabilities" })).toContainText("prompted segmentation");
@@ -135,11 +160,11 @@ test("guided SAM registration requires discovery, immutable identity, and a type
   await expect(identityDialog.getByLabel("Version", { exact: true })).toHaveValue("e2e-contract-v1");
   await expect(identityDialog.getByLabel("Checkpoint SHA-256", { exact: true })).toHaveValue("a".repeat(64));
   await expect(identityDialog.getByLabel("Checkpoint license", { exact: true })).toHaveValue("test-only deterministic fixture");
-  await identityDialog.getByRole("button", { name: "Save identity and test" }).click();
+  await clickSettingsAction("Save identity and test");
 
   const sampleDialog = page.getByRole("dialog", { name: "Run a selected-image sample" });
   await expect(sampleDialog).toContainText(`Expert Vision E2E ${stamp}`);
-  await sampleDialog.getByRole("button", { name: "Run sample test" }).click();
+  await clickSettingsAction("Run sample test");
   await expect(sampleDialog).toContainText("Sample conversion passed");
   await expect(sampleDialog).toContainText("refined geometry");
   await sampleDialog.getByText("Converted Artifact and coordinates").click();
@@ -147,7 +172,7 @@ test("guided SAM registration requires discovery, immutable identity, and a type
   await expect(sampleDialog).toContainText("e2e-mask");
   await page.getByRole("button", { name: "Review registration" }).click();
   await expect(page.getByRole("dialog", { name: "Register the Expert Model" })).toContainText("Ready to register");
-  await page.getByRole("button", { name: "Register Expert Model" }).click();
+  await clickSettingsAction("Register Expert Model");
   await expect(page.getByRole("dialog")).toHaveCount(0);
 
   const saved = await settings(request);

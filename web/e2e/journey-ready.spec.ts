@@ -32,10 +32,15 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   const draftId = new URL(page.url()).searchParams.get("draft")!;
   const sessions = await (await request.get(`/api/projects/${projectId}/agent-sessions`)).json();
   expect(sessions.sessions[0].builder_constraints.maximum_dry_runs).toBe(0);
+  expect(sessions.sessions[0].outcome).toBe("draft_ready_for_human_review");
+  expect(sessions.sessions[0].steps.every((step: { success: boolean }) => step.success)).toBe(true);
   expect(sessions.sessions[0].steps.filter((step: { tool_name: string; success: boolean }) => step.tool_name === "dry_run_pipeline" && step.success)).toHaveLength(0);
   const preview = await (await request.get(`/api/workflow-drafts/${draftId}/sample-preview`)).json();
   expect(preview.supported, JSON.stringify(preview)).toBe(true);
   expect(preview.request_limit).toBe(12);
+  const prematurePublication = await request.post(`/api/workflow-drafts/${draftId}/publish`, { data: {} });
+  expect(prematurePublication.ok()).toBe(false);
+  expect(await prematurePublication.text()).toContain("persisted Sample Test");
   const stale = await request.post(`/api/workflow-drafts/${draftId}/dry-run`, { data: { image_indices: [0], expected_revision: preview.revision, authorization_fingerprint: "stale-scope" } });
   expect(stale.status()).toBe(400);
   await page.getByRole("checkbox", { name: "I reviewed the sample scope" }).check();
@@ -56,4 +61,15 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   }
   const annotations = await (await request.get(`/api/projects/${projectId}/export-readiness`)).json();
   expect(JSON.stringify(annotations)).not.toContain("human_accepted");
+  // A persisted planning session is a read-only recovery key, never a request to re-plan.
+  const planningRequests: string[] = [];
+  page.on("request", (req) => { if (req.method() === "POST" && req.url().endsWith("/suggest")) planningRequests.push(req.url()); });
+  await page.goto(`/projects/${projectId}/task/goal?session=${sessions.sessions[0].id}`);
+  await expect(page).toHaveURL(/\/task\/samples\?/, { timeout: 20_000 });
+  expect(planningRequests).toEqual([]);
+  expect(sampleRequests).toHaveLength(1);
+  await page.goto(`/projects/${projectId}/task/goal?session=missing-session`);
+  await expect(page.getByRole("alert")).toContainText("This planning task does not exist in this Project");
+  await expect(page).toHaveURL(/session=missing-session/);
+  expect(planningRequests).toEqual([]);
 });

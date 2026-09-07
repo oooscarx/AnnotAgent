@@ -18,4 +18,9 @@ describe("guided task presentation", () => {
   it("does not interpret unknown task scenes as another project", () => {
     expect(parseWorkspaceRoute("/projects/p/task/publish").kind).toBe("notFound");
   });
+  it("restores a planning session without changing page focus or accepting an external return", () => {
+    const path = projectJourneyPath("p1", "goal", { agentSessionId: "session1" });
+    expect(parseWorkspaceRoute("/projects/p1/task/goal", "?session=session1&return_to=https://example.com")).toMatchObject({ kind: "journey", agentSessionId: "session1", canonicalPath: path });
+    expect(routeFocusKey(parseWorkspaceRoute("/projects/p1/task/goal", "?session=session1"))).toBe(routeFocusKey(parseWorkspaceRoute("/projects/p1/task/goal")));
+  });
 });

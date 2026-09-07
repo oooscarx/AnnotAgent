@@ -97,3 +97,98 @@ schema/model changes invalidating prior sample authorization at publication;
 atomic authorization scope revalidation; combined durable publish/start receipt;
 sample improvement and adding/relabeling geometry; guided processing/review/export.
 No claim that M2–M4 or end-to-end user acceptance is complete.
+
+## M2 — connection and planning recovery increment
+
+M1 commit: `ee58cee`. `/projects/:id/task/model` is now a conditional task page,
+not an embedded Providers dashboard. Missing-model Continue first saves the goal.
+The page offers existing compatible text/tool/structured-response profiles or a
+small OpenAI-compatible connection form. It uses the existing Provider, private
+workspace-file credential, Model Profile, explicit active probe and Project
+binding APIs. No keychain, URL secret, global default overwrite, model download,
+installation or implicit inference is introduced. The active text probe checks
+connectivity; tool capabilities are still user-declared, not a measured quality
+guarantee. Returning or cancelling restores the saved goal/images. A locked
+Project planning binding is not overwritten. Partial connection saves remain in
+the Registry; typed credentials not yet saved do not survive refresh.
+
+Planning sessions now use the existing stable `session` URL parameter. Refresh
+loads that Project's saved session rather than calling suggest again. Unknown or
+cross-Project session IDs do not fall back to another task. Real server phases
+have concise labels, the existing cancel API is directly exposed for running
+planning, and stopped/failed sessions are not automatically treated as successful
+sample results. Project-keyed components and mounted-response guards prevent old
+responses from navigating into a new Project.
+
+Recovery testing exposed a protocol mismatch: zero authorized Dry Runs were still
+required by the Builder's finalization gate. Fixed tool availability, the static
+validation next-action hint, finalization guard and prompt for planning-only
+sessions. They now finish with an explicitly **untested editable Draft**, without
+failed forbidden Dry Run calls. Publication still requires a persisted passing
+Sample Test; the E2E explicitly attempts premature publication and checks rejection.
+No increase to step budgets and no permanent submit-only state was introduced.
+
+Connection, cancellation-of-setup, persistence and recovered-session browser
+tests passed on isolated fixture services. Screens: `model-{1440,390}.png`.
+All three focused journey tests passed; the ready-model test checks every Builder
+tool succeeds, no image call occurs during planning, and refresh does not replan.
+Rust catalog/tool-availability regression also passed. Full regression outcomes
+are recorded below after final verification.
+
+This is **not full M2 acceptance**: visual-model repair setup, persistent in-flight
+Sample Test cancellation/recovery, crash-safe partial setup receipts and concurrent
+binding edits remain. M3 confirmation/processing/review/delivery and M4 complete
+default-route isolation remain unimplemented. Existing management routes and APIs
+are retained, including their delete/restore/Debug/Replay/export behavior.
+
+## Verification and handoff checkpoint
+
+Final full browser run: **62/62 passed**, log
+`/tmp/annotagent-journey-final-e2e.log`. Earlier full-suite failures are retained
+above, not erased: the expanded suite exceeded the real 120-mutations/minute
+sliding window. Security/HTTP-model tests now wait only for the exact middleware
+`mutation_rate_limited` rejection before execution; settings retries reacquire
+the 30-second one-use nonce. They do not retry an executed model action or a
+Provider error. Production rate limits, auth, CSRF and nonce rules are unchanged.
+Final focused rerun on the latest upload/connection changes: **11/11 passed**,
+`/tmp/annotagent-journey-final-focused.log`. Original screenshot directories were
+again restored byte-for-byte from the baseline backup after E2E completed.
+
+Rust: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets
+--all-features -- -D warnings`, `cargo test --workspace --all-features`, and
+`cargo build --workspace --all-features` passed. Tests: **503 passed, 5 ignored**
+(including externally supplied real-model weights). Web typecheck, unit **81/81**,
+production build and full E2E passed. Production build still reports the existing
+large-chunk warning; no loading-performance improvement is claimed.
+
+Default route changes:
+
+| Before | Current implemented entry |
+| --- | --- |
+| Create combines image/name/goal/category/type | Images only → saved Goal → planning consent → image scope consent → Sample canvas |
+| Missing planner requires embedded Registry management | Saved Goal → conditional connection → saved Goal, no automatic inference |
+| Inspect sample alongside node/details workbench | Same persisted Test/Image on the default canvas; technical render subtree omitted |
+| Refresh loses a pending planner's context | Stable Project/session URL restores persisted phase/outcome without another suggest POST |
+
+The main remaining sample action is still **Confirm this sample**, not the
+requested **Use this plan → confirm processing**; this is an explicit M3 gap,
+not a claim that the complete Guided Journey has shipped. Structured sandbox
+feedback reuses existing bbox correction; omitted-object/region editing and
+in-context improvement remain incomplete.
+
+Unique advanced management entrances retained (exit the task via Back to Project):
+`/projects/:id/build/data`, `/build/labels`, `/build/pipeline`,
+`/projects/:id/runs`, `/review`, `/export`, `/manage/trash`, and the existing
+global Settings routes. Run/Pipeline archive/delete/restore, immutable versions,
+default selection, full evidence and Replay were not removed. These management
+surfaces have not all been redesigned as guided scenes.
+
+Screens exercise 1440×900, 1280×720, 1024×768 and 390×844 (some goal screenshots
+use 900px height). Existing keyboard/reduced-motion/reflow tests passed. **Native
+200% browser zoom, OS-level Chinese IME/screen-reader verification, live-model
+accuracy and real-person usability testing were not executed.** Reflow screenshots
+and automated tests do not substitute for these checks.
+
+No push, remote edits, history rewrites or real workspace data writes. The
+original fourteen user-modified screenshots remain outside task commits. The
+task does not restart the real workspace server; isolated E2E servers are used.

@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { readFileSync } from "node:fs";
 import { expect, test } from "./fixtures";
 
 test("image-first journey saves images and every goal label without model calls", async ({ page, request }) => {
@@ -12,6 +13,15 @@ test("image-first journey saves images and every goal label without model calls"
   const upload = page.getByRole("region", { name: "Create Project", exact: true });
   await expect(upload.getByLabel("Project name", { exact: true })).toHaveCount(0);
   await upload.getByLabel("Choose images", { exact: false }).setInputFiles(resolve("../examples/robocup/images/synthetic-robocup.png"));
+  const transfer = await page.evaluateHandle((base64) => {
+    const data = new DataTransfer();
+    const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+    data.items.add(new File([bytes], "dropped-test.png", { type: "image/png" }));
+    return data;
+  }, readFileSync(resolve("../examples/robocup/images/synthetic-robocup.png")).toString("base64"));
+  await upload.locator(".journey-upload").dispatchEvent("drop", { dataTransfer: transfer });
+  await expect(upload.getByAltText("dropped-test.png", { exact: true })).toBeVisible();
+  await upload.getByRole("button", { name: "Remove selected image dropped-test.png" }).click();
   await expect(upload.getByAltText("synthetic-robocup.png", { exact: true })).toBeVisible();
   await upload.getByRole("button", { name: "Remove selected image synthetic-robocup.png" }).click();
   await expect(upload.getByRole("button", { name: "Continue", exact: true })).toBeDisabled();
@@ -25,7 +35,14 @@ test("image-first journey saves images and every goal label without model calls"
   await expect(goal.getByAltText("synthetic-robocup.png", { exact: true })).toBeVisible();
   await goal.getByLabel("Describe your goal", { exact: true }).fill("Find cups and plates, not bottles.");
   await goal.getByLabel("Categories to keep", { exact: false }).fill("cup，plate");
-  await goal.getByRole("button", { name: "Save goal", exact: true }).click();
+  await goal.getByRole("button", { name: "Save goal and connect model", exact: true }).click();
+  await expect(page).toHaveURL(/\/task\/model$/);
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "One connection before we prepare your samples." })).toBeVisible();
+  await page.getByRole("button", { name: "Connect a model service", exact: true }).click();
+  await page.getByLabel("Service URL", { exact: true }).fill("https://not-sent.example/v1");
+  await page.getByRole("button", { name: "Cancel connection", exact: true }).click();
+  await page.getByRole("button", { name: "Back to saved goal", exact: true }).click();
   await expect(goal.getByText("Goal saved", { exact: true })).toBeVisible();
   expect(inference).toEqual([]);
   const saved = await (await request.get(`/api/projects/${projectId}/goal`)).json();

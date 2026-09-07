@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test("localhost API rejects cross-origin access and protects mutations", async ({ request }) => {
+  test.setTimeout(90_000);
   const health = await request.get("/api/health");
   expect(health.ok()).toBeTruthy();
   const healthBody = await health.json();
@@ -41,10 +42,21 @@ test("localhost API rejects cross-origin access and protects mutations", async (
   expect(wrongCsrf.status()).toBe(403);
   expect((await wrongCsrf.json()).code).toBe("csrf_token_invalid");
 
-  const confirmed = await request.post("/api/session/privileged-confirmation", {
-    headers: { "x-annotagent-csrf": csrfToken },
-    data: { action: "PUT /api/settings", confirmed: true },
-  });
+  const issueConfirmation = () => request.post("/api/session/privileged-confirmation", {
+      headers: { "x-annotagent-csrf": csrfToken },
+      data: { action: "PUT /api/settings", confirmed: true },
+    });
+  let confirmed = await issueConfirmation();
+  // Earlier tests share the real server's mutation window. Only wait on its exact
+  // pre-execution rate rejection; all authentication/CSRF assertions above stay strict.
+  if (confirmed.status() === 429 && (await confirmed.json()).code === "mutation_rate_limited") {
+    await expect.poll(async () => {
+      confirmed = await issueConfirmation();
+      if (confirmed.status() !== 429) return true;
+      expect((await confirmed.json()).code).toBe("mutation_rate_limited");
+      return false;
+    }, { timeout: 65_000, intervals: [1000] }).toBe(true);
+  }
   expect(confirmed.ok()).toBeTruthy();
   expect(await confirmed.json()).toMatchObject({
     action: "PUT /api/settings",
