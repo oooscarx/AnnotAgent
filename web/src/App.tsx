@@ -1,5 +1,6 @@
 import { t, localeTag, useLocale } from "./i18n";
 import { reviewLabelText, withReviewLabel } from "./review-label";
+import { canRefreshReviewDraft, mergeReviewQueue } from "./reviewQueue";
 import { isTextEditingTarget, workspaceShortcutAllowed } from "./workspaceKeyboard";
 import { recoveryNodeIds, builderStopLabel, builderPlanSource } from "./pipelinePresentation";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
@@ -9208,6 +9209,7 @@ function ReviewPage({
   const [queueNavigation, setQueueNavigation] = useState<ReviewNavigation>();
   const [selectedId, setSelectedId] = useState(route.reviewItemId ?? "");
   const [draft, setDraft] = useState<Annotation>();
+  const loadedReviewAnnotation = useRef<Annotation | undefined>(undefined);
   const [past, setPast] = useState<Annotation[]>([]);
   const [future, setFuture] = useState<Annotation[]>([]);
   const [isNew, setIsNew] = useState(false);
@@ -9234,6 +9236,7 @@ function ReviewPage({
   const [revisionHistoryLoading, setRevisionHistoryLoading] = useState(false);
   const [images, setImages] = useState<ImageItem[]>([]);
   const queueLoadGeneration = useRef(0);
+  const detailResponse = useRef<{sequence:number;id?:string}>({sequence:0});
   const itemLoadGeneration = useRef(0);
   const reviewProgressRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -9289,15 +9292,15 @@ function ReviewPage({
   }, [route.kind, route.reviewItemId, route.projectId, routeReviewProject?.id]);
   const refresh = (offset = 0, append = false) => {
     const generation = ++queueLoadGeneration.current;
+    const priorDetailSequence = detailResponse.current.sequence;
     const key = `${queryKeys.reviewQueue(route.projectId)}:${offset}`;
     if (!append) setQueueLoaded(false);
     return workspaceQueries
       .load(key, (signal) => api.reviews(route.projectId, signal, offset), { force: true })
       .then((value) => {
         if (generation !== queueLoadGeneration.current) return;
-        setReviews((current) => append
-          ? [...current, ...value.reviews.filter((review) => !current.some((item) => item.id === review.id))]
-          : [...value.reviews, ...current.filter((item) => item.id === route.reviewItemId && !value.reviews.some((review) => review.id === item.id))]);
+        const newerDetailId=detailResponse.current.sequence!==priorDetailSequence?detailResponse.current.id:undefined;
+        setReviews((current) => mergeReviewQueue(current,value.reviews,{append,keepId:route.reviewItemId,newerDetailId}));
         setProgress(value.progress);
         setNextReviewOffset(value.page.next_offset);
       })
@@ -9326,6 +9329,7 @@ function ReviewPage({
       )
       .then((review) => {
         if (generation !== itemLoadGeneration.current) return;
+        detailResponse.current={sequence:detailResponse.current.sequence+1,id:review.id};
         setReviews((items) => items.some((item) => item.id === review.id)
           ? items.map((item) => item.id === review.id ? review : item)
           : [review, ...items]);
@@ -9396,6 +9400,9 @@ function ReviewPage({
     setImages([]);
   }, [reviewProject?.id]);
   useEffect(() => {
+    const previous = loadedReviewAnnotation.current;
+    if (!canRefreshReviewDraft(previous, selected?.annotation, draft, attributesText, Boolean(note.trim() || rejectOpen))) return;
+    loadedReviewAnnotation.current = selected?.annotation;
     setDraft(selected?.annotation);
     setAttributesText(JSON.stringify(selected?.annotation.attributes ?? {}, null, 2));
     setPast([]);
@@ -9409,7 +9416,7 @@ function ReviewPage({
     setCorrectionSkillId("");
     setRevisionHistory([]);
     setRevisionHistoryOpen(false);
-  }, [selected?.id]);
+  }, [selected?.id, selected?.annotation]);
   const beginEdit = () => {
     if (!draft) return;
     setPast((items) => [...items, structuredClone(draft)]);
@@ -9492,6 +9499,7 @@ function ReviewPage({
       if (isNew) await api.createAnnotation(selected.run_id, annotation);
       else await api.revise(annotation, reason);
       const savedReview = await api.review(annotation.id, undefined, reviewProject?.id);
+      loadedReviewAnnotation.current = savedReview.annotation;
       setReviews((items) => [...items.filter((item) => item.id !== savedReview.id), savedReview]);
       setDraft(savedReview.annotation);
       setAttributesText(JSON.stringify(savedReview.annotation.attributes ?? {}, null, 2));
@@ -9622,6 +9630,7 @@ function ReviewPage({
       setProgress(outcome.progress);
       setRejectOpen(false);
       setEditing(false);
+      loadedReviewAnnotation.current = outcome.annotation;
       setDraft(outcome.annotation);
       setAttributesText(JSON.stringify(outcome.annotation.attributes ?? {}, null, 2));
       setPast([]); setFuture([]);

@@ -4615,3 +4615,26 @@ management tests all ran/passed. Journey-ready reached shape editing but its fou
 disappeared: the retained detail response contains the TEST polygon, while the rendered UI
 returns to the original classification. Review's queue refresh can overwrite a later detail
 response. Preserve the trace before another run and fix this read-order race, not the assertion.
+
+### 2026-09-09 — Review detail hydration and queue ordering
+
+The first queue-order fix alone did not solve the browser regression (handle 18377, one
+failure). Further inspection found the editor initialized only on selected ID changes: a
+queue entry could initialize it before the exact same-ID detail arrived. This is a second,
+independent hydration issue, not evidence that the response merger was sufficient.
+
+Review now preserves detail responses newer than an in-flight queue request and hydrates a
+pristine editor when its same-ID annotation changes. Geometry, attribute and decision edits
+prevent that hydration; successful saves establish the new baseline. Existing project/request
+generation guards, decision services and ownership checks remain in place. No new write API.
+Seven focused unit cases cover queue ordering, pagination, fresh refresh, detail hydration and
+unsaved input protection. The existing shape browser regression failed before hydration and
+passed afterwards: handle 85864, **1 passed (34.4s)**, isolated workspace
+`/tmp/annotagent-guided-e2e-6102`, evidence `/tmp/annotagent-review-detail-verification`.
+The shape responses are explicitly UI-only TEST substitutions, not saved model predictions.
+
+Current-source full verification is running: Rust fmt/clippy/test/build handle 7814 and
+combined browser handle 87265 (evidence `/tmp/annotagent-full-browser-round4`). Their results
+are pending, not a green-suite claim. Live model quality and real human usability remain
+unverified. Real workspace, existing screenshot edits, remotes and published user data were
+not changed.
