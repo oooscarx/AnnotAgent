@@ -8,12 +8,12 @@ use chrono::{DateTime, Duration, Utc};
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct BuilderSelection {
-    operation_id: uuid::Uuid,
-    schema_id: uuid::Uuid,
-    schema_revision: u64,
-    model_id: Option<ModelProfileId>,
+    pub(super) operation_id: uuid::Uuid,
+    pub(super) schema_id: uuid::Uuid,
+    pub(super) schema_revision: u64,
+    pub(super) model_id: Option<ModelProfileId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    repair_request_id: Option<uuid::Uuid>,
+    pub(super) repair_request_id: Option<uuid::Uuid>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -27,12 +27,12 @@ pub(super) struct BuilderConsent {
     repair: Option<ConversationBuilderRepair>,
 }
 #[derive(Clone, Copy, PartialEq)]
-enum AuthorizationBase {
+pub(super) enum AuthorizationBase {
     Preview,
     Initial,
     Existing(uuid::Uuid),
 }
-fn scope(
+pub(super) fn scope(
     state: &ServerState,
     project: &str,
     conversation: uuid::Uuid,

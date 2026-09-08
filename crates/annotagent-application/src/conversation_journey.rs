@@ -29,6 +29,54 @@ pub struct ConversationJourneyDataScope {
 }
 
 impl LocalApplication {
+    /// Historical consent reads never resolve models or trigger continuation.
+    pub fn conversation_journey_consent(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+    ) -> Result<Option<ConversationJourneyRecord>> {
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self
+            .store
+            .conversation_journey(&owner, conversation, task, id)?)
+    }
+
+    /// Caller has validated the exact Builder preview and explicit acceptance.
+    /// Original receipts are replayable even if a model later becomes unavailable.
+    pub fn save_conversation_journey_consent(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        consent: &ConversationJourneyConsent,
+    ) -> Result<ConversationJourneyRecord> {
+        let owner = self.conversation_project_identity(project)?;
+        if self
+            .store
+            .conversation_journey(&owner, conversation, consent.task_id, consent.id)?
+            .is_none()
+        {
+            self.validate_conversation_journey_data(project, conversation, consent)?;
+        }
+        Ok(self
+            .store
+            .save_conversation_journey(&owner, conversation, consent)?)
+    }
+
+    pub fn revoke_conversation_journey_consent(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+    ) -> Result<ConversationJourneyRecord> {
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self
+            .store
+            .revoke_conversation_journey(&owner, conversation, task, id)?)
+    }
+
     fn journey_model_description(&self, selection: &str) -> Result<JourneyModelDescription> {
         if let Some(id) = selection.strip_prefix("model-profile:") {
             let id: ModelProfileId = id.parse()?;
@@ -389,6 +437,8 @@ mod tests {
             id: Uuid::new_v4(),
             task_id: task,
             builder_operation_id: Uuid::new_v4(),
+            builder_model_id: Some(model.id),
+            previous_grant_id: None,
             sample_operation_id: Uuid::new_v4(),
             builder_scope_hash: "a".repeat(64),
             schema_id: schema.id,

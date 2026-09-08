@@ -30,6 +30,10 @@ pub struct ConversationJourneyConsent {
     pub id: Uuid,
     pub task_id: Uuid,
     pub builder_operation_id: Uuid,
+    #[serde(default)]
+    pub builder_model_id: Option<annotagent_core::ModelProfileId>,
+    #[serde(default)]
+    pub previous_grant_id: Option<Uuid>,
     pub sample_operation_id: Uuid,
     pub builder_scope_hash: String,
     pub schema_id: Uuid,
@@ -84,6 +88,7 @@ fn validate(input: &ConversationJourneyConsent) -> Result<(), StorageError> {
         input.schema_id,
     ];
     if ids.iter().any(Uuid::is_nil)
+        || input.builder_model_id.is_none_or(|id| id.0.is_nil())
         || input.builder_operation_id == input.sample_operation_id
         || input.schema_revision == 0
         || !digest(&input.schema_digest)
@@ -378,6 +383,8 @@ mod tests {
             id: Uuid::new_v4(),
             task_id: task.id,
             builder_operation_id: Uuid::new_v4(),
+            builder_model_id: Some(annotagent_core::ModelProfileId::new()),
+            previous_grant_id: None,
             sample_operation_id: Uuid::new_v4(),
             builder_scope_hash: "b".repeat(64),
             schema_id: schema.id,

@@ -2570,3 +2570,33 @@ including actual Builder revision/hash receipts, normal sample execution and unk
 recovery. Its production Web build passed with the existing chunk-size warning. No visual layout
 changed in this layer, so regenerated unrelated screenshots are not part of the implementation
 commit. No real workspace, old keys, Live/human tests, push or remote changes.
+
+### M2 coordinator integration — HTTP preview, consent persistence, read and revocation
+
+Added task-scoped journey-preview and journey-consent routes to the existing workspace router.
+Preview derives the real Builder scope and Application image/model/Schema snapshots; it reports
+unknown cost as null and returns an unaccepted envelope. POST requires explicit unknown-cost
+acceptance, validates exact planning model/prior grant/call bound and rechecks current data scope
+before saving. GET and exact POST replay return saved records without re-resolving a now-changed
+Provider or dispatching any model. Revocation persists a one-way permission withdrawal, not a
+claim that an already-issued remote request was physically cancelled.
+
+The envelope now also preserves exact planner Model Profile ID and previous grant ID so future
+dispatch/recovery need not reconstruct them from today's defaults. Optional decoding retains
+historical readability; a fresh consent cannot omit the planner identity. This does not add a
+call allowance, renew expiry, publish, accept annotations, or start a Sample Operation. Runtime
+dispatch/stop propagation/restart recovery and the unified GUI action remain to be implemented;
+the consent-only API is not presented as an already-working automatic pipeline.
+
+Isolated browser `/tmp/annotagent-guided-e2e-31872` passed 1/1 in 32.8 seconds. Added checks
+exercise honest unknown-price preview, missing acceptance, tampered binding hash, exact save/read
+replay, changed-expiry rejection, foreign task denial and irreversible revoke/replay. Call lists
+remain byte-for-byte equal and no Builder operation exists after these consent-only requests.
+The ordinary explicit bbox pipeline still completes afterwards. Final
+`/tmp/annotagent-guided-e2e-32058` passed 1/1 in 28.3 seconds, also verifying missing CSRF returns
+403 and a smuggled auto_publish field returns 422. Existing protections were not bypassed.
+40 Server tests, 66 storage unit + 16 storage integration tests, the focused Application scope
+test, all-target/all-feature Server Clippy and format/diff checks passed. Browser production build
+retains the known chunk warning. Cargo lock waits completed normally; no service was restarted
+because of a lock/observation timeout. No real workspace migration, old keys, Live/human tests,
+push or remote changes. No new UI screenshot claim for this API-only stage.

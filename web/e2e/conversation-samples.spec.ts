@@ -71,7 +71,36 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   };
   if(scenario==="human-classification")await changeCeiling(0);
   await page.getByRole("button",{name:"Review Builder authorization",exact:true}).click();
-  const builderPreview=await (await builderPreviewPromise).json();
+  const builderPreviewResponse=await builderPreviewPromise;
+  const builderPreview=await builderPreviewResponse.json();
+  if(scenario==="bbox"){
+    const jointRoot=new URL(builderPreviewResponse.url()).pathname.replace(/\/builder-preview$/, "");
+    const before=await (await request.get(`${jointRoot}/calls`)).json();
+    const query=new URLSearchParams({consent_id:randomUUID(),builder_operation_id:randomUUID(),sample_operation_id:randomUUID(),schema_id:builderPreview.selection.schema_id,schema_revision:String(builderPreview.selection.schema_revision),planner_model_id:model.id,allowed_models:JSON.stringify([`model-profile:${model.id}`])});
+    const response=await request.get(`${jointRoot}/journey-preview?${query}`);expect(response.ok(),await response.text()).toBe(true);
+    const joint=await response.json();
+    expect(joint.estimated_cost).toBeNull();expect(joint.consent.allow_unknown_cost).toBe(false);
+    expect(joint.consent.images).toHaveLength(1);expect(joint.data.models[0].destination).toContain("8796");
+    expect((await request.post(`${jointRoot}/journey-consents`,{data:joint.consent})).status()).toBe(400);
+    const accepted={...joint.consent,allow_unknown_cost:true};
+    expect((await page.request.post(`${jointRoot}/journey-consents`,{data:accepted})).status()).toBe(403);
+    expect((await request.post(`${jointRoot}/journey-consents`,{data:{...accepted,auto_publish:true}})).status()).toBe(422);
+    const altered={...accepted,allowed_models:[{...accepted.allowed_models[0],binding_digest:"f".repeat(64)}]};
+    expect((await request.post(`${jointRoot}/journey-consents`,{data:altered})).status()).toBe(400);
+    const savedResponse=await request.post(`${jointRoot}/journey-consents`,{data:accepted});expect(savedResponse.ok(),await savedResponse.text()).toBe(true);
+    const saved=await savedResponse.json();expect(saved.consent).toEqual(accepted);expect(saved.sample).toBeNull();
+    expect(await (await request.post(`${jointRoot}/journey-consents`,{data:accepted})).json()).toEqual(saved);
+    const savedPath=`${jointRoot}/journey-consents/${accepted.id}`;
+    expect(await (await request.get(savedPath)).json()).toEqual(saved);
+    expect((await request.post(`${jointRoot}/journey-consents`,{data:{...accepted,expires_at:new Date(Date.now()+30*60*1000).toISOString()}})).status()).toBe(400);
+    expect((await request.get(`${jointRoot.replace(/\/tasks\/[^/]+$/,`/tasks/${randomUUID()}`)}/journey-consents/${accepted.id}`)).ok()).toBe(false);
+    const revoked=await (await request.post(`${savedPath}/revoke`,{data:{}})).json();expect(revoked.revoked).toBe(true);
+    expect(await (await request.post(`${jointRoot}/journey-consents`,{data:accepted})).json()).toEqual(revoked);
+    expect(await (await request.get(`${jointRoot}/calls`)).json()).toEqual(before);
+    expect((await (await request.get(`${jointRoot}/builder-operations`)).json()).items).toHaveLength(0);
+    // Consent-only API tests never launch a planner or sample; this existing
+    // workflow proceeds below under its separate explicit phase authorizations.
+  }
   if(humanSchema){
     expect(builderPreview.previous_grant_id).toBeNull();expect(builderPreview.maximum_calls).toBe(8);expect(builderPreview.used_calls).toBe(0);
   }

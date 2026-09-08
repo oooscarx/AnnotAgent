@@ -2,6 +2,7 @@
 
 mod conversation_builder;
 mod conversation_human_requests;
+mod conversation_journey;
 mod conversation_schema;
 mod conversations;
 mod processing_operations;
