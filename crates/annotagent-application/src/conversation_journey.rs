@@ -590,6 +590,7 @@ mod tests {
         assert_eq!(scope.images.len(), 1);
         assert_eq!(scope.models[0].destination, provider.endpoint_summary());
         let consent = ConversationJourneyConsent {
+            repair: None,
             continue_after_clarification: false,
             schema_proposal: None,
             id: Uuid::new_v4(),

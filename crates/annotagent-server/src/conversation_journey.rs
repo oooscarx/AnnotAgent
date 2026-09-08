@@ -17,6 +17,7 @@ pub(super) struct JourneySelection {
     schema_revision: u64,
     schema_call_id: Option<uuid::Uuid>,
     planner_model_id: Option<ModelProfileId>,
+    repair_request_id: Option<uuid::Uuid>,
     /// JSON array of exact Model Profile / Plugin selection IDs, not model hashes.
     allowed_models: String,
 }
@@ -51,7 +52,8 @@ pub(super) async fn preview(
         )
         .map_err(ApiError::bad_request)?;
     if let Some(call_id) = selection.schema_call_id {
-        if !selection.schema_id.is_nil()
+        if selection.repair_request_id.is_some()
+            || !selection.schema_id.is_nil()
             || selection.schema_revision != 0
             || state
                 .application
@@ -82,6 +84,7 @@ pub(super) async fn preview(
             allow_unknown_cost: false,
         };
         let consent = ConversationJourneyConsent {
+            repair: None,
             continue_after_clarification: true,
             schema_proposal: Some(proposal.clone()),
             id: selection.consent_id,
@@ -120,7 +123,7 @@ pub(super) async fn preview(
         schema_id: selection.schema_id,
         schema_revision: selection.schema_revision,
         model_id: selection.planner_model_id,
-        repair_request_id: None,
+        repair_request_id: selection.repair_request_id,
         image_class_review_id: None,
     };
     let (model, builder) = conversation_builder::scope(
@@ -132,6 +135,7 @@ pub(super) async fn preview(
         AuthorizationBase::Preview,
     )?;
     let consent = ConversationJourneyConsent {
+        repair: serde_json::from_value(builder["repair"].clone()).map_err(ApiError::internal)?,
         continue_after_clarification: false,
         schema_proposal: None,
         id: selection.consent_id,
@@ -229,7 +233,7 @@ pub(super) async fn save(
         schema_id: consent.schema_id,
         schema_revision: consent.schema_revision,
         model_id: consent.builder_model_id,
-        repair_request_id: None,
+        repair_request_id: consent.repair.as_ref().map(|repair| repair.request_id),
         image_class_review_id: None,
     };
     let (_, builder) = conversation_builder::scope(
@@ -243,6 +247,7 @@ pub(super) async fn save(
             .map_or(AuthorizationBase::Initial, AuthorizationBase::Existing),
     )?;
     if builder["scope_hash"] != consent.builder_scope_hash
+        || builder["repair"] != json!(consent.repair)
         || builder["previous_grant_id"] != json!(consent.previous_grant_id)
         || builder["maximum_builder_calls"].as_u64()
             != Some(u64::from(consent.maximum_builder_calls))
@@ -543,8 +548,10 @@ async fn advance(
                 "operation_id": consent.builder_operation_id,
                 "schema_id": consent.schema_id,
                 "schema_revision": consent.schema_revision,
-                "model_id": consent.builder_model_id
+                "model_id": consent.builder_model_id,
+                "repair_request_id": consent.repair.as_ref().map(|repair| repair.request_id)
             },
+            "repair": consent.repair,
             "previous_grant_id": consent.previous_grant_id,
             "scope_hash": consent.builder_scope_hash,
             "expires_at": consent.expires_at,

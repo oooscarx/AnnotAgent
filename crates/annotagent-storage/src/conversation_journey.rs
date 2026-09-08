@@ -24,9 +24,21 @@ pub struct JourneyImageScope {
     pub content_hash: String,
 }
 
+/// Exact editable copy approved for repair, never a pointer to its latest revision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConversationBuilderRepair {
+    pub request_id: Uuid,
+    pub draft_id: String,
+    pub revision: u64,
+    pub content_hash: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConversationJourneyConsent {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair: Option<ConversationBuilderRepair>,
     /// Present only when the authorized text call must first produce a Schema.
     /// Nil `schema_id` and revision zero mean unresolved, never a fake Schema.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -100,6 +112,20 @@ fn digest(value: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 fn validate(input: &ConversationJourneyConsent) -> Result<(), StorageError> {
+    if input.repair.as_ref().is_some_and(|repair| {
+        repair.request_id.is_nil()
+            || Uuid::parse_str(&repair.draft_id)
+                .ok()
+                .is_none_or(|id| id.is_nil())
+            || repair.revision == 0
+            || !digest(&repair.content_hash)
+            || input.schema_proposal.is_some()
+            || input.continue_after_clarification
+    }) {
+        return Err(invalid(
+            "Repair requires one exact saved Draft and cannot grant initial Schema continuation",
+        ));
+    }
     let ids = [
         input.id,
         input.task_id,
@@ -558,6 +584,7 @@ pub(crate) mod tests {
             .create_human_conversation_schema_draft(&project, task.id, Uuid::new_v4(), &definition)
             .unwrap();
         let consent = ConversationJourneyConsent {
+            repair: None,
             continue_after_clarification: false,
             schema_proposal: None,
             id: Uuid::new_v4(),
@@ -604,6 +631,69 @@ pub(crate) mod tests {
             maximum_calls: 10,
         };
         (project, conversation, consent, sample)
+    }
+
+    #[test]
+    fn repair_consent_preserves_exact_snapshot_and_never_upgrades_legacy_grants() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TEST-repair.db");
+        let store = SqliteStore::open(&path).unwrap();
+        let (project, conversation, mut consent, _) = setup(&store);
+        let legacy = serde_json::to_value(&consent).unwrap();
+        assert!(legacy.get("repair").is_none());
+        assert!(
+            serde_json::from_value::<ConversationJourneyConsent>(legacy)
+                .unwrap()
+                .repair
+                .is_none()
+        );
+        consent.repair = Some(ConversationBuilderRepair {
+            request_id: Uuid::new_v4(),
+            draft_id: Uuid::new_v4().to_string(),
+            revision: 3,
+            content_hash: "a".repeat(64),
+        });
+        let saved = store
+            .save_conversation_journey(&project, conversation, &consent)
+            .unwrap();
+        drop(store);
+        let store = SqliteStore::open(&path).unwrap();
+        assert_eq!(
+            store
+                .save_conversation_journey(&project, conversation, &consent)
+                .unwrap(),
+            saved
+        );
+        for change in ["revision", "hash", "request", "draft", "remove"] {
+            let mut changed = consent.clone();
+            let repair = changed.repair.as_mut().unwrap();
+            match change {
+                "revision" => repair.revision += 1,
+                "hash" => repair.content_hash = "b".repeat(64),
+                "request" => repair.request_id = Uuid::new_v4(),
+                "draft" => repair.draft_id = Uuid::new_v4().to_string(),
+                _ => changed.repair = None,
+            }
+            assert!(
+                store
+                    .save_conversation_journey(&project, conversation, &changed)
+                    .is_err()
+            );
+        }
+        let mut widened = consent.clone();
+        widened.id = Uuid::new_v4();
+        widened.continue_after_clarification = true;
+        assert!(
+            store
+                .save_conversation_journey(&project, conversation, &widened)
+                .is_err()
+        );
+        assert_eq!(
+            store
+                .conversation_journey(&project, conversation, consent.task_id, consent.id)
+                .unwrap(),
+            Some(saved)
+        );
     }
 
     #[test]

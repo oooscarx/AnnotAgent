@@ -5011,3 +5011,36 @@ confirms the exact Project summary destructuring correction. This is not a new f
 green run, and the “200 percent reflow boundary” remains a viewport test, not native zoom.
 Conversation fixture/scroll repairs are committed as `ae9a7d0`; source recovery as
 `d483800`. The complete objective and automatic repair-authorization work remain open.
+
+### 2026-09-09 — Exact correction snapshot in joint Builder/sample authorization
+
+Implemented the backend seam, reusing the existing Journey executor and Builder.
+The shared `ConversationBuilderRepair` DTO now lives in Storage and is re-exported
+through Application without changing its wire shape. Journey consent can explicitly
+carry that exact request/Draft/revision/content-hash snapshot. Preview resolves it
+through the existing owner-checked repair service; acceptance verifies it against the
+Builder scope; execution forwards the frozen snapshot to the original Builder launch.
+The existing sealed sample scope and task/Project call ledgers remain authoritative.
+There is no new model engine or execution route.
+
+Absent repair data remains absent for old serialized grants. Invalid repair snapshots
+and initial-Schema/clarification-continuation combinations are rejected. Storage tests
+cover restart and exact retry plus changed request, Draft, revision, hash or removed
+repair scope rejection. Eight Journey storage tests, all 47 server tests, formatting
+and server all-target/all-feature Clippy pass. An initial compile typo in a Result
+predicate was corrected before these passing checks.
+
+New isolated browser/HTTP test performs a real canvas answer, persists its checkpoint,
+previews and acknowledges one bounded joint repair, then executes Builder and sample.
+It checks changed-revision rejection, read-only GET and duplicate execute without added
+call records. Initial test setup incorrectly used an unqualified model ID; Registry
+correctly rejected it (trace `/tmp/annotagent-joint-repair-trace-sP2MMy/test-results`).
+After using the existing `model-profile:` selection format, run 6519 passed 1/1 (6.3s),
+workspace `/tmp/annotagent-guided-e2e-19392`. Stronger rerun 78594 additionally asserts
+both child operations use the exact correction Draft, not a newly generated substitute.
+That stronger run passed 1/1 (6.5s), workspace `/tmp/annotagent-guided-e2e-19490`.
+
+This backend capability is not yet connected to a unified UI repair card, and does not
+grant automatic improvement after a future answer under old initial consent. UI scope
+matching, restored-history isolation, and any bounded future-answer opt-in remain open.
+Fixture execution is not Live inference quality evidence. No push or real data changes.

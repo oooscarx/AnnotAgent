@@ -43,8 +43,8 @@ pub use conversation_project_budget::{ProjectCallLimit, ProjectCallLimitInput};
 mod conversation_human_requests;
 mod conversation_journey;
 pub use conversation_journey::{
-    ConversationJourneyConsent, ConversationJourneyRecord, JourneyImageScope, JourneyModelScope,
-    JourneySampleScope,
+    ConversationBuilderRepair, ConversationJourneyConsent, ConversationJourneyRecord,
+    JourneyImageScope, JourneyModelScope, JourneySampleScope,
 };
 mod conversation_schema;
 mod conversation_task_selection;

@@ -25,15 +25,7 @@ pub struct ConversationBuilderExecution {
     pub image_class_repair: Option<crate::ConversationImageClassBuilderRepair>,
 }
 
-/// Exact editable copy approved for repair, never a mutable pointer to the latest plan.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ConversationBuilderRepair {
-    pub request_id: Uuid,
-    pub draft_id: String,
-    pub revision: u64,
-    pub content_hash: String,
-}
+pub use annotagent_storage::ConversationBuilderRepair;
 
 struct BuilderGuard<'a> {
     app: &'a LocalApplication,
