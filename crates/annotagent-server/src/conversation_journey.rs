@@ -2,6 +2,8 @@
 use super::*;
 use annotagent_storage::{ConversationJourneyConsent, ConversationJourneyRecord};
 use conversation_builder::{AuthorizationBase, BuilderSelection};
+use futures::FutureExt;
+use std::panic::AssertUnwindSafe;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -236,6 +238,64 @@ pub(super) async fn execute(
         uuid::Uuid,
     )>,
     Json(_input): Json<ExecuteJourney>,
+) -> ApiResult<Json<Value>> {
+    let current = state
+        .application
+        .conversation_journey_execution_status(&project, conversation, task, id)
+        .map_err(ApiError::bad_request)?;
+    if !current["sample"].is_null() || current["dispatch"]["status"] == "running" {
+        return Ok(Json(current));
+    }
+    state
+        .application
+        .require_active_conversation_journey(&project, conversation, task, id)
+        .map_err(ApiError::bad_request)?;
+    let attempt = uuid::Uuid::new_v4();
+    let permit = state.journey_workers.clone().try_acquire_owned().map_err(|_| ApiError {
+        status: StatusCode::TOO_MANY_REQUESTS,
+        body: json!({"error":"Background journey capacity is full. No new execution was admitted.","code":"journey_capacity_exhausted"}),
+    })?;
+    if state
+        .application
+        .claim_conversation_journey_dispatch(&project, conversation, task, id, attempt)
+        .map_err(ApiError::bad_request)?
+    {
+        let worker_state = state.clone();
+        let worker_project = project.clone();
+        tokio::spawn(async move {
+            let _permit = permit;
+            let result = AssertUnwindSafe(Box::pin(advance(
+                worker_state.clone(),
+                worker_project,
+                conversation,
+                task,
+                id,
+            )))
+            .catch_unwind()
+            .await;
+            let error = match result {
+                Ok(Ok(_)) => None,
+                Ok(Err(error)) => Some(error.body["error"].as_str().unwrap_or("Journey execution failed; child receipts remain saved.").to_owned()),
+                Err(_) => Some("Journey worker stopped unexpectedly. Saved child receipts remain; no automatic retry was started.".to_owned()),
+            };
+            if let Err(error) = worker_state
+                .application
+                .store()
+                .finish_conversation_journey_dispatch(id, attempt, error.as_deref())
+            {
+                eprintln!("could not settle journey dispatch {id}: {error}");
+            }
+        });
+    }
+    status(State(state), AxumPath((project, conversation, task, id))).await
+}
+
+async fn advance(
+    state: ServerState,
+    project: String,
+    conversation: uuid::Uuid,
+    task: uuid::Uuid,
+    id: uuid::Uuid,
 ) -> ApiResult<Json<Value>> {
     let current = state
         .application

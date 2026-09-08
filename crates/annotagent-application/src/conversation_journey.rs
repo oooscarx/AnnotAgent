@@ -55,7 +55,30 @@ impl LocalApplication {
         }) {
             bail!("Journey sample identity belongs to another task");
         }
-        Ok(serde_json::json!({"record":record,"builder":builder,"sample":sample}))
+        let dispatch = self
+            .store
+            .conversation_journey_dispatch(&owner, conversation, task, id)?;
+        Ok(
+            serde_json::json!({"record":record,"builder":builder,"sample":sample,"dispatch":dispatch}),
+        )
+    }
+
+    pub fn claim_conversation_journey_dispatch(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+        attempt: Uuid,
+    ) -> Result<bool> {
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self.store.claim_conversation_journey_dispatch(
+            &owner,
+            conversation,
+            task,
+            id,
+            attempt,
+        )?)
     }
 
     pub fn require_active_conversation_journey(

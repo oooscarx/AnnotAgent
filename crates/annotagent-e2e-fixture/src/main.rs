@@ -382,6 +382,13 @@ async fn openai_completion(
         return Json(response);
     }
     let tools = tools_by_name(&request);
+    if request["model"] == "e2e-conversation-classification-background"
+        && !tools.is_empty()
+        && !tools.contains_key("propose_annotation_schema")
+    {
+        // TEST-only slow planner: prove the HTTP reply/navigation precedes completion.
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
     if tools.contains_key("propose_annotation_schema") {
         let serialized = request.to_string();
         if serialized.contains("image_url") {

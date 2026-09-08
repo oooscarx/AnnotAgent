@@ -123,6 +123,7 @@ pub struct ServerState {
     default_write_reference: Arc<CredentialReference>,
     model_install_operations: Arc<RwLock<BTreeMap<uuid::Uuid, ModelInstallOperation>>>,
     sample_cancellations: Arc<RwLock<BTreeMap<String, CancellationToken>>>,
+    journey_workers: Arc<tokio::sync::Semaphore>,
     processing_gate: Arc<tokio::sync::Mutex<()>>,
     security: security::LocalSecurity,
 }
@@ -230,6 +231,7 @@ impl ServerState {
             default_write_reference: Arc::new(default_write_reference),
             model_install_operations: Arc::new(RwLock::new(BTreeMap::new())),
             sample_cancellations: Arc::new(RwLock::new(BTreeMap::new())),
+            journey_workers: Arc::new(tokio::sync::Semaphore::new(8)),
             processing_gate: Arc::new(tokio::sync::Mutex::new(())),
             security: security::LocalSecurity::default(),
         })

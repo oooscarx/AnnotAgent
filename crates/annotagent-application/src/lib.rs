@@ -7256,6 +7256,7 @@ impl LocalApplication {
         store.recover_sample_operations()?;
         store.recover_conversation_calls()?;
         store.recover_conversation_builders()?;
+        store.recover_conversation_journey_dispatches()?;
         for mut session in store.list_agent_sessions(None)? {
             if session.kind == AgentKind::PipelineBuilder
                 && session.status == AgentSessionStatus::Running

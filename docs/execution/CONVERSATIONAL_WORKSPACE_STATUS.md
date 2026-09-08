@@ -2638,3 +2638,42 @@ This is NOT yet a durable background coordinator: a lost Builder handler can lea
 receipt, and there is no automatic restart after process loss. The default GUI still uses phase
 cards; unified consent presentation and background dispatch/recovery are subsequent work.
 No real workspace migration/restart, old keys, push or remote changes. Goal remains incomplete.
+
+### M2 coordinator integration — background dispatch and durable interruption receipts
+
+Journey execution POST now claims a durable dispatch attempt and returns immediately, while a
+bounded server worker advances the existing Builder/sample chain independently of page lifetime.
+Migration 41 adds a consent-owned dispatch row, running/settled/interrupted state, attempt identity
+and error. Claim is atomic; a second concurrent POST reads the same running work. Worker settlement
+uses attempt CAS, so a stale worker cannot finish a newer attempt. Eight background planning
+workers are allowed per server; capacity rejection occurs before dispatch admission. Existing
+HTTP security, Project/task call ledgers and child-operation checks remain in force.
+
+Startup marks orphaned dispatches interrupted and preserves child receipts; it does not issue
+model requests. Explicit retry uses the original consent and child operation identities. A
+completed Builder can continue to its unstarted sample after checking the saved scope, but a
+Builder with uncertain/interrupted model execution is not automatically replayed. This is safe
+interruption reporting, not a claim of resumable arbitrary LLM token streams. Sample workers
+continue using their existing durable receipt/restart behavior. Exceptions settle a visible
+dispatch error; no automatic retry is introduced.
+
+Storage regression uses independent database connections to verify exclusive claims, foreign
+ownership rejection, restart marking, a subsequent explicit claim, stale-worker CAS protection,
+persisted failure and revoked-consent rejection. All 67 Storage unit + 16 integration tests and
+40 Server tests passed. All-target/all-feature Server and E2E-fixture Clippy, format/diff checks
+passed. Initial compile used the wrong futures crate path; corrected to the already-installed
+futures dependency without adding a package.
+
+Isolated `/tmp/annotagent-guided-e2e-33899` passed 1/1 (30.9 s including compile) with a named
+slow TEST planner: execution returns running with no sample yet, page navigates to Projects,
+then the original Builder and sample complete. Final `/tmp/annotagent-guided-e2e-34025` passed
+2/2 in 13.1 s, including simultaneous POSTs/replay and revocation while Builder is reserved:
+the latter settles with no sample and further execution is denied without additional calls.
+The earlier fast-fixture pass in `/tmp/annotagent-guided-e2e-33775` was superseded by this timing
+evidence. Production Web build passed with its known chunk-size warning.
+
+No new UI has been connected in this stage, so there is no new visual screenshot claim. Next:
+unified consent/action/status presentation, saved journey discovery, and frontend recovery without
+mount-triggered execution. Full Schema-to-results default experience, broader HumanRequest types,
+Live quality, native zoom/a11y matrix and real-human usability remain incomplete. No real
+Workspace restart/migration, old keys, push or remote modifications; unrelated screenshots kept.

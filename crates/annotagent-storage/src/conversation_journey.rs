@@ -186,6 +186,58 @@ fn read(
 }
 
 impl SqliteStore {
+    /// Claim only on explicit POST. Restart recovery never dispatches inference.
+    pub fn claim_conversation_journey_dispatch(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+        attempt: Uuid,
+    ) -> Result<bool, StorageError> {
+        self.with_connection(|db| {
+            let tx = db.unchecked_transaction()?;
+            owned(&tx, project, conversation, task)?;
+            let saved = read(&tx, task, id)?.ok_or_else(|| invalid("Journey consent not found"))?;
+            if attempt.is_nil() || saved.revoked || saved.consent.expires_at <= Utc::now() {
+                return Err(invalid("Journey consent is revoked or expired"));
+            }
+            let changed = tx.execute("INSERT INTO conversation_journey_dispatch(consent_id,attempt_id,status,updated_at) VALUES(?1,?2,'running',?3) ON CONFLICT(consent_id) DO UPDATE SET attempt_id=excluded.attempt_id,status='running',error=NULL,updated_at=excluded.updated_at WHERE conversation_journey_dispatch.status!='running'",params![id.to_string(),attempt.to_string(),Utc::now().to_rfc3339()])?;
+            tx.commit()?;
+            Ok(changed == 1)
+        })
+    }
+    pub fn conversation_journey_dispatch(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+    ) -> Result<Option<serde_json::Value>, StorageError> {
+        self.with_connection(|db| {
+            owned(db, project, conversation, task)?;
+            read(db, task, id)?.ok_or_else(|| invalid("Journey consent not found"))?;
+            Ok(db.query_row("SELECT attempt_id,status,error,updated_at FROM conversation_journey_dispatch WHERE consent_id=?1",[id.to_string()],|row|Ok(serde_json::json!({"attempt_id":row.get::<_,String>(0)?,"status":row.get::<_,String>(1)?,"error":row.get::<_,Option<String>>(2)?,"updated_at":row.get::<_,String>(3)?}))).optional()?)
+        })
+    }
+    /// Attempt CAS prevents an obsolete worker from settling a newer dispatch.
+    pub fn finish_conversation_journey_dispatch(
+        &self,
+        id: Uuid,
+        attempt: Uuid,
+        error: Option<&str>,
+    ) -> Result<(), StorageError> {
+        self.with_connection(|db| {
+            db.execute("UPDATE conversation_journey_dispatch SET status='settled',error=?3,updated_at=?4 WHERE consent_id=?1 AND attempt_id=?2 AND status='running'",params![id.to_string(),attempt.to_string(),error,Utc::now().to_rfc3339()])?;
+            Ok(())
+        })
+    }
+    pub fn recover_conversation_journey_dispatches(&self) -> Result<(), StorageError> {
+        self.with_connection(|db| {
+            db.execute("UPDATE conversation_journey_dispatch SET status='interrupted',error='Server restarted. Read saved child receipts before explicitly retrying; no automatic inference was started.',updated_at=?1 WHERE status='running'",[Utc::now().to_rfc3339()])?;
+            Ok(())
+        })
+    }
     pub fn conversation_journey(
         &self,
         project: &str,
@@ -424,6 +476,99 @@ mod tests {
             maximum_calls: 10,
         };
         (project, conversation, consent, sample)
+    }
+
+    #[test]
+    fn dispatch_claim_recovery_and_stale_worker_settlement_are_safe() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TEST-dispatch.db");
+        let store = SqliteStore::open(&path).unwrap();
+        let (project, conversation, consent, _) = setup(&store);
+        store
+            .save_conversation_journey(&project, conversation, &consent)
+            .unwrap();
+        let first = Uuid::new_v4();
+        assert!(
+            store
+                .claim_conversation_journey_dispatch(
+                    &project,
+                    conversation,
+                    consent.task_id,
+                    consent.id,
+                    first
+                )
+                .unwrap()
+        );
+        let second = SqliteStore::open(&path).unwrap();
+        assert!(
+            !second
+                .claim_conversation_journey_dispatch(
+                    &project,
+                    conversation,
+                    consent.task_id,
+                    consent.id,
+                    Uuid::new_v4()
+                )
+                .unwrap()
+        );
+        assert!(
+            second
+                .conversation_journey_dispatch("foreign", conversation, consent.task_id, consent.id)
+                .is_err()
+        );
+        second.recover_conversation_journey_dispatches().unwrap();
+        assert_eq!(
+            second
+                .conversation_journey_dispatch(&project, conversation, consent.task_id, consent.id)
+                .unwrap()
+                .unwrap()["status"],
+            "interrupted"
+        );
+        let next = Uuid::new_v4();
+        assert!(
+            second
+                .claim_conversation_journey_dispatch(
+                    &project,
+                    conversation,
+                    consent.task_id,
+                    consent.id,
+                    next
+                )
+                .unwrap()
+        );
+        store
+            .finish_conversation_journey_dispatch(consent.id, first, Some("obsolete worker"))
+            .unwrap();
+        assert_eq!(
+            second
+                .conversation_journey_dispatch(&project, conversation, consent.task_id, consent.id)
+                .unwrap()
+                .unwrap()["status"],
+            "running"
+        );
+        second
+            .finish_conversation_journey_dispatch(consent.id, next, Some("TEST failure"))
+            .unwrap();
+        let saved = second
+            .conversation_journey_dispatch(&project, conversation, consent.task_id, consent.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved["status"], "settled");
+        assert_eq!(saved["error"], "TEST failure");
+        second
+            .revoke_conversation_journey(&project, conversation, consent.task_id, consent.id)
+            .unwrap();
+        assert!(
+            second
+                .claim_conversation_journey_dispatch(
+                    &project,
+                    conversation,
+                    consent.task_id,
+                    consent.id,
+                    Uuid::new_v4()
+                )
+                .is_err()
+        );
     }
 
     #[test]

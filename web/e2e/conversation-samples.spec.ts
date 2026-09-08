@@ -8,9 +8,9 @@ import { expect as baseExpect, test, fetchWithinMutationLimit } from "./fixtures
 // UI observations must not fail while that bounded transport pacing is still active.
 const expect=baseExpect.configure({timeout:75_000});
 
-for(const scenario of ["joint-classification","classification","bbox","classification-review","human-classification","human-bbox"] as const){
+for(const scenario of ["joint-classification","joint-stop","classification","bbox","classification-review","human-classification","human-bbox"] as const){
 const humanSchema = scenario.startsWith("human-");
-const transport = humanSchema ? scenario.slice(6) : scenario.replace(/^joint-/, "");
+const transport = scenario==="joint-stop" ? "classification" : humanSchema ? scenario.slice(6) : scenario.replace(/^joint-/, "");
 const kind = transport === "bbox" ? "bbox" : "classification";
 const requiresReview = transport !== "classification";
 test(`conversation ${scenario} authorizes HTTP fixture samples and restores editable terminal canvas`,async({page,request})=>{
@@ -24,7 +24,7 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   }
   const provider=await (await request.post("/api/providers",{data:{display_name:"Conversation sample TEST transport",adapter:"open_ai_compatible",base_url:"http://127.0.0.1:8796/openai/v1"}})).json();
   expect((await request.post(`/api/providers/${provider.id}/credential`,{data:{source:"workspace_file",secret:"TEST-conversation-samples-only"}})).ok()).toBeTruthy();
-  const model=await (await request.post("/api/model-profiles",{data:{provider_id:provider.id,display_name:`Conversation TEST ${scenario}`,remote_model_id:`e2e-conversation-${transport}`,input_modalities:["text","image"],task_capabilities:["text_generation","vision_language","image_classification"],protocol_features:{tool_calls:true,structured_output:true}}})).json();
+  const model=await (await request.post("/api/model-profiles",{data:{provider_id:provider.id,display_name:`Conversation TEST ${scenario}`,remote_model_id:scenario.startsWith("joint-")?"e2e-conversation-classification-background":`e2e-conversation-${transport}`,input_modalities:["text","image"],task_capabilities:["text_generation","vision_language","image_classification"],protocol_features:{tool_calls:true,structured_output:true}}})).json();
   expect((await request.post(`/api/providers/${provider.id}/active-probe`,{data:{model_profile_id:model.id,confirmed_billable:true}})).ok()).toBeTruthy();
   const defaults=await (await request.get("/api/agent-model-bindings")).json();
   expect((await request.put("/api/agent-model-bindings",{data:{...defaults,pipeline_builder:model.id}})).ok()).toBeTruthy();
@@ -73,7 +73,7 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   await page.getByRole("button",{name:"Review Builder authorization",exact:true}).click();
   const builderPreviewResponse=await builderPreviewPromise;
   const builderPreview=await builderPreviewResponse.json();
-  if(scenario==="joint-classification"){
+  if(scenario.startsWith("joint-")){
     const root=new URL(builderPreviewResponse.url()).pathname.replace(/\/builder-preview$/, "");
     const query=new URLSearchParams({consent_id:randomUUID(),builder_operation_id:randomUUID(),sample_operation_id:randomUUID(),schema_id:builderPreview.selection.schema_id,schema_revision:String(builderPreview.selection.schema_revision),planner_model_id:model.id,allowed_models:JSON.stringify([`model-profile:${model.id}`])});
     const preview=await request.get(`${root}/journey-preview?${query}`);expect(preview.ok(),await preview.text()).toBe(true);
@@ -87,7 +87,22 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
     expect((await request.post(path,{data:{auto_publish:true}})).status()).toBe(422);
     const starts=await Promise.all([request.post(path,{data:{},timeout:90_000}),request.post(path,{data:{},timeout:90_000})]);
     for(const started of starts)expect(started.ok(),await started.text()).toBe(true);
-    await expect.poll(async()=> (await (await request.get(path)).json()).sample.status).toBe("succeeded");
+    expect((await starts[0].json()).dispatch.status).toBe("running");
+    expect((await starts[0].json()).sample).toBeNull();
+    if(scenario==="joint-stop"){
+      await expect.poll(async()=> (await (await request.get(path)).json()).builder?.status).toBe("reserved");
+      const stop=await request.post(path.replace(/\/execution$/, "/revoke"),{data:{}});expect(stop.ok(),await stop.text()).toBe(true);
+      await expect.poll(async()=> (await (await request.get(path)).json()).dispatch.status).toBe("settled");
+      const stopped=await (await request.get(path)).json();
+      expect(stopped.record.revoked).toBe(true);expect(stopped.sample).toBeNull();
+      const calls=await (await request.get(`${root}/calls`)).json();
+      expect((await request.post(path,{data:{}})).status()).toBe(400);
+      expect(await (await request.get(`${root}/calls`)).json()).toEqual(calls);
+      return;
+    }
+    await page.goto("/projects");
+    await expect.poll(async()=> (await (await request.get(path)).json()).dispatch.status).toBe("settled");
+    await expect.poll(async()=> (await (await request.get(path)).json()).sample?.status).toBe("succeeded");
     const completed=await (await request.get(path)).json();
     expect(completed.builder.status).toBe("completed");expect(completed.sample.id).toBe(consent.sample_operation_id);
     expect(completed.record.sample.operation_id).toBe(consent.sample_operation_id);
