@@ -2002,3 +2002,36 @@ Final `/tmp/annotagent-guided-e2e-19837` passed 2/2 (8.9 seconds). Inspected
 `conversational-workspace/clarification-cancelled.png` with the cancellation explanation and
 original question visible together. Production build passed with the existing chunk-size warning;
 fmt and diff hygiene passed. No full-workspace Rust or full-browser-suite pass is claimed here.
+
+### M4 checkpoint — full regression after clarification and disclosure changes
+
+Re-ran the requested Rust workspace commands against `c85fcea` production code:
+`cargo fmt --all --check`,
+`cargo clippy --workspace --all-targets --all-features -- -D warnings`,
+`cargo test --workspace --all-features`, and
+`cargo build --workspace --all-features`. The chained command completed with exit 0.
+Five explicitly ignored tests remain excluded: billable Pipeline Builder Provider smoke and
+real-weight process workflows for PIDNet, RF-DETR, SAM and YOLOX. This verifies the available
+workspace regression, not those Live model/weight scenarios or real-human usability.
+
+Started all 77 browser scenarios in `/tmp/annotagent-guided-e2e-20012` using TEST-only servers.
+The independent-goals/model-setup scenario exposed a shared-suite precondition: it expected no
+default planner, but the new preceding clarification scenario left a compatible TEST planner.
+Updated the test to explicitly clear the isolated registry's planner default and explicitly
+choose its newly created TEST Provider when adding its model. It no longer assumes either an
+empty default or the first Provider option. Production registry selection is unchanged.
+The original run is allowed to finish; its final results and subsequent verification follow.
+The full run completed 76/77 in 5.1 minutes, with only that missing-planner precondition failure.
+All remaining scenarios passed, including sample delivery, ownership/deep-link recovery,
+Review/Run navigation, immutable publication, export, history restore/delete safety, provider
+and plugin setup, keyboard and responsive layouts. The 200-percent test explicitly simulates
+the 640 CSS-pixel reflow boundary, not native browser zoom; its result is not stronger than that.
+
+The first focused replay exposed an exact-label test selector mismatch on the wrapped Provider
+select. The accessibility snapshot showed a correctly named Provider combobox; the test now
+uses that role/name instead of wrapped-label text. Final `/tmp/annotagent-guided-e2e-20771`
+passed the three consecutive clarification-answer, clarification-cancel and missing-model
+setup/return scenarios (3/3, 11 seconds). Web typecheck and 119 units also passed. No production
+code or test assertion was weakened to bypass the missing-model state. This is 76/77 plus a
+passing focused correction, not a claimed fresh 77/77 full run. The known production chunk-size
+warning remains. No Live model or human-usability test; no real Workspace, remote or push changes.

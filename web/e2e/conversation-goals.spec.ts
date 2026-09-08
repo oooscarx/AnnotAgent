@@ -1,6 +1,10 @@
 import { expect, test } from "./fixtures";
 
 test("saved messages select independent goals without inference or task substitution",async({page,request})=>{
+  // This scenario specifically starts without a planner. Earlier scenarios use the
+  // same isolated TEST registry; do not assume suite order left its defaults empty.
+  const defaults=await (await request.get("/api/agent-model-bindings")).json();
+  expect((await request.put("/api/agent-model-bindings",{data:{...defaults,pipeline_builder:null}})).ok()).toBe(true);
   const project=`conversation-goals-${Date.now()}`;
   const created=await request.post("/api/projects",{data:{id:project,yaml:"version: 1\nproject:\n  name: TEST independent conversation goals\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n"}});
   expect(created.ok(),await created.text()).toBe(true);
@@ -59,6 +63,7 @@ test("saved messages select independent goals without inference or task substitu
   await page.getByRole("navigation",{name:"Settings sections",exact:true}).getByRole("button",{name:"Models",exact:true}).click();
   await page.getByRole("button",{name:"Add model",exact:true}).click();
   const modelEditor=page.locator(".registry-model-editor");
+  await modelEditor.getByRole("combobox",{name:"Provider",exact:true}).selectOption({label:"Conversation setup TEST"});
   await modelEditor.getByLabel("Display name",{exact:true}).fill("Conversation TEST setup planner");
   await modelEditor.getByLabel("Remote model ID",{exact:true}).fill("e2e-conversation-classification");
   await modelEditor.getByLabel("Tool calls",{exact:true}).check();
