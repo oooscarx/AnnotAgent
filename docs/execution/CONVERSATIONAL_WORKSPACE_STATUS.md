@@ -4807,5 +4807,8 @@ retains both textarea and send action at the bottom of the left pane. Previous f
 
 The stronger full-control visibility checks at 1440×900, 1280×720 and 1024×768 are now running
 on handle 47082 (`/tmp/annotagent-composer-viewports`). These are real viewport checks, not
-native browser zoom, assistive-technology or a human usability study. Broader history pagination
-and the final combined regression remain outstanding.
+native browser zoom, assistive-technology or a human usability study. Handle 47082 completed:
+**1 passed (6.0s)**, workspace `/tmp/annotagent-guided-e2e-10444`; all three viewport checks passed
+and their screenshots were saved under `/tmp/annotagent-composer-viewports/conversational-workspace`.
+No tool process remains running from these targeted checks. Broader history pagination and the
+final combined regression remain outstanding.
