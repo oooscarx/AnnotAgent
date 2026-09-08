@@ -267,10 +267,36 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   const approvalResponse=await request.get(`/api/projects/${project}/processing-preview?${new URLSearchParams(selection as any)}`);
   expect(approvalResponse.ok(),await approvalResponse.text()).toBe(true);
   const approval=await approvalResponse.json();
-  const confirmation={request_id:randomUUID(),selection,expected_revision:approval.revision,authorization_fingerprint:approval.authorization_fingerprint};
-  const startedResponse=await request.post(`/api/projects/${project}/processing-operations`,{data:confirmation});
-  expect(startedResponse.ok(),await startedResponse.text()).toBe(true);
-  const started=await startedResponse.json();
+  const budgetBefore=await (await request.get(`${taskRoot}/budget`)).json();
+  expect(budgetBefore.total_reserved_calls).toBe(afterComparison.length);
+  await page.getByRole("button",{name:"Review dataset processing",exact:true}).click();
+  const confirmCard=page.getByRole("region",{name:"Processing confirmation",exact:true});
+  await expect(confirmCard).toContainText("prior usage is not reset");
+  await expect(confirmCard).toContainText("Cost is unknown");
+  await expect(confirmCard.getByRole("button",{name:"Confirm and start processing",exact:true})).toBeDisabled();
+  await confirmCard.getByRole("checkbox",{name:"I authorize this image, model and call-budget scope",exact:true}).check();
+  if(kind==="bbox"){
+    await page.setViewportSize({width:390,height:844});
+    await page.getByRole("button",{name:"Conversation",exact:true}).click();
+    const authorizationCheckbox=confirmCard.getByRole("checkbox",{name:"I authorize this image, model and call-budget scope",exact:true});
+    await authorizationCheckbox.scrollIntoViewIfNeeded();
+    await expect(authorizationCheckbox).toBeChecked();
+    await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
+    await page.screenshot({path:"../docs/execution/conversational-workspace/processing-confirm-390.png",fullPage:true,animations:"disabled"});
+    await page.setViewportSize({width:1280,height:800});
+  }
+  await confirmCard.evaluate(element=>element.scrollIntoView({block:"start"}));
+  await page.screenshot({path:`../docs/execution/conversational-workspace/processing-confirm-${scenario}.png`,fullPage:true,animations:"disabled"});
+  let confirmation:any;
+  await page.route(`**/api/projects/${project}/processing-operations`,async route=>{
+    confirmation=route.request().postDataJSON(); await route.fetch(); await route.abort("failed");
+  },{times:1});
+  await confirmCard.getByRole("button",{name:"Confirm and start processing",exact:true}).click();
+  await expect.poll(()=>confirmation?.request_id).toBeTruthy();
+  await expect(page).toHaveURL(new RegExp(`processing=${confirmation.request_id}`));
+  await page.reload();
+  await expect(confirmCard.getByRole("heading",{name:"Processing started",exact:true})).toBeVisible();
+  const started=await (await request.get(`/api/projects/${project}/processing-operations/${confirmation.request_id}`)).json();
   expect(started.phase,JSON.stringify(started)).toBe("started");
   const duplicate=await (await request.post(`/api/projects/${project}/processing-operations`,{data:confirmation})).json();
   expect(duplicate.batch_id).toBe(started.batch_id);
@@ -278,6 +304,14 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   expect(operations).toHaveLength(1);
   expect(operations[0].authorization.conversation.schema.id).toBe(approval.conversation.schema.id);
   await expect.poll(async()=> (await (await request.get(`/api/batches/${started.batch_id}`)).json()).batch.images[0].execution_status).toBe(requiresReview ? "awaiting_review" : "completed");
+  const frozenBatch=(await (await request.get(`/api/batches/${started.batch_id}`)).json()).checkpoint.batch;
+  expect(frozenBatch.workflow_snapshot.settings.provider.max_retries).toBe(0);
+  const budgetAfter=await (await request.get(`${taskRoot}/budget`)).json();
+  expect(budgetAfter.planning_reserved_calls).toBe(budgetBefore.planning_reserved_calls);
+  expect(budgetAfter.processing_authorized_calls).toBe(approval.maximum_model_calls);
+  expect(budgetAfter.processing_reserved_calls).toBe(1);
+  expect(budgetAfter.total_reserved_calls).toBe(budgetBefore.total_reserved_calls+1);
+  expect(budgetAfter.total_authorized_calls).toBe(budgetBefore.total_authorized_calls+approval.maximum_model_calls);
   await page.reload();
   const processingCard=page.getByRole("region",{name:"Saved processing tasks",exact:true});
   await expect(processingCard.getByRole("button",{name:"Open processing results",exact:true})).toBeVisible();

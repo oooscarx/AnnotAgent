@@ -24,6 +24,18 @@ pub struct ConversationCallBudget {
     pub revoked: bool,
 }
 
+/// One task's ledger view over existing planning grants and explicitly confirmed Batch allocations.
+/// The disjoint phase caps remain enforced by their original admission transactions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConversationTaskBudget {
+    pub planning_authorized_calls: u64,
+    pub planning_reserved_calls: u64,
+    pub processing_authorized_calls: u64,
+    pub processing_reserved_calls: u64,
+    pub total_authorized_calls: u64,
+    pub total_reserved_calls: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConversationCallStatus {
@@ -96,6 +108,30 @@ fn receipt(
 }
 
 impl SqliteStore {
+    pub fn conversation_task_budget(
+        &self,
+        project: &str,
+        task: Uuid,
+    ) -> Result<ConversationTaskBudget, StorageError> {
+        self.with_connection(|db| {
+            owner(db,project,task)?;
+            let planning_authorized_calls:i64=db.query_row("SELECT COALESCE(MAX(maximum_calls),0) FROM conversation_call_grants WHERE task_id=?1",[task.to_string()],|row|row.get(0))?;
+            let planning_reserved_calls:i64=db.query_row("SELECT COUNT(*) FROM conversation_model_calls WHERE task_id=?1",[task.to_string()],|row|row.get(0))?;
+            // Batch allocation and allowance are created together. Join by the durable operation
+            // id, not a late `started` receipt, so a crash after Batch creation cannot hide spend.
+            let (processing_authorized_calls,processing_reserved_calls):(i64,i64)=db.query_row("SELECT COALESCE(SUM(a.maximum),0),COALESCE(SUM(a.reserved),0) FROM batch_model_call_allowances a JOIN processing_operations p ON p.id=a.batch_id WHERE json_extract(p.state_json,'$.authorization.conversation.task_id')=?1",[task.to_string()],|row|Ok((row.get(0)?,row.get(1)?)))?;
+            let count=|value:i64|u64::try_from(value).map_err(|_|invalid("invalid negative task budget"));
+            let planning_authorized_calls=count(planning_authorized_calls)?;
+            let planning_reserved_calls=count(planning_reserved_calls)?;
+            let processing_authorized_calls=count(processing_authorized_calls)?;
+            let processing_reserved_calls=count(processing_reserved_calls)?;
+            Ok(ConversationTaskBudget {
+                planning_authorized_calls,planning_reserved_calls,processing_authorized_calls,processing_reserved_calls,
+                total_authorized_calls:planning_authorized_calls.checked_add(processing_authorized_calls).ok_or_else(||invalid("task budget overflow"))?,
+                total_reserved_calls:planning_reserved_calls.checked_add(processing_reserved_calls).ok_or_else(||invalid("task usage overflow"))?,
+            })
+        })
+    }
     pub fn conversation_authorization(
         &self,
         project: &str,
@@ -552,6 +588,33 @@ mod tests {
             .unwrap();
         assert_eq!(budget.used_calls, 3);
         assert_eq!(budget.current_grant, next);
+        let batch = annotagent_core::BatchId::new();
+        let processing = serde_json::json!({"phase":"published","authorization":{"conversation":{"conversation_id":conversation,"task_id":task}}});
+        store
+            .reserve_processing_operation(
+                &batch.to_string(),
+                "TEST-project-slug",
+                &serde_json::json!({"request":"TEST"}),
+                &processing,
+            )
+            .unwrap();
+        store.with_connection(|db| { db.execute("INSERT INTO batch_model_call_allowances(batch_id,maximum,reserved) VALUES(?1,2,0)",[batch.to_string()])?; Ok(()) }).unwrap();
+        store.reserve_batch_model_call(batch).unwrap();
+        store.reserve_batch_model_call(batch).unwrap();
+        assert!(store.reserve_batch_model_call(batch).is_err());
+        let combined = store.conversation_task_budget(project, task).unwrap();
+        assert_eq!(combined.planning_reserved_calls, 3);
+        assert_eq!(combined.processing_reserved_calls, 2);
+        assert_eq!(combined.total_reserved_calls, 5);
+        assert_eq!(combined.total_authorized_calls, 5);
+        // The Batch exists even though the operation has not settled its `started` receipt.
+        let reopened = SqliteStore::open(temp.path().join("TEST-phases.db")).unwrap();
+        assert_eq!(
+            reopened.conversation_task_budget(project, task).unwrap(),
+            combined
+        );
+        assert!(reopened.conversation_task_budget("foreign", task).is_err());
+        assert!(reopened.reserve_batch_model_call(batch).is_err());
         assert!(matches!(
             store
                 .reserve_conversation_call(

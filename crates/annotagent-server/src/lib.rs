@@ -10583,6 +10583,85 @@ mod tests {
             .expect("state")
     }
 
+    #[tokio::test]
+    async fn processing_retry_recovers_created_batch_without_scope_reauthorization_or_execution() {
+        let temporary = tempfile::tempdir().unwrap();
+        let application = Arc::new(LocalApplication::new(temporary.path()).unwrap());
+        let state = test_state(
+            application.clone(),
+            Arc::new(InMemorySecretStore::default()),
+        )
+        .await;
+        let batch_id = annotagent_core::BatchId::new();
+        let input = json!({"request_id":batch_id,"selection":{"draft_id":"TEST-missing-after-crash","sample_test_id":"TEST-sample"},"expected_revision":1,"authorization_fingerprint":"TEST-old-budget-snapshot"});
+        let receipt = json!({"id":batch_id,"project_id":"TEST","phase":"published","workflow_id":"TEST-fixed-version","version":1,"request":input});
+        application
+            .store()
+            .reserve_processing_operation(&batch_id.to_string(), "TEST", &input, &receipt)
+            .unwrap();
+        let batch:annotagent_core::BatchRecord=serde_json::from_value(json!({
+            "id":batch_id,"project_id":"TEST","project_path":"TEST/project.yaml","provider":"TEST-no-executable-provider",
+            "status":"pending","max_concurrency":1,"workflow_version":"TEST-fixed-version",
+            "workflow_snapshot":{"guided_processing":true},"project_snapshot":{},
+            "budget_limits":{"max_request_count":2},"budget_ledger":annotagent_core::BatchBudgetLedger::default(),"lease_owner":null,"lease_expires_at":null,
+            "event_sequence":0,"created_at":chrono::Utc::now(),"updated_at":chrono::Utc::now()
+        })).unwrap();
+        application
+            .store()
+            .create_batch(
+                batch,
+                &[(annotagent_core::ImageId::new(), "TEST.png".into())],
+            )
+            .unwrap();
+        application
+            .store()
+            .reserve_batch_model_call(batch_id)
+            .unwrap();
+        let Json(recovered) = processing_operations::confirm(
+            State(state.clone()),
+            AxumPath("TEST".into()),
+            Json(serde_json::from_value(input.clone()).unwrap()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(recovered["phase"], "started");
+        assert_eq!(recovered["batch_id"], json!(batch_id));
+        assert_eq!(
+            application.store().get_batch(batch_id).unwrap().status,
+            annotagent_core::BatchStatus::Pending
+        );
+        assert_eq!(recovered["workflow_id"], "TEST-fixed-version");
+        let Json(duplicate) = processing_operations::confirm(
+            State(state.clone()),
+            AxumPath("TEST".into()),
+            Json(serde_json::from_value(input.clone()).unwrap()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(duplicate, recovered);
+        let mut conflict = input;
+        conflict["expected_revision"] = json!(2);
+        assert!(
+            processing_operations::confirm(
+                State(state),
+                AxumPath("TEST".into()),
+                Json(serde_json::from_value(conflict).unwrap())
+            )
+            .await
+            .is_err()
+        );
+        application
+            .store()
+            .reserve_batch_model_call(batch_id)
+            .unwrap();
+        assert!(
+            application
+                .store()
+                .reserve_batch_model_call(batch_id)
+                .is_err()
+        );
+    }
+
     async fn security_headers(
         service: &Router,
         method: &axum::http::Method,

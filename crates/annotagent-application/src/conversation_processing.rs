@@ -15,6 +15,23 @@ pub struct ConversationProcessingContext {
 }
 
 impl LocalApplication {
+    pub fn conversation_task_budget(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+    ) -> Result<annotagent_storage::ConversationTaskBudget> {
+        if !self
+            .conversation_tasks(project, conversation)?
+            .iter()
+            .any(|item| item.input.id == task)
+        {
+            bail!("Budget task does not belong to this conversation");
+        }
+        Ok(self
+            .store
+            .conversation_task_budget(&self.conversation_project_identity(project)?, task)?)
+    }
     /// Derive ownership from the persisted sample command; never trust active UI selection.
     /// A later Schema revision does not reinterpret the exact revision tested by this Draft.
     pub fn conversation_processing_context(

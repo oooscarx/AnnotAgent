@@ -21,6 +21,14 @@
 .conversation-status { padding: 8px clamp(12px,2vw,24px); margin: 0; }
 .conversation-schema-card, .conversation-consent, .conversation-proposal-result { display: grid; gap: 12px; min-width: 0; overflow-wrap: anywhere; }
 .conversation-schema-card { padding-block: 16px; border-block-start: 1px solid var(--aa-border); }
+.conversation-processing { min-width: 0; padding-block: 16px; border-block-start: 1px solid var(--aa-border); }
+.conversation-processing .journey-scene { padding: 0; min-width: 0; }
+.conversation-processing .journey-actions { position: static; display: flex; flex-wrap: wrap; gap: 10px; padding: 12px 0; }
+.conversation-processing .journey-consent, .conversation-processing .journey-intro { min-width: 0; overflow-wrap: anywhere; }
+.conversation-processing .journey-intro h2 { font-size: 1.35rem; line-height: 1.3; letter-spacing: normal; margin: 0; }
+.conversation-processing .journey-intro p { font-size: .95rem; line-height: 1.5; margin-block: 10px; }
+.conversation-processing .journey-consent { padding: 12px; display: grid; gap: 12px; }
+.conversation-processing .journey-consent h3 { font-size: 1rem; line-height: 1.4; margin: 0; }
 .conversation-schema-card h3 { margin: 0; }
 .conversation-panel > [aria-label="Human requests"] { display: grid; gap: 14px; min-width: 0; }
 .conversation-panel > [aria-label="Human requests"] h3 { margin: 0; }

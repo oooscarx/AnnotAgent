@@ -10,7 +10,7 @@ mod conversation_schema;
 mod conversation_tasks;
 pub use conversation_calls::{
     ConversationCallAdmission, ConversationCallBudget, ConversationCallGrant,
-    ConversationCallReceipt, ConversationCallStatus,
+    ConversationCallReceipt, ConversationCallStatus, ConversationTaskBudget,
 };
 pub use conversation_human_requests::{
     ConversationHumanRequest, ConversationHumanRequestInput, ConversationHumanRequestStatus,

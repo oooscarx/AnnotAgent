@@ -27,9 +27,9 @@ describe("guided workspace routing", () => {
     expect(routeFocusKey(route)).toBe(routeFocusKey(parseWorkspaceRoute(url.pathname,"?image=another")));
   });
   it("keeps a human request bound to its task and exact sample on refresh",()=>{
-    const path=projectWorkPath("project",{conversationId:"conversation",taskId:"task",humanRequestId:"request",draftId:"draft",sampleTestId:"test",imageId:"image"});
+    const path=projectWorkPath("project",{conversationId:"conversation",taskId:"task",humanRequestId:"request",draftId:"draft",sampleTestId:"test",imageId:"image",processingOperationId:"confirmation"});
     const url=new URL(path,"http://localhost");
-    expect(parseWorkspaceRoute(url.pathname,url.search)).toMatchObject({kind:"conversation",taskId:"task",humanRequestId:"request",draftId:"draft",sampleTestId:"test",imageId:"image",canonicalPath:path});
+    expect(parseWorkspaceRoute(url.pathname,url.search)).toMatchObject({kind:"conversation",taskId:"task",humanRequestId:"request",draftId:"draft",sampleTestId:"test",imageId:"image",processingOperationId:"confirmation",canonicalPath:path});
   });
   it("accepts only a typed same-project revision return for model setup", () => {
     const path = projectJourneyPath("project", "model", { returnScene: "revise", draftId: "draft", sampleTestId: "test", imageId: "image" });

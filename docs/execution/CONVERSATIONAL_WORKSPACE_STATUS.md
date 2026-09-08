@@ -1217,3 +1217,55 @@ The UI explicitly states that starting processing there is not connected; no fak
 confirmation control was added. This increment proves the existing service can execute the
 conversation's frozen plan and be recovered from its task, not the entire requested journey.
 No real workspace mutation/restart, push or remote change. Goal remains active.
+
+### Conversation confirmation and cumulative task accounting (M4 increment)
+
+The saved-sample workspace now opens the existing `JourneyConfirm` component in the
+conversation column. It shows the tested Schema/plan revision, image range, model destination,
+unknown price, prior task usage, additional bounded allocation and Sandbox-feedback warning.
+The explicit checkbox/button invokes the existing publication/Batch service. Success stays
+on the same image and receipt; opening processing results remains a separate visible action.
+The `processing` query carries preview/operation identity through refresh and Back. The
+standalone confirmation route still uses the same component and existing navigation.
+
+Accounting reuses—not replaces—the existing cumulative planning/sample grant and atomic
+Batch allowances. An owned task ledger view sums planning reservations and all explicitly
+confirmed processing allocations/reservations, including failed/in-doubt planning requests.
+Each phase keeps its enforced sub-cap; new processing consent adds a bounded allocation,
+never resets prior spend or grants each nested call an independent budget. This is call-count
+accounting, not a monetary estimate or a new Project-wide lifetime spending limit. The latter
+must not be inferred from this task-level view. Ledger scope participates in confirmation
+fingerprinting, so changes before first admission require renewed scope review.
+
+The Batch allowance is created with the Batch transaction. Ledger reads join by its durable
+operation ID, even if a crash prevented saving the final started receipt. Confirmation retries
+first recover an already-created Batch after validating the original request key/body, without
+reauthorizing against a now-changed usage snapshot, restarting it or publishing again. A new
+server regression deliberately leaves a pending Batch and a published receipt with missing
+current Draft data: retry restores its receipt and leaves the Batch pending. It also checks
+conflicting bodies and preserved exhausted allowance. Conversation processing freezes Provider
+transport retries to zero; Runtime retry attempts and local plugins still pass through the
+existing allowance. Legacy non-conversation processing behavior is unchanged.
+
+UI checks caught an oversized inherited confirmation heading and composer overlap; embedded
+heading/spacing were reduced and the composer is temporarily hidden while confirmation is
+active (unsent text state is retained; Back returns to the sample conversation). The mobile
+confirmation remains scrollable with visible scope/checkbox/actions, no horizontal overflow.
+Long historical card stacks still need the broader conversation-density refinement.
+
+Final evidence: `conversation-samples.spec.ts` **3/3 passed** in
+`/tmp/annotagent-guided-e2e-1951`, now using the actual UI confirmation for bbox, normal
+classification and review classification. It loses the POST response intentionally, reloads
+the same receipt, retries without a second Batch, verifies exactly one added processing call
+and preserved planning spend, checks frozen transport retries = 0, then opens results and
+returns to the exact workspace URL. `journey-ready.spec.ts` **1/1 passed** for the pre-existing
+standalone flow. Storage **53 unit + 16 integrations**, Application **99 passed / 1 billable
+ignored**, Server **37/37**, strict relevant Clippy, Web typecheck, **108/108** unit tests,
+production build, formatting and diff checks passed (known production chunk warning remains).
+Inspected `processing-confirm-bbox.png` and `processing-confirm-390.png` in
+`conversational-workspace/`. TEST transport/synthetic image evidence is not Live quality or
+真人可用性 evidence; neither was executed. No push, remote change or real workspace mutation.
+
+Next: bring live Batch status/control and formal Review/export back into the conversation,
+finish broader intent/reference/setup handling, and complete default-entry and M4 audits.
+This closes the explicit start action, not the entire Conversational Workspace objective.

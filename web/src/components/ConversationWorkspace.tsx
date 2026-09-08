@@ -6,13 +6,14 @@ import "./conversation-workspace.css";
 import { ConversationSchemaCard } from "./ConversationSchemaCard";
 import { ConversationSampleCanvas } from "./ConversationSampleCanvas";
 import { ConversationRepairCard } from "./ConversationRepairCard";
+import { JourneyConfirm } from "./JourneyConfirm";
 import { conversationSampleRelation } from "../conversation-context";
 import type { HumanRequest } from "../conversation-human-api";
 
 /** The journal and image importer share the existing Project; neither starts inference. */
-export function ConversationWorkspace({ project, conversationId, imageId, draftId, sampleTestId, taskId, humanRequestId, onNavigate, onNavigationGuardChange }: {
+export function ConversationWorkspace({ project, conversationId, imageId, draftId, sampleTestId, taskId, humanRequestId, processingOperationId, onNavigate, onNavigationGuardChange }: {
   project: ProjectSummary; conversationId?: string; imageId?: string; draftId?:string; sampleTestId?:string;
-  taskId?:string; humanRequestId?:string;
+  taskId?:string; humanRequestId?:string; processingOperationId?:string;
   onNavigate: (path: string) => void;
   onNavigationGuardChange: (guard?: () => boolean) => void;
 }) {
@@ -42,7 +43,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
       processing:await api.conversationProcessing(project.id,conversation,task.input.id,controller.signal),
     })))).then(values=>{if(!controller.signal.aborted){setRequests(values.flatMap(value=>value.requests));setProcessing(values.flatMap(value=>value.processing));setRequestsReady(true);}}).catch((error:Error)=>{if(!controller.signal.aborted)setError(error.message);});
     return()=>controller.abort();
-  },[project.id,conversation,sampleTestId,requestRefresh]);
+  },[project.id,conversation,sampleTestId,processingOperationId,requestRefresh]);
   const updateRequest=(value:HumanRequest)=>setRequests(items=>items.map(item=>item.input.id===value.input.id ? value : item));
   async function cancelRequest(value:HumanRequest){
     if(value.input.id===humanRequestId && sampleDirty.current && !window.confirm("Discard unsaved correction and cancel this request?"))return;
@@ -154,7 +155,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
       <section className="conversation-panel" aria-label="Project conversation">
         <h2>What would you like to annotate?</h2>
         <p className="muted">Describe your goal before or after uploading images.</p>
-        <p className="conversation-development-note">Workspace integration in progress: label proposals, sample tests, corrections and processing history share saved server state. Starting dataset processing from this conversation is not connected yet.</p>
+        <p className="conversation-development-note">Samples and corrections are evaluations, not formal annotations. Dataset processing needs your explicit image and budget confirmation. Advanced review and export remain in the saved processing results.</p>
         <ol className="conversation-messages" aria-label="Saved messages">
           {messages.map((message) => <li key={message.input.id}><p>{message.input.text}</p>{message.input.image && <button onClick={() => {
             const reference = message.input.image;
@@ -163,6 +164,12 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
             openImage(image.image_id);
           }}>Referenced image · {images.find((image) => image.image_id === message.input.image?.image_id)?.name ?? message.input.image.image_id}</button>}<small>Saved · {message.sequence}</small></li>)}
         </ol>
+        {conversation && draftId && sampleTestId && <section className="conversation-processing" aria-label="Process this dataset">
+          {processingOperationId ? <JourneyConfirm key={`${draftId}:${sampleTestId}`} projectId={project.id} draftId={draftId} testId={sampleTestId} imageId={imageId} operationId={processingOperationId==="preview" ? undefined : processingOperationId} expectedConversation={conversation} stayOnReceipt
+            confirmationPath={id=>projectWorkPath(project.id,{conversationId:conversation,draftId,sampleTestId,imageId,taskId,humanRequestId,processingOperationId:id})}
+            backPath={projectWorkPath(project.id,{conversationId:conversation,draftId,sampleTestId,imageId,taskId,humanRequestId})} onNavigate={onNavigate} />
+          : <button disabled={repairEditing} onClick={()=>onNavigate(projectWorkPath(project.id,{conversationId:conversation,draftId,sampleTestId,imageId,taskId,humanRequestId,processingOperationId:"preview"}))}>Review dataset processing</button>}
+        </section>}
         {processing.length>0 && <section className="conversation-consent" aria-label="Saved processing tasks"><h3>Processing tasks</h3>{processing.map(operation=><article className="conversation-consent" key={operation.id}>
           <h4>{operation.authorization.goal.goal || operation.authorization.plan_name}</h4>
           <p>{operation.phase==="started" ? "Processing was started. Open its saved results for current progress." : operation.phase==="published_start_failed" ? "Plan published; processing did not start." : `Saved operation: ${operation.phase}`}</p>
@@ -173,12 +180,12 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
         {conversation && <section aria-label="Human requests"><h3>Requests for your help</h3><button onClick={()=>{if(sampleDirty.current){setError("Save or undo this correction before refreshing requests.");return;}setRequestRefresh(value=>value+1);}}>Refresh requests</button>{requests.map(value=><article key={value.input.id} className="conversation-consent"><p>{value.input.question}</p><p>{value.resume_draft_id ? "Correction saved · revision Draft available" : value.status==="answered" ? "Correction saved · awaiting task continuation" : value.status}</p>{value.resume_error && <p role="alert">Correction saved, but Draft preparation failed: {value.resume_error}</p>}<button onClick={()=>void openRequest(value)}>Open requested result</button>{value.status==="answered" && <button onClick={()=>void retryContinuation(value)}>Retry Draft preparation</button>}{value.resume_draft_id && <button onClick={()=>onNavigate(projectBuildPath(project.id,"pipeline",{draftId:value.resume_draft_id!}))}>Inspect revision Draft</button>}{value.status==="pending" && <button onClick={()=>void cancelRequest(value)}>Cancel request</button>}</article>)}</section>}
         {conversation && messages[0] && <ConversationSchemaCard key={`${conversation}:${messages[0].input.id}`} project={project.id} conversation={conversation} message={messages[0].input.id} onDirtyChange={schemaDirtyChange} onAssistance={assistanceChanged} onSample={(draft,test,image)=>void openSample(draft,test,image)} />}
         {activeRequest?.status==="applied" && activeRequest.resume_draft_id && <ConversationRepairCard key={activeRequest.input.id} project={project.id} request={activeRequest} editing={repairEditing} onAssistance={assistanceChanged} onSample={(draft,test,image)=>void openSample(draft,test,image)} />}
-        <form onSubmit={(event) => { event.preventDefault(); void send(); }} className="conversation-composer">
+        {!processingOperationId && <form onSubmit={(event) => { event.preventDefault(); void send(); }} className="conversation-composer">
           <label htmlFor="conversation-message">Your message</label>
           <textarea id="conversation-message" value={text} disabled={busy || Boolean(frozen.current)} rows={3} placeholder="Find cups, but not bottles" onChange={(event) => { unsent.current = event.target.value; setText(event.target.value); }} />
           <small>{referenceImage ? `Image reference: ${referenceImage.name}` : "No image reference · Project-level message"}</small>
           <button className="primary" disabled={!ready || busy || !text.trim()} type="submit">{busy ? "Saving…" : frozen.current ? "Retry saving message" : "Save message"}</button>
-        </form>
+        </form>}
       </section>
       <div className="conversation-divider" role="separator" aria-label="Resize conversation panel" aria-orientation="vertical" tabIndex={0} aria-valuemin={25} aria-valuemax={50} aria-valuenow={width}
         onKeyDown={(event) => { if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); setWidth((current) => Math.max(25, Math.min(50, current + (event.key === "ArrowRight" ? 2 : -2)))); } }}

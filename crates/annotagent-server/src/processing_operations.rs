@@ -133,6 +133,13 @@ fn scope(
         "sample_images_are_sandbox_only":true,"review_policy":"Uncertain results stay in Review. This action does not accept every output.",
     });
     if let Some(context) = conversation {
+        value["provider_transport_retries"] = json!(0);
+        value["task_budget"] = json!(
+            state
+                .application
+                .conversation_task_budget(project, context.conversation_id, context.task_id)
+                .map_err(ApiError::bad_request)?
+        );
         value["goal"] = json!({"goal": context.schema.definition.goal});
         value["conversation"] = json!(context);
     }
@@ -163,6 +170,17 @@ pub(super) async fn conversation_history(
     state
         .application
         .conversation_processing_history(&project, conversation, task)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
+pub(super) async fn conversation_budget(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+) -> ApiResult<Json<annotagent_storage::ConversationTaskBudget>> {
+    state
+        .application
+        .conversation_task_budget(&project, conversation, task)
         .map(Json)
         .map_err(ApiError::bad_request)
 }
@@ -213,6 +231,27 @@ pub(super) async fn confirm(
             .map_err(ApiError::bad_request)?;
         if value["phase"] == "started" {
             return Ok(Json(owned(&state, &project, &input.request_id)?));
+        }
+        // Recover the already-created allocation before recomputing a preview whose ledger
+        // now includes this Batch. No model call or restart is permitted by this read recovery.
+        if let Ok(batch) = state
+            .application
+            .store()
+            .get_batch(parse_batch_id(&input.request_id)?)
+        {
+            if batch.project_id != project {
+                return Err(ApiError::bad_request("Batch ownership mismatch"));
+            }
+            let mut receipt = value.clone();
+            receipt["phase"] = json!("started");
+            receipt["batch_id"] = json!(batch.id);
+            receipt["error"] = Value::Null;
+            state
+                .application
+                .store()
+                .update_processing_operation(&input.request_id, &receipt)
+                .map_err(ApiError::internal)?;
+            return Ok(Json(receipt));
         }
     }
     let settings = state.settings.read().await.clone();
@@ -351,6 +390,11 @@ async fn execute_confirmation(
             .await?;
     let mut execution_settings = settings.clone();
     execution_settings.budget.max_requests = authorization["maximum_model_calls"].as_u64();
+    if authorization.get("conversation").is_some() {
+        // Runtime attempts pass through the durable Batch allowance; provider-internal
+        // retries would evade that boundary, so disable them in the frozen settings.
+        execution_settings.provider.max_retries = 0;
+    }
     let confirmed = ConfirmedBatchScope {
         id: batch_id,
         settings: execution_settings,
