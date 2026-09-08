@@ -4899,3 +4899,30 @@ status prose as proof. Current evidence boundaries:
 The automatic improvement continuation row is a fidelity issue to resolve explicitly,
 not permission to increase budgets or silently extend old consent. The overall goal
 remains active. No remote changes, push, credentials or real workspace mutations.
+
+### 2026-09-09 — Repair continuation reuse, verified while round 5 runs
+
+Round 5 handle 36529 is still live; tests 1–31 have passed. The previous Rust handle
+16894 is terminal/successful and must not be restarted merely to observe it again.
+
+Current-source tracing identifies the exact integration seam: joint Journey preview,
+save validation and dispatch hard-code `BuilderSelection.repair_request_id: None`.
+The standalone Builder already resolves an owned `ConversationBuilderRepair` containing
+request ID, Draft ID, revision and content hash. Its scope hash includes that evidence;
+launch rejects changed evidence, and persisted-operation retries compare the full frozen
+execution hash. Journey's existing sample seal already prevents changing the generated
+Draft/model/image allowance on retry. Reuse these services and gates.
+
+Important implementation constraint: storing only a request ID and re-resolving its latest
+Draft at retry is insufficient. The Builder itself may have advanced the editable Draft;
+the original repair snapshot must remain part of the acknowledged consent/child request.
+Old consent JSON must deserialize without any new repair permission. Initial Schema
+proposal and exact repair are distinct sources and must not be accepted together. One
+post-correction joint confirmation can replace the current two confirmations, but does
+not by itself prove pre-authorized automatic improvement after a future answer; that
+broader allowance still requires explicit bounded scope, expiry and shared budget.
+
+Required follow-up tests are exact repair snapshot preservation, changed-source rejection,
+lost acknowledgement and restart, revoked/expired permission, sample model/image expansion
+rejection, and no repair inference from GET/reload or legacy consent. No product rebuild or
+source mutation was made against the currently running round 5 server.
