@@ -1,6 +1,8 @@
 //! Shared application service used by CLI/TUI and HTTP frontends.
 
 mod conversation_builder;
+mod conversation_journey;
+pub use conversation_journey::{ConversationJourneyDataScope, JourneyModelDescription};
 mod conversation_human_requests;
 mod conversation_processing;
 mod conversation_provider;
@@ -17336,6 +17338,13 @@ impl LocalApplication {
                 binding.starts_with("plugin:") || binding.starts_with("model-instance:")
             })
             .collect::<BTreeSet<_>>();
+        self.freeze_plugin_model_selections(referenced)
+    }
+
+    fn freeze_plugin_model_selections(
+        &self,
+        referenced: BTreeSet<&str>,
+    ) -> Result<Vec<PluginModelSnapshot>> {
         if referenced.is_empty() {
             return Ok(Vec::new());
         }

@@ -372,7 +372,7 @@ impl LocalApplication {
                 Some(execution.operation_id),
             )
             .await?;
-        self.store.settle_conversation_builder(&owner,execution.task_id,execution.operation_id,true,&serde_json::json!({"session_id":report.session.id,"draft_id":report.suggestion.as_ref().map(|suggestion|&suggestion.draft.id),"outcome":report.session.outcome,"schema_id":execution.schema_id,"schema_revision":execution.schema_revision,"published":false,"samples_tested":false}))?;
+        self.store.settle_conversation_builder(&owner,execution.task_id,execution.operation_id,true,&serde_json::json!({"session_id":report.session.id,"draft_id":report.suggestion.as_ref().map(|suggestion|&suggestion.draft.id),"draft_revision":report.suggestion.as_ref().map(|suggestion|suggestion.draft.revision),"draft_content_hash":report.suggestion.as_ref().map(|suggestion|&suggestion.draft.content_hash),"outcome":report.session.outcome,"schema_id":execution.schema_id,"schema_revision":execution.schema_revision,"published":false,"samples_tested":false}))?;
         self.store
             .conversation_builder_operation(&owner, execution.task_id, execution.operation_id)?
             .ok_or_else(|| anyhow!("Builder receipt missing"))

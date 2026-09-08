@@ -2529,3 +2529,44 @@ seal; revoking that saved seal also rejects late continuation. Final storage cou
 and 16 integration tests. Server-target all-feature/all-target Clippy additionally compiles the
 Application/Server dependency chain. This migration was exercised only in fresh temporary test
 databases, not the user's running workspace. Live and human tests remain unexecuted.
+
+### M2 coordinator integration — derive and revalidate actual Application snapshots
+
+Added Application services over the stored consent. The data scope reads this task's current
+saved Schema and the existing bounded sampler's first 1–3 live images with stable IDs and fresh
+content hashes. Explicit model selections resolve to actual frozen Registry Model Profiles or
+installed native model snapshots. Remote binding hashes include frozen model semantics plus
+destination/routing/connection policy and credential reference (never credential bytes); ordinary
+health-check timestamps do not invalidate consent. Native selections reuse publication's exact
+Plugin/Model Instance readiness/package/asset checks, with declared Plugin permissions included
+in the scope and display data. This does not install anything or grant Plugin permissions.
+
+`seal_conversation_journey_draft` now checks that the proposed Draft is this consent's actually
+completed Builder result, with unchanged revision/content hash, before deriving its current
+image/model/Schema scope and using the atomic storage seal. Builder receipts now persist those
+exact Draft revision/hash fields. Old receipts lacking the identity cannot silently qualify for
+automatic execution; their existing manual sample path is unchanged. Runtime static checks,
+supported-binding checks, server-computed sample fingerprint, call admission and scope seals
+still belong to the existing execution path and are required before a sample can start.
+
+The new test uses an isolated no-network TEST Registry and synthetic image. It proves actual
+snapshot resolution, missing/duplicate/foreign bindings rejection, endpoint/availability/image
+bytes/Schema-revision invalidation and stable health timestamps. A scope-only Draft/Builder receipt
+fixture checks successful sealing and rejection after editing; it is explicitly not inference or
+quality evidence. Initial disabled-Provider test data violated the existing Disabled-health rule;
+corrected that fixture. A later test used nonexistent `Settings::default`; corrected to the
+existing embedded-default loader, without reading real user config or credentials.
+
+Application all-feature tests passed 101 unit + 1 integration, with the paid Provider smoke
+explicitly ignored. The added final scope-seal test and Application all-target/all-feature Clippy
+passed. Remote and native publication/runtime regressions were included in the Application suite,
+but no real weights/Live inference claim is made. Browser classification/bbox paths now assert the
+real HTTP TEST Builder receipt matches its saved Draft revision/hash before any sample execution.
+HTTP joint-consent routes, coordinator dispatch/recovery and GUI consent are still not connected;
+these Application methods do not yet replace the manual phase cards. Full objective remains open.
+
+Browser `/tmp/annotagent-guided-e2e-31402` passed classification + bbox 2/2 in 34.6 seconds,
+including actual Builder revision/hash receipts, normal sample execution and unknown-response
+recovery. Its production Web build passed with the existing chunk-size warning. No visual layout
+changed in this layer, so regenerated unrelated screenshots are not part of the implementation
+commit. No real workspace, old keys, Live/human tests, push or remote changes.

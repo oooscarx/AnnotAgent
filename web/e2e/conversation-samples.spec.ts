@@ -93,7 +93,14 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
     await expect(authorization).toContainText("Project has 64 calls remaining");
     await page.getByRole("checkbox",{name:/Allow this bounded Builder request/}).check();
   }
+  const builderReceiptPromise=page.waitForResponse(response=>response.url().endsWith("/builder-operations")&&response.request().method()==="POST");
   await page.getByRole("button",{name:"Build Pipeline Draft",exact:true}).click();
+  const builderReceipt=await (await builderReceiptPromise).json();
+  expect(builderReceipt.status).toBe("completed");
+  const builtDraft=(await (await request.get(`/api/workflow-drafts?project_id=${project}`)).json()).drafts.find((draft:{id:string})=>draft.id===builderReceipt.evidence.draft_id);
+  expect(builtDraft).toBeTruthy();
+  expect(builderReceipt.evidence.draft_revision).toBe(builtDraft.revision);
+  expect(builderReceipt.evidence.draft_content_hash).toBe(builtDraft.content_hash);
   if(scenario==="human-classification"){
     await expect(page.getByRole("button",{name:"Review sample authorization",exact:true})).toBeEnabled();
     const current=await (await request.get(`/api/projects/${project}/conversation-call-limit`)).json();
