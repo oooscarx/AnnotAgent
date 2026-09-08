@@ -4926,3 +4926,80 @@ Required follow-up tests are exact repair snapshot preservation, changed-source 
 lost acknowledgement and restart, revoked/expired permission, sample model/image expansion
 rejection, and no repair inference from GET/reload or legacy consent. No product rebuild or
 source mutation was made against the currently running round 5 server.
+
+### 2026-09-09 — Round 5 first failure: long-card screenshot positioning
+
+Test 39 failed at its last viewport assertion, after its Schema save, revision/diff,
+unchanged original state and no-repeat-call assertions had passed. Error context reports
+`Review build and sample authorization` viewport ratio 0 after centering the entire
+long Future rule card. Inspected the real failure PNG: saved state and comparison occupy
+the independently scrolling history; the composer remains visible and the next-action
+button is below that scroll viewport. Centering a card taller than the history cannot
+prove all descendants fit simultaneously.
+
+Trace, error context and PNG are preserved at
+`/tmp/annotagent-round5-future-trace-pDvudU/`. The test now captures the saved-state view,
+then scrolls to the actual action, requires full visibility and performs a Playwright
+trial click (no authorization or inference). No product layout, permission or persistence
+assertion was weakened. This edited test is **not yet rerun**: full handle 36529 remains
+live, through test 46 with that single failure. Wait for termination before a fresh run;
+do not claim the screenshot fix passed based on inspection alone.
+
+### 2026-09-09 — Round 5 terminal evidence and recovery repairs
+
+Full handle 36529 is terminal, exit 1: **139 passed, 7 failed, 26 did not run (26.1m)**.
+All failure artifacts were archived before rerun at
+`/tmp/annotagent-round5-traces-MXvleH/test-results`. The seven failures comprise two
+long-card viewport assumptions, two missing-reference expectations, a manual-label
+request-list wait, a journal upload wait, and a historical dashboard-page assumption.
+
+Missing-reference failure exposed a product bug: exact optional reference GET failed
+bootstrap before messages/images were committed, leaving the valid task and canvas in
+Loading indefinitely. History loading now distinguishes mandatory task source failure
+from optional reference failure. The latter preserves valid context and reports the
+error; the canvas's existing exact-scope guard refuses substitution. A new unit test
+verifies that distinction; typecheck and all **227 Web tests pass**.
+
+The journal trace shows repeated image-upload 429s during the test fixture's bounded
+pre-execution pacing, while its UI assertion expired after 10 seconds. Its observation
+now permits that existing 65-second window (75-second expectation), not extra Provider
+retries. The manual-label test had the same explicit 10-second override over this suite's
+documented 75-second observer; removed that override, but its failure had no saved trace,
+so rate limiting is not asserted as independently proven there. Both require rerun.
+The historical publication assertion now reads the exact Project summary rather than
+assuming its Project exists on the first dashboard page. Long-card tests scroll to the
+action and require a full-visibility trial click; all data and permission assertions remain.
+
+Fresh affected-file browser run **80890** is live, evidence under
+`/tmp/annotagent-round5-repairs`. It covers future Schema/model proposals, complete sample
+flows, journal and Guided Workspace regression. Do not rebuild/restart while it runs.
+No browser-pass claim for these repairs yet; changes await that verification/local commit.
+
+During rerun 80890, the previously failing future-model long-card test passed (test 9,
+1.8s). Inspected `/tmp/annotagent-round5-repairs/conversational-workspace/future-model-proposal-next-action.png`:
+the full next-action button is visible in the history pane and the composer remains
+separate and accessible. The optional-reference recovery implementation and its unit
+regression are committed as `d483800` (227 unit tests/typecheck passed). Browser/test
+adjustments and this record remain pending until the affected-file run completes;
+through test 12 no failures have been reported. Handle 80890 remains live.
+
+### 2026-09-09 — Affected-file rerun terminal; all conversation repairs pass
+
+Handle 80890 completed exit 1: **38 passed, 1 failed, 26 not run (7.7m)**. Both long-card
+tests, all nine full conversation sample scenarios (including classification-review,
+human classification and human bbox), journal upload/recovery and image index passed.
+This verifies the optional-reference fix through actual missing/wrong-image deep links,
+not merely the loader unit test. The conversation test adjustments can now be committed.
+
+The remaining Guided publication test failed on its Project summary shape assertion.
+Source currently destructures `{ project }` from the owned summary response; this line
+was corrected after the prior run had begun. A fresh run is required before attributing
+failure to a current server bug. Archived its artifacts and other remaining outputs at
+`/tmp/annotagent-round5-guided-trace-bMGz5E/test-results`.
+
+An accidental root-directory `npx playwright` invocation (99158) terminated with a test
+runner version/config mismatch and ran no tests; package manifests/lockfiles are unchanged.
+The corrected command uses `web/node_modules/.bin/playwright` from `web`. Current handle
+**46539** runs the complete Guided Workspace file against a fresh isolated workspace,
+evidence `/tmp/annotagent-guided-summary-repair`. Do not count either failed invocation
+as a passing check. No real workspace/remote/credential changes or push.

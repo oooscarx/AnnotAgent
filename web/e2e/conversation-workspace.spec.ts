@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { expect, test } from "./fixtures";
 
 test("conversation journal restores, freezes image references and retries without inference", async ({ page, request }) => {
+  test.setTimeout(180_000);
   const project = `conversation-test-${Date.now()}`;
   const yaml = "version: 1\nproject:\n  name: TEST conversation workspace\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n";
   expect((await request.post("/api/projects", { data: { id: project, yaml } })).ok()).toBeTruthy();
@@ -20,7 +21,7 @@ test("conversation journal restores, freezes image references and retries withou
   await expect(page.getByRole("list", { name: "Saved messages" })).toContainText("TEST find cups, not bottles");
   const conversation = (await (await request.get(root)).json()).conversation_id;
   await page.getByLabel("Add images", { exact: true }).setInputFiles(resolve("../examples/robocup/images/synthetic-robocup.png"));
-  await expect(page.getByText("Images saved on this server. This upload did not start inference.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Images saved on this server. This upload did not start inference.", { exact: true })).toBeVisible({ timeout: 75_000 });
   const images = (await (await request.get(`/api/projects/${project}/images`)).json()).images;
   await page.getByLabel("Your message", { exact: true }).fill("TEST inspect this image");
   await page.route(`**${root}/${conversation}/messages`, async (route) => {

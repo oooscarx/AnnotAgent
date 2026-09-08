@@ -180,7 +180,10 @@ test(`future ${bbox?"bbox":"classification"} Schema UI restores the explicit for
   }else{
     await wideEvidence(page,card);
     await expect(card.getByLabel("Future task goal",{exact:true})).toBeInViewport();
-    await expect(card.getByRole("button",{name:"Save future rule draft",exact:true})).toBeInViewport();
+    const save = card.getByRole("button",{name:"Save future rule draft",exact:true});
+    await save.scrollIntoViewIfNeeded();
+    await expect(save).toBeInViewport({ratio:1});
+    await save.click({trial:true});
     await page.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/future-schema-classification-form.png"),animations:"disabled"});
     await page.setViewportSize({width:1280,height:800});
   }

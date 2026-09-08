@@ -312,8 +312,14 @@ test("future bbox proposal stays editable, preserves removed-label evidence and 
   await expect(divider).toHaveAttribute("aria-valuenow", "50");
   await card.evaluate(element => element.scrollIntoView({ block: "center" }));
   await expect(card.getByText("Future rule draft saved", { exact: true })).toBeInViewport();
-  await expect(builder.getByRole("button", { name: "Review build and sample authorization", exact: true })).toBeInViewport();
   await page.screenshot({ path: isolatedEvidencePath("../docs/execution/conversational-workspace/future-model-proposal-human-reviewed.png"), animations: "disabled" });
+  // The saved comparison can exceed the independently scrolling history pane.
+  // Prove the next action is reachable, not that the entire long card fits at once.
+  const next = builder.getByRole("button", { name: "Review build and sample authorization", exact: true });
+  await next.scrollIntoViewIfNeeded();
+  await expect(next).toBeInViewport({ ratio: 1 });
+  await next.click({ trial: true });
+  await page.screenshot({ path: isolatedEvidencePath("../docs/execution/conversational-workspace/future-model-proposal-next-action.png"), animations: "disabled" });
 });
 
 test("future proposal authorization with a lost ACK restores the original call before any explicit execution", async ({ page, request }) => {
