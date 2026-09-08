@@ -114,6 +114,25 @@ mod control_tests {
         ));
     }
     #[test]
+    fn image_class_controls_do_not_turn_answers_or_resume_into_control_bypasses() {
+        let id = Uuid::new_v4();
+        let root =
+            format!("/api/projects/test/conversations/{id}/tasks/{id}/image-class-reviews/{id}");
+        assert!(is_execution_control(
+            &Method::POST,
+            &format!("{root}/cancel")
+        ));
+        for suffix in ["", "/answer", "/resume", "/cancel/extra"] {
+            let path = format!("{root}{suffix}");
+            assert!(!is_execution_control(&Method::POST, &path));
+            assert!(!is_expensive_action(&path));
+        }
+        assert!(!is_execution_control(
+            &Method::GET,
+            &format!("{root}/cancel")
+        ));
+    }
+    #[test]
     fn control_allowlist_rejects_resume_and_suffix_impostors() {
         let id = Uuid::new_v4();
         for path in [
@@ -452,7 +471,7 @@ fn is_execution_control(method: &Method, path: &str) -> bool {
             conversation,
             "tasks",
             task,
-            "calls" | "human-requests",
+            "calls" | "human-requests" | "image-class-reviews",
             id,
             "cancel",
         ]

@@ -1,6 +1,8 @@
 //! Offline application integration checks; all projects and images live in `TempDir`.
 #[path = "conversation_future_proposal_tests.rs"]
 mod future_proposal;
+#[path = "conversation_image_class_tests.rs"]
+mod image_class;
 use super::*;
 use crate::conversation_feedback_intent::{
     ConversationFeedbackDecision, ConversationFeedbackReason,
@@ -35,6 +37,23 @@ fn fixture(duplicate_candidate_id: bool) -> Fixture {
 }
 
 fn fixture_with_schema(duplicate_candidate_id: bool, sealed_schema: bool) -> Fixture {
+    fixture_with_schema_and_class_member(duplicate_candidate_id, sealed_schema, false)
+}
+
+fn fixture_with_schema_and_class_member(
+    duplicate_candidate_id: bool,
+    sealed_schema: bool,
+    same_class: bool,
+) -> Fixture {
+    fixture_with_schema_class_and_box(duplicate_candidate_id, sealed_schema, same_class, None)
+}
+
+fn fixture_with_schema_class_and_box(
+    duplicate_candidate_id: bool,
+    sealed_schema: bool,
+    same_class: bool,
+    rect: Option<[f32; 4]>,
+) -> Fixture {
     let temporary = tempfile::tempdir().unwrap();
     let app = LocalApplication::new(temporary.path()).unwrap();
     app.create_project(PROJECT, PROJECT_YAML).unwrap();
@@ -90,6 +109,12 @@ fn fixture_with_schema(duplicate_candidate_id: bool, sealed_schema: bool) -> Fix
     sample.draft_content_hash = baseline.content_hash;
     sample.inputs[0].image_id = image.image_id.to_string();
     sample.inputs[0].content_hash = image.content_hash.clone();
+    if let Some(rect) = rect {
+        sample.report.samples[0].projection.final_candidates[0]
+            .outcome
+            .value =
+            Some(serde_json::from_value(json!({"kind":"bounding_box","rect":rect})).unwrap());
+    }
     let selected = sample.report.samples[0].projection.final_candidates[0].clone();
     let mut unrelated = selected.clone();
     unrelated.source_artifact_id = annotagent_core::ArtifactId(Uuid::new_v4());
@@ -102,6 +127,18 @@ fn fixture_with_schema(duplicate_candidate_id: bool, sealed_schema: bool) -> Fix
         .final_candidates
         .insert(0, unrelated.clone());
     sample.report.samples[0].outcomes = vec![unrelated.outcome, selected.outcome.clone()];
+    if same_class {
+        let mut second = selected.clone();
+        second.outcome.id = "TEST second cup".into();
+        second.source_artifact_id = annotagent_core::ArtifactId(Uuid::new_v4());
+        sample.report.samples[0]
+            .outcomes
+            .push(second.outcome.clone());
+        sample.report.samples[0]
+            .projection
+            .final_candidates
+            .push(second);
+    }
     app.store.save_workflow_sample_test(&sample).unwrap();
     app.store
         .reserve_sample_operation_sealed(
@@ -297,6 +334,97 @@ fn feedback_authorization(
             expires_at: expiry,
         },
     }
+}
+
+#[test]
+fn persisted_feedback_context_comparison_keeps_full_identity_and_unknown_field_checks() {
+    let f = fixture_with_schema_class_and_box(false, false, false, Some([0.12, 0.2, 0.16, 0.22]));
+    let context = f.context();
+    let original = serde_json::to_value(&context).unwrap();
+    let persisted: serde_json::Value =
+        serde_json::from_slice(&serde_json::to_vec(&original).unwrap()).unwrap();
+    assert_ne!(original, persisted);
+    assert!(context.matches_saved_context(&original).unwrap());
+    assert!(context.matches_saved_context(&persisted).unwrap());
+    for (path, replacement) in [
+        ("/message/input/text", json!("TEST changed intent")),
+        ("/message/input/id", json!(Uuid::new_v4())),
+        (
+            "/message/input/reference/source_artifact_id",
+            json!(Uuid::new_v4()),
+        ),
+        ("/message/input/image/sha256", json!("0".repeat(64))),
+        ("/candidate/source_artifact_id", json!(Uuid::new_v4())),
+        ("/candidate/outcome/id", json!("TEST different candidate")),
+        ("/candidate/outcome/label", json!("bottle")),
+        ("/candidate/outcome/confidence", json!(0.5)),
+        ("/candidate/outcome/value/rect/0", json!(0.13)),
+        ("/candidate/lineage_id", json!("TEST different lineage")),
+        (
+            "/candidate/geometry",
+            json!("TEST changed geometry evidence"),
+        ),
+        (
+            "/candidate/localization",
+            json!("TEST changed localization evidence"),
+        ),
+        (
+            "/candidate/final_status",
+            json!("TEST changed status evidence"),
+        ),
+        ("/expected_feedback_sequence", json!(1)),
+        ("/sample_content_hash", json!("0".repeat(64))),
+        ("/pixels_supplied", json!(true)),
+    ] {
+        let mut changed = persisted.clone();
+        *changed.pointer_mut(path).unwrap() = replacement;
+        assert!(
+            !context.matches_saved_context(&changed).unwrap_or(false),
+            "Changed field was accepted: {path}"
+        );
+    }
+    for path in [
+        "",
+        "/message",
+        "/candidate",
+        "/candidate/outcome",
+        "/candidate/outcome/value",
+    ] {
+        let mut changed = persisted.clone();
+        changed
+            .pointer_mut(path)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .insert("unsupported_authority".into(), json!("delete all"));
+        assert!(
+            !context.matches_saved_context(&changed).unwrap_or(false),
+            "Unknown field was accepted at {path}"
+        );
+    }
+    let execution = f.execution();
+    let envelope = json!({"contract":"conversation-feedback-v1","subject":persisted,"remote_model":execution.remote_model,"scope_hash":execution.scope_hash});
+    assert!(
+        context
+            .matches_saved_envelope(&envelope, &execution)
+            .unwrap()
+    );
+    for key in ["contract", "remote_model", "scope_hash"] {
+        let mut changed = envelope.clone();
+        changed[key] = json!("TEST substituted scope");
+        assert!(
+            !context
+                .matches_saved_envelope(&changed, &execution)
+                .unwrap()
+        );
+    }
+    let mut changed = envelope;
+    changed["unsupported_authority"] = json!(true);
+    assert!(
+        !context
+            .matches_saved_envelope(&changed, &execution)
+            .unwrap()
+    );
 }
 
 #[test]

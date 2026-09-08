@@ -682,7 +682,7 @@ export function App() {
           />
         )}
         {loaded && route.kind === "conversation" && (
-          selectedProject ? <ConversationWorkspace key={route.projectId} project={selectedProject} referenceMessageId={route.referenceMessageId} conversationId={route.conversationId} imageId={route.imageId} draftId={route.draftId} sampleTestId={route.sampleTestId} taskId={route.taskId} humanRequestId={route.humanRequestId} processingOperationId={route.processingOperationId} results={route.results} onNavigate={navigate} onNavigationGuardChange={setNavigationGuard} />
+          selectedProject ? <ConversationWorkspace key={route.projectId} project={selectedProject} classReviewId={route.classReviewId} referenceMessageId={route.referenceMessageId} conversationId={route.conversationId} imageId={route.imageId} draftId={route.draftId} sampleTestId={route.sampleTestId} taskId={route.taskId} humanRequestId={route.humanRequestId} processingOperationId={route.processingOperationId} results={route.results} onNavigate={navigate} onNavigationGuardChange={setNavigationGuard} />
             : <NotFoundPage invalidPath={route.canonicalPath} onNavigate={navigate} />
         )}
         {loaded && route.kind === "journey" && (
@@ -728,6 +728,7 @@ export function App() {
             onError={setError}
           />
         )}
+        {loaded && route.kind === "build" && route.step === "pipeline" && route.workspaceReturn && <section className="conversation-consent conversation-setup-return" aria-label={t("Return to image-class review")}><p>{t("This revision Draft is separate from the saved sample. Returning does not run a model or apply the Draft.")}</p><button onClick={() => navigate(route.workspaceReturn!)}>{t("Return to image-class review")}</button></section>}
         {loaded && route.kind === "build" && route.step === "pipeline" && (
           <WorkflowsPage
             projects={projects}
@@ -744,10 +745,10 @@ export function App() {
             }
             onRefresh={refresh}
             onNavigate={(step, draftId) =>
-              navigate(projectBuildPath(route.projectId, step, { draftId }))
+              navigate(projectBuildPath(route.projectId, step, { draftId, workspaceReturn: route.workspaceReturn }))
             }
             onSelectContext={(context, replace) =>
-              navigate(projectBuildPath(route.projectId, "pipeline", context), replace)
+              navigate(projectBuildPath(route.projectId, "pipeline", { ...context, workspaceReturn: route.workspaceReturn }), replace)
             }
             onOpenProjects={() => navigate("/projects")}
             onOpenProject={() => openProject(route.projectId)}

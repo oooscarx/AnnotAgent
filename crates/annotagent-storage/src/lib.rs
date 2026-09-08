@@ -7,8 +7,14 @@ mod conversation_feedback;
 mod conversation_feedback_scope;
 mod conversation_future_schema;
 mod conversation_future_schema_proposal;
+mod conversation_image_class;
 pub use conversation_future_schema_proposal::{
     ConversationFutureSchemaProposalAuthorizationRecord, ConversationFutureSchemaProposalSource,
+};
+pub use conversation_image_class::{
+    ConversationImageClassAction, ConversationImageClassAnswerInput,
+    ConversationImageClassCreateInput, ConversationImageClassReview, ConversationImageClassScope,
+    ConversationImageClassStatus, conversation_image_class_effective_outcome,
 };
 mod conversation_stop;
 pub use conversation_feedback::{
@@ -662,6 +668,8 @@ impl SqliteStore {
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(47,'conversation_stop_requests',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute_batch(include_str!("../../../migrations/0048_conversation_future_schema_proposals.sql"))?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(48,'conversation_future_schema_proposals',?1)",[Utc::now().to_rfc3339()])?;
+            transaction.execute_batch(include_str!("../../../migrations/0049_conversation_image_class.sql"))?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(49,'conversation_image_class',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(41,'conversation_journey_dispatch',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(39,'conversation_human_deferrals',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(38,'conversation_task_selection',?1)",[Utc::now().to_rfc3339()])?;

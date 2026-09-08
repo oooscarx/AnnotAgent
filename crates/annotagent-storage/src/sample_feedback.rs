@@ -6,6 +6,7 @@ use super::{DateTime, OptionalExtension, SqliteStore, StorageError, Utc, params}
 pub enum SampleFeedbackReason {
     Correct,
     WrongTarget,
+    ExcludeTarget,
     PoorBoundary,
     MissingTarget,
     CannotJudge,
@@ -363,8 +364,31 @@ impl SqliteStore {
             test_id,
             project_id,
             copy_id,
-            Some(feedback_revision_id),
+            Some(&[feedback_revision_id.to_owned()]),
         )
+    }
+
+    /// Exact, immutable group evidence; unrelated revisions are never incorporated.
+    pub fn copy_sample_plan_for_feedback_revisions(
+        &self,
+        test_id: &str,
+        project_id: &str,
+        copy_id: &str,
+        revisions: &[String],
+    ) -> Result<annotagent_core::WorkflowDraft, StorageError> {
+        if revisions.is_empty()
+            || revisions.len() > 1024
+            || revisions
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                != revisions.len()
+        {
+            return Err(StorageError::InvalidEnum(
+                "Invalid bounded feedback revision set".into(),
+            ));
+        }
+        self.copy_sample_plan_with_feedback(test_id, project_id, copy_id, Some(revisions))
     }
 
     fn copy_sample_plan_with_feedback(
@@ -372,7 +396,7 @@ impl SqliteStore {
         test_id: &str,
         project_id: &str,
         copy_id: &str,
-        feedback_revision_id: Option<&str>,
+        feedback_revision_ids: Option<&[String]>,
     ) -> Result<annotagent_core::WorkflowDraft, StorageError> {
         let test = self
             .get_workflow_sample_test_by_id(test_id)?
@@ -388,10 +412,12 @@ impl SqliteStore {
                     "Copy key belongs to another sample".into(),
                 ));
             }
-            if let Some(revision) = feedback_revision_id {
+            if let Some(revisions) = feedback_revision_ids {
                 let saved: Vec<SampleFeedbackRevision> =
                     serde_json::from_value(evidence["feedback"].clone())?;
-                if saved.len() != 1 || saved[0].revision_id != revision {
+                if saved.len() != revisions.len()
+                    || saved.iter().any(|f| !revisions.contains(&f.revision_id))
+                {
                     return Err(StorageError::InvalidEnum(
                         "Copy key belongs to a different human feedback scope".into(),
                     ));
@@ -409,8 +435,13 @@ impl SqliteStore {
         for image in &test.inputs {
             feedback.extend(self.sample_feedback(test_id, &image.image_id)?);
         }
-        if let Some(revision) = feedback_revision_id {
-            feedback.retain(|item| item.revision_id == revision);
+        if let Some(revisions) = feedback_revision_ids {
+            feedback.retain(|item| revisions.contains(&item.revision_id));
+            if feedback.len() != revisions.len() {
+                return Err(StorageError::InvalidEnum(
+                    "A requested feedback revision is missing from this sample".into(),
+                ));
+            }
         }
         if feedback.is_empty() {
             return Err(StorageError::InvalidEnum(
@@ -418,7 +449,12 @@ impl SqliteStore {
             ));
         }
         let evidence = serde_json::to_string(&feedback)?;
-        if evidence.len() > 32_000 {
+        let maximum = if feedback_revision_ids.is_some_and(|ids| ids.len() > 1) {
+            262_144
+        } else {
+            32_000
+        };
+        if evidence.len() > maximum {
             return Err(StorageError::InvalidEnum(
                 "Sample feedback is too large for bounded planning; use a smaller Sample Test"
                     .into(),
@@ -475,6 +511,13 @@ impl SqliteStore {
         feedback: &SampleFeedbackRevision,
         after_write: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<(), StorageError>,
     ) -> Result<(), StorageError> {
+        self.save_sample_feedback_batch_with(std::slice::from_ref(feedback), after_write)
+    }
+
+    fn validate_sample_feedback(
+        &self,
+        feedback: &SampleFeedbackRevision,
+    ) -> Result<(), StorageError> {
         let test = self
             .get_workflow_sample_test_by_id(&feedback.sample_test_id)?
             .ok_or_else(|| StorageError::InvalidEnum("Sample Test not found".into()))?;
@@ -494,6 +537,14 @@ impl SqliteStore {
             return Err(StorageError::InvalidEnum(
                 "Invalid feedback note or sequence".into(),
             ));
+        }
+        if feedback.reason == SampleFeedbackReason::ExcludeTarget
+            && (feedback.outcome_id.is_none()
+                || feedback.addition_id.is_some()
+                || feedback.corrected_value.is_some()
+                || feedback.corrected_label.is_some())
+        {
+            return Err(StorageError::InvalidEnum("Excluding a saved candidate requires its outcome and no replacement geometry or label".into()));
         }
         if feedback
             .corrected_label
@@ -572,12 +623,47 @@ impl SqliteStore {
                 "A correction requires a source outcome".into(),
             ));
         }
+        Ok(())
+    }
+
+    /// A bounded same-image human answer is atomic; legacy single revisions reuse this path.
+    pub(crate) fn save_sample_feedback_batch_with(
+        &self,
+        feedbacks: &[SampleFeedbackRevision],
+        after_write: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<(), StorageError>,
+    ) -> Result<(), StorageError> {
+        self.save_sample_feedback_batch_with_checks(feedbacks, |_| Ok(true), after_write)
+    }
+
+    pub(crate) fn save_sample_feedback_batch_with_checks(
+        &self,
+        feedbacks: &[SampleFeedbackRevision],
+        before_write: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<bool, StorageError>,
+        after_write: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<(), StorageError>,
+    ) -> Result<(), StorageError> {
+        let Some(first) = feedbacks.first() else {
+            return Err(StorageError::InvalidEnum("Empty sample answer".into()));
+        };
+        if feedbacks.len() > 256
+            || feedbacks
+                .iter()
+                .any(|f| f.sample_test_id != first.sample_test_id || f.image_id != first.image_id)
+        {
+            return Err(StorageError::InvalidEnum(
+                "Sample answer must be bounded to one image".into(),
+            ));
+        }
+        for feedback in feedbacks {
+            self.validate_sample_feedback(feedback)?;
+        }
         self.with_connection(|connection| {
             let transaction = connection.unchecked_transaction()?;
+            if !before_write(&transaction)? {transaction.commit()?;return Ok(());}
+            for feedback in feedbacks {
             let json = serde_json::to_string(feedback)?;
             let existing: Option<String> = transaction.query_row("SELECT feedback_json FROM sample_feedback_revisions WHERE revision_id = ?1", [&feedback.revision_id], |row| row.get(0)).optional()?;
             if let Some(existing) = existing {
-                if existing == json { after_write(&transaction)?; transaction.commit()?; return Ok(()); }
+                if existing == json { continue; }
                 return Err(StorageError::InvalidEnum("Feedback revision conflict".into()));
             }
             let sequence: i64 = transaction.query_row("SELECT COALESCE(MAX(sequence), 0) FROM sample_feedback_revisions WHERE sample_test_id = ?1 AND image_id = ?2", params![feedback.sample_test_id, feedback.image_id], |row| row.get(0))?;
@@ -586,6 +672,7 @@ impl SqliteStore {
                 return Err(StorageError::InvalidEnum("Feedback changed in another window; reload before saving".into()));
             }
             transaction.execute("INSERT INTO sample_feedback_revisions VALUES (?1, ?2, ?3, ?4, ?5)", params![feedback.revision_id, feedback.sample_test_id, feedback.image_id, next, json])?;
+            }
             after_write(&transaction)?;
             transaction.commit()?;
             Ok(())

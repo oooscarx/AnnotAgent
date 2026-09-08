@@ -67,3 +67,26 @@
 .conversation-future-model { display: grid; min-width: 0; gap: .75rem; padding-block: .75rem; }
 .conversation-future-model h5 { margin: 0; font: inherit; font-weight: 600; }
 .conversation-future-model > button { justify-self: start; }
+.conversation-image-class-card, .conversation-image-class-card > section,
+.conversation-image-class-review, .image-class-edit-controls,
+.conversation-image-class-review > footer, .sample-excluded-candidates {
+  display: grid; min-width: 0; gap: .85rem;
+}
+.conversation-image-class-card { border-top: 1px solid var(--aa-border); padding-top: 1rem; }
+.conversation-image-class-card :is(p, h4), .conversation-image-class-review :is(p, h2) { margin: 0; overflow-wrap: anywhere; }
+.conversation-image-class-card label, .conversation-image-class-review label { display: grid; gap: .45rem; min-width: 0; }
+.conversation-image-class-card :is(input, select), .conversation-image-class-review :is(input, select) { min-width: 0; width: 100%; box-sizing: border-box; }
+.conversation-image-class-card > button, .conversation-image-class-card > section > button,
+.conversation-image-class-review > footer > button { justify-self: start; }
+.conversation-image-class-review > header { display: grid; gap: .5rem; }
+.conversation-image-class-review > .canvas-shell .annotation-canvas { height: clamp(260px, 48dvh, 650px); min-height: 0; width: 100%; }
+.conversation-image-class-review button { max-width: 100%; white-space: normal; height: auto; }
+.conversation-image-class-review > footer { border-top: 1px solid var(--aa-border); padding-block: 1rem; }
+.sample-excluded-candidates { padding-block: .75rem; }
+.sample-excluded-candidates summary { cursor: pointer; font-weight: 600; }
+.sample-excluded-candidates li { overflow-wrap: anywhere; }
+.sample-excluded-candidates .annotation-canvas { height: 260px; min-height: 0; }
+@media (max-width: 600px) {
+  .conversation-image-class-review > .canvas-shell .annotation-canvas { height: 300px; }
+  .conversation-image-class-review .sample-feedback-coordinates { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

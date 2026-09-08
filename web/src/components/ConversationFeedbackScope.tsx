@@ -63,7 +63,7 @@ export function ConversationFeedbackScope({ project, value, cancelled, busy, onS
     {!ready && <p role="status">Restoring your scope choices…</p>}
     {answer && <div className="conversation-feedback-scope-result">
       <p role="status">Scope answer saved</p><p>{feedbackScopeLabel(answer.input.choice.scope)}</p>
-      {answer.input.choice.scope === "current_candidate" ? <><p>{feedbackReasonLabel(answer.input.choice.reason)}</p><p>No annotation was changed by this scope answer.{!cancelled && " Open the canvas to supply the actual correction."}</p></> : <><p>This intention is recorded, not applied.</p><p>A separate rule proposal is required; no labels or annotations have been changed.</p></>}
+      {answer.input.choice.scope === "current_candidate" ? <><p>{feedbackReasonLabel(answer.input.choice.reason)}</p><p>No annotation was changed by this scope answer.{!cancelled && " Open the canvas to supply the actual correction."}</p></> : <><p>This intention is recorded, not applied.</p><p>{answer.input.choice.scope === "current_image_class" ? "Choose the class and review its frozen candidates in this sample image. Saving this scope did not change any result." : "A separate rule proposal is required; no labels or annotations have been changed."}</p></>}
       {cancelled && <p>This feedback request is cancelled. Its saved scope answer is read-only.</p>}
     </div>}
     {ready && (!answer || conflict) && <form onSubmit={event => { event.preventDefault(); void submit(); }}>

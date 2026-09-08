@@ -167,7 +167,7 @@ pub(crate) fn require_call_admission_clear(
     task: Uuid,
     call: Uuid,
 ) -> Result<(), StorageError> {
-    let waiting: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM conversation_human_requests WHERE task_id=?1 AND status='pending')", [task.to_string()], |row| row.get(0))?;
+    let waiting: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM conversation_human_requests WHERE task_id=?1 AND status='pending' UNION ALL SELECT 1 FROM conversation_image_class_reviews WHERE task_id=?1 AND status='pending')", [task.to_string()], |row| row.get(0))?;
     if waiting {
         return Err(invalid(
             "Task is waiting for human input; no model call was admitted",

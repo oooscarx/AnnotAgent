@@ -9,6 +9,8 @@ import { ConversationBudgetNotice } from "./ConversationBudgetNotice";
 import { ConversationFeedbackScope } from "./ConversationFeedbackScope";
 import { sameScopeAnswerInput } from "../conversation-feedback-scope";
 import { ConversationFutureSchemaCard } from "./ConversationFutureSchemaCard";
+import { ConversationImageClassCard } from "./ConversationImageClassCard";
+import type { ImageClassReview } from "../conversation-image-class-api";
 import type { OpenConversationSample } from "./ConversationSampleCard";
 import "./conversation-feedback.css";
 
@@ -17,6 +19,7 @@ type FeedbackCardProps = {
   project: string; message: ConversationMessage; requests: HumanRequest[]; requestsReady: boolean;
   onOpen: (request: HumanRequest) => void; onAssistance: () => void;
   captureCanvasNavigation: () => (request: HumanRequest) => void;
+  captureClassNavigation?: () => (review: ImageClassReview) => void;
   onScopeDirtyChange?: (dirty: boolean) => void;
   onSample: OpenConversationSample;
   onSetup?: () => void;
@@ -26,7 +29,7 @@ export function ConversationFeedbackCard(props: FeedbackCardProps) {
   if (reference?.scope !== "sample_candidate") return null;
   return <FeedbackCard {...props} task={reference.task_id} />;
 }
-function FeedbackCard({ project, message, requests, requestsReady, onOpen, onAssistance, captureCanvasNavigation, onScopeDirtyChange, onSample, onSetup, task }: FeedbackCardProps & { task: string }) {
+function FeedbackCard({ project, message, requests, requestsReady, onOpen, onAssistance, captureCanvasNavigation, captureClassNavigation, onScopeDirtyChange, onSample, onSetup, task }: FeedbackCardProps & { task: string }) {
   const conversation = message.conversation_id;
   const storageKey = `annotagent.feedback:${project}:${conversation}:${task}:${message.input.id}`;
   const [saved, setSaved] = useState<FeedbackStatus>();
@@ -42,6 +45,7 @@ function FeedbackCard({ project, message, requests, requestsReady, onOpen, onAss
   const setDirtySource = useCallback((source: string, dirty: boolean) => { if (dirty) dirtySources.current.add(source); else dirtySources.current.delete(source); dirtyCallback.current?.(dirtySources.current.size > 0); }, []);
   const scopeDirty = useCallback((dirty: boolean) => setDirtySource("scope", dirty), [setDirtySource]);
   const futureDirty = useCallback((dirty: boolean) => setDirtySource("future", dirty), [setDirtySource]);
+  const classDirty = useCallback((dirty: boolean) => setDirtySource("image-class", dirty), [setDirtySource]);
   const waiting = feedbackWaitingRequest(message, requests);
   const cancelled = Boolean(saved?.cancelled || feedbackCancellationMatches(cancellation, task, saved?.authorization.consent.call_id ?? frozen.current?.call_id));
   const phase = cancelled ? "cancelled" : feedbackPhase(saved);
@@ -233,6 +237,7 @@ function FeedbackCard({ project, message, requests, requestsReady, onOpen, onAss
       {decision && !cancelled && <><p>{decision.question}</p><p>{decision.rationale}</p><small>Text-only interpretation of your saved message and candidate metadata, not a visual accuracy assessment.</small></>}
       <ConversationFeedbackScope key={saved.authorization.consent.call_id} project={project} value={saved} cancelled={cancelled} busy={busy} onSave={saveScope} onDirtyChange={scopeDirty} />
       {saved.scope_answer?.input.choice.scope === "project_future_rule" && <ConversationFutureSchemaCard key={`${saved.authorization.consent.call_id}:${saved.scope_answer.input.command_id}`} project={project} conversation={conversation} task={task} call={saved.authorization.consent.call_id} sourceAnswer={saved.scope_answer.input.command_id} cancelled={cancelled} onDirtyChange={futureDirty} onSample={onSample} onAssistance={onAssistance} onSetup={onSetup} />}
+      {saved.scope_answer?.input.choice.scope === "current_image_class" && captureClassNavigation && <ConversationImageClassCard key={`${saved.authorization.consent.call_id}:${saved.scope_answer.input.command_id}`} project={project} value={saved} cancelled={cancelled} blocked={!requestsReady || Boolean(waiting)} captureOpen={captureClassNavigation} onDirtyChange={classDirty} />}
       {canCorrect && !waiting && <button className="primary" disabled={busy} onClick={() => void correct()}>Correct in canvas</button>}
       {phase === "clarify" && !waiting && (!saved.scope_answer || saved.scope_answer.input.choice.scope === "current_candidate") && <><button disabled={busy || !requestsReady} onClick={() => void stop()}>{saved.scope_answer ? "Cancel feedback action" : "Cancel scope question"}</button><small>Cancels this feedback action only. Saved answers, annotations and any existing correction requests remain unchanged.</small></>}
       {(running || checking || recoverable) && <button onClick={() => void stop()}>{running || checking ? "Stop feedback request" : "Cancel saved feedback request"}</button>}

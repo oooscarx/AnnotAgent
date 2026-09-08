@@ -2085,7 +2085,7 @@ export interface SampleFeedbackRevision {
   sample_test_id: string;
   image_id: string;
   sequence: number;
-  reason: "correct" | "wrong_target" | "poor_boundary" | "missing_target" | "cannot_judge";
+  reason: "correct" | "wrong_target" | "poor_boundary" | "missing_target" | "cannot_judge" | "exclude_target";
   outcome_id?: string | null;
   corrected_value?: AnnotationValue | null;
   corrected_label?: string | null;

@@ -6,14 +6,17 @@ import type { OpenConversationSample } from "./ConversationSampleCard";
 import type { HumanRequest } from "../conversation-human-api";
 import { AnnotationCanvas } from "./AnnotationCanvas";
 import { sampleAnnotations } from "../sampleAnnotations";
+import type { ImageClassReview } from "../conversation-image-class-api";
+import { ConversationImageClassReview } from "./ConversationImageClassReview";
 
-export function ConversationSampleCanvas({project, draft, test, image, onDirtyChange, onOpen, humanRequest, onAnswered, referenceTask, onReference, messageReference}: {
+export function ConversationSampleCanvas({project, draft, test, image, onDirtyChange, onOpen, humanRequest, onAnswered, referenceTask, onReference, messageReference, imageClassReview, onClassChanged, onClassReturn, onClassRevision}: {
   messageReference?:ConversationMessageInput;
   referenceTask?:{id:string;schema_revision:string};
   onReference?:(input:Pick<ConversationMessageInput,"image"|"reference">,name:string)=>void;
   project: string; draft: string; test: string; image?: ImageItem;
   onDirtyChange: (dirty:boolean)=>void; onOpen:OpenConversationSample;
   humanRequest?:HumanRequest; onAnswered?:(value:HumanRequest)=>void;
+  imageClassReview?:ImageClassReview; onClassChanged?:(value:ImageClassReview)=>void; onClassReturn?:()=>void; onClassRevision?:(draft:string)=>void;
 }) {
   const [record,setRecord]=useState<WorkflowSampleTestRecord>();
   const [error,setError]=useState("");
@@ -47,6 +50,11 @@ export function ConversationSampleCanvas({project, draft, test, image, onDirtyCh
   const outcomes=[...projection.final_candidates.map(candidate=>candidate.outcome),...projection.review_candidates.map(item=>item.candidate.outcome)];
   if(humanRequest && !outcomes.some(outcome=>outcome.id===humanRequest.input.outcome_id))return <p role="alert">The requested candidate is not in this sample's terminal results. No replacement was selected.</p>;
   const terminal={...sample,outcomes:outcomes.filter((item,index,items)=>items.findIndex(other=>other.id===item.id)===index)};
+  if(imageClassReview){
+    const scope=imageClassReview.scope;
+    if(humanRequest || messageReference || scope.draft_id!==draft || scope.sample_test_id!==test || scope.draft_revision!==record.draft_revision || scope.draft_content_hash!==record.draft_content_hash || scope.image_id!==image.image_id || scope.content_hash!==image.content_hash || !onClassChanged || !onClassReturn || !onClassRevision || scope.members.some(member=>![...projection.final_candidates,...projection.review_candidates.map(item=>item.candidate)].some(item=>item.outcome.id===member.outcome.id && item.source_artifact_id===member.source_artifact_id)))return <p role="alert">The image-class review does not match this saved terminal evidence. No ordinary editor was substituted.</p>;
+    return <ConversationImageClassReview key={imageClassReview.id} project={project} review={imageClassReview} image={image} outcomes={terminal.outcomes} onChanged={onClassChanged} onDirtyChange={onDirtyChange} onReturn={onClassReturn} onRevision={onClassRevision}/>;
+  }
   if(humanRequest?.deferred)return <section className="conversation-sample-canvas" aria-label="Deferred sample request"><h2>{image.name}</h2><p role="status">Deferred · not reviewed or completed. Reopen the request in the conversation before submitting a correction.</p><SampleFeedbackEditor key={`deferred:${humanRequest.input.id}`} readOnly projectId={project} draftId={draft} testId={test} sample={terminal} image={image} goalOverride={schema} initialOutcomeId={humanRequest.input.outcome_id} onDirtyChange={onDirtyChange} onKeepOriginal={onOpen}/></section>;
   return <section className="conversation-sample-canvas" aria-label="Saved sample results">
     <header><h2>{image.name}</h2><p>Sample {index+1}/{record.inputs.length} · Evaluation only · Not a published dataset annotation</p></header>

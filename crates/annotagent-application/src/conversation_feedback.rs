@@ -22,6 +22,34 @@ impl ConversationFeedbackContext {
     pub fn digest(&self) -> Result<String> {
         Ok(annotagent_image_tools::sha256(&serde_json::to_vec(self)?))
     }
+
+    /// Compare the complete typed subject and its exact JSON shape. A persisted
+    /// `Value` may round the last f64 digit of a promoted f32 during JSON parsing;
+    /// this is not a changed candidate. Unknown fields are still rejected.
+    pub fn matches_saved_context(&self, saved: &serde_json::Value) -> Result<bool> {
+        let restored: Self = serde_json::from_value(saved.clone())?;
+        if self != &restored {
+            return Ok(false);
+        }
+        let expected = serde_json::to_value(self)?;
+        let persisted: serde_json::Value = serde_json::from_slice(&serde_json::to_vec(&expected)?)?;
+        Ok(saved == &expected || saved == &persisted)
+    }
+
+    fn matches_saved_envelope(
+        &self,
+        saved: &serde_json::Value,
+        execution: &ConversationSchemaExecution,
+    ) -> Result<bool> {
+        if saved.as_object().is_none_or(|object| object.len() != 4)
+            || saved["contract"] != "conversation-feedback-v1"
+            || saved["remote_model"] != execution.remote_model
+            || saved["scope_hash"] != execution.scope_hash
+        {
+            return Ok(false);
+        }
+        self.matches_saved_context(&saved["subject"])
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -341,11 +369,12 @@ impl LocalApplication {
             execution.task_id,
             execution.call_id,
         )? {
-            if receipt
-                .evidence
-                .as_ref()
-                .is_none_or(|evidence| evidence["context"] != frozen)
-            {
+            if !match receipt.evidence.as_ref() {
+                Some(evidence) => {
+                    context.matches_saved_envelope(&evidence["context"], execution)?
+                }
+                None => false,
+            } {
                 bail!(
                     "Feedback call is pending, indeterminate or conflicts with this frozen context; no new call was sent"
                 );
@@ -400,12 +429,12 @@ impl LocalApplication {
             execution.task_id,
             execution.call_id,
         )? {
-            if saved
-                .receipt
-                .evidence
-                .as_ref()
-                .is_none_or(|evidence| evidence["context"] != frozen)
-            {
+            if !match saved.receipt.evidence.as_ref() {
+                Some(evidence) => {
+                    context.matches_saved_envelope(&evidence["context"], execution)?
+                }
+                None => false,
+            } {
                 bail!("Concurrent feedback request conflicts with this frozen context");
             }
             Ok(saved)

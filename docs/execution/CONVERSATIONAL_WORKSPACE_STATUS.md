@@ -3593,3 +3593,138 @@ Conversational Workspace goal remains active: current-image class-scope applicat
 visual/global Human Request behavior, long-history performance and the wider accessibility and
 context acceptance matrix still need implementation or verification. This record does not mark
 M0–M4 complete or claim that the running user instance already serves these changes.
+
+### M3 continuation: atomic current-image class feedback (in progress)
+
+The preceding model-assisted future-rule slice is committed as `fd413eb`. This continuation
+starts from its committed source; the only pre-existing dirty files are historical screenshots,
+which remain outside the new work. The preceding goal turn made verified progress (source,
+tests, screenshots and a local commit). The full goal remains unchanged; no completion or
+blocking condition is inferred from the remaining implementation work.
+
+Current code inspection confirms that `CurrentImageClass` saves intent but has no application
+step. Existing regression tests intentionally assert that scope selection alone does not create
+a single-candidate request or feedback. The new first browser assertion reproduces the missing
+follow-up control after a real TEST scope answer in `/tmp/annotagent-guided-e2e-72842`.
+Unlike earlier temporary Playwright output, its failure screenshot, trace and error context
+were copied to `/tmp/annotagent-image-class-baseline-evidence-HDLxzo` for this continuation.
+The test servers then stopped. No 8787 or real workspace operation was performed.
+
+The chosen implementation reuses Sandbox feedback and the existing draft-copy service: preview
+the exact image/class membership, explicitly create a frozen human review, edit or exclude
+members in one canvas, then atomically save the complete answer. It must not create N independent
+repair Drafts for N objects. A durable answered record resumes into one editable Draft with
+exact feedback revision IDs, with fresh authorization required for any new model invocation.
+This is a bounded human command, not a new annotation store or inference executor.
+
+The original terminal candidates remain immutable. Membership uses effective labels/values at
+the frozen feedback baseline; prior human edits are not reset by Keep. Detection labels match
+exactly, and classification uses an explicitly selected real label token, never a joined display
+string or substring. Other classes, images, predictions, formal annotations and versions remain
+unchanged. Whole-candidate exclusion gets explicit `ExcludeTarget` feedback semantics; the old
+`WrongTarget` quality note is not silently reinterpreted as deletion. Removing one classification
+token preserves all the others. Collection membership, source/artifact identity, baseline sequence,
+ownership and cancellation are checked together before the batch transaction commits.
+
+The existing TEST classifier protocol emits one class per subject. The multi-label regression
+will therefore start with an actual single-label sample and explicitly saved human multi-label
+feedback against a compatible edited Schema, then exercise class-scope changes. It will not
+pretend that a fixture returning an invalid multi-label model response is real classifier support.
+
+The implementation now has a durable image-class review command, Migration 49, Application
+recovery and same-origin HTTP endpoints. Creation remains explicit after a read-only preview;
+GET/mount never creates a review. A pending group and a pending single-candidate request on the
+same task/image cannot coexist. The shared Sandbox feedback transaction validates every member
+before writing any of them. An answered outbox resumes into one deterministic repair Draft,
+including the frozen members' prior corrections plus this answer, not unrelated later feedback.
+
+The first Rust aggregate passes (139 Application, 141 Storage and 45 Server unit tests, plus
+integration suites; five Live-dependent tests ignored). Strict all-workspace Clippy passes after
+normal lint fixes. Web reached 192 passing unit tests. Browser execution is still in progress:
+the first six-case run in `/tmp/annotagent-guided-e2e-74413` passed three cases, including the
+classification path, but all three bbox cases stopped before group creation. Their immediate
+feedback execute was falsely rejected as a changed authorization scope. The failure traces,
+screenshots and contexts are preserved in
+`/tmp/annotagent-image-class-scope-failure-evidence-TQaTsN`.
+
+Investigation identifies an existing numeric persistence boundary: converting typed f32 box
+coordinates into a JSON Value and decoding that Value from SQLite can shift a promoted f64's
+last bit. A fresh Value equality check then rejects an unchanged typed context. The fix must
+retain complete subject/envelope checks and reject real changes; changing fixture coordinates
+to avoid the failure is not acceptable. A dedicated red regression and final browser rerun
+will be recorded below.
+
+Independent UI review also found and fixed two local-edit losses: editing a second field while
+a box temporarily has an invalid width must not reset that width to the baseline; and a saved
+answer from another window must not silently discard the local dirty guard or hide its unsaved
+geometry. A conflict now offers explicitly labelled local/saved views. The existing Pipeline
+inspector gains only an exact, project-validated class-review return context, preserving review,
+task, sample and image; the general return-destination allowlist is unchanged. This inspection
+does not pretend that a group is a single HumanRequest or automatically invoke another Builder.
+
+The numeric regression now exercises the original failing `[0.12, 0.2, 0.16, 0.22]`
+coordinates through persisted authorization, one actual TEST Provider request, receipt recovery,
+scope selection, class review, answer and one resumed Draft. Complete typed context and exact
+JSON structure are checked, accepting only its original or JSON-persisted representation;
+contract, model, scope, unknown fields and real candidate changes remain rejected. Server
+admission, both Application receipt checks, class preview and its Storage anchor use the same
+strict intent. Focused feedback tests pass 37/37 and class Storage tests 12/12.
+
+A further real browser red reproduced the analogous **client acknowledgement** defect: an
+answer with width `0.123456789` was saved and applied by Rust, yet the UI claimed that another
+batch had answered because Rust returned that coordinate at f32 precision. Evidence is preserved
+in `/tmp/annotagent-image-class-ack-failure-evidence-CCfgWA`. Client comparison now normalizes
+only typed bbox edit coordinates to the same f32 representation; command, Artifact, membership,
+labels and all other fields remain exact. A one-ULP actual coordinate change still differs.
+Validation also follows Core's f32 arithmetic and bounds before freezing a command, while
+retaining incomplete local form input for correction. The initial expanded API comparison test
+likewise required comparing typed f32 coordinates across typed and generic JSON responses, not
+weakening evidence or identity assertions.
+
+After these Rust changes, a second full `cargo test --workspace --all-features -q` succeeds:
+141 Application unit tests, 141 Storage unit tests, 45 Server unit tests, and the other workspace
+and integration suites pass; the same five Live-dependent tests remain ignored. `cargo fmt --all
+--check`, strict all-workspace Clippy and `cargo build --workspace --all-features` pass. These
+checks do not exercise the user's workspace or claim that a Live model improved its boxes.
+
+Final checkpoint verification:
+
+- Web typecheck and **194 unit tests in 40 files** pass; the E2E harness's production Web
+  build also succeeds (the existing large-bundle warning remains).
+- All **6 new browser cases** passed in `/tmp/annotagent-guided-e2e-76513`. After correcting
+  the scoped CSS selector to match the existing `.canvas-shell` wrapper, the combined
+  **21-case** run (12 existing feedback, 3 existing future-Schema and 6 new image-class cases)
+  finished in `/tmp/annotagent-guided-e2e-76821`. Following a user interruption, its saved
+  Playwright `.last-run.json` was recovered with `status: passed` and no failed tests; the
+  matching selection was re-listed as 21 cases in three files. No test server remained.
+- The final bbox browser case measures the actual SVG at 650px on a 1280×1800 viewport and
+  300px at 390×844, retains selection and unsaved edits across that change, saves a high-
+  precision coordinate, restores an unknown acknowledgement without another batch, and opens
+  the revision Draft then returns to the exact class review without a POST.
+- Two actual TEST-browser screenshots were inspected:
+  `conversational-workspace/image-class-bbox-review.png` and
+  `conversational-workspace/image-class-classification-review.png`, both **1280×1800**.
+  They show local edits before the explicit atomic save. These tall captures do not claim
+  that all controls fit a 720px screen; the bbox capture also shows that the preceding image
+  heading can scroll behind the sticky header. The synthetic scene and scripted labels are
+  execution evidence only, not an accuracy or real-world visual-recognition demonstration.
+
+This slice covers terminal model candidates in one frozen sample image/class. Human-added
+examples are not silently incorporated into that membership. Classification token removal
+preserves other labels, and explicit exclusion remains separate from a WrongTarget note.
+Answers generate one independent Draft; inspecting it has an exact return link. The group-
+specific, same-chat fresh Builder/Sample authorization continuation is still a next slice,
+not a completed capability disguised as a single-candidate HumanRequest. Existing single-
+candidate continuation remains available and regression-tested.
+
+The next bounded integration can reuse `PipelineBuildMode::RepairDraft`, the existing advisor
+loop and Sample operation. It needs an explicit image-class-review source, exact saved group
+evidence and sealed Schema validation, and durable Builder admission linkage; it must not infer
+ownership from a recent-history window or create another repair Draft. Broader Human Request
+coverage, long-history performance and the full accessibility acceptance matrix also remain.
+No Live Provider, native 200% zoom, native Chinese IME or real-human usability study was run.
+
+This checkpoint includes only its source/tests, migration, this log and two new screenshots.
+Pre-existing historical PNG modifications remain excluded. Branch is `main`; both existing
+remotes are unchanged, with no push. The user's service on 8787 and real workspace were not
+restarted or altered. The overall goal remains active, not complete.

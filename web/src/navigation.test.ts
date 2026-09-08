@@ -13,6 +13,24 @@ import {
 } from "./navigation";
 
 describe("guided workspace routing", () => {
+  it("retains a bounded same-project class-review return only on the Pipeline inspector",()=>{
+    const workspaceReturn=projectWorkPath("project",{conversationId:"conversation",taskId:"task",classReviewId:"class",draftId:"source",sampleTestId:"test",imageId:"image"});
+    const path=projectBuildPath("project","pipeline",{draftId:"revision",workspaceReturn});
+    const url=new URL(path,"http://localhost");
+    expect(parseWorkspaceRoute(url.pathname,url.search)).toMatchObject({kind:"build",draftId:"revision",workspaceReturn,canonicalPath:path});
+    expect(projectBuildPath("other","pipeline",{draftId:"revision",workspaceReturn})).not.toContain("workspace_return");
+    expect(projectBuildPath("project","pipeline",{draftId:"revision",workspaceReturn:"https://outside.invalid"})).not.toContain("workspace_return");
+    expect(projectBuildPath("project","test",{draftId:"revision",workspaceReturn})).not.toContain("workspace_return");
+    expect(projectBuildPath("project","pipeline",{draftId:"revision",workspaceReturn:projectWorkPath("project",{conversationId:"conversation"})})).not.toContain("workspace_return");
+  });
+  it("restores one image-class review without turning it into a human request or changing focus",()=>{
+    const context={conversationId:"conversation",taskId:"task",classReviewId:"scope",draftId:"draft",sampleTestId:"test",imageId:"image"};
+    const url=new URL(projectWorkPath("project",context),"http://localhost");
+    const route=parseWorkspaceRoute(url.pathname,url.search);
+    expect(route).toMatchObject({kind:"conversation",...context});
+    expect(routeFocusKey(route)).toBe(routeFocusKey(parseWorkspaceRoute(url.pathname,"?image=other")));
+    expect(parseWorkspaceRoute(url.pathname,`${url.search}&request=other`).kind).toBe("notFound");
+  });
   it("retains a frozen reference message and its exact sample context",()=>{
     const context={conversationId:"conversation",taskId:"task",referenceMessageId:"message",draftId:"draft",sampleTestId:"sample",imageId:"image"};
     const path=projectWorkPath("project",context),url=new URL(path,"http://localhost");

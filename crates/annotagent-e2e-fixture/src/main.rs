@@ -230,6 +230,38 @@ fn grounding_completion(request: &Value) -> Option<Value> {
         } else {
             json!([0.35, 0.35, 0.2, 0.2])
         };
+        let detections = if request["model"] == "e2e-conversation-bbox-feedback-image-class" {
+            // Explicit TEST-only multi-object image: exact labels from the real
+            // grounding request, two cups plus unrelated classes. No quality claim.
+            prompt["target_label_ids"]
+                .as_array()?
+                .iter()
+                .flat_map(|value| {
+                    let label = value.as_str().unwrap_or_default();
+                    let boxes: Vec<[f32; 4]> = match label {
+                        "cup" => vec![[0.12, 0.2, 0.16, 0.22], [0.5, 0.55, 0.16, 0.22]],
+                        "cupcake" => vec![[0.1, 0.65, 0.12, 0.1]],
+                        "bottle" => vec![[0.72, 0.15, 0.12, 0.25]],
+                        _ => vec![],
+                    };
+                    boxes.into_iter().map(move |rect| {
+                        let bbox = if qwen {
+                            json!([
+                                rect[0] * 1000.0,
+                                rect[1] * 1000.0,
+                                (rect[0] + rect[2]) * 1000.0,
+                                (rect[1] + rect[3]) * 1000.0
+                            ])
+                        } else {
+                            json!(rect)
+                        };
+                        json!({"label":label,"bbox":bbox,"confidence":0.9})
+                    })
+                })
+                .collect::<Vec<_>>()
+        } else {
+            vec![json!({"label":label,"bbox":bbox,"confidence":0.9})]
+        };
         return Some(json!({
             "id": format!("chatcmpl-{}", uuid::Uuid::new_v4()),
             "object": "chat.completion",
@@ -237,7 +269,7 @@ fn grounding_completion(request: &Value) -> Option<Value> {
                 "index": 0,
                 "message": {
                     "role": "assistant",
-                    "content": json!({"detections": [{"label": label, "bbox": bbox, "confidence": 0.9}]}).to_string(),
+                    "content": json!({"detections": detections}).to_string(),
                 },
                 "finish_reason": "stop",
             }],
@@ -490,6 +522,7 @@ async fn openai_completion(
             json!({"decision":"request_correction","reason":"poor_boundary","question":"TEST unauthorized coordinates","rationale":"TEST invalid output must not become feedback","bbox":[0.0,0.0,1.0,1.0]})
         } else if remote.ends_with("-feedback-clarify")
             || remote.ends_with("-feedback-future-base-clarify")
+            || remote.ends_with("-feedback-image-class")
         {
             json!({"decision":"clarify_scope","question":"TEST: remove this candidate, or change the label definition?","rationale":"TEST ambiguous scope; no change was authorized"})
         } else {
@@ -523,6 +556,8 @@ async fn openai_completion(
             json!({"decision":"draft","kind":"classification","labels":[],"multi_label":false,"attributes":{},"boundary_rules":[],"rationale":"TEST invalid empty label set"})
         } else if request["model"] == "e2e-conversation-clarify" {
             json!({"decision":"clarify","question":"TEST: Which output type and labels should this task use?","rationale":"TEST ambiguous goal; human semantics required"})
+        } else if request["model"] == "e2e-conversation-bbox-feedback-image-class" {
+            json!({"decision":"draft","kind":"bounding_box","labels":["cup","cupcake","bottle"],"multi_label":false,"attributes":{},"boundary_rules":["TEST independent cup, cupcake and bottle targets"],"rationale":"TEST multi-object baseline, not observed accuracy"})
         } else if request["model"] == "e2e-conversation-bbox-feedback-future-base-clarify" {
             // Only this new TEST baseline has two bbox labels, so the later
             // proposal can remove one without an invalid empty label schema.

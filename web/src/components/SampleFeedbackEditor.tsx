@@ -5,6 +5,8 @@ import type { Annotation, ImageItem, SampleFeedbackRevision, WorkflowDryRunRepor
 import { AnnotationCanvas } from "./AnnotationCanvas";
 import { useSampleFreshness } from "../useSampleFreshness";
 import { sampleAnnotations } from "../sampleAnnotations";
+import { sampleFeedbackOverlay, type ExcludedSampleCandidate } from "../sampleFeedbackOverlay";
+import { SampleExcludedCandidates } from "./SampleExcludedCandidates";
 
 const reasons: [SampleFeedbackRevision["reason"], string][] = [
   ["correct", "Target and boundary are correct"], ["wrong_target", "Wrong target"],
@@ -31,6 +33,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
   const freshness = useSampleFreshness(projectId, draftId, testId);
   const original = sampleAnnotations(sample.projection ? sample.outcomes : [],image.image_id,testId);
   const [annotations, setAnnotations] = useState(original);
+  const [excluded, setExcluded] = useState<ExcludedSampleCandidate[]>([]);
   const [selected, setSelected] = useState<string>();
   const [history, setHistory] = useState<Annotation[][]>([]);
   const [revisions, setRevisions] = useState<SampleFeedbackRevision[]>([]);
@@ -74,17 +77,9 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
     void api.sampleFeedback(testId, image.image_id).then(({ revisions: values }) => {
       if (!current) return;
       setRevisions(values);
-      const restored = original.map((annotation) => {
-        const changes = values.filter((value) => value.outcome_id === annotation.id);
-        return changes.reduce((item, change) => change.corrected_value || change.corrected_label ? ({ ...item, value: change.corrected_value ?? item.value, label: change.corrected_label ?? item.label, confidence: undefined, source: "human sample feedback", provenance: { ...item.provenance, human_corrected: true } }) : item, annotation);
-      });
-      for (const change of values) {
-        if (!change.addition_id || !change.corrected_value || !change.corrected_label) continue;
-        const id = `human-sample:${change.addition_id}`;
-        const existing = restored.findIndex((item) => item.id === id);
-        const addition: Annotation = { id, image_id: image.image_id, task_id: "sample", label: change.corrected_label, value: change.corrected_value, attributes: {}, source: "human sample feedback", review_status: "needs_review", provenance: { addition_id: change.addition_id, sample_test_id: testId }, created_at: change.created_at };
-        if (existing >= 0) restored[existing] = addition; else restored.push(addition);
-      }
+      const overlay = sampleFeedbackOverlay(original, values);
+      const restored = overlay.annotations;
+      setExcluded(overlay.excluded);
       setAnnotations(restored);
       const last = values.at(-1);
       if (last) { setReason(last.reason); setNote(last.note); setSelected(last.addition_id ? `human-sample:${last.addition_id}` : last.outcome_id ?? undefined); setSaved(true); }
@@ -152,7 +147,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
     setHistory((items) => [...items, annotations]); setAnnotations((items) => [...items, added]); setSelected(added.id);
     setDirty(true); setSaved(false); setReason("missing_target"); setAttentionOpen(true); setShowBefore(false); setShowOriginal(false);
   };
-  if(readOnly)return <section aria-label="Saved sample corrections"><p>Saved sample corrections · Read only</p>{error ? <p role="alert">{error}</p> : !loaded ? <p role="status">Loading saved corrections…</p> : <AnnotationCanvas compactList imageUrl={image.url} annotations={annotations} selectedId={selected} readOnly onSelect={setSelected} onChange={()=>{}}/>}</section>;
+  if(readOnly)return <section aria-label="Saved sample corrections"><p>Saved sample corrections · Read only</p>{error ? <p role="alert">{error}</p> : !loaded ? <p role="status">Loading saved corrections…</p> : <><AnnotationCanvas compactList imageUrl={image.url} annotations={annotations} selectedId={selected} readOnly onSelect={setSelected} onChange={()=>{}}/><SampleExcludedCandidates excluded={excluded} imageUrl={image.url}/></>}</section>;
   return <div className="sample-feedback-workspace">
     {freshness.status === "checking" && <p role="status">{t("Checking whether this sample still matches the current plan…")}</p>}
     {freshness.status === "stale" && <p role="alert" className="sample-risk-notice">{t("The plan or its inputs changed elsewhere. Your edits are kept and can still be saved as feedback on this sample. Test the current plan before adopting it.")}</p>}
@@ -166,6 +161,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
         if(!humanSubmission || id===humanSubmission.outcomeId)setSelected(id);
       }} onEditStart={() => setHistory((items) => [...items, annotations])} onChange={edit} />
     </section>
+    <SampleExcludedCandidates excluded={excluded} imageUrl={image.url}/>
     {onReferenceOutcome && <div className="conversation-candidate-reference"><button disabled={!loaded||busy||dirty||showOriginal||showBefore||!selected||!sample.outcomes.some(outcome=>outcome.id===selected)} onClick={()=>{if(selected)onReferenceOutcome(selected);}}>Reference saved candidate in message</button><small>References the original saved prediction, not later corrections or unsaved edits.</small></div>}
     {!humanSubmission && goal && ["classification", "bounding_box", "polygon", "semantic_mask", "instance_mask"].includes(goal.kind ?? "") && <button className="sample-add-missing" disabled={!loaded || busy || dirty || showBefore} onClick={addMissing}>{t("Add missing target")}</button>}
     {typeof selectedAnnotation?.provenance.addition_id === "string" && <p className="sample-risk-notice">{t("Human sample example, not a model prediction. Adjust its label and boundary before saving. It never becomes a formal annotation automatically.")}</p>}

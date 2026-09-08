@@ -16,6 +16,7 @@ mod conversation_feedback_intent;
 mod conversation_feedback_scope;
 mod conversation_future_proposal;
 mod conversation_future_schema;
+mod conversation_image_class;
 pub use conversation_future_schema::{
     ConversationFutureSchemaRequest, ConversationFutureSchemaView,
 };
@@ -7341,6 +7342,7 @@ impl LocalApplication {
         };
         application.reconcile_legacy_project_ownership()?;
         application.recover_conversation_corrections()?;
+        application.recover_conversation_image_class_reviews()?;
         application.recover_conversation_sample_assistance()?;
         Ok(application)
     }

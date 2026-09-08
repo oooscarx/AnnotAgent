@@ -4,6 +4,7 @@ mod conversation_builder;
 mod conversation_feedback;
 mod conversation_future_proposal;
 mod conversation_human_requests;
+mod conversation_image_class;
 mod conversation_journey;
 mod conversation_schema;
 mod conversation_stop;

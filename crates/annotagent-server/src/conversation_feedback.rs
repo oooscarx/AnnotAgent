@@ -362,7 +362,9 @@ pub(super) async fn execute(
         Some(&saved.consent),
     )?;
     if preview["consent"]["scope_hash"] != saved.consent.scope_hash
-        || serde_json::to_value(&context).map_err(ApiError::internal)? != saved.context
+        || !context
+            .matches_saved_context(&saved.context)
+            .map_err(ApiError::bad_request)?
     {
         return Err(ApiError::bad_request(
             "Feedback scope changed after authorization. Saved message and consent remain available; no model call was sent.",

@@ -1144,6 +1144,7 @@ impl SqliteStore {
                     crate::conversation_feedback_scope::validate_scoped_request(&tx, project, input, source, answer)?;
                 } else { validate_feedback_request_source(&tx, input, source)?; }
             }
+            crate::conversation_image_class::require_no_pending_on_image(&tx,input.task_id,&input.sample_test_id,&input.image_id)?;
             if exclusive {
                 let waiting:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_human_requests WHERE task_id=?1 AND status='pending' AND json_extract(request_json,'$.sample_test_id')=?2 AND json_extract(request_json,'$.image_id')=?3)",params![input.task_id.to_string(),input.sample_test_id,input.image_id],|row|row.get(0))?;
                 if waiting {return Err(invalid("An existing request on this sample image must be resolved first"));}
