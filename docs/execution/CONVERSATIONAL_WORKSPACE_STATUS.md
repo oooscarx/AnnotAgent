@@ -4402,3 +4402,21 @@ not yet prove the trigger. Keep the trace and reproduce separately; neither incr
 240-second timeout nor weakening the consent assertion fixes a lost click. Later corresponding
 storage_corrupt and draft_changed cases passed. No cause or fix is claimed for test 58 yet.
 Same baseline handle 79494 remains live; no restart, rebuild, paid call or real data change.
+
+### 2026-09-09 — Pre-admission stop assertion corrected from exact trace evidence
+
+Baseline test 86 failed because it assumed the first history item was its cancelled operation.
+The actual response is HTTP 400: `operation was stopped; no new work was admitted`. The history
+before/after is byte-identical; its completed item belongs to the preceding successful Builder.
+Pre-admission cancellation correctly creates no new Builder session/receipt. The test now checks
+that rejection text, unchanged complete history, absence of its exact operation ID and unchanged
+call records. It does not relabel the old completed task or require a fake interrupted session.
+Typecheck/diff check pass; this corrected browser assertion awaits the post-baseline rerun.
+
+Baseline reached test 114 with eight failures so far. Two additional failures remain to diagnose:
+test 88 waits for a reserved standalone-sample call that it never observes; test 104's legacy
+image-first flow cannot find its expected goal-page image. Do not group those with the proven
+model-count/limit-window causes without inspecting their distinct traces. Tests 81–85 cover
+complete bbox/classification/human flows and background Schema disconnect recovery successfully;
+tests 89–103 include Batch stop, stop selection, independent task safety, keyboard/pagination and
+the two new screenshot-path checks. Same full-suite handle 79494 remains active.

@@ -114,10 +114,11 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
     expect((await request.post(`${taskRoot}/calls/${stoppedSelection.operation_id}/cancel`)).ok()).toBeTruthy();
     const stoppedResponse=await request.post(`${taskRoot}/builder-operations`,{data:{selection:stopPreview.selection,previous_grant_id:stopPreview.previous_grant_id,scope_hash:stopPreview.scope_hash,expires_at:stopPreview.expires_at,allow_unknown_cost:true}});
     expect(stoppedResponse.status()).toBe(400);
+    expect((await stoppedResponse.json()).error).toContain("no new work was admitted");
     expect(await (await request.get(`${taskRoot}/calls`)).json()).toEqual(callsBeforeStop);
     const stoppedHistory=await (await request.get(`${taskRoot}/builder-operations`)).json();
-    expect(stoppedHistory.items[0].operation.status).toBe("interrupted");
-    expect(stoppedHistory.items[0].session).toBeNull();
+    expect(stoppedHistory).toEqual(restoredBuilder);
+    expect(stoppedHistory.items.some((entry:any)=>entry.operation.id===stoppedSelection.operation_id)).toBe(false);
   }
   expect((await (await request.get(`/api/projects/${project}/goal`)).json()).revision).toBe(revision);
   const defaults = await (await request.get("/api/agent-model-bindings")).json();
