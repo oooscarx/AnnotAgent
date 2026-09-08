@@ -2,12 +2,21 @@ import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { expect, test } from "./fixtures";
 
-for(const kind of ["classification","bbox"] as const){
-test(`conversation ${kind} authorizes HTTP fixture samples and restores editable terminal canvas`,async({page,request})=>{
+for(const scenario of ["classification","bbox","classification-review"] as const){
+const kind = scenario === "bbox" ? "bbox" : "classification";
+const requiresReview = scenario !== "classification";
+test(`conversation ${scenario} authorizes HTTP fixture samples and restores editable terminal canvas`,async({page,request})=>{
   test.setTimeout(120_000);
+  // Each scenario must bind its own TEST transport, not an earlier compatible registry model.
+  const existingProfiles = (await (await request.get("/api/model-profiles")).json()).models;
+  for (const profile of existingProfiles) {
+    if (profile.display_name.startsWith("Conversation TEST ")) {
+      expect((await request.patch(`/api/model-profiles/${profile.id}`, {data:{enabled:false}})).ok()).toBe(true);
+    }
+  }
   const provider=await (await request.post("/api/providers",{data:{display_name:"Conversation sample TEST transport",adapter:"open_ai_compatible",base_url:"http://127.0.0.1:8796/openai/v1"}})).json();
   expect((await request.post(`/api/providers/${provider.id}/credential`,{data:{source:"workspace_file",secret:"TEST-conversation-samples-only"}})).ok()).toBeTruthy();
-  const model=await (await request.post("/api/model-profiles",{data:{provider_id:provider.id,display_name:`Conversation TEST ${kind}`,remote_model_id:`e2e-conversation-${kind}`,input_modalities:["text","image"],task_capabilities:["text_generation","vision_language","image_classification"],protocol_features:{tool_calls:true,structured_output:true}}})).json();
+  const model=await (await request.post("/api/model-profiles",{data:{provider_id:provider.id,display_name:`Conversation TEST ${scenario}`,remote_model_id:`e2e-conversation-${scenario}`,input_modalities:["text","image"],task_capabilities:["text_generation","vision_language","image_classification"],protocol_features:{tool_calls:true,structured_output:true}}})).json();
   expect((await request.post(`/api/providers/${provider.id}/active-probe`,{data:{model_profile_id:model.id,confirmed_billable:true}})).ok()).toBeTruthy();
   const defaults=await (await request.get("/api/agent-model-bindings")).json();
   expect((await request.put("/api/agent-model-bindings",{data:{...defaults,pipeline_builder:model.id}})).ok()).toBeTruthy();
@@ -43,8 +52,11 @@ test(`conversation ${kind} authorizes HTTP fixture samples and restores editable
   expect(envelope.conversation.allow_unknown_cost).toBe(true);
   const taskRoot=`/api/projects/${project}/conversations/${envelope.conversation.conversation_id}/tasks/${envelope.conversation.task_id}`;
   const calls=await (await request.get(`${taskRoot}/calls`)).json();
+  const initialReport = (await (await request.get(`/api/workflow-drafts/${envelope.draft_id}/sample-test?test_id=${envelope.request_id}`)).json()).sample_test.report;
+  expect(initialReport.validation.valid).toBe(true);
+  expect(initialReport.samples[0].nodes.some((node:any)=>node.metadata.model === `e2e-conversation-${scenario}`)).toBe(true);
   expect(envelope.conversation.human_review).toBe(true);
-  if(kind==="bbox"){
+  if(requiresReview){
   await expect.poll(async()=> (await (await request.get(`${taskRoot}/human-requests`)).json()).length).toBe(1);
   const initialAutomatic=(await (await request.get(`${taskRoot}/human-requests`)).json())[0];
   expect(initialAutomatic.input.reason_code).toBe("terminal_result_requires_review");
@@ -57,7 +69,7 @@ test(`conversation ${kind} authorizes HTTP fixture samples and restores editable
     expect(await (await request.get(`${taskRoot}/human-requests`)).json()).toEqual([]);
   }
   expect(calls.some((call:any)=>call.evidence?.phase==="sample_inference" && call.status==="completed")).toBe(true);
-  if (kind === "bbox") {
+  if (requiresReview) {
     const saved = await (await request.get(`/api/workflow-drafts/${envelope.draft_id}/sample-test?test_id=${envelope.request_id}`)).json();
     const projection = saved.sample_test.report.samples[0].projection;
     expect(projection.final_candidates).toHaveLength(0);
@@ -96,7 +108,7 @@ test(`conversation ${kind} authorizes HTTP fixture samples and restores editable
   expect(starts.filter(url=>!url.endsWith("/feedback"))).toEqual([]);
   expect(await (await request.get(`${taskRoot}/calls`)).json()).toEqual(calls);
   await page.locator(".conversation-image-panel").evaluate(element=>element.scrollTop=0);
-  await page.screenshot({path:`../docs/execution/conversational-workspace/sample-${kind}.png`,fullPage:true});
+  await page.screenshot({path:`../docs/execution/conversational-workspace/sample-${scenario}.png`,fullPage:true});
   await page.setViewportSize({width:390,height:844});
   await page.getByRole("button",{name:/Images \(/}).click();
   await expect(page.getByLabel("Saved sample results",{exact:true})).toBeVisible();

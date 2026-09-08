@@ -4864,7 +4864,9 @@ function LabelPipelineEditor({
         Object.values(step.inputs).some((source) =>
           source.source === "shared_stage"
             ? source.stage_id === stage.id
-            : source.source === "step" && stepIds.has(source.step_id),
+            : source.source === "any_of_steps"
+              ? source.sources.some(member => (member.source === "step" || member.source === "routed_step") && stepIds.has(member.step_id))
+              : (source.source === "step" || source.source === "routed_step") && stepIds.has(source.step_id),
         ),
       ),
     );
@@ -5527,7 +5529,12 @@ function PipelineNodeDrawer({
         )}
         <details><summary>{t("Expert details")}</summary>
           <code>{step.node_type} · {step.id}</code>
-          <label>{t("Input")}<input readOnly value={Object.entries(step.inputs).map(([name, source]) => `${name}: ${source.source === "image" ? "Image" : `${source.step_id}.${source.port}`}`).join(" + ") || "None"} /></label>
+          <label>{t("Input")}<input readOnly value={Object.entries(step.inputs).map(([name, source]) => {
+            const describe = (input: PipelineSource): string => input.source === "image" ? "Image"
+              : input.source === "any_of_steps" ? input.sources.map(describe).join(" OR ")
+              : `${input.step_id}.${input.port}${input.source === "routed_step" ? ` [${input.route}]` : ""}`;
+            return `${name}: ${describe(source)}`;
+          }).join(" + ") || "None"} /></label>
           <label>{t("Output")}<input readOnly value={Object.entries(step.outputs).map(([name, type]) => `${name}: ${type}`).join(", ") || "Terminal"} /></label>
           <label>{t("Fallback node")}<input value={step.fallback ?? ""} disabled={immutable} placeholder={t("No fallback")} onChange={(event) => onChange({ ...step, fallback: event.target.value || undefined })} /></label>
           <label>{t("Raw parameters and class mapping")}<textarea value={parameters} disabled={immutable} onChange={(event) => {

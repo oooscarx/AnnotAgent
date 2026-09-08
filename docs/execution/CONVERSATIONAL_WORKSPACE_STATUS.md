@@ -1137,3 +1137,38 @@ The fixture now supports an explicit `-review` model scenario for reproducing th
 NOT fixed by the UI change; next work must introduce conditional review routing while
 preserving the direct high-confidence path and Commit safety. No real workspace changes,
 Live calls, push or remote modification; broader goal and M3/M4 requirements remain open.
+
+### Conditional classification review and branch joins (M3 increment)
+
+Fixed the controlled classification composition: Classifier → Confidence Gate sends `pass`
+directly toward Commit and `review` into Human Review. Both converge at the same required
+Commit input. Low-confidence classifications no longer fail unsafe Commit or disappear as
+no-target; high-confidence classifications are not forced into Review. Runtime approval and
+Commit validation are unchanged. Existing saved/PUBLISHED drafts are not migrated or mutated.
+
+Core authoring now preserves generic `routed_step` and `any_of_steps` sources through JSON,
+compile/save and static validation. A branch join compiles alternative edges into one required,
+multi-source port, using the existing DAG readiness/routing semantics. Empty joins, mixed
+types, nonlocal/nested join members, unknown outputs and malformed route names block validation.
+No specific model or Label branch was added to Core. The advanced editor retains and describes
+these inputs. The iterative Advisor's intentional invalid-Draft exercise now disconnects and
+restores all Commit inputs, because removing only one alternative no longer makes a join invalid.
+
+Regression-driven iterations caught and corrected an initially incompatible two-Commit plan
+and an incorrect `accept` route name (the existing confidence gate emits `pass`). A subsequent
+TEST scenario initially selected an earlier enabled compatible model; browser setup now disables
+only previous models bearing this test's explicit display-name prefix and verifies the actual
+model in the sample trace. No real Registry is changed by these isolated tests.
+
+Final checks: Core **117/117**, Application **99 passed / 1 billable ignored**, Runtime **33 unit
++ 15 integration**, Web **108/108**, typecheck, production build, strict Core/Application Clippy,
+format and diff checks passed. Browser **3/3 passed**, isolated
+`/tmp/annotagent-guided-e2e-99100`: high classification, bbox, and explicit confidence-0.4
+classification, including authorization, lost-response recovery, automatic assistance,
+correction, plan repair and retest. The low-confidence saved trace shows the exact TEST model,
+gate route `review` and `confidence_review: awaitingreview`, not an unsafe Commit failure.
+Inspected `conversational-workspace/sample-classification-review.png`; synthetic pixels and
+scripted labels prove transport/UI behavior only, not quality or真人可用性. Known chunk warning
+and tall conversation editor remain. No push, remote modification, real workspace mutation,
+Live inference or new formal annotation. Formal processing integration and other M3/M4 work
+remain unfinished; the goal is still active.

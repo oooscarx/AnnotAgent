@@ -1143,6 +1143,18 @@ pub enum PipelineSource {
         port: String,
         artifact_type: ArtifactKind,
     },
+    /// Read a local step only when its output selected this route.
+    RoutedStep {
+        step_id: String,
+        port: String,
+        artifact_type: ArtifactKind,
+        route: String,
+    },
+    /// Join active local branches at one required input port (at least one must produce output).
+    AnyOfSteps {
+        artifact_type: ArtifactKind,
+        sources: Vec<PipelineSource>,
+    },
 }
 
 impl PipelineSource {
@@ -1150,18 +1162,26 @@ impl PipelineSource {
     pub const fn artifact_type(&self) -> ArtifactKind {
         match self {
             Self::Image => ArtifactKind::Image,
-            Self::SharedStage { artifact_type, .. } | Self::Step { artifact_type, .. } => {
-                *artifact_type
-            }
+            Self::SharedStage { artifact_type, .. }
+            | Self::Step { artifact_type, .. }
+            | Self::RoutedStep { artifact_type, .. }
+            | Self::AnyOfSteps { artifact_type, .. } => *artifact_type,
         }
     }
 
-    fn producer(&self) -> (&str, &str) {
+    fn producers(&self) -> Vec<(&str, &str, Option<&str>)> {
         match self {
-            Self::Image => (IMAGE_INPUT_NODE_ID, "image"),
+            Self::Image => vec![(IMAGE_INPUT_NODE_ID, "image", None)],
             Self::SharedStage { step_id, port, .. } | Self::Step { step_id, port, .. } => {
-                (step_id, port)
+                vec![(step_id, port, None)]
             }
+            Self::RoutedStep {
+                step_id,
+                port,
+                route,
+                ..
+            } => vec![(step_id, port, Some(route))],
+            Self::AnyOfSteps { sources, .. } => sources.iter().flat_map(Self::producers).collect(),
         }
     }
 }
@@ -1432,71 +1452,113 @@ fn validate_step(
     };
 
     for (port, source) in &step.inputs {
-        let source_type = source.artifact_type();
-        if !descriptor.accepts.is_empty() && !descriptor.accepts.contains(&source_type) {
-            push_issue(
-                issues,
-                "node_input_type_unsupported",
-                format!("{path}.inputs.{port}"),
-                format!(
-                    "operation {:?} does not accept {source_type:?}",
-                    step.node_type
-                ),
-            );
-        }
-        if let PipelineSource::SharedStage {
-            stage_id,
-            step_id,
-            port: source_port,
+        let sources = if let PipelineSource::AnyOfSteps {
+            sources,
             artifact_type,
         } = source
         {
-            if !shared_stage_ids.contains(stage_id.as_str()) {
+            if sources.is_empty()
+                || sources.iter().any(|member| {
+                    !matches!(
+                        member,
+                        PipelineSource::Step { .. } | PipelineSource::RoutedStep { .. }
+                    ) || member.artifact_type() != *artifact_type
+                })
+            {
                 push_issue(
                     issues,
-                    "unknown_shared_stage",
-                    format!("{path}.inputs.{port}.stage_id"),
-                    format!("shared stage {stage_id:?} does not exist"),
-                );
-            }
-            if step_stage.get(step_id) != Some(stage_id) {
-                push_issue(
-                    issues,
-                    "shared_stage_source_mismatch",
+                    "invalid_branch_join",
                     format!("{path}.inputs.{port}"),
-                    format!("step {step_id:?} is not owned by shared stage {stage_id:?}"),
+                    "Branch joins require nonempty local step sources of the declared artifact type",
                 );
             }
-            validate_source_output(
-                step_id,
-                source_port,
-                *artifact_type,
-                outputs,
-                &format!("{path}.inputs.{port}"),
-                issues,
-            );
-        } else if let PipelineSource::Step {
-            step_id,
-            port: source_port,
-            artifact_type,
-        } = source
-        {
-            if current_stage.is_none() && step_stage.contains_key(step_id) {
+            sources.iter().collect::<Vec<_>>()
+        } else {
+            vec![source]
+        };
+        for source in sources {
+            if let PipelineSource::RoutedStep { route, .. } = source
+                && (route.is_empty() || route.trim() != route)
+            {
                 push_issue(
                     issues,
-                    "shared_step_requires_shared_source",
-                    format!("{path}.inputs.{port}"),
-                    "Label Pipeline references to shared steps must name their Shared Stage",
+                    "invalid_source_route",
+                    format!("{path}.inputs.{port}.route"),
+                    "A conditional source requires a nonempty route without surrounding whitespace",
                 );
             }
-            validate_source_output(
+            let source_type = source.artifact_type();
+            if !descriptor.accepts.is_empty() && !descriptor.accepts.contains(&source_type) {
+                push_issue(
+                    issues,
+                    "node_input_type_unsupported",
+                    format!("{path}.inputs.{port}"),
+                    format!(
+                        "operation {:?} does not accept {source_type:?}",
+                        step.node_type
+                    ),
+                );
+            }
+            if let PipelineSource::SharedStage {
+                stage_id,
                 step_id,
-                source_port,
-                *artifact_type,
-                outputs,
-                &format!("{path}.inputs.{port}"),
-                issues,
-            );
+                port: source_port,
+                artifact_type,
+            } = source
+            {
+                if !shared_stage_ids.contains(stage_id.as_str()) {
+                    push_issue(
+                        issues,
+                        "unknown_shared_stage",
+                        format!("{path}.inputs.{port}.stage_id"),
+                        format!("shared stage {stage_id:?} does not exist"),
+                    );
+                }
+                if step_stage.get(step_id) != Some(stage_id) {
+                    push_issue(
+                        issues,
+                        "shared_stage_source_mismatch",
+                        format!("{path}.inputs.{port}"),
+                        format!("step {step_id:?} is not owned by shared stage {stage_id:?}"),
+                    );
+                }
+                validate_source_output(
+                    step_id,
+                    source_port,
+                    *artifact_type,
+                    outputs,
+                    &format!("{path}.inputs.{port}"),
+                    issues,
+                );
+            } else if let PipelineSource::Step {
+                step_id,
+                port: source_port,
+                artifact_type,
+            }
+            | PipelineSource::RoutedStep {
+                step_id,
+                port: source_port,
+                artifact_type,
+                ..
+            } = source
+            {
+                if current_stage.is_none() && step_stage.contains_key(step_id) {
+                    push_issue(
+                        issues,
+                        "shared_step_requires_shared_source",
+                        format!("{path}.inputs.{port}"),
+                        "Label Pipeline references to shared steps must name their Shared Stage",
+                    );
+                }
+                validate_source_output(
+                    step_id,
+                    source_port,
+                    *artifact_type,
+                    outputs,
+                    &format!("{path}.inputs.{port}"),
+                    issues,
+                );
+            }
         }
     }
     for (port, artifact_type) in &step.outputs {
@@ -1699,20 +1761,21 @@ impl LabelWorkflowComposition {
                 .inputs
                 .iter()
                 .map(|(port, source)| {
-                    let (source_node, source_port) = source.producer();
-                    dependencies.insert(source_node.to_owned());
-                    edges.push(WorkflowEdge {
-                        from_node: source_node.to_owned(),
-                        from_port: source_port.to_owned(),
-                        to_node: step.id.clone(),
-                        to_port: port.clone(),
-                        route: None,
-                    });
+                    for (source_node, source_port, route) in source.producers() {
+                        dependencies.insert(source_node.to_owned());
+                        edges.push(WorkflowEdge {
+                            from_node: source_node.to_owned(),
+                            from_port: source_port.to_owned(),
+                            to_node: step.id.clone(),
+                            to_port: port.clone(),
+                            route: route.map(str::to_owned),
+                        });
+                    }
                     NodePort {
                         id: port.clone(),
                         artifact_type: source.artifact_type(),
                         required: true,
-                        multiple: false,
+                        multiple: matches!(source, PipelineSource::AnyOfSteps { .. }),
                     }
                 })
                 .collect();
@@ -2693,6 +2756,120 @@ mod tests {
             3
         );
         assert_eq!(draft.label_pipeline, Some(composition));
+    }
+
+    #[test]
+    fn conditional_sources_round_trip_compile_and_validate_like_local_sources() {
+        let mut composition = shared_composition();
+        let pipeline = &mut composition.label_pipelines[0];
+        let producer = pipeline.steps[0].id.clone();
+        pipeline.steps[1].inputs.insert(
+            "candidates".to_owned(),
+            PipelineSource::RoutedStep {
+                step_id: producer.clone(),
+                port: "detections".to_owned(),
+                artifact_type: ArtifactKind::DetectionSet,
+                route: "accept".to_owned(),
+            },
+        );
+        let encoded = serde_json::to_value(&composition).expect("serialize composition");
+        let decoded: LabelWorkflowComposition =
+            serde_json::from_value(encoded).expect("restore composition");
+        assert_eq!(decoded, composition);
+        let (nodes, models) = registries();
+        let report = LabelPipelineStaticValidator.validate(&decoded, &project(), &nodes, &models);
+        assert!(report.valid, "{:?}", report.issues);
+        let draft = decoded.compile_draft("generic", "conditional", BTreeMap::new(), Utc::now());
+        let edge = draft
+            .edges
+            .iter()
+            .find(|edge| edge.from_node == producer)
+            .expect("conditional edge");
+        assert_eq!(edge.route.as_deref(), Some("accept"));
+        assert_eq!(draft.label_pipeline, Some(decoded));
+        if let PipelineSource::RoutedStep {
+            artifact_type,
+            route,
+            ..
+        } = composition.label_pipelines[0].steps[1]
+            .inputs
+            .get_mut("candidates")
+            .unwrap()
+        {
+            *artifact_type = ArtifactKind::CropSet;
+            *route = " ".to_owned();
+        }
+        let report =
+            LabelPipelineStaticValidator.validate(&composition, &project(), &nodes, &models);
+        assert!(!report.valid);
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.code == "invalid_source_route")
+        );
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.code == "pipeline_artifact_type_mismatch")
+        );
+    }
+
+    #[test]
+    fn branch_join_compiles_one_required_port_with_alternative_edges() {
+        let mut composition = shared_composition();
+        let producer = composition.label_pipelines[0].steps[0].id.clone();
+        let sources = ["accept", "review"]
+            .map(|route| PipelineSource::RoutedStep {
+                step_id: producer.clone(),
+                port: "detections".to_owned(),
+                artifact_type: ArtifactKind::DetectionSet,
+                route: route.to_owned(),
+            })
+            .to_vec();
+        composition.label_pipelines[0].steps[1].inputs.insert(
+            "candidates".to_owned(),
+            PipelineSource::AnyOfSteps {
+                artifact_type: ArtifactKind::DetectionSet,
+                sources,
+            },
+        );
+        let (nodes, models) = registries();
+        let report =
+            LabelPipelineStaticValidator.validate(&composition, &project(), &nodes, &models);
+        assert!(report.valid, "{:?}", report.issues);
+        let draft = composition.compile_draft("generic", "join", BTreeMap::new(), Utc::now());
+        let target = &composition.label_pipelines[0].steps[1].id;
+        let incoming: Vec<_> = draft
+            .edges
+            .iter()
+            .filter(|edge| edge.to_node == *target)
+            .collect();
+        assert_eq!(incoming.len(), 2);
+        assert!(incoming.iter().all(|edge| edge.to_port == "candidates"));
+        let node = draft.nodes.iter().find(|node| node.id == *target).unwrap();
+        assert_eq!(node.inputs.len(), 1);
+        assert!(node.inputs[0].required && node.inputs[0].multiple);
+        assert_eq!(node.depends_on, vec![producer]);
+        let restored: WorkflowDraft =
+            serde_json::from_value(serde_json::to_value(&draft).unwrap()).unwrap();
+        assert_eq!(restored.label_pipeline, Some(composition.clone()));
+        if let PipelineSource::AnyOfSteps { sources, .. } = composition.label_pipelines[0].steps[1]
+            .inputs
+            .get_mut("candidates")
+            .unwrap()
+        {
+            sources.clear();
+        }
+        let report =
+            LabelPipelineStaticValidator.validate(&composition, &project(), &nodes, &models);
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.code == "invalid_branch_join" && issue.blocking)
+        );
     }
 
     #[test]

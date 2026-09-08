@@ -5797,12 +5797,59 @@ fn controlled_label_composition(
                 },
                 ArtifactKind::ClassificationSet,
             );
-            let commit_step = commit(PipelineSource::Step {
-                step_id: gate_id,
+            let accepted_source = PipelineSource::RoutedStep {
+                step_id: gate_id.clone(),
                 port: "candidates".to_owned(),
                 artifact_type: ArtifactKind::ClassificationSet,
+                route: "pass".to_owned(),
+            };
+            let review_id = format!("{target_task_id}.{target_label}.confidence_review");
+            let review_step = PipelineStep {
+                id: review_id.clone(),
+                node_type: "core.human_review".to_owned(),
+                kind: WorkflowNodeKind::HumanReview,
+                inputs: BTreeMap::from([(
+                    "candidates".to_owned(),
+                    PipelineSource::RoutedStep {
+                        step_id: gate_id,
+                        port: "candidates".to_owned(),
+                        artifact_type: ArtifactKind::ClassificationSet,
+                        route: "review".to_owned(),
+                    },
+                )]),
+                outputs: BTreeMap::from([(
+                    "candidates".to_owned(),
+                    ArtifactKind::ClassificationSet,
+                )]),
+                model_binding: None,
+                skill_binding: None,
+                parameters: BTreeMap::from([(
+                    "reason".to_owned(),
+                    json!("classification_confidence_requires_review"),
+                )]),
+                validators: Vec::new(),
+                refiners: Vec::new(),
+                fallback: None,
+                retry_policy: RetryPolicy::default(),
+                review_gate: ReviewGate {
+                    required: true,
+                    allow_manual_override: false,
+                },
+                resources: ResourceRequirements::default(),
+            };
+            let reviewed_source = PipelineSource::Step {
+                step_id: review_id,
+                port: "candidates".to_owned(),
+                artifact_type: ArtifactKind::ClassificationSet,
+            };
+            let commit_step = commit(PipelineSource::AnyOfSteps {
+                artifact_type: ArtifactKind::ClassificationSet,
+                sources: vec![accepted_source, reviewed_source],
             });
-            (Vec::new(), vec![classifier, gate_step, commit_step])
+            (
+                Vec::new(),
+                vec![classifier, gate_step, commit_step, review_step],
+            )
         }
         TaskKind::BoundingBox => {
             let detector_id = "shared.detector".to_owned();
@@ -11414,14 +11461,23 @@ impl LocalApplication {
             .find(|node| node.kind == WorkflowNodeKind::Commit)
             .map(|node| node.id.clone())
             .ok_or_else(|| anyhow!("Pipeline Builder template has no Commit"))?;
-        let incoming = invalid
+        let incoming_edges = invalid
             .edges
             .iter()
-            .find(|edge| edge.to_node == commit_id)
+            .filter(|edge| edge.to_node == commit_id)
             .cloned()
+            .collect::<Vec<_>>();
+        let incoming = incoming_edges
+            .first()
             .ok_or_else(|| anyhow!("Pipeline Builder template has no connection into Commit"))?;
-        let removed =
-            PipelineDraftTools.disconnect(&mut invalid, &incoming.from_node, &incoming.to_node)?;
+        let mut removed = Vec::new();
+        for edge in &incoming_edges {
+            removed.extend(PipelineDraftTools.disconnect(
+                &mut invalid,
+                &edge.from_node,
+                &edge.to_node,
+            )?);
+        }
         if !record(
             &mut session,
             "disconnect_pipeline_nodes",
@@ -11475,7 +11531,9 @@ impl LocalApplication {
         }
 
         let mut revised = suggestion;
-        PipelineDraftTools.connect(&mut invalid, incoming.clone())?;
+        for edge in &incoming_edges {
+            PipelineDraftTools.connect(&mut invalid, edge.clone())?;
+        }
         invalid.status = WorkflowDraftStatus::Suggested;
         revised.draft = invalid;
         if !record(

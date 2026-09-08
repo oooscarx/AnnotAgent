@@ -1315,6 +1315,7 @@ export type PipelineArtifactType =
 
 export type PipelineSource =
   | { source: "image" }
+  | { source: "any_of_steps"; artifact_type: PipelineArtifactType; sources: PipelineSource[] }
   | {
       source: "shared_stage";
       stage_id: string;
@@ -1327,6 +1328,13 @@ export type PipelineSource =
       step_id: string;
       port: string;
       artifact_type: PipelineArtifactType;
+    }
+  | {
+      source: "routed_step";
+      step_id: string;
+      port: string;
+      artifact_type: PipelineArtifactType;
+      route: string;
     };
 
 export interface PipelineStep {
