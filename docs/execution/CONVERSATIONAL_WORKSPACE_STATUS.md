@@ -2445,3 +2445,13 @@ Web typecheck, 123 unit tests and production build passed (known chunk-size warn
 The regenerated automatic-label-draft screenshot now shows the current goal's request status
 alongside its saved labels, not the obsolete selection prompt. TEST only; no Live inference,
 real-human usability, real workspace writes, push or remote changes.
+
+Coordinator boundary rechecked after this fix: `conversation_builder.rs` in Server explicitly
+authorizes text-only goal/Schema/Registry metadata and excludes sample inference. In
+`sample_operations.rs`, `conversation_scope` seals the resolved Draft fingerprint, task,
+request and previous grant; `validate_scope` requires the authorized revision/model/image
+fingerprint and exact first 1–3-image selection. Thus an automatic front-end click using the
+Builder grant would not constitute the requested bounded coordinator. The next integrated
+authorization must explicitly cover permitted image recipients/selection and cumulative calls,
+then validate the actually generated Draft against that envelope before sample admission.
+The existing distinct consent boundaries remain intact until that mechanism is implemented.
