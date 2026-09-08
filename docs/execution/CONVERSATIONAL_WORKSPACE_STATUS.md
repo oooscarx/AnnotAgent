@@ -4565,3 +4565,23 @@ submission, duplicate answer, reload/checkpoint and unchanged inference history.
 yet run: the old full-browser server remains active on 21905 (observed through test 94), and
 must finish before the new build is tested. Automatic request generation for no-target evidence
 is still pending; these explicit API-created TEST requests do not prove that Agent behavior.
+
+### 2026-09-09 — Full round two ended; new contract browser verification starts
+
+Handle 21905 is terminal: **129 passed, 4 failed, 34 did not run (23.7m)**. The full retained
+failure evidence is `/tmp/annotagent-full-round2-traces-o1KGja/test-results` (copied before the
+next run). Failures: goals, multi-label class canvas, guided creation, and journey-ready.
+Guided creation still found its ID by name in the bounded dashboard; the test now uses the
+creation URL's ID and verifies its exact summary. Goals' retained trace proves HTTP 429
+`mutation_rate_limited`; its lost-ACK route used `continue` on later requests, bypassing the
+fixture pacing layer. It now falls back to that layer and uses its bounded observation window.
+Typecheck passes; neither fix is counted as browser-passed yet.
+
+The class-canvas failure shows no preview request and remains to reproduce; the independent
+journey-ready test exhausted its total 120 seconds at the later missing-annotation action.
+Do not assume a shared cause without evidence. The serial 34 skips are not passes.
+
+Fresh new-code verification runs on handle 75462 with isolated evidence
+`/tmp/annotagent-reference-verification`: both reference target UI paths, the terminal comparison
+transport regression, goals, and the prior multi-label canvas failure. This run includes the
+new Rust contract and Web build; unlike the full baseline it can validate the new implementation.

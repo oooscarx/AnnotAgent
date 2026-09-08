@@ -277,8 +277,9 @@ test("create and open a generic Project", async ({ page, request }) => {
   await dialog.getByLabel("Choose images", { exact: false }).setInputFiles({ name: `${projectName}.png`, mimeType: "image/png", buffer: readFileSync(resolve("../examples/robocup/images/synthetic-robocup.png")) });
   await dialog.getByRole("button", { name: "Continue", exact: true }).click();
   await expect(page).toHaveURL(/\/work$/);
+  projectId = new URL(page.url()).pathname.split("/")[2];
   // Keep testing the existing management/legacy editor as a deliberate deep link.
-  await page.goto(`/projects/${new URL(page.url()).pathname.split("/")[2]}/task/goal`);
+  await page.goto(`/projects/${projectId}/task/goal`);
   const goal = page.getByRole("region", { name: "Annotation goal", exact: true });
   await goal.getByLabel("Categories to keep", { exact: false }).fill("day");
   await goal.getByLabel("Describe your goal", { exact: true }).fill("Classify this scene as day or night.");
@@ -289,8 +290,9 @@ test("create and open a generic Project", async ({ page, request }) => {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
   await goal.getByRole("button", { name: "Prepare sample results", exact: true }).click();
   await expect(goal.getByText("Goal saved", { exact: true })).toBeVisible();
-  const state = await dashboard(request);
-  projectId = state.projects.find((project: { name: string }) => project.name === projectName).id;
+  const summaryResponse=await request.get(`/api/projects/${projectId}/summary`);
+  expect(summaryResponse.ok(),await summaryResponse.text()).toBe(true);
+  expect((await summaryResponse.json()).project.id).toBe(projectId);
   // This suite continues testing the existing management editor independently of the Journey.
   expect((await request.post("/api/workflow-drafts", { data: { project_id: projectId } })).ok()).toBeTruthy();
   const bound = await request.put(`/api/projects/${projectId}/model-bindings`, {

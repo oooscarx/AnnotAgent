@@ -1,7 +1,9 @@
 import { isolatedEvidencePath } from "./evidence";
-import { expect, test, fetchWithinMutationLimit } from "./fixtures";
+import { expect as baseExpect, test, fetchWithinMutationLimit } from "./fixtures";
+const expect=baseExpect.configure({timeout:75_000});
 
 test("saved messages select independent goals without inference or task substitution",async({page,request})=>{
+  test.setTimeout(180_000);
   // This scenario specifically starts without a planner. Earlier scenarios use the
   // same isolated TEST registry; do not assume suite order left its defaults empty.
   const defaults=await (await request.get("/api/agent-model-bindings")).json();
@@ -29,7 +31,7 @@ test("saved messages select independent goals without inference or task substitu
       const response=await fetchWithinMutationLimit(route);
       expect(response.ok(),await response.text()).toBe(true);
       await route.abort("failed");
-    }else await route.continue();
+    }else await route.fallback();
   });
   await page.getByRole("button",{name:"Use message 2 as annotation goal",exact:true}).click();
   await expect(page.getByRole("alert").last()).toBeVisible();
