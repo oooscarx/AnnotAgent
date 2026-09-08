@@ -7864,13 +7864,27 @@ struct ExportConversation {
     task_id: uuid::Uuid,
 }
 
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct ExportHistoryQuery {
+    before: Option<uuid::Uuid>,
+    limit: Option<u32>,
+}
+
 async fn conversation_export_history(
     State(state): State<ServerState>,
     AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+    Query(page): Query<ExportHistoryQuery>,
 ) -> ApiResult<Json<Value>> {
     state
         .application
-        .conversation_export_history(&project, conversation, task)
+        .conversation_export_history_page(
+            &project,
+            conversation,
+            task,
+            page.before,
+            page.limit.unwrap_or(100),
+        )
         .map(|value| Json(json!(value)))
         .map_err(ApiError::bad_request)
 }

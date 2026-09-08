@@ -729,6 +729,8 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
       expect(duplicateExport.ok(),await duplicateExport.text()).toBe(true);
       expect((await duplicateExport.json()).delivery.id).toBe(delivered.delivery.id);
       expect(await (await request.get(exportHistoryPath)).json()).toHaveLength(1);
+      expect(await (await request.get(`${exportHistoryPath}?limit=1&before=${delivered.delivery.id}`)).json()).toEqual([]);
+      expect((await request.get(`${exportHistoryPath}?before=${randomUUID()}`)).ok()).toBe(false);
       const foreignExport=await request.post(`/api/projects/${project}/export`,{data:{...exportInput,conversation:{...exportInput.conversation,id:randomUUID(),task_id:randomUUID()}}});
       expect(foreignExport.ok()).toBe(false);
       expect(delivered.report.exported_count,JSON.stringify(delivered)).toBe(1);
@@ -773,6 +775,27 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
     await expect(exports).toContainText("Project-wide exports requested from this goal");
     await expect(exports.getByRole("link",{name:"Download annotation archive"})).toBeVisible();
     await exports.screenshot({path:evidencePath(`export-card-${kind}.png`),animations:"disabled"});
+    if(scenario==="classification-review"){
+      // Browser-only pagination fixture; no extra export or fake completed artifact is created.
+      const historyPath=`/api/projects/${project}/conversations/${new URL(page.url()).searchParams.get("conversation")}/tasks/${new URL(page.url()).searchParams.get("task")}/exports`;
+      const fixtureRows=Array.from({length:21},(_,index)=>({id:randomUUID(),format:`TEST pagination ${index+1}`,created_at:"2000-01-01T00:00:00Z",result:null,error:"TEST pagination fixture — no export executed"}));
+      const pattern=`**${historyPath}?**`;
+      await page.route(pattern,route=>route.fulfill({json:new URL(route.request().url()).searchParams.has("before") ? fixtureRows.slice(20) : fixtureRows.slice(0,20)}));
+      await exports.getByRole("button",{name:"Refresh export status"}).click();
+      await expect(exports.locator("article")).toHaveCount(20);
+      const contextUrl=page.url();
+      await exports.getByRole("button",{name:"Older exports"}).click();
+      await expect(exports.locator("article")).toHaveCount(1);
+      await expect(exports).toContainText("TEST pagination 21");
+      await expect(exports.getByRole("button",{name:"Older exports"})).toBeDisabled();
+      expect(page.url()).toBe(contextUrl);
+      await exports.getByRole("button",{name:"Newer exports"}).click();
+      await expect(exports.locator("article")).toHaveCount(20);
+      await page.unroute(pattern);
+      await exports.getByRole("button",{name:"Refresh export status"}).click();
+      await expect(exports.locator("article")).toHaveCount(1);
+      await expect(exports.getByRole("link",{name:"Download annotation archive"})).toBeVisible();
+    }
   }
   await page.screenshot({path:evidencePath(`processing-results-${scenario}.png`),fullPage:true,animations:"disabled"});
   const foreignUrl=new URL(page.url());foreignUrl.searchParams.set("batch",crypto.randomUUID());

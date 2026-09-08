@@ -68,11 +68,23 @@ impl SqliteStore {
         conversation: Uuid,
         task: Uuid,
     ) -> Result<Vec<ConversationExport>, StorageError> {
+        self.conversation_exports_page(project, conversation, task, None, 100)
+    }
+    pub fn conversation_exports_page(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        before: Option<Uuid>,
+        limit: u32,
+    ) -> Result<Vec<ConversationExport>, StorageError> {
         self.with_connection(|db| {
             let owned:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM conversation_tasks t JOIN project_conversations c ON c.id=t.conversation_id WHERE c.project_id=?1 AND c.id=?2 AND t.id=?3)",params![project,conversation.to_string(),task.to_string()],|row|row.get(0))?;
             if !owned {return Err(StorageError::InvalidConversation("Export task is unavailable in this Project".into()));}
-            let mut query=db.prepare("SELECT id,format,created_at,result_json,error FROM conversation_exports WHERE project_id=?1 AND conversation_id=?2 AND task_id=?3 ORDER BY created_at DESC,id DESC LIMIT 100")?;
-            let rows=query.query_map(params![project,conversation.to_string(),task.to_string()],|row|Ok((row.get::<_,String>(0)?,row.get(1)?,row.get(2)?,row.get::<_,Option<String>>(3)?,row.get(4)?)))?;
+            let cursor=before.map(|id|id.to_string());
+            let timestamp:Option<String>=if let Some(id)=&cursor {Some(db.query_row("SELECT created_at FROM conversation_exports WHERE id=?1 AND project_id=?2 AND conversation_id=?3 AND task_id=?4",params![id,project,conversation.to_string(),task.to_string()],|row|row.get(0)).optional()?.ok_or_else(||StorageError::InvalidConversation("Export cursor is unavailable in this task".into()))?)}else{None};
+            let mut query=db.prepare("SELECT id,format,created_at,result_json,error FROM conversation_exports WHERE project_id=?1 AND conversation_id=?2 AND task_id=?3 AND (?4 IS NULL OR (created_at,id)<(?5,?4)) ORDER BY created_at DESC,id DESC LIMIT ?6")?;
+            let rows=query.query_map(params![project,conversation.to_string(),task.to_string(),cursor,timestamp,limit.clamp(1,100)],|row|Ok((row.get::<_,String>(0)?,row.get(1)?,row.get(2)?,row.get::<_,Option<String>>(3)?,row.get(4)?)))?;
             rows.map(|row|{let(id,format,created_at,result,error)=row?;Ok(ConversationExport{id:Uuid::parse_str(&id).map_err(|_|StorageError::InvalidConversation("Invalid export ID".into()))?,format,created_at,result:result.map(|value|serde_json::from_str(&value)).transpose()?,error})}).collect()
         })
     }
@@ -153,5 +165,69 @@ mod tests {
             .unwrap();
         assert_eq!(history.len(), 1);
         assert!(history[0].error.is_none());
+        for _ in 0..124 {
+            store
+                .begin_conversation_export(&project, conversation, task, Uuid::new_v4(), "native")
+                .unwrap();
+        }
+        // Equal timestamps must still produce stable pages via the UUID tie-breaker.
+        store.with_connection(|db|{db.execute("UPDATE conversation_exports SET created_at='2000-01-01T00:00:00Z' WHERE task_id=?1",[task.to_string()])?;Ok(())}).unwrap();
+        let first = store
+            .conversation_exports_page(&project, conversation, task, None, 17)
+            .unwrap();
+        assert_eq!(first.len(), 17);
+        let newest = Uuid::new_v4();
+        store
+            .begin_conversation_export(&project, conversation, task, newest, "native")
+            .unwrap();
+        let mut ids = std::collections::BTreeSet::new();
+        let mut page = first;
+        while let Some(last) = page.last().map(|row| row.id) {
+            for row in &page {
+                assert!(ids.insert(row.id), "no duplicate across pages");
+            }
+            page = store
+                .conversation_exports_page(&project, conversation, task, Some(last), 17)
+                .unwrap();
+        }
+        assert_eq!(
+            ids.len(),
+            125,
+            "older history remains reachable beyond the original 100 limit"
+        );
+        assert!(
+            !ids.contains(&newest),
+            "new inserts do not shift an existing cursor"
+        );
+        assert!(
+            store
+                .conversation_exports_page(&project, conversation, task, Some(Uuid::new_v4()), 17)
+                .is_err()
+        );
+        let other_message = crate::ConversationMessageInput {
+            id: Uuid::new_v4(),
+            ..message
+        };
+        store
+            .append_conversation_message(&project, conversation, &other_message)
+            .unwrap();
+        let other = Uuid::new_v4();
+        store
+            .begin_conversation_task(
+                &project,
+                conversation,
+                &crate::BeginConversationTask {
+                    id: other,
+                    source_message_id: other_message.id,
+                    schema_revision: "a".repeat(64),
+                },
+            )
+            .unwrap();
+        assert!(
+            store
+                .conversation_exports_page(&project, conversation, other, Some(id), 17)
+                .is_err(),
+            "cursor cannot cross tasks"
+        );
     }
 }

@@ -108,6 +108,19 @@ impl LocalApplication {
             .store
             .conversation_exports(&owner, conversation, task)?)
     }
+    pub fn conversation_export_history_page(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        before: Option<Uuid>,
+        limit: u32,
+    ) -> Result<Vec<annotagent_storage::ConversationExport>> {
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self
+            .store
+            .conversation_exports_page(&owner, conversation, task, before, limit)?)
+    }
     pub async fn export_from_conversation(
         &self,
         project: &str,

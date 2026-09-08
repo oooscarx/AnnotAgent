@@ -4043,3 +4043,28 @@ accessibility acceptance. Pending receipts deliberately do not claim a live work
 use the explicit isolated TEST backend, not Live quality or human usability evidence. No
 real workspace or service 8787, remote, credentials or historical PNG edits were touched;
 no push. Overall goal remains active.
+
+### 2026-09-09 — Bounded, owner-checked export history pages
+
+Replaced the inaccessible older-than-100 history boundary with keyset pagination using
+`(created_at,id)` and an owned export UUID cursor. Unknown/cross-task cursors fail explicitly;
+the cursor is never interpreted as a path. The conversation renders only 20 records per page
+with newer/older controls (not shown for a single short page), keeps the task/image URL, and
+does not create any export on paging. Latest-result query invalidation still targets only the
+requesting task. Refresh currently returns to the first history page; this remaining local
+view-restoration limitation is not considered completed acceptance.
+
+Storage test reads all 125 historical receipts with tied timestamps in 17-record pages,
+adds a newer receipt between reads, verifies no duplicate/omission, and rejects another
+task's cursor. Two full TEST browser paths pass (10.3s/10.0s, 46.6s harness), including real
+HTTP empty-page/invalid-cursor checks. The classification path separately injects an explicitly
+labelled read-only 21-record browser fixture to exercise older/newer controls; these are not
+21 real exports and never appear as successful assets. The real download card is restored
+after removing that UI fixture. Web 199 tests/typecheck and targeted strict all-target Clippy
+pass. Screenshot evidence: `/tmp/annotagent-export-pages-evidence`; isolated server workspace
+`/tmp/annotagent-guided-e2e-89648`. No real data or old screenshot edits changed; no push.
+Background export interruption recovery, history-page refresh retention and broader goal
+acceptance remain unfinished.
+
+Final browser rerun after hiding unnecessary one-page navigation passed both paths
+(9.9s/9.8s; 25.0s harness), workspace `/tmp/annotagent-guided-e2e-89881`.

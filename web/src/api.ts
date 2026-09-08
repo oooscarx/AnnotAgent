@@ -1147,7 +1147,7 @@ export const api = {
     }),
   exportReadiness: (projectId: string, signal?: AbortSignal) =>
     request<ExportReadiness>(`/api/projects/${projectId}/export-readiness`, { signal }),
-  conversationExports: (project:string,conversation:string,task:string,signal?:AbortSignal)=>request<{id:string;error?:string|null;result?:ProjectExportResult|null;format:string;created_at:string}[]>(`/api/projects/${encodeURIComponent(project)}/conversations/${conversation}/tasks/${task}/exports`,{signal}),
+  conversationExports: (project:string,conversation:string,task:string,signal?:AbortSignal,before?:string,limit=100)=>request<{id:string;error?:string|null;result?:ProjectExportResult|null;format:string;created_at:string}[]>(`/api/projects/${encodeURIComponent(project)}/conversations/${conversation}/tasks/${task}/exports?limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ""}`,{signal}),
   export: (projectId: string, format: string, conversation?:{id:string;conversation_id:string;task_id:string}) =>
     request<ProjectExportResult>(`/api/projects/${projectId}/export`, {
       method: "POST",
