@@ -1,3 +1,4 @@
+import { isolatedEvidencePath } from "./evidence";
 import { type APIRequestContext, type Page, type Route } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -223,12 +224,12 @@ export:
   await page.unroute(`**/api/workflow-drafts/${draft.id}/sample-test*`);
   await page.reload();
   await expect(sampleEditor.locator(".sample-confirm-action button")).toBeEnabled();
-  await page.screenshot({ path: resolve("../docs/execution/first-result/bbox-feedback.png") });
+  await page.screenshot({ path: isolatedEvidencePath(resolve("../docs/execution/first-result/bbox-feedback.png")) });
   for (const [width, height] of [[1440, 900], [1280, 720], [1024, 768], [390, 844]]) {
     await page.setViewportSize({ width, height });
     await page.locator(".focus-header").scrollIntoViewIfNeeded();
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
-    await page.screenshot({ path: `../docs/execution/focus-workspace/sample-${width}.png`, fullPage: true });
+    await page.screenshot({ path: isolatedEvidencePath(`../docs/execution/focus-workspace/sample-${width}.png`), fullPage: true });
   }
   await sampleEditor.getByRole("button", { name: "Close annotation preview" }).click();
   const published = await request.post(`/api/workflow-drafts/${draft.id}/publish`);
@@ -265,7 +266,7 @@ test("empty workspace stays generic and contains no RoboCup product content", as
   await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeFocused();
   await expect(page.getByRole("button", { name: "New annotation project", exact: true })).toBeVisible();
   await expect(page.locator("body")).not.toContainText("RoboCup");
-  await page.screenshot({ path: `${screenshots}/01-empty-workspace.png`, fullPage: true });
+  await page.screenshot({ path: isolatedEvidencePath(`${screenshots}/01-empty-workspace.png`), fullPage: true });
 });
 
 test("create and open a generic Project", async ({ page, request }) => {
@@ -283,7 +284,7 @@ test("create and open a generic Project", async ({ page, request }) => {
   await goal.getByLabel("Describe your goal", { exact: true }).fill("Classify this scene as day or night.");
   await goal.getByRole("radio", { name: /Image categories/ }).check();
   await page.setViewportSize({ width: 1024, height: 900 });
-  await page.screenshot({ path: `${screenshots}/02-guided-project-wizard.png` });
+  await page.screenshot({ path: isolatedEvidencePath(`${screenshots}/02-guided-project-wizard.png`) });
   await page.setViewportSize({ width: 720, height: 450 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
   await goal.getByRole("button", { name: "Prepare sample results", exact: true }).click();
@@ -324,7 +325,7 @@ test("create and open a generic Project", async ({ page, request }) => {
   await expect(page.locator(".journey-timeline li")).toHaveCount(8);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
   await page.setViewportSize({ width: 1280, height: 900 });
-  await page.screenshot({ path: `${screenshots}/03-project-guidance.png`, fullPage: true });
+  await page.screenshot({ path: isolatedEvidencePath(`${screenshots}/03-project-guidance.png`), fullPage: true });
   await page.locator("#project-advanced-details > summary").click();
   await expect(page.getByRole("button", { name: "Edit Skills in Automation" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Edit Labels in Build" })).toBeVisible();
@@ -381,7 +382,7 @@ test("Build navigation preserves the Project and imports real data", async ({ pa
   await expect(page.getByText(/1 registered/)).toBeVisible();
   await expect(page.getByRole("heading", { name: "Add images to your Project" })).toBeVisible();
   await expect(page.locator(".build-image-list article")).toHaveCount(1);
-  await page.screenshot({ path: `${screenshots}/04-build-data.png`, fullPage: true });
+  await page.screenshot({ path: isolatedEvidencePath(`${screenshots}/04-build-data.png`), fullPage: true });
   await page.reload();
   await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/build/data$`));
 
@@ -403,7 +404,7 @@ test("Build navigation preserves the Project and imports real data", async ({ pa
         return children.slice(1).map((child, index) => child.top - children[index].bottom);
       });
       expect(Math.min(...labelFormGaps)).toBeGreaterThanOrEqual(12);
-      await page.screenshot({ path: `${screenshots}/05-build-labels.png`, fullPage: true });
+      await page.screenshot({ path: isolatedEvidencePath(`${screenshots}/05-build-labels.png`), fullPage: true });
     }
     if (path === "pipeline")
       await expect(page.getByRole("heading", { name: "How AnnotAgent will label your data" })).toBeVisible();
@@ -458,7 +459,7 @@ test("Automation Recipe previews Advisor changes and autosaves Drawer edits", as
   await page.getByText("View technical graph (read-only)", { exact: true }).click();
   await expect(page.getByLabel("Technical graph JSON")).toHaveAttribute("readonly", "");
   await expect(page.getByRole("button", { name: /Apply technical graph|Add node|Add connection/ })).toHaveCount(0);
-  await page.screenshot({ path: `${screenshots}/06-automation-recipe.png`, fullPage: true });
+  await page.screenshot({ path: isolatedEvidencePath(`${screenshots}/06-automation-recipe.png`), fullPage: true });
 });
 
 test("two tabs surface a Draft revision conflict without losing either copy", async ({ context, request }, testInfo) => {
@@ -728,7 +729,7 @@ test("Dry Run reports real summary metrics and publishes an immutable version", 
   await previewDialog.getByLabel("Feedback note", { exact: true }).fill("The scene needs human inspection.");
   await previewDialog.getByRole("button", { name: "Save sample feedback", exact: true }).click();
   await expect(previewDialog.getByRole("status")).toContainText("Sample feedback saved");
-  await page.screenshot({ path: resolve("../docs/execution/first-result/sample-feedback.png") });
+  await page.screenshot({ path: isolatedEvidencePath(resolve("../docs/execution/first-result/sample-feedback.png")) });
   await previewDialog.getByRole("button", { name: "Close annotation preview" }).click();
   await expect(previewDialog).toBeHidden();
   await page.reload();
@@ -755,7 +756,7 @@ test("Dry Run reports real summary metrics and publishes an immutable version", 
   await expect(page.getByText("No uncertain results in this sample")).toBeVisible();
   await expect(page.locator(".sample-diagnostics details[open]")).toHaveCount(0);
   await expect(page.locator(".sample-outcome-metrics > div")).toHaveCount(3);
-  await page.screenshot({ path: `${screenshots}/02-dry-run-summary.png`, fullPage: true });
+  await page.screenshot({ path: isolatedEvidencePath(`${screenshots}/02-dry-run-summary.png`), fullPage: true });
   await page.setViewportSize({ width: 720, height: 450 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBeTruthy();
   await expect(page.getByRole("button", { name: "Activate automation", exact: true })).toBeVisible();
@@ -910,7 +911,7 @@ test("open Run Artifact from history without entering an ID", async ({ page }) =
   await page.reload();
   await expect(page.getByRole("button", { name: "Show results", exact: true })).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "Show results", exact: true }).click();
-  await page.screenshot({ path: "../docs/execution/guided-journey/run-results.png", fullPage: true });
+  await page.screenshot({ path: isolatedEvidencePath("../docs/execution/guided-journey/run-results.png"), fullPage: true });
   await page.setViewportSize({ width: 720, height: 450 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBeTruthy();
   await page.getByRole("button", { name: "Back to project", exact: true }).click();
@@ -967,7 +968,7 @@ test("Run URL refresh restores its one stable image and node context", async ({ 
     return Math.abs((range.top + range.height / 2) - (output.top + output.height / 2));
   });
   expect(zoomAlignment).toBeLessThanOrEqual(1);
-  await page.screenshot({ path: `${screenshots}/08-run-debug.png`, fullPage: true });
+  await page.screenshot({ path: isolatedEvidencePath(`${screenshots}/08-run-debug.png`), fullPage: true });
   await page.reload();
   await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/runs/${runId}\\?view=debug&image=${reviewImageId}&node=core.image_input`));
   await expect(page.locator(".run-node-timeline button.active")).toContainText("core.image_input");
@@ -990,7 +991,7 @@ test("Review to Run to Review navigation is bidirectional", async ({ page, reque
   await expect(page.getByRole("button", { name: "Box", exact: true })).toHaveCount(0);
   await expect(page.locator(".review-queue")).toHaveCount(0);
   await expect(page.locator(".review-inspector")).toHaveCount(0);
-  await page.screenshot({ path: "../docs/execution/focus-workspace/review-focused.png", fullPage: true });
+  await page.screenshot({ path: isolatedEvidencePath("../docs/execution/focus-workspace/review-focused.png"), fullPage: true });
   await page.getByRole("button", { name: "Show details" }).click();
   const widthWithInspector = await page.locator(".review-center").evaluate((element) => element.getBoundingClientRect().width);
   await page.getByRole("button", { name: "Hide details" }).click();
@@ -1161,7 +1162,7 @@ test("Review workspace has tablet and mobile layouts without horizontal overflow
   expect(mobileLayout.scrollWidth).toBeLessThanOrEqual(mobileLayout.viewport);
   expect(mobileLayout.queueWidth).toBeLessThanOrEqual(mobileLayout.viewport);
   expect(mobileLayout.centerWidth).toBeLessThanOrEqual(mobileLayout.viewport);
-  await page.screenshot({ path: `${screenshots}/03-review-mobile.png`, fullPage: true });
+  await page.screenshot({ path: isolatedEvidencePath(`${screenshots}/03-review-mobile.png`), fullPage: true });
 });
 
 test("an active Run restores from the server and locks duplicate Start", async ({ page, request }) => {
@@ -1241,7 +1242,7 @@ test("bbox and crop selection stay linked through parent references", async ({ p
   await expect(page.locator(".crop-preview-list button.selected")).toHaveCount(1);
   await page.getByRole("button", { name: "Result", exact: true }).click();
   await expect(overlay.locator("g.selected")).toHaveCount(1);
-  await page.screenshot({ path: `${screenshots}/03-run-artifact-lineage.png`, fullPage: true });
+  await page.screenshot({ path: isolatedEvidencePath(`${screenshots}/03-run-artifact-lineage.png`), fullPage: true });
 });
 
 test("geometry safety is visible from Results through Improve Automation", async ({ page, request }) => {
@@ -1644,7 +1645,7 @@ test("Review behaves as a keyboard-operable decision inbox", async ({ page }) =>
   await page.locator("body").dispatchEvent("keydown", { key: "a", keyCode: 229, bubbles: true });
   expect(decisions).toEqual([]);
 
-  await page.screenshot({ path: "../docs/execution/guided-journey/review-default.png", fullPage: true, animations: "disabled" });
+  await page.screenshot({ path: isolatedEvidencePath("../docs/execution/guided-journey/review-default.png"), fullPage: true, animations: "disabled" });
   await page.keyboard.press("E");
   await expect(page.getByLabel("Annotation edit details")).toBeVisible();
   await expect(page.locator(".review-execution-details")).toHaveCount(0);
@@ -1660,8 +1661,8 @@ test("Review behaves as a keyboard-operable decision inbox", async ({ page }) =>
   await expect(label).toHaveValue("day corrected");
   await expect(page).toHaveURL(new RegExp(`/review/${reviewId}$`));
   expect(decisions).toEqual([]);
-  await page.screenshot({ path: `${screenshots}/09-review-inbox.png`, fullPage: true });
-  await page.screenshot({ path: resolve("../docs/execution/first-result/project-review.png") });
+  await page.screenshot({ path: isolatedEvidencePath(`${screenshots}/09-review-inbox.png`), fullPage: true });
+  await page.screenshot({ path: isolatedEvidencePath(resolve("../docs/execution/first-result/project-review.png")) });
 
   await page.reload();
   await expect(page.getByRole("button", { name: "Accept and next" })).toBeVisible();
@@ -1673,11 +1674,11 @@ test("Review behaves as a keyboard-operable decision inbox", async ({ page }) =>
   expect(decisions).toEqual([]);
   await expect(page.getByLabel("Reject reason").locator("option")).toHaveCount(8);
   await expect(page.locator('optgroup[label="Enabled Skill reasons"]')).toHaveCount(0);
-  await page.screenshot({ path: `${screenshots}/10-review-reject.png`, fullPage: true });
+  await page.screenshot({ path: isolatedEvidencePath(`${screenshots}/10-review-reject.png`), fullPage: true });
   await page.getByRole("dialog", { name: "Why is this result incorrect?" }).getByRole("button", { name: "Reject & next" }).click();
   await expect(page.getByRole("heading", { name: "Review complete" })).toBeVisible();
   await expect(page.locator(".annotation-canvas image")).toBeVisible();
-  await page.screenshot({ path: "../docs/execution/guided-journey/review-complete.png", fullPage: true, animations: "disabled" });
+  await page.screenshot({ path: isolatedEvidencePath("../docs/execution/guided-journey/review-complete.png"), fullPage: true, animations: "disabled" });
   await expect(page.getByRole("button", { name: "Continue to export" })).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/review/${reviewId}$`));
   await page.reload();
@@ -1729,10 +1730,10 @@ test("Export readiness blocks unresolved reviews and persists a completed export
   await expect(page.getByRole("heading", { name: "Dataset exported successfully" })).toBeVisible();
   await expect(page.locator(".section-tabs, .focus-project-menu")).toHaveCount(0);
   await expect(page.getByText("This folder is on the AnnotAgent server, not necessarily on this device.", { exact: true })).toBeVisible();
-  await page.screenshot({ path: "../docs/execution/guided-journey/export-complete.png", fullPage: true, animations: "disabled" });
+  await page.screenshot({ path: isolatedEvidencePath("../docs/execution/guided-journey/export-complete.png"), fullPage: true, animations: "disabled" });
   await expect(page.getByText("Result folder", { exact: true })).toBeVisible();
   await expect(page.locator(".export-report")).not.toHaveAttribute("open", "");
-  await page.screenshot({ path: `${screenshots}/11-export-complete.png`, fullPage: true });
+  await page.screenshot({ path: isolatedEvidencePath(`${screenshots}/11-export-complete.png`), fullPage: true });
   await page.reload();
   await expect(page.getByRole("heading", { name: "Dataset exported successfully" })).toBeVisible();
 
@@ -1869,7 +1870,7 @@ test("release surfaces keep one primary action and remain operable at compact vi
   }
   await page.goto(`/projects/${projectId}`);
   await expect(page.locator(".project-context-facts > span")).toHaveCount(3);
-  await page.screenshot({ path: `${screenshots}/12-guided-release-1024.png`, fullPage: true });
+  await page.screenshot({ path: isolatedEvidencePath(`${screenshots}/12-guided-release-1024.png`), fullPage: true });
 
   await page.setViewportSize({ width: 720, height: 450 });
   for (const route of [

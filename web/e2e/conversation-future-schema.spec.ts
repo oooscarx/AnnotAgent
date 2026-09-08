@@ -1,3 +1,4 @@
+import { isolatedEvidencePath } from "./evidence";
 import {randomUUID} from "node:crypto";
 import type {APIRequestContext,Page,Locator} from "@playwright/test";
 import {test,expect as baseExpect,fetchWithinMutationLimit} from "./fixtures";
@@ -175,12 +176,12 @@ test(`future ${bbox?"bbox":"classification"} Schema UI restores the explicit for
   if(bbox){
     await page.setViewportSize({width:390,height:844});await page.getByRole("button",{name:"Conversation",exact:true}).click();
     await card.evaluate(element=>element.scrollIntoView({block:"center"}));
-    await card.screenshot({path:"../docs/execution/conversational-workspace/future-schema-bbox-390-form.png",animations:"disabled"});
+    await card.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/future-schema-bbox-390-form.png"),animations:"disabled"});
   }else{
     await wideEvidence(page,card);
     await expect(card.getByLabel("Future task goal",{exact:true})).toBeInViewport();
     await expect(card.getByRole("button",{name:"Save future rule draft",exact:true})).toBeInViewport();
-    await page.screenshot({path:"../docs/execution/conversational-workspace/future-schema-classification-form.png",animations:"disabled"});
+    await page.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/future-schema-classification-form.png"),animations:"disabled"});
     await page.setViewportSize({width:1280,height:800});
   }
   if(!bbox){
@@ -227,6 +228,6 @@ test(`future ${bbox?"bbox":"classification"} Schema UI restores the explicit for
   await expect(card.getByText("Future rule draft saved",{exact:true})).toBeInViewport();
   await expect(builder.getByRole("button",{name:"Review build and sample authorization",exact:true})).toBeInViewport();
   await expect(page.getByRole("region",{name:"Saved sample results",exact:true}).getByRole("heading",{name:"synthetic-robocup.png",exact:true})).toBeInViewport();
-  await page.screenshot({path:`../docs/execution/conversational-workspace/future-schema-${bbox?"bbox":"classification"}-saved.png`,animations:"disabled"});
+  await page.screenshot({path:isolatedEvidencePath(`../docs/execution/conversational-workspace/future-schema-${bbox?"bbox":"classification"}-saved.png`),animations:"disabled"});
 });
 }

@@ -1,3 +1,4 @@
+import { isolatedEvidencePath } from "./evidence";
 import { resolve } from "node:path";
 import { readFileSync } from "node:fs";
 import { expect, test } from "./fixtures";
@@ -56,7 +57,7 @@ test("image-first journey saves images and every goal label without model calls"
   for (const width of [1440, 1280, 1024, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
-    await page.screenshot({ path: `../docs/execution/guided-journey/goal-${width}.png`, fullPage: true, animations: "disabled" });
+    await page.screenshot({ path: isolatedEvidencePath(`../docs/execution/guided-journey/goal-${width}.png`), fullPage: true, animations: "disabled" });
   }
   await goal.getByRole("button", { name: "Back to images", exact: true }).click();
   await expect(page).toHaveURL(/\/task\/images$/);

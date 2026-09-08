@@ -1,3 +1,4 @@
+import { isolatedEvidencePath } from "./evidence";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -194,7 +195,7 @@ test(`image class repair continues in chat with separate Builder and sample cons
   await expect(page).toHaveURL(url);
   await expect(card.getByRole("button",{name:"View sample results in canvas",exact:true})).toBeVisible();
   expect(await read(request,`${state.taskRoot}/calls`)).toEqual(settledCalls);
-  if(transport==="normal"){await card.getByRole("button",{name:"View sample results in canvas",exact:true}).scrollIntoViewIfNeeded();await page.screenshot({path:resolve(`../docs/execution/conversational-workspace/image-class-builder-${bbox ? "continuation" : "classification"}.png`),fullPage:true});}
+  if(transport==="normal"){await card.getByRole("button",{name:"View sample results in canvas",exact:true}).scrollIntoViewIfNeeded();await page.screenshot({path:isolatedEvidencePath(resolve(`../docs/execution/conversational-workspace/image-class-builder-${bbox ? "continuation" : "classification"}.png`)),fullPage:true});}
   else {await page.setViewportSize({width:390,height:844});await card.getByRole("button",{name:"View sample results in canvas",exact:true}).scrollIntoViewIfNeeded();await expect(card.getByRole("button",{name:"View sample results in canvas",exact:true})).toBeVisible();await expect(page).toHaveURL(url);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);}
 });
 }
@@ -400,7 +401,7 @@ test(`image class ${bbox ? "bbox" : "human multi-label classification"} canvas s
   else await expect(canvas.getByLabel("Replacement class", { exact: true })).toHaveValue("室外");
   await canvas.evaluate(element => element.scrollIntoView({ block: "center" }));
   await expect(canvas.getByRole("button", { name: "Save all class decisions", exact: true })).toBeInViewport();
-  await page.screenshot({ path: `../docs/execution/conversational-workspace/image-class-${bbox ? "bbox" : "classification"}-review.png`, animations: "disabled" });
+  await page.screenshot({ path: isolatedEvidencePath(`../docs/execution/conversational-workspace/image-class-${bbox ? "bbox" : "classification"}-review.png`), animations: "disabled" });
   if (bbox) {
     let aborted = false;
     await page.route(`**${endpoint}/answer`, async route => { aborted = true; await route.abort("failed"); }, { times: 1 });

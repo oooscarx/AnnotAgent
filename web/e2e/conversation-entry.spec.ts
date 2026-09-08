@@ -1,3 +1,4 @@
+import { isolatedEvidencePath } from "./evidence";
 import {resolve} from "node:path";
 import {readFileSync} from "node:fs";
 import {expect,test} from "./fixtures";
@@ -34,5 +35,5 @@ test("new image project and inventory entry use the same conversation workspace"
   await expect(page.getByText("Loading saved workspace…",{exact:true})).toHaveCount(0);
   await expect(page.locator(".sidebar")).toHaveCount(0);
   expect(writes).toEqual([]);
-  await page.screenshot({path:resolve(process.env.ANNOTAGENT_E2E_EVIDENCE_DIR ?? "../docs/execution/conversational-workspace","default-project-entry.png"),fullPage:true,animations:"disabled"});
+  await page.screenshot({path:isolatedEvidencePath(resolve(process.env.ANNOTAGENT_E2E_EVIDENCE_DIR ?? "../docs/execution/conversational-workspace","default-project-entry.png")),fullPage:true,animations:"disabled"});
 });

@@ -1,3 +1,4 @@
+import { isolatedEvidencePath } from "./evidence";
 import {randomUUID} from "node:crypto";
 import {readFileSync} from "node:fs";
 import {resolve} from "node:path";
@@ -165,7 +166,7 @@ test("chat feedback authorization survives reload and opens the exact correction
   // it below the app's sticky header. No screenshot pixels or styles are edited.
   await page.setViewportSize({width:1280,height:1100});
   await authorization.evaluate(element=>element.scrollIntoView({block:"center"}));
-  await authorization.screenshot({path:"../docs/execution/conversational-workspace/candidate-feedback-authorization.png",animations:"disabled"});
+  await authorization.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/candidate-feedback-authorization.png"),animations:"disabled"});
   await page.setViewportSize({width:1280,height:800});
   let savedPath="";
   await page.route(`**${state.taskRoot}/feedback-authorizations`,async route=>{
@@ -192,7 +193,7 @@ test("chat feedback authorization survives reload and opens the exact correction
   await page.setViewportSize({width:1280,height:1100});
   const canvas=page.getByRole("region",{name:"Saved sample results",exact:true});
   await canvas.evaluate(element=>element.scrollIntoView({block:"center"}));
-  await page.screenshot({path:"../docs/execution/conversational-workspace/candidate-feedback-correction.png",fullPage:true,animations:"disabled"});
+  await page.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/candidate-feedback-correction.png"),fullPage:true,animations:"disabled"});
   await page.setViewportSize({width:1280,height:800});
   const correctionUrl=page.url();
   await page.setViewportSize({width:390,height:844});
@@ -200,7 +201,7 @@ test("chat feedback authorization survives reload and opens the exact correction
   await expect(canvas).toBeVisible();
   await expect(page.getByRole("button",{name:"Submit correction",exact:true})).toBeVisible();
   await page.getByRole("button",{name:"Submit correction",exact:true}).scrollIntoViewIfNeeded();
-  await page.screenshot({path:"../docs/execution/conversational-workspace/candidate-feedback-390.png",fullPage:true,animations:"disabled"});
+  await page.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/candidate-feedback-390.png"),fullPage:true,animations:"disabled"});
   await page.getByRole("button",{name:"Conversation",exact:true}).click();
   await expect(card).toBeVisible();
   await expect(card.getByRole("button",{name:"Open existing correction request",exact:true})).toBeVisible();
@@ -475,7 +476,7 @@ test(`scope clarification ${choice} restores the user's saved answer without hid
     if(choice==="candidate"){
       await page.setViewportSize({width:1280,height:1100});
       await form.evaluate(element=>element.scrollIntoView({block:"center"}));
-      await form.screenshot({path:"../docs/execution/conversational-workspace/candidate-scope-answer-form.png",animations:"disabled"});
+      await form.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/candidate-scope-answer-form.png"),animations:"disabled"});
       await page.setViewportSize({width:1280,height:800});
     }
   }else{
@@ -529,7 +530,7 @@ test(`scope clarification ${choice} restores the user's saved answer without hid
     await canvas.evaluate(element=>element.scrollIntoView({block:"center"}));
     await expect(canvas.getByRole("heading",{name:"synthetic-robocup.png",exact:true})).toBeInViewport();
     await expect(canvas.getByRole("button",{name:"Submit correction",exact:true})).toBeInViewport();
-    await page.screenshot({path:"../docs/execution/conversational-workspace/candidate-scope-answer-canvas.png",fullPage:true,animations:"disabled"});
+    await page.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/candidate-scope-answer-canvas.png"),fullPage:true,animations:"disabled"});
     await page.setViewportSize({width:1280,height:800});
   }else if(choice==="cancelled"){
     await card.getByRole("button",{name:"Cancel feedback action",exact:true}).click();
@@ -593,7 +594,7 @@ test(`cancelled unsaved scope choices survive with browser storage ${storage}`,a
     await expect(form.getByRole("radio",{name:"Label is wrong",exact:true})).toBeChecked();
     await expect(form.getByRole("radio",{name:"Label is wrong",exact:true})).toBeDisabled();
     await form.evaluate(element=>element.scrollIntoView({block:"center"}));
-    await form.screenshot({path:"../docs/execution/conversational-workspace/candidate-scope-cancelled-390.png",animations:"disabled"});
+    await form.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/candidate-scope-cancelled-390.png"),animations:"disabled"});
     expect(mutations).toHaveLength(count);
   }else{
     const url=page.url();let guarded=false;

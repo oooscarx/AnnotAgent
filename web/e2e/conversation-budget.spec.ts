@@ -1,3 +1,4 @@
+import { isolatedEvidencePath } from "./evidence";
 import {randomUUID} from "node:crypto";
 import {expect,test,fetchWithinMutationLimit} from "./fixtures";
 
@@ -34,7 +35,7 @@ test("Project conversation ceiling persists, retries exactly and rejects stale c
   await expect(card).toContainText("3 cumulative maximum · Revision 2");
   await page.setViewportSize({width:390,height:844});
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-  await card.screenshot({path:"../docs/execution/conversational-workspace/project-call-limit-390.png",animations:"disabled"});
+  await card.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/project-call-limit-390.png"),animations:"disabled"});
   expect((await request.post(`/api/projects/not-a-project/conversation-call-limit`,{data:{id:randomUUID(),expected_revision:0,maximum_calls:100}})).ok()).toBe(false);
   expect((await request.post(path,{data:{id:randomUUID(),expected_revision:2,maximum_calls:10,grant_model_permission:true}})).ok()).toBe(false);
 });

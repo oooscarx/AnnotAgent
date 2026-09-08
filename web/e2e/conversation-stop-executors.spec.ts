@@ -1,3 +1,4 @@
+import { isolatedEvidencePath } from "./evidence";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import type { APIRequestContext, Page } from "@playwright/test";
@@ -186,5 +187,5 @@ test("chat Stop reaches the real running dataset Batch and preserves its sample 
   const card = page.getByRole("region", { name: "Stop request", exact: true });
   await expect(card).toContainText("Cancellation request saved.");
   await card.evaluate(element => element.scrollIntoView({ block: "center" }));
-  await page.screenshot({ path: "../docs/execution/conversational-workspace/chat-stop-batch-workspace.png", animations: "disabled" });
+  await page.screenshot({ path: isolatedEvidencePath("../docs/execution/conversational-workspace/chat-stop-batch-workspace.png"), animations: "disabled" });
 });

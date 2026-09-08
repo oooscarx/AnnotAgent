@@ -1,3 +1,4 @@
+import { isolatedEvidencePath } from "./evidence";
 import {expect,test} from "./fixtures";
 
 for(const kind of ["bounding_box","classification"]){
@@ -18,7 +19,7 @@ for(const kind of ["bounding_box","classification"]){
     await form.getByLabel("Boundary rules · optional",{exact:true}).fill("TEST 不包含背景");
     await page.setViewportSize({width:390,height:844});
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
-    await page.screenshot({path:`../docs/execution/conversational-workspace/human-schema-${kind}-390.png`,fullPage:true,animations:"disabled"});
+    await page.screenshot({path:isolatedEvidencePath(`../docs/execution/conversational-workspace/human-schema-${kind}-390.png`),fullPage:true,animations:"disabled"});
     await page.setViewportSize({width:1280,height:800});
     let intercepted=false;
     await page.route("**/human-schema-drafts",async route=>{
@@ -44,7 +45,7 @@ for(const kind of ["bounding_box","classification"]){
     expect(await editor.getByRole("button",{name:"Edit labels and boundary rules",exact:true}).evaluate(element=>{
       const box=element.getBoundingClientRect();return element.contains(document.elementFromPoint(box.x+box.width/2,box.y+box.height/2));
     })).toBe(true);
-    await page.screenshot({path:`../docs/execution/conversational-workspace/human-schema-${kind}.png`,fullPage:true,animations:"disabled"});
+    await page.screenshot({path:isolatedEvidencePath(`../docs/execution/conversational-workspace/human-schema-${kind}.png`),fullPage:true,animations:"disabled"});
     const conversation=(await (await request.get(`/api/projects/${project}/conversations`)).json()).conversation_id;
     const taskRoot=`/api/projects/${project}/conversations/${conversation}/tasks`;
     const tasks=await (await request.get(taskRoot)).json();expect(tasks).toHaveLength(1);

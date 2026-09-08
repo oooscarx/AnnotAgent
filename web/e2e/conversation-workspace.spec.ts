@@ -1,3 +1,4 @@
+import { isolatedEvidencePath } from "./evidence";
 import { resolve } from "node:path";
 import { expect, test } from "./fixtures";
 
@@ -72,7 +73,7 @@ test("conversation journal restores, freezes image references and retries withou
       await imagesTab.focus();await page.keyboard.press("Enter");
     }
     expect(page.url()).toBe(selectedUrl);
-    await page.screenshot({ path: resolve(process.env.ANNOTAGENT_E2E_EVIDENCE_DIR ?? "../docs/execution/conversational-workspace",`journal-${width}.png`), fullPage: true, animations: "disabled" });
+    await page.screenshot({ path: isolatedEvidencePath(resolve(process.env.ANNOTAGENT_E2E_EVIDENCE_DIR ?? "../docs/execution/conversational-workspace",`journal-${width}.png`)), fullPage: true, animations: "disabled" });
   }
   expect(charged).toEqual([]);
 });
@@ -101,5 +102,5 @@ test("large TEST image index renders bounded thumbnails and restores the selecte
   await expect(pages).toContainText("961–984 of 1001");
   await expect(thumbnails.getByRole("button",{name:"TEST image 960",exact:true})).toHaveAttribute("aria-current","true");
   await pages.scrollIntoViewIfNeeded();
-  await page.screenshot({path:resolve(process.env.ANNOTAGENT_E2E_EVIDENCE_DIR ?? "../docs/execution/conversational-workspace","large-image-index-TEST.png"),fullPage:true,animations:"disabled"});
+  await page.screenshot({path:isolatedEvidencePath(resolve(process.env.ANNOTAGENT_E2E_EVIDENCE_DIR ?? "../docs/execution/conversational-workspace","large-image-index-TEST.png")),fullPage:true,animations:"disabled"});
 });

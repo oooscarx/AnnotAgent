@@ -1,3 +1,4 @@
+import { isolatedEvidencePath } from "./evidence";
 import { expect, test, fetchWithinMutationLimit } from "./fixtures";
 
 test("saved messages select independent goals without inference or task substitution",async({page,request})=>{
@@ -41,7 +42,7 @@ test("saved messages select independent goals without inference or task substitu
   const second=new URL(page.url()).searchParams.get("task");
   await page.reload();
   await expect(page.getByRole("button",{name:"Use message 2 as annotation goal",exact:true})).toHaveAttribute("aria-pressed","true");
-  await page.screenshot({path:"../docs/execution/conversational-workspace/independent-goals.png",fullPage:true,animations:"disabled"});
+  await page.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/independent-goals.png"),fullPage:true,animations:"disabled"});
   await page.getByRole("button",{name:"Use message 2 as annotation goal",exact:true}).click();
   expect(new URL(page.url()).searchParams.get("task")).toBe(second);
   const savedSelection=await (await request.get(selectionPath)).json();
@@ -52,7 +53,7 @@ test("saved messages select independent goals without inference or task substitu
   await page.goto(`/projects/${project}/work`);
   await expect.poll(()=>new URL(page.url()).searchParams.get("task")).toBe(second);
   await expect(page.getByRole("button",{name:"Use message 2 as annotation goal",exact:true})).toHaveAttribute("aria-pressed","true");
-  await page.screenshot({path:"../docs/execution/conversational-workspace/task-selection-restored.png",fullPage:true,animations:"disabled"});
+  await page.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/task-selection-restored.png"),fullPage:true,animations:"disabled"});
   await page.goto(`/projects/${project}/work?conversation=${conversation}&task=${first}`);
   await expect(page.getByRole("button",{name:"Use message 1 as annotation goal",exact:true})).toHaveAttribute("aria-pressed","true");
   expect(await (await request.get(selectionPath)).json()).toEqual(savedSelection);
@@ -125,11 +126,11 @@ test("saved messages select independent goals without inference or task substitu
   await page.getByLabel("Default Pipeline Builder model",{exact:true}).selectOption({label:"Conversation TEST setup planner via Conversation setup TEST"});
   await expect(page.getByLabel("Default Pipeline Builder model",{exact:true})).toBeEnabled();
   await page.reload();
-  await page.screenshot({path:"../docs/execution/conversational-workspace/task-model-setup.png",fullPage:true,animations:"disabled"});
+  await page.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/task-model-setup.png"),fullPage:true,animations:"disabled"});
   await page.setViewportSize({width:390,height:844});
   await expect(page.getByRole("button",{name:"Return to annotation task",exact:true})).toBeVisible();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
-  await page.screenshot({path:"../docs/execution/conversational-workspace/task-model-setup-390.png",fullPage:true,animations:"disabled"});
+  await page.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/task-model-setup-390.png"),fullPage:true,animations:"disabled"});
   await page.setViewportSize({width:1280,height:800});
   await page.getByRole("button",{name:"Return to annotation task",exact:true}).click();
   await expect(page).toHaveURL(savedTaskUrl);

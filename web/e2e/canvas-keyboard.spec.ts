@@ -1,3 +1,4 @@
+import { isolatedEvidencePath } from "./evidence";
 import { expect, test } from "./fixtures";
 
 test("shared box canvas supports keyboard pixel edits inside a dialog without inference", async ({ page }) => {
@@ -29,6 +30,6 @@ test("shared box canvas supports keyboard pixel edits inside a dialog without in
   await expect.poll(async () => Number(await box.getAttribute("width"))).toBeCloseTo(initialWidth + 1, 5);
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
-  await page.screenshot({ path: "../docs/execution/guided-journey/keyboard-box-390.png", fullPage: true, animations: "disabled" });
+  await page.screenshot({ path: isolatedEvidencePath("../docs/execution/guided-journey/keyboard-box-390.png"), fullPage: true, animations: "disabled" });
   expect(mutations).toEqual([]);
 });

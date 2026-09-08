@@ -1,3 +1,4 @@
+import { isolatedEvidencePath } from "./evidence";
 import { resolve } from "node:path";
 import { expect, test } from "./fixtures";
 
@@ -54,7 +55,7 @@ test("conditional model connection saves, verifies with consent, and returns wit
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
-    await page.screenshot({ path: `../docs/execution/guided-journey/model-${width}.png`, fullPage: true, animations: "disabled" });
+    await page.screenshot({ path: isolatedEvidencePath(`../docs/execution/guided-journey/model-${width}.png`), fullPage: true, animations: "disabled" });
   }
   await page.getByRole("button", { name: "Use connection and return", exact: true }).click();
   await expect(page).toHaveURL(`/projects/${projectId}/task/goal`);
@@ -73,7 +74,7 @@ test("conditional model connection saves, verifies with consent, and returns wit
   for (const [width, height] of [[1440, 900], [390, 844]]) {
     await page.setViewportSize({ width, height });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
-    await page.screenshot({ path: `../docs/execution/guided-journey/local-model-unavailable-${width}.png`, fullPage: true, animations: "disabled" });
+    await page.screenshot({ path: isolatedEvidencePath(`../docs/execution/guided-journey/local-model-unavailable-${width}.png`), fullPage: true, animations: "disabled" });
   }
   await page.getByRole("button", { name: "Connect a model service", exact: true }).click();
   await expect(page.getByLabel("Service URL", { exact: true })).toBeVisible();

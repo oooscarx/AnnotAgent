@@ -1,3 +1,4 @@
+import { isolatedEvidencePath } from "./evidence";
 import { expect, test } from "./fixtures";
 
 test("one canonical project inventory opens page-level preparation without mutations", async ({ page }) => {
@@ -34,6 +35,6 @@ for (const [width, height] of [[1440, 900], [1280, 720], [1024, 768], [390, 844]
     await prepare.getByRole("button", { name: "Continue", exact: true }).scrollIntoViewIfNeeded();
     await expect(prepare.getByRole("button", { name: "Continue", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Back to projects", exact: true }).scrollIntoViewIfNeeded();
-    await page.screenshot({ path: `../docs/execution/guided-journey/images-${width}.png`, fullPage: true });
+    await page.screenshot({ path: isolatedEvidencePath(`../docs/execution/guided-journey/images-${width}.png`), fullPage: true });
   });
 }

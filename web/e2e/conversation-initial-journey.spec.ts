@@ -1,3 +1,4 @@
+import { isolatedEvidencePath } from "./evidence";
 import {randomUUID} from "node:crypto";
 import {resolve} from "node:path";
 import {test,expect,fetchWithinMutationLimit} from "./fixtures";
@@ -39,7 +40,7 @@ test(`initial goal journey ${kind} preserves one consent through actual Schema a
     const authorization=panel.getByLabel("Build and sample authorization",{exact:true});
     await expect(authorization).toContainText("9 planning calls (including one label proposal)");
     await authorization.getByRole("checkbox",{name:/Allow this plan and sample test/}).check();
-    if(kind==="ui-classification")await authorization.screenshot({path:"../docs/execution/conversational-workspace/initial-goal-consent.png",animations:"disabled"});
+    if(kind==="ui-classification")await authorization.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/initial-goal-consent.png"),animations:"disabled"});
     const execution=page.waitForResponse(response=>response.url().endsWith("/execution")&&response.request().method()==="POST");
     await authorization.getByRole("button",{name:"Build plan and test samples",exact:true}).click();
     const response=await execution;expect(response.ok(),await response.text()).toBe(true);
@@ -51,7 +52,7 @@ test(`initial goal journey ${kind} preserves one consent through actual Schema a
       await expect(page.getByRole("button",{name:"Answer this clarification",exact:true})).toBeVisible();
       const state=await (await request.get(`${taskRoot}/journey-consents/${receipt.record.consent.id}/execution`)).json();
       expect(state.builder).toBeNull();expect(state.sample).toBeNull();
-      await page.getByRole("region",{name:"Annotation Schema proposal",exact:true}).screenshot({path:"../docs/execution/conversational-workspace/initial-goal-clarification.png",animations:"disabled"});
+      await page.getByRole("region",{name:"Annotation Schema proposal",exact:true}).screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/initial-goal-clarification.png"),animations:"disabled"});
       expect(writes).toEqual([]);
       await page.getByRole("button",{name:"Answer this clarification",exact:true}).click();
       await page.getByLabel("Output type",{exact:true}).selectOption("classification");
@@ -59,7 +60,7 @@ test(`initial goal journey ${kind} preserves one consent through actual Schema a
       await page.setViewportSize({width:1280,height:1100});
       const answerPanel=page.getByRole("region",{name:"Define labels without a model",exact:true});
       await answerPanel.evaluate(element=>element.scrollIntoView({block:"center"}));
-      await answerPanel.screenshot({path:"../docs/execution/conversational-workspace/initial-clarification-continuation.png",animations:"disabled"});
+      await answerPanel.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/initial-clarification-continuation.png"),animations:"disabled"});
       await page.setViewportSize({width:1280,height:800});
       const answerSaved=page.waitForRequest(request=>request.url().endsWith("/human-schema-drafts")&&request.method()==="POST");
       // The server owns continuation even if acknowledgement of the saved answer is lost.
@@ -76,7 +77,7 @@ test(`initial goal journey ${kind} preserves one consent through actual Schema a
       expect((await (await request.get(`${taskRoot}/calls`)).json()).filter((call:any)=>call.evidence?.decision)).toHaveLength(1);
       await panel.getByRole("button",{name:"View sample results in canvas",exact:true}).click();
       await expect(page.getByLabel("Saved sample results",{exact:true})).toBeVisible();
-      await page.screenshot({path:"../docs/execution/conversational-workspace/initial-clarification-result.png",fullPage:true,animations:"disabled"});
+      await page.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/initial-clarification-result.png"),fullPage:true,animations:"disabled"});
     }else{
       await expect(page.getByRole("button",{name:"Stop build and sample task",exact:true})).toBeVisible();
       await expect(panel.getByRole("button",{name:"View sample results in canvas",exact:true})).toBeVisible();
@@ -85,7 +86,7 @@ test(`initial goal journey ${kind} preserves one consent through actual Schema a
       await panel.getByRole("button",{name:"View sample results in canvas",exact:true}).click();
       await expect(page.getByLabel("Saved sample results",{exact:true})).toBeVisible();
       const url=page.url();await page.reload();await expect(page).toHaveURL(url);await expect(page.getByLabel("Saved sample results",{exact:true})).toBeVisible();
-      await page.screenshot({path:"../docs/execution/conversational-workspace/initial-goal-result.png",fullPage:true,animations:"disabled"});
+      await page.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/initial-goal-result.png"),fullPage:true,animations:"disabled"});
     }
     expect(writes).toEqual([]);expect((await (await request.get(`${taskRoot}/journey-consents`)).json()).items).toHaveLength(1);
     return;

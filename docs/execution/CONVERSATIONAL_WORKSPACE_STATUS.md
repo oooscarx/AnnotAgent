@@ -4302,3 +4302,23 @@ non-overwriting screenshot strategy for the remaining old hardcoded paths. Exist
 repository screenshots were preserved. Other open acceptance items include the full requirement
 matrix audit, metadata/thumbnail transfer performance and unexecuted assistive-technology,
 native IME, actual browser zoom and human/live-conditional checks. No push or remote change.
+
+### 2026-09-09 — Non-overwriting full-browser evidence routing
+
+All 104 explicit screenshot option paths in the existing E2E tests now pass through one
+test-only isolatedEvidencePath helper. An AST-driven mechanical rewrite changed only those
+expressions and imports (including locator screenshots); assertions, fixtures and product
+code are unchanged. With ANNOTAGENT_E2E_EVIDENCE_DIR set, legacy docs/execution paths retain
+their subdirectories under that destination. Explicit paths already outside that tree remain
+unchanged. Without the environment variable, existing output behavior is preserved.
+
+Path-boundary assertions pass in Node; two equivalent Playwright checks are part of the full
+suite. Web 203 unit tests/typecheck pass. The full browser run was started with
+`ANNOTAGENT_E2E_EVIDENCE_DIR=/tmp/annotagent-full-browser-evidence npm run test:e2e` against
+`/tmp/annotagent-guided-e2e-97754`. It contains 166 tests and is still running at this checkpoint;
+the first 14 pass, including a real rate-window wait, client disconnect and stop recovery.
+Do not interpret this checkpoint as a full-suite pass. The live command handle is 79494;
+continuation must poll that handle or inspect its authoritative process state before restarting.
+Output files observed under the temporary root confirm that old repository screenshots were
+not used as the new evidence destination. Full-suite results and failures will be recorded after
+termination. No real workspace, Live provider, credential, remote or push action was used.

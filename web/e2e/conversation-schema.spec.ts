@@ -1,3 +1,4 @@
+import { isolatedEvidencePath } from "./evidence";
 import { randomUUID } from "node:crypto";
 import { expect as baseExpect, test, fetchWithinMutationLimit } from "./fixtures";
 
@@ -46,7 +47,7 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
       await expect(page.getByRole("button",{name:"Retry saved Schema request",exact:true})).toBeDisabled();
       await page.reload();
       await expect(page.getByLabel("Saved Schema authorization",{exact:true})).toContainText(consent.expires_at);
-      await page.getByLabel("Saved Schema authorization",{exact:true}).screenshot({path:"../docs/execution/conversational-workspace/schema-pending-authorization.png",animations:"disabled"});
+      await page.getByLabel("Saved Schema authorization",{exact:true}).screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/schema-pending-authorization.png"),animations:"disabled"});
     }
     expect((await request.post(limitPath,{data:{id:randomUUID(),expected_revision:beforeLimit.revision,maximum_calls:beforeLimit.reserved_calls+1}})).ok()).toBe(true);
     if(kind==="bounding_box"){
@@ -61,7 +62,7 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
       await expect(page.getByRole("region",{name:"Annotation Schema proposal",exact:true}).getByRole("alert")).toHaveCount(0);
       expect(actual).toEqual(consent);
       await page.reload();await expect(page.getByText("Schema proposal saved",{exact:true})).toBeVisible();
-      await page.getByRole("region",{name:"Annotation Schema proposal",exact:true}).screenshot({path:"../docs/execution/conversational-workspace/schema-original-consent-recovered.png",animations:"disabled"});
+      await page.getByRole("region",{name:"Annotation Schema proposal",exact:true}).screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/schema-original-consent-recovered.png"),animations:"disabled"});
     }
     const response = await request.post(`${taskRoot}/schema-proposals`,{data:consent});
     expect(response.ok()).toBeTruthy(); const receipt = await response.json();
@@ -194,7 +195,7 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
   for (const width of [1440,390]) {
     await page.setViewportSize({width,height:width===390?844:900});
     expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
-    await page.screenshot({path:`../docs/execution/conversational-workspace/schema-${width}.png`,fullPage:true,animations:"disabled"});
+    await page.screenshot({path:isolatedEvidencePath(`../docs/execution/conversational-workspace/schema-${width}.png`),fullPage:true,animations:"disabled"});
   }
   const cancelProject = `${uiProject}-cancel`;
   const savedStage=page.locator(".conversation-completed-stage > summary");
@@ -216,7 +217,7 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
   await page.reload();
   await expect(page.getByText("Build interrupted",{exact:true})).toBeVisible();
   await expect(page.getByRole("button",{name:"Stop Builder",exact:true})).toHaveCount(0);
-  await page.screenshot({path:"../docs/execution/conversational-workspace/builder-cancelled.png",fullPage:true,animations:"disabled"});
+  await page.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/builder-cancelled.png"),fullPage:true,animations:"disabled"});
   expect((await request.post("/api/projects",{data:{id:cancelProject,yaml}})).ok()).toBeTruthy();
   await page.setViewportSize({width:1440,height:900});
   await page.goto(`/projects/${cancelProject}/work`);
@@ -252,5 +253,5 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
   await expect(page.getByText(/^Cancellation saved/)).toBeVisible({timeout:70_000});
   await expect(page.getByRole("button",{name:"Prepare label proposal",exact:true})).toHaveCount(0);
   await expect(page.getByText("Schema proposal saved",{exact:true})).toHaveCount(0);
-  await page.screenshot({path:"../docs/execution/conversational-workspace/schema-cancelled.png",fullPage:true,animations:"disabled"});
+  await page.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/schema-cancelled.png"),fullPage:true,animations:"disabled"});
 });

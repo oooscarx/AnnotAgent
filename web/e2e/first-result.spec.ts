@@ -1,3 +1,4 @@
+import { isolatedEvidencePath } from "./evidence";
 import { expect, test } from "./fixtures";
 import { resolve } from "node:path";
 
@@ -7,7 +8,7 @@ test("first-result entry and offline example do not perform server mutations", a
     if (request.url().includes("/api/") && !["GET", "HEAD"].includes(request.method())) mutations.push(request.url());
   });
   await page.goto("/");
-  await page.screenshot({ path: resolve("../docs/execution/first-result/entry.png"), fullPage: true });
+  await page.screenshot({ path: isolatedEvidencePath(resolve("../docs/execution/first-result/entry.png")), fullPage: true });
   await expect(page.getByRole("button", { name: "New annotation project", exact: true })).toBeVisible();
   await page.getByText("Input and output examples", { exact: true }).click();
     await page.getByRole("button", { name: "Explore an example", exact: true }).click();

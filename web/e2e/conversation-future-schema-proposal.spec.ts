@@ -1,3 +1,4 @@
+import { isolatedEvidencePath } from "./evidence";
 import { randomUUID } from "node:crypto";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { authorize as authorizeFeedback, clarification, sample } from "./conversation-feedback-helpers";
@@ -266,7 +267,7 @@ test("future bbox proposal stays editable, preserves removed-label evidence and 
   for (let index = 0; index < 13; index++) await divider.press("ArrowRight");
   await model.evaluate(element => element.scrollIntoView({ block: "center" }));
   await expect(model.getByRole("button", { name: "Save proposed future rule draft", exact: true })).toBeInViewport();
-  await page.screenshot({ path: "../docs/execution/conversational-workspace/future-model-proposal-diff.png", animations: "disabled" });
+  await page.screenshot({ path: isolatedEvidencePath("../docs/execution/conversational-workspace/future-model-proposal-diff.png"), animations: "disabled" });
   await model.getByRole("button", { name: "Edit proposed future rules", exact: true }).click();
   await expect(card.getByLabel("Labels · one per line", { exact: true })).toHaveValue("cup");
   const humanRule = "TEST human review: ambiguous occlusion must remain a review item.";
@@ -312,7 +313,7 @@ test("future bbox proposal stays editable, preserves removed-label evidence and 
   await card.evaluate(element => element.scrollIntoView({ block: "center" }));
   await expect(card.getByText("Future rule draft saved", { exact: true })).toBeInViewport();
   await expect(builder.getByRole("button", { name: "Review build and sample authorization", exact: true })).toBeInViewport();
-  await page.screenshot({ path: "../docs/execution/conversational-workspace/future-model-proposal-human-reviewed.png", animations: "disabled" });
+  await page.screenshot({ path: isolatedEvidencePath("../docs/execution/conversational-workspace/future-model-proposal-human-reviewed.png"), animations: "disabled" });
 });
 
 test("future proposal authorization with a lost ACK restores the original call before any explicit execution", async ({ page, request }) => {

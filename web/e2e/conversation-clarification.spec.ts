@@ -1,3 +1,4 @@
+import { isolatedEvidencePath } from "./evidence";
 import {randomUUID} from "node:crypto";
 import {resolve} from "node:path";
 import {expect,test,fetchWithinMutationLimit} from "./fixtures";
@@ -46,7 +47,7 @@ test(`Schema clarification ${mode}: same-task persistence and explicit continuat
     const task=(await (await request.get(`/api/projects/${project}/conversations/${owner}/tasks`)).json())[0];
     expect((await (await request.get(`/api/projects/${project}/conversations/${owner}/tasks/${task.input.id}/budget`)).json()).total_reserved_calls).toBe(0);
     expect(await (await request.get(`/api/projects/${project}/conversations/${owner}/messages`)).json()).toHaveLength(1);
-    await page.getByLabel("Schema model authorization",{exact:true}).screenshot({path:"../docs/execution/conversational-workspace/first-goal-authorization.png",animations:"disabled"});
+    await page.getByLabel("Schema model authorization",{exact:true}).screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/first-goal-authorization.png"),animations:"disabled"});
   }else{
     await page.getByRole("button",{name:"Save message",exact:true}).click();
     await page.getByRole("button",{name:"Prepare label proposal",exact:true}).click();
@@ -80,7 +81,7 @@ test(`Schema clarification ${mode}: same-task persistence and explicit continuat
     expect(await (await request.get(`${taskRoot}/human-schema-drafts`)).json()).toEqual([]);
     expect((await (await request.get(questionPath)).json()).status).toBe("cancelled");
     expect(await (await request.get(`${taskRoot}/budget`)).json()).toEqual(before);
-    await page.getByRole("region",{name:"Annotation Schema proposal",exact:true}).screenshot({path:"../docs/execution/conversational-workspace/clarification-cancelled.png",animations:"disabled"});
+    await page.getByRole("region",{name:"Annotation Schema proposal",exact:true}).screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/clarification-cancelled.png"),animations:"disabled"});
     return;
   }
   await page.reload();
@@ -105,7 +106,7 @@ test(`Schema clarification ${mode}: same-task persistence and explicit continuat
   await expect(page.getByLabel("Builder model authorization",{exact:true})).toContainText("1 calls already used");
   expect(await (await request.get(`${taskRoot}/budget`)).json()).toEqual(before);
   expect(await (await request.get(root)).json()).toHaveLength(1);
-  await page.getByRole("region",{name:"Saved label draft",exact:true}).screenshot({path:"../docs/execution/conversational-workspace/clarification-answer-restored.png",animations:"disabled"});
+  await page.getByRole("region",{name:"Saved label draft",exact:true}).screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/clarification-answer-restored.png"),animations:"disabled"});
   await page.getByRole("checkbox",{name:/Allow this bounded Builder request/}).check();
   await page.getByRole("button",{name:"Build Pipeline Draft",exact:true}).click();
   await expect(page.getByRole("button",{name:"Review sample authorization",exact:true})).toBeEnabled();
@@ -146,7 +147,7 @@ test(`Schema clarification ${mode}: same-task persistence and explicit continuat
   expect(await (await request.get(`${taskRoot}/budget`)).json()).toEqual(after);
   expect(await (await request.get(root)).json()).toHaveLength(1);
   expect(writes).toBe(0);
-  await page.screenshot({path:"../docs/execution/conversational-workspace/clarification-sample-result.png",fullPage:true,animations:"disabled"});
+  await page.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/clarification-sample-result.png"),fullPage:true,animations:"disabled"});
   const oldBuilders=await (await request.get(`${taskRoot}/builder-operations`)).json();
   await page.getByRole("button",{name:"Edit labels and boundary rules",exact:true}).click();
   await page.getByLabel("Labels · one per line",{exact:true}).fill("室内\n室外\n不确定");

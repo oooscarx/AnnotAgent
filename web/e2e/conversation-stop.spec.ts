@@ -1,3 +1,4 @@
+import { isolatedEvidencePath } from "./evidence";
 import { randomUUID } from "node:crypto";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { expect as baseExpect, fetchWithinMutationLimit, test } from "./fixtures";
@@ -121,7 +122,7 @@ test("chat stop cancels the actual reserved Schema call once and restores withou
   expect((await (await request.get(`${state.root}/tasks`)).json())).toHaveLength(1);
   const card = page.getByRole("region", { name: "Stop request", exact: true });
   await expect(card).toContainText("Cancellation request saved.");
-  await card.screenshot({ path: "../docs/execution/conversational-workspace/chat-stop-schema-receipt.png", animations: "disabled" });
+  await card.screenshot({ path: isolatedEvidencePath("../docs/execution/conversational-workspace/chat-stop-schema-receipt.png"), animations: "disabled" });
   const path = `${state.root}/stop-requests/${saved.input.id}`;
   const stored = await (await request.get(path)).json();
   const replay = await request.post(`${state.root}/stop-requests`, { data: saved.input });
@@ -176,7 +177,7 @@ test("chat stop with no selected task asks which active operation and cancels on
   expect(writes).toEqual([]);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "Conversation", exact: true }).click();
-  await card.screenshot({ path: "../docs/execution/conversational-workspace/chat-stop-selected-390.png", animations: "disabled" });
+  await card.screenshot({ path: isolatedEvidencePath("../docs/execution/conversational-workspace/chat-stop-selected-390.png"), animations: "disabled" });
 });
 
 test("a saved stop snapshot never substitutes a new active call after its original target finishes", async ({ page, request }) => {

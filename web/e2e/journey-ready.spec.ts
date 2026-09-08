@@ -1,3 +1,4 @@
+import { isolatedEvidencePath } from "./evidence";
 import { dirname, resolve } from "node:path";
 import { renameSync } from "node:fs";
 import { expect, fetchWithinMutationLimit, test } from "./fixtures";
@@ -73,7 +74,7 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   await expect(page.getByRole("button", { name: "Stop sample test", exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "Sample input previews" }).getByRole("img")).toBeVisible();
   const operationUrl = page.url();
-  await page.screenshot({ path: "../docs/execution/guided-journey/sample-running.png", fullPage: true });
+  await page.screenshot({ path: isolatedEvidencePath("../docs/execution/guided-journey/sample-running.png"), fullPage: true });
   const operationId = new URL(operationUrl).searchParams.get("operation")!;
   const duplicate = await request.post(`/api/projects/${projectId}/sample-operations`, { data: sampleRequests[0] });
   expect(duplicate.ok()).toBe(true);
@@ -96,7 +97,7 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   for (const [width, height] of [[1440, 900], [1280, 720], [1024, 768], [390, 844]]) {
     await page.setViewportSize({ width, height });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
-    await page.screenshot({ path: `../docs/execution/guided-journey/sample-${width}.png`, fullPage: true });
+    await page.screenshot({ path: isolatedEvidencePath(`../docs/execution/guided-journey/sample-${width}.png`), fullPage: true });
   }
   const annotations = await (await request.get(`/api/projects/${projectId}/export-readiness`)).json();
   expect(JSON.stringify(annotations)).not.toContain("human_accepted");
@@ -140,7 +141,7 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   await expect(page.getByLabel("Correct label", { exact: true })).toHaveValue("corrected-missing-category");
   await expect(page.getByRole("button", { name: /^Annotation list · 2$/ })).toBeVisible();
   expect(await (await request.get(`/api/projects/${projectId}/export-readiness`)).json()).toEqual(annotations);
-  await page.screenshot({ path: "../docs/execution/guided-journey/sample-human-example.png", fullPage: true, animations: "disabled" });
+  await page.screenshot({ path: isolatedEvidencePath("../docs/execution/guided-journey/sample-human-example.png"), fullPage: true, animations: "disabled" });
   await page.getByText("Result needs attention", { exact: true }).click();
   await page.getByLabel("Result to inspect", { exact: true }).selectOption("");
   await page.getByLabel("What needs attention?", { exact: true }).selectOption("cannot_judge");
@@ -193,7 +194,7 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   await page.getByRole("button", { name: "Before adjustment", exact: true }).click();
   await expect(page.getByRole("button", { name: "Before adjustment", exact: true })).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "Current candidates", exact: true }).click();
-  await page.screenshot({ path: "../docs/execution/guided-journey/sample-comparison.png", fullPage: true });
+  await page.screenshot({ path: isolatedEvidencePath("../docs/execution/guided-journey/sample-comparison.png"), fullPage: true });
   const revisedSampleUrl = page.url();
   await page.getByRole("button", { name: "Keep original plan", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`draft=${draftId}`));
@@ -207,7 +208,7 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   await expect(page.getByRole("button", { name: "Continue with this plan", exact: true })).toHaveCount(0);
   await page.reload();
   await expect(page.getByRole("heading", { name: "Sample Test is out of date", exact: true })).toBeVisible();
-  await page.screenshot({ path: "../docs/execution/guided-journey/sample-outdated.png", fullPage: true, animations: "disabled" });
+  await page.screenshot({ path: isolatedEvidencePath("../docs/execution/guided-journey/sample-outdated.png"), fullPage: true, animations: "disabled" });
   await page.getByRole("button", { name: "Review new sample scope", exact: true }).click();
   await expect(page.getByRole("region", { name: "Sample authorization", exact: true })).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "I reviewed the sample scope" })).not.toBeChecked();
@@ -239,7 +240,7 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   await expect(page.getByRole("status").filter({ hasText: /^Stopped$/ })).toBeVisible();
   const replayStopped = await (await request.post(`/api/projects/${projectId}/sample-operations`, { data: stopInput })).json();
   expect(replayStopped.status).toBe("cancelled");
-  await page.screenshot({ path: "../docs/execution/guided-journey/sample-stopped.png", fullPage: true });
+  await page.screenshot({ path: isolatedEvidencePath("../docs/execution/guided-journey/sample-stopped.png"), fullPage: true });
   await page.getByRole("button", { name: "Review scope for a new test", exact: true }).click();
   await expect(page.getByRole("region", { name: "Sample authorization" })).toBeVisible();
   // A lost outgoing POST keeps the same non-secret request key across refresh.
@@ -263,7 +264,7 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   await page.reload();
   expect(processingRequests).toHaveLength(0);
   await page.getByRole("checkbox", { name: "I authorize this image, model and call-budget scope", exact: true }).check();
-  await page.screenshot({ path: "../docs/execution/guided-journey/processing-confirm.png", fullPage: true });
+  await page.screenshot({ path: isolatedEvidencePath("../docs/execution/guided-journey/processing-confirm.png"), fullPage: true });
   const fixtureWorkspace = dirname(String(testInfo.config.metadata.e2eImport));
   expect(fixtureWorkspace).toMatch(/^\/tmp\/annotagent-guided-e2e-\d+$/);
   const credentialPath = resolve(fixtureWorkspace, `.annotagent/credentials/registry-provider-${provider.id}.key`);
@@ -342,7 +343,7 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   for (const [width, height] of [[1440, 900], [390, 844]]) {
     await page.setViewportSize({ width, height });
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
-    await page.screenshot({ path: `../docs/execution/guided-journey/processing-results-${width}.png`, fullPage: true, animations: "disabled" });
+    await page.screenshot({ path: isolatedEvidencePath(`../docs/execution/guided-journey/processing-results-${width}.png`), fullPage: true, animations: "disabled" });
   }
   expect(processingRequests).toHaveLength(2);
   // Registry changes invalidate adoption without hiding persisted sample images.
@@ -433,7 +434,7 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   for (const [width, height] of [[1440, 900], [390, 844]]) {
     await page.setViewportSize({ width, height });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
-    await page.screenshot({ path: `../docs/execution/guided-journey/manual-addition-${width}.png`, fullPage: true, animations: "disabled" });
+    await page.screenshot({ path: isolatedEvidencePath(`../docs/execution/guided-journey/manual-addition-${width}.png`), fullPage: true, animations: "disabled" });
   }
   await page.getByRole("button", { name: "Save annotation to Review", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/review/`));
