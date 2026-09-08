@@ -43,6 +43,9 @@
 .conversation-builder-card, .conversation-builder-result { display: grid; gap: 12px; min-width: 0; overflow-wrap: anywhere; }
 .conversation-builder-card { padding-block: 16px; border-block-start: 1px solid var(--aa-border); }
 .conversation-builder-card a { white-space: normal; overflow-wrap: anywhere; }
+.journey-model-choices { display: grid; gap: 12px; padding-block: 12px; }
+.journey-model-choices label { display: flex; align-items: start; gap: 10px; min-width: 0; }
+.journey-model-choices input { flex-shrink: 0; margin-top: 3px; }
 .conversation-completed-stage { min-width: 0; }
 .conversation-completed-stage > summary { cursor: pointer; padding-block: 8px; line-height: 1.5; overflow-wrap: anywhere; }
 .conversation-completed-stage > summary span { display: block; margin-inline-start: 1.1em; font-size: .85rem; color: var(--aa-text-muted); }

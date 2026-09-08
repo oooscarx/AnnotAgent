@@ -18,6 +18,17 @@ pub(super) struct JourneySelection {
     allowed_models: String,
 }
 
+pub(super) async fn history(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+) -> ApiResult<Json<Value>> {
+    let items = state
+        .application
+        .conversation_journey_history(&project, conversation, task)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({"items":items,"limit":50})))
+}
+
 pub(super) async fn preview(
     State(state): State<ServerState>,
     AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,

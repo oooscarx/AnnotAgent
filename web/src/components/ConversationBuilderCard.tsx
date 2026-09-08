@@ -4,6 +4,7 @@ import { ConversationBudgetNotice } from "./ConversationBudgetNotice";
 import {projectBudgetAvailability} from "../projectBudget";
 import { projectBuildPath } from "../navigation";
 import { ConversationSampleCard, type OpenConversationSample } from "./ConversationSampleCard";
+import {ConversationJourneyCard} from "./ConversationJourneyCard";
 import type { ConversationBuilderConsent, ConversationBuilderItem, ConversationBuilderPreview, ConversationSchemaDraft } from "../types";
 
 /** Restoring history only reads. Model work requires a new, explicit consent. */
@@ -11,6 +12,8 @@ export function ConversationBuilderCard({ project, conversation, task, schema, e
   project: string; conversation: string; task: string; schema: Pick<ConversationSchemaDraft,"id"|"revision">; editing: boolean; onAssistance?:()=>void; onSample: OpenConversationSample;
   repairRequest?: {id:string;draft:string};
 }) {
+  const [advanced,setAdvanced]=useState(false);
+  const [journeyActive,setJourneyActive]=useState(false);
   const [item,setItem]=useState<ConversationBuilderItem>();
   const [preview,setPreview]=useState<ConversationBuilderPreview>();
   const [confirmed,setConfirmed]=useState(false);
@@ -25,8 +28,10 @@ export function ConversationBuilderCard({ project, conversation, task, schema, e
   const running=item?.operation.status==="reserved" || Boolean(frozen.current && (busy || uncertain));
   useEffect(()=>{
     alive.current=true; const controller=new AbortController();
-    void api.conversationBuilderHistory(project,conversation,task,controller.signal).then((history)=>{
-      if(!controller.signal.aborted) { setItem(history.items.find(entry=>repairRequest ? entry.session?.working_draft?.draft_id===repairRequest.draft : entry.session?.working_draft?.build_mode.kind!=="repair_draft"));setReady(true); }
+    void api.conversationBuilderHistory(project,conversation,task,controller.signal).then(async(history)=>{
+      const entry=history.items.find(entry=>repairRequest ? entry.session?.working_draft?.draft_id===repairRequest.draft : entry.session?.working_draft?.build_mode.kind!=="repair_draft");
+      const journeys=entry&&!repairRequest ? await api.journeyHistory(project,conversation,task,controller.signal) : undefined;
+      if(!controller.signal.aborted) { setItem(entry);if(entry&&journeys&&!journeys.items.some(journey=>journey.record.consent.builder_operation_id===entry.operation.id))setAdvanced(true);setReady(true); }
     }).catch((error:Error)=>{if(!controller.signal.aborted)setError(error.message);});
     return ()=>{alive.current=false;controller.abort();};
   },[project,conversation,task,repairRequest?.draft]);
@@ -99,7 +104,13 @@ export function ConversationBuilderCard({ project, conversation, task, schema, e
     {item && item.operation.status!=="reserved" && <div className="conversation-builder-result"><strong>{item.operation.status==="interrupted" ? "Build interrupted" : completed ? "Saved execution record" : "Builder outcome saved"}</strong><p>{session?.outcome?.replaceAll("_"," ") ?? item.operation.evidence?.outcome?.replaceAll("_"," ") ?? item.operation.status}</p>{item.operation.evidence?.error && <p>{item.operation.evidence.error}</p>}{session?.next_action && <p>{session.next_action}</p>}{session?.unresolved_bindings?.length ? <ul>{session.unresolved_bindings.map((binding,index)=><li key={index}>{binding}</li>)}</ul> : null}{draftId && <a href={projectBuildPath(project,"pipeline",{draftId,agentSessionId:session?.id})}>Open saved Pipeline details</a>}<small>No sample result or formal annotation was accepted.</small></div>}
     {error && <p role="alert">{error} Saved operations remain on the server; refreshing will not start another build.</p>}
   </>;
+  if(!repairRequest&&!advanced)return <>
+    <ConversationJourneyCard key={`${project}:${conversation}:${task}`} project={project} conversation={conversation} task={task} schema={schema} disabled={editing||running} onSample={onSample} onAssistance={onAssistance} onActiveChange={setJourneyActive}/>
+    <button disabled={!ready||busy||editing||running||journeyActive} onClick={()=>{setAdvanced(true);void prepare();}}>Review Builder authorization</button>
+    <small>Advanced: build only, then authorize samples separately.</small>
+  </>;
   return <section className="conversation-builder-card" aria-label={repairRequest ? "Repair annotation pipeline" : "Build annotation pipeline"}>
+    {!repairRequest&&!running&&!busy&&<button onClick={()=>setAdvanced(false)}>Back to build and sample task</button>}
     {completed ? <details className="conversation-completed-stage"><summary><strong>Builder outcome saved</strong><span>View build details</span></summary><div>{buildDetails}</div></details> : buildDetails}
     {draftId && !running && <ConversationSampleCard key={`${task}:${draftId}`} project={project} conversation={conversation} task={task} draft={draftId} disabled={editing || busy} onOpen={onSample} onAssistance={onAssistance} />}
   </section>;

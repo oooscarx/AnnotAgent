@@ -29,6 +29,19 @@ pub struct ConversationJourneyDataScope {
 }
 
 impl LocalApplication {
+    pub fn conversation_journey_history(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+    ) -> Result<Vec<serde_json::Value>> {
+        let owner = self.conversation_project_identity(project)?;
+        self.store
+            .conversation_journey_ids(&owner, conversation, task)?
+            .into_iter()
+            .map(|id| self.conversation_journey_execution_status(project, conversation, task, id))
+            .collect()
+    }
     pub fn conversation_journey_execution_status(
         &self,
         project: &str,
@@ -58,8 +71,13 @@ impl LocalApplication {
         let dispatch = self
             .store
             .conversation_journey_dispatch(&owner, conversation, task, id)?;
+        let mut sample_value = serde_json::json!(sample);
+        if let Some(sample) = sample {
+            sample_value["assistance"] =
+                serde_json::json!(self.store.sample_assistance_status(&sample.id)?);
+        }
         Ok(
-            serde_json::json!({"record":record,"builder":builder,"sample":sample,"dispatch":dispatch}),
+            serde_json::json!({"record":record,"builder":builder,"sample":sample_value,"dispatch":dispatch}),
         )
     }
 

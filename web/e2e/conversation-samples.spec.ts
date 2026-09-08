@@ -8,9 +8,9 @@ import { expect as baseExpect, test, fetchWithinMutationLimit } from "./fixtures
 // UI observations must not fail while that bounded transport pacing is still active.
 const expect=baseExpect.configure({timeout:75_000});
 
-for(const scenario of ["joint-classification","joint-stop","classification","bbox","classification-review","human-classification","human-bbox"] as const){
+for(const scenario of ["joint-ui","joint-ui-recover","joint-classification","joint-stop","classification","bbox","classification-review","human-classification","human-bbox"] as const){
 const humanSchema = scenario.startsWith("human-");
-const transport = scenario==="joint-stop" ? "classification" : humanSchema ? scenario.slice(6) : scenario.replace(/^joint-/, "");
+const transport = scenario==="joint-stop"||scenario.startsWith("joint-ui") ? "classification" : humanSchema ? scenario.slice(6) : scenario.replace(/^joint-/, "");
 const kind = transport === "bbox" ? "bbox" : "classification";
 const requiresReview = transport !== "classification";
 test(`conversation ${scenario} authorizes HTTP fixture samples and restores editable terminal canvas`,async({page,request})=>{
@@ -63,6 +63,50 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   await expect(page.getByText("Schema Draft saved · Revision 1",{exact:true})).toBeVisible();
   await expect(page.getByRole("button",{name:"Save as editable Schema Draft",exact:true})).toHaveCount(0);
   if(scenario==="bbox")await page.screenshot({path:"../docs/execution/conversational-workspace/automatic-label-draft.png",fullPage:true,animations:"disabled"});
+  }
+  if(scenario.startsWith("joint-ui")){
+    const panel=page.getByRole("region",{name:"Build and test annotation plan",exact:true});
+    await panel.getByRole("button",{name:"Review build and sample authorization",exact:true}).click();
+    const consent=panel.getByLabel("Build and sample authorization",{exact:true});
+    await expect(consent).toContainText("Cost unknown");await expect(consent).toContainText("8796");
+    const start=consent.getByRole("button",{name:"Build plan and test samples",exact:true});
+    await expect(start).toBeDisabled();
+    await consent.getByRole("checkbox",{name:/Allow this plan and sample test/}).check();
+    await consent.screenshot({path:"../docs/execution/conversational-workspace/joint-consent.png",animations:"disabled"});
+    if(scenario==="joint-ui-recover"){
+      let savedPath="";
+      await page.route(`**/api/projects/${project}/conversations/*/tasks/*/journey-consents`,async route=>{
+        if(route.request().method()!=="POST")return route.fallback();
+        const acknowledged=await fetchWithinMutationLimit(route);expect(acknowledged.ok(),await acknowledged.text()).toBe(true);
+        savedPath=route.request().url();await route.abort("failed");
+      },{times:1});
+      await start.click();
+      await expect(panel).toContainText("Authorization saved; execution not started");
+      const before=await (await request.get(savedPath.replace(/journey-consents$/, "calls"))).json();
+      await page.reload();
+      await expect(panel).toContainText("Authorization saved; execution not started");
+      expect(await (await request.get(savedPath.replace(/journey-consents$/, "calls"))).json()).toEqual(before);
+      expect((await (await request.get(savedPath)).json()).items).toHaveLength(1);
+    }
+    const executionPromise=page.waitForResponse(response=>response.url().includes("/journey-consents/")&&response.url().endsWith("/execution")&&response.request().method()==="POST");
+    if(scenario==="joint-ui-recover")await panel.getByRole("button",{name:"Continue the same saved request",exact:true}).click();else await start.click();
+    const response=await executionPromise;expect(response.ok(),await response.text()).toBe(true);
+    const receipt=await response.json();expect(receipt.dispatch.status).toBe("running");
+    const writes:string[]=[];page.on("request",request=>{if(request.method()==="POST"&&/journey-consents|builder-operations|sample-operations/.test(request.url()))writes.push(request.url());});
+    await page.reload();
+    await expect(panel.getByRole("button",{name:"Stop build and sample task",exact:true})).toBeVisible();
+    await expect(panel.getByRole("button",{name:"View sample results in canvas",exact:true})).toBeVisible();
+    expect(writes).toEqual([]);
+    await panel.getByRole("button",{name:"View sample results in canvas",exact:true}).click();
+    await expect(page.getByLabel("Saved sample results",{exact:true})).toBeVisible();
+    await page.screenshot({path:"../docs/execution/conversational-workspace/joint-result.png",fullPage:true,animations:"disabled"});
+    const url=page.url();await page.reload();await expect(page).toHaveURL(url);
+    await expect(page.getByLabel("Saved sample results",{exact:true})).toBeVisible();expect(writes).toEqual([]);
+    await page.setViewportSize({width:390,height:844});
+    await page.getByRole("button",{name:"Images (1)",exact:true}).click();
+    await expect(page.getByLabel("Saved sample results",{exact:true})).toBeVisible();
+    await page.screenshot({path:"../docs/execution/conversational-workspace/joint-result-390.png",fullPage:true,animations:"disabled"});
+    return;
   }
   const builderPreviewPromise=page.waitForResponse(response=>response.url().includes("/builder-preview"));
   const changeCeiling=async(maximum:number)=>{

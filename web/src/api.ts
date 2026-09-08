@@ -4,6 +4,25 @@ export type SampleOperation = {
   status: "queued" | "running" | "cancelling" | "cancelled" | "interrupted" | "failed" | "succeeded";
   error?: string | null;
 };
+export type JourneyConsent = {
+  id:string; task_id:string; builder_operation_id:string; sample_operation_id:string;
+  builder_model_id:string; previous_grant_id:string|null; builder_scope_hash:string;
+  schema_id:string; schema_revision:number; schema_digest:string;
+  images:{image_id:string;content_hash:string}[];
+  allowed_models:{model_id:string;binding_digest:string}[];
+  maximum_builder_calls:number; maximum_sample_calls:number; expires_at:string; allow_unknown_cost:boolean;
+};
+export type JourneyStatus = {
+  record:{consent:JourneyConsent;revoked:boolean;sample:{draft_id:string;draft_revision:number}|null};
+  builder:import("./types").ConversationBuilderOperation|null; sample:SampleOperation|null;
+  dispatch:{attempt_id:string;status:"running"|"settled"|"interrupted";error:string|null}|null;
+};
+export type JourneyPreview = {
+  consent:JourneyConsent; builder:import("./types").ConversationBuilderPreview;
+  data:{models:{scope:{model_id:string;binding_digest:string};display_name:string;destination:string;permissions:unknown}[]};
+  project_call_limit?:import("./types").ProjectCallLimitSnapshot; estimated_cost:null; operation:string;
+};
+const journeyRoot=(project:string,conversation:string,task:string)=>`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/tasks/${encodeURIComponent(task)}`;
 export type ConversationSampleConsent = { conversation_id: string; task_id: string; previous_grant_id: string; scope_hash: string; expires_at: string; allow_unknown_cost: boolean; human_review?:boolean };
 export type ConversationSamplePreview = { project_call_limit?: import("./types").ProjectCallLimitSnapshot; project_id: string; revision: number; image_count: number; models: {name: string; destination: string; id: string; revision: number}[]; supported: boolean; other_bindings: string[]; authorization_fingerprint: string; request_limit: number; estimated_cost: null; request_id: string; conversation_budget: { previous_grant_id: string; scope_hash: string; expires_at: string; maximum_calls: number; used_calls: number } };
 export type ProcessingSelection = { draft_id: string; sample_test_id: string; limit?: number };
@@ -575,6 +594,12 @@ export const api = {
   pendingSchemaAuthorization: (project:string,conversation:string,task:string,signal?:AbortSignal)=>request<import("./types").ConversationSchemaAuthorization|null>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/tasks/${encodeURIComponent(task)}/schema-authorizations/pending`,{signal}),
   conversationBuilderPreview: (project: string, conversation: string, task: string, selection: import("./types").ConversationBuilderSelection) => request<import("./types").ConversationBuilderPreview>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/tasks/${encodeURIComponent(task)}/builder-preview?${new URLSearchParams(Object.entries(selection).filter(([,value])=>value!==undefined).map(([key,value])=>[key,String(value)]))}`),
   conversationBuilderHistory: (project: string, conversation: string, task: string, signal?: AbortSignal) => request<{items: import("./types").ConversationBuilderItem[]}>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/tasks/${encodeURIComponent(task)}/builder-operations`,{signal}),
+  journeyHistory:(project:string,conversation:string,task:string,signal?:AbortSignal)=>request<{items:JourneyStatus[]}>(`${journeyRoot(project,conversation,task)}/journey-consents`,{signal}),
+  journeyPreview:(project:string,conversation:string,task:string,selection:Record<string,string>)=>request<JourneyPreview>(`${journeyRoot(project,conversation,task)}/journey-preview?${new URLSearchParams(selection)}`),
+  saveJourney:(project:string,conversation:string,task:string,consent:JourneyConsent)=>request<JourneyStatus["record"]>(`${journeyRoot(project,conversation,task)}/journey-consents`,{method:"POST",body:JSON.stringify(consent)}),
+  journeyStatus:(project:string,conversation:string,task:string,id:string,signal?:AbortSignal)=>request<JourneyStatus>(`${journeyRoot(project,conversation,task)}/journey-consents/${encodeURIComponent(id)}/execution`,{signal}),
+  executeJourney:(project:string,conversation:string,task:string,id:string)=>request<JourneyStatus>(`${journeyRoot(project,conversation,task)}/journey-consents/${encodeURIComponent(id)}/execution`,{method:"POST",body:"{}"}),
+  revokeJourney:(project:string,conversation:string,task:string,id:string)=>request<JourneyStatus["record"]>(`${journeyRoot(project,conversation,task)}/journey-consents/${encodeURIComponent(id)}/revoke`,{method:"POST",body:"{}"}),
   launchConversationBuilder: (project: string, conversation: string, task: string, consent: import("./types").ConversationBuilderConsent) => request<import("./types").ConversationBuilderOperation>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/tasks/${encodeURIComponent(task)}/builder-operations`,{method:"POST",body:JSON.stringify(consent)}),
   conversationSchemaDraftForCall: (project: string, conversation: string, task: string, call: string, signal?: AbortSignal) => request<import("./types").ConversationSchemaDraft | null>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/tasks/${encodeURIComponent(task)}/calls/${encodeURIComponent(call)}/schema-draft`, { signal }),
   saveConversationSchemaDraft: (project: string, conversation: string, task: string, call: string) => request<import("./types").ConversationSchemaDraft>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/tasks/${encodeURIComponent(task)}/calls/${encodeURIComponent(call)}/schema-draft`, { method: "POST" }),

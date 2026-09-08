@@ -1,6 +1,6 @@
 # Conversational Annotation Workspace — execution record
 
-## Current checkpoint (after `54ae0d5`; not a completion declaration)
+## Current checkpoint (after `f3345db`, with unified build/sample UI; not a completion declaration)
 
 The default Project entry now uses the persisted conversation/image workspace. Explicit goal
 selection survives re-entry, sample candidate references are frozen, and clarification/correction
@@ -11,11 +11,15 @@ Authorized valid Schema proposals now become editable Drafts without a separate 
 click; idempotent retry preserves subsequent human edits and never issues another model call.
 Stop/pause commands have a separately bounded admission lane under ordinary write saturation.
 
-Still incomplete: the bounded coordinator that advances through Schema/Builder/sample stages
-under one matching authorization; automatic interpretation of scoped conversational feedback;
+Saved labels now offer one bounded build-and-sample authorization, backed by persistent
+background dispatch and the existing Builder/Sample services. Refresh restores owned work;
+explicit phase-by-phase building remains available as an advanced path.
+
+Still incomplete: advancing through initial Schema/Builder/sample stages under one matching
+authorization (the unified path currently starts from saved labels); automatic interpretation of scoped conversational feedback;
 the other structured visual/setup request kinds; complete scope-change/Schema patch and stop-text
 semantics; large-history performance and the remaining accessibility/context restoration audit.
-Current phase cards still require explicit intermediate actions. Live model quality, native
+Schema setup and repair phase cards still require explicit intermediate actions. Live model quality, native
 200-percent browser zoom and real-human novice usability are not proven. Full regression results
 and their failures/fixes are recorded chronologically at the end of this file.
 
@@ -2677,3 +2681,53 @@ unified consent/action/status presentation, saved journey discovery, and fronten
 mount-triggered execution. Full Schema-to-results default experience, broader HumanRequest types,
 Live quality, native zoom/a11y matrix and real-human usability remain incomplete. No real
 Workspace restart/migration, old keys, push or remote modifications; unrelated screenshots kept.
+
+### M2 default interface — one saved-label build/sample authorization and recovery
+
+The default saved-label card now offers one build-and-sample action. It enumerates available
+image Model Profiles (excluding Mock Providers) and selectable installed model instances,
+allows an explicit selection change, and obtains the server-derived preview before acceptance.
+The preview lists planner/image recipients, sample count, call bounds, expiry, unknown cost,
+Project budget and expandable permission evidence. Changed selections discard the old preview.
+Starting saves exact consent before the existing background POST. No new executor, automatic
+publication or annotation acceptance is introduced.
+
+Task-owned GET history restores the last saved journey and child receipts. This is currently
+a bounded latest-50 history, not a completed pagination/performance implementation. Unknown
+save/execute outcomes retain the original envelope in session storage until a server receipt
+is found. Restoring a saved but undispatched consent shows an explicit Continue action; mount
+never executes it. Running work exposes Stop and explains possible in-flight billing. Saved
+results open the existing sample canvas and use the existing URL/feedback/Review boundaries.
+Assistance delivery status is included and polled so review-request preparation is not lost
+when sample inference finishes first. Failure remains visible; no automatic inference retry.
+
+The legacy phase-by-phase Builder is a secondary visible action. Historical non-journey
+operations restore that existing UI so their stop/results controls are not stranded. Repair
+flows remain unchanged. Completed default journeys prioritize viewing results; creating a
+different plan is secondary and requires fresh authorization. Settings errors link through the
+existing validated conversation return context, not an arbitrary return URL.
+
+Browser evidence: initial `/tmp/annotagent-guided-e2e-34965` passed the default UI 1/1 in
+13.8 s. `/tmp/annotagent-guided-e2e-35241` passed normal + lost-save-ack UI 2/2 in 27.9 s:
+the server had saved consent, the browser lost its response, reload found exactly one consent
+without model calls, and explicit Continue used that same request. Final
+`/tmp/annotagent-guided-e2e-35484` passed 4/4 in 53.3 s: both UI scenarios, simultaneous
+joint execution and the existing bbox edit/review/export workflow. UI tests refresh during
+the slow TEST Builder, retain Stop, open results, refresh the exact result URL and record zero
+new execution POSTs from reload/navigation. Native/Live models are not exercised by this test.
+
+Screenshots inspected: `conversational-workspace/joint-consent.png`, `joint-result.png`,
+`joint-result-390.png`. Initial card screenshot was occluded by the sticky header, so the
+final authorization screenshot captures the complete consent region. The initial mobile capture
+showed the Conversation tab, so the final test explicitly opens Images and captures the actual
+classification canvas. These use a synthetic image and scripted TEST classification, not quality
+evidence or a claim that a synthetic football field is indoors. Existing CSS/fonts/tokens reused;
+checkbox spacing and flexible wrapping added for model choices. No unrelated screenshots staged.
+
+123 Web unit tests, Web typecheck/production build, Server 40 tests, focused Storage journey
+tests (5), final Server all-target/all-feature Clippy and format/diff checks passed. Existing
+production chunk warning remains. Top-level checkpoint updated without declaring completion.
+Still needed: initial Schema/goal coordination under one suitable consent, advanced HumanRequest
+types and scoped message interpretation, comprehensive multi-history/context and a11y audit,
+full final regression, Live quality and real-human usability. No push, remote changes, user data
+mutation, real workspace restart or old API keys.

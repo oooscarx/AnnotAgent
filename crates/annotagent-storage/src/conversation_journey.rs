@@ -186,6 +186,19 @@ fn read(
 }
 
 impl SqliteStore {
+    pub fn conversation_journey_ids(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+    ) -> Result<Vec<Uuid>, StorageError> {
+        self.with_connection(|db| {
+            owned(db, project, conversation, task)?;
+            let mut query = db.prepare("SELECT id FROM conversation_journey_consents WHERE task_id=?1 ORDER BY created_at DESC,id DESC LIMIT 50")?;
+            let ids = query.query_map([task.to_string()], |row| row.get::<_,String>(0))?.collect::<Result<Vec<_>,_>>()?;
+            ids.into_iter().map(|id| Uuid::parse_str(&id).map_err(|_| invalid("Invalid saved journey identity"))).collect()
+        })
+    }
     /// Claim only on explicit POST. Restart recovery never dispatches inference.
     pub fn claim_conversation_journey_dispatch(
         &self,
@@ -484,9 +497,26 @@ mod tests {
         let path = dir.path().join("TEST-dispatch.db");
         let store = SqliteStore::open(&path).unwrap();
         let (project, conversation, consent, _) = setup(&store);
+        assert!(
+            store
+                .conversation_journey_ids(&project, conversation, consent.task_id)
+                .unwrap()
+                .is_empty()
+        );
         store
             .save_conversation_journey(&project, conversation, &consent)
             .unwrap();
+        assert_eq!(
+            store
+                .conversation_journey_ids(&project, conversation, consent.task_id)
+                .unwrap(),
+            vec![consent.id]
+        );
+        assert!(
+            store
+                .conversation_journey_ids("foreign", conversation, consent.task_id)
+                .is_err()
+        );
         let first = Uuid::new_v4();
         assert!(
             store
