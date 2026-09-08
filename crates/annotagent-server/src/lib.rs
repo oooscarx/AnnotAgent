@@ -10,6 +10,7 @@ mod conversation_schema;
 mod conversation_stop;
 mod conversations;
 mod export_jobs;
+mod image_previews;
 mod processing_operations;
 mod sample_operations;
 mod security;
@@ -5649,6 +5650,7 @@ async fn list_images(
             "size_bytes": image.size_bytes,
             "status": image.status,
             "url": format!("/api/projects/{project_id}/images/{}/content", image.image_id),
+            "thumbnail_url": format!("/api/projects/{project_id}/images/{}/thumbnail", image.image_id),
         })).collect::<Vec<_>>()
     })))
 }
@@ -12470,6 +12472,13 @@ export:
             ),
         )
         .expect("Project");
+        app.create_project(
+            "other-preview-owner",
+            include_str!(
+                "../../../examples/label-pipelines/whole-image-classification/project.yaml"
+            ),
+        )
+        .expect("other Project");
         let service = router(
             test_state(app, Arc::new(InMemorySecretStore::default())).await,
             None,
@@ -12563,6 +12572,39 @@ export:
         let content_hash = images["images"][0]["content_hash"]
             .as_str()
             .expect("content hash");
+        let preview_url = images["images"][0]["thumbnail_url"]
+            .as_str()
+            .expect("bounded thumbnail URL");
+        let preview = request(&service, axum::http::Method::GET, preview_url, None).await;
+        assert_eq!(preview.status(), StatusCode::OK);
+        assert_eq!(preview.headers()[header::CONTENT_TYPE], "image/png");
+        let preview_bytes = to_bytes(preview.into_body(), 1_000_000).await.unwrap();
+        let preview_file = temp.path().join("preview.png");
+        std::fs::write(&preview_file, &preview_bytes).unwrap();
+        let frame = annotagent_image_tools::load_image(&preview_file, 256 * 256).unwrap();
+        assert!(frame.metadata.width <= 256 && frame.metadata.height <= 256);
+        let foreign = request(
+            &service,
+            axum::http::Method::GET,
+            &format!("/api/projects/other-preview-owner/images/{image_id}/thumbnail"),
+            None,
+        )
+        .await;
+        assert_eq!(foreign.status(), StatusCode::NOT_FOUND);
+        let original = request(
+            &service,
+            axum::http::Method::GET,
+            images["images"][0]["url"].as_str().unwrap(),
+            None,
+        )
+        .await;
+        assert_eq!(
+            to_bytes(original.into_body(), 1_000_000)
+                .await
+                .unwrap()
+                .as_ref(),
+            std::fs::read(&incoming).unwrap()
+        );
         let removed = response_json(
             request(
                 &service,
@@ -12576,6 +12618,12 @@ export:
         )
         .await;
         assert_eq!(removed["removed"], json!("incoming.png"));
+        assert_eq!(
+            request(&service, axum::http::Method::GET, preview_url, None)
+                .await
+                .status(),
+            StatusCode::NOT_FOUND
+        );
     }
 
     #[tokio::test]

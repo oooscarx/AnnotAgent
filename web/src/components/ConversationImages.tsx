@@ -16,6 +16,6 @@ export function ConversationImages({images,selectedId,onSelect}:{images:ImageIte
       <span aria-live="polite">{start+1}–{Math.min(start+PAGE_SIZE,images.length)} of {images.length}</span>
       <button disabled={page===lastPage} onClick={()=>setBrowsing({selection:selectedId,page:page+1})}>Next images</button>
     </nav>}
-    <nav key={page} className="conversation-thumbnails" aria-label="Select image">{images.slice(start,start+PAGE_SIZE).map(image=><button key={image.image_id} aria-label={image.name} aria-current={image.image_id===selectedId ? "true" : undefined} onClick={()=>onSelect(image.image_id)}><img loading="lazy" decoding="async" src={image.url} alt=""/><span>{image.name}</span></button>)}</nav>
+    <nav key={page} className="conversation-thumbnails" aria-label="Select image">{images.slice(start,start+PAGE_SIZE).map(image=><button key={image.image_id} aria-label={image.name} aria-current={image.image_id===selectedId ? "true" : undefined} onClick={()=>onSelect(image.image_id)}><img loading="lazy" decoding="async" src={image.thumbnail_url ?? image.url} alt=""/><span>{image.name}</span></button>)}</nav>
   </>;
 }

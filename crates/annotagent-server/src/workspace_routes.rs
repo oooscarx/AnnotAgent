@@ -188,6 +188,10 @@ pub(super) fn routes() -> Router<ServerState> {
             "/api/projects/{project_id}/images/{index}/content",
             get(image_content),
         )
+        .route(
+            "/api/projects/{project_id}/images/{index}/thumbnail",
+            get(super::image_previews::thumbnail),
+        )
         .route("/api/projects/{project_id}/runs", post(start_run))
         .route(
             "/api/projects/{project_id}/management/preview",

@@ -1937,6 +1937,7 @@ export interface ImageItem {
   size_bytes: number;
   status: string;
   url: string;
+  thumbnail_url?: string;
 }
 
 export interface RunAnnotationInspection {

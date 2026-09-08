@@ -36,7 +36,8 @@ The earlier statement that these features were absent was stale and is supersede
 
 Formal processing and export now link saved task receipts to real immutable archive deliveries;
 background export workers, transactional events, keyset history and URL restoration are implemented.
-Thumbnail rendering is bounded to 24 images, but the dataset metadata API still returns a full index.
+Thumbnail rendering is bounded to 24 images. A bounded browse-preview endpoint is now implemented
+(fresh browser integration still pending); the dataset metadata API still returns a full index.
 
 Still open: requirement-by-requirement completion audit, all visual/setup request-kind coverage,
 remaining metadata/thumbnail transfer and long-history performance, assistive-technology/native IME/
@@ -4646,3 +4647,27 @@ tests remain ignored (Application: 148 passed, 1 ignored); this does not validat
 The 170-test browser round remains running on handle 87265 in isolated workspace
 `/tmp/annotagent-guided-e2e-6319`. Its final outcome must be collected before another browser
 run clears traces. Do not poll completed handles 18377, 56861, 59327, 85864, 40919 or 7814.
+
+### 2026-09-09 — Bounded browse preview transfer
+
+The image-index response now advertises an optional `thumbnail_url`. ConversationImages uses
+that URL for its 24-item strip, while the image's original `url` and annotation canvas remain
+unchanged. The Rust endpoint reuses image-tools loading/thumbnail/PNG encoding; there is no
+model call, derivative workspace file or second image entity. Project ownership and path safety
+are resolved through the existing Application method before returning image bytes. Decoding
+runs on the blocking pool with two permits held until actual worker completion (including after
+client disconnect). Input limits are 32 MiB and 16 million pixels; output is at most 256px on
+either axis without upscaling. Oversize/unreadable images fail explicitly; no fake preview.
+
+The server integration test failed first for the missing URL, then passed after implementation.
+It checks PNG dimensions, rejection of a real different Project owner, original bytes unchanged,
+and a 404 after isolated image removal. Web rendering tests check preview selection and legacy
+index fallback without altering the original URL. Typecheck plus **218 tests / 45 files** pass;
+targeted server test, fmt and strict server all-target/all-feature clippy pass (handle 5436).
+
+Limitations: previews use private no-store responses, not a generated-cache claim; metadata still
+loads as a complete index. No end-to-end latency improvement has been measured. The running
+170-test round on handle 87265 predates this preview change and cannot verify its browser
+integration. Wait for that round before rebuilding/restarting its server or overwriting traces;
+then verify preview network bytes/dimensions and unchanged full-resolution canvas in a fresh run.
+No real workspace data, original PNG edits, Provider or remote was modified. No push.
