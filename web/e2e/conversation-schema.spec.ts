@@ -209,14 +209,23 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
   const builderSubmitted=page.waitForRequest((req)=>req.method()==="POST" && req.url().endsWith("/builder-operations"));
   await page.getByRole("button",{name:"Build Pipeline Draft",exact:true}).click();
   const builderPending=await builderSubmitted;
+  const builderHistoryUrl=new URL(builderPending.url());
+  const historyBeforeCancel=await (await request.get(builderHistoryUrl.toString())).json();
   await page.getByRole("button",{name:"Stop Builder",exact:true}).click();
   await expect(page.getByText(/^Cancellation saved\. Waiting for the server/)).toBeVisible();
   const builderStopped=page.waitForResponse((res)=>res.url()===builderPending.url() && res.request().method()==="POST");
   releaseBuilder();expect((await builderStopped).status()).toBe(400);
   await page.unroute("**/builder-operations");
-  await expect(page.getByText("Build interrupted",{exact:true})).toBeVisible();
+  await expect(page.getByText("Cancellation saved. The operation has stopped; any prior call cost remains recorded separately.",{exact:true})).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText("no new work was admitted");
+  expect(await (await request.get(builderHistoryUrl.toString())).json()).toEqual(historyBeforeCancel);
+  reloadWrites=0;
   await page.reload();
-  await expect(page.getByText("Build interrupted",{exact:true})).toBeVisible();
+  // This request was stopped before admission, so there is no interrupted
+  // execution to restore. The preceding completed build is still unchanged.
+  await expect(page.getByText("Builder outcome saved",{exact:true})).toBeVisible();
+  expect(await (await request.get(builderHistoryUrl.toString())).json()).toEqual(historyBeforeCancel);
+  expect(reloadWrites).toBe(0);
   await expect(page.getByRole("button",{name:"Stop Builder",exact:true})).toHaveCount(0);
   await page.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/builder-cancelled.png"),fullPage:true,animations:"disabled"});
   expect((await request.post("/api/projects",{data:{id:cancelProject,yaml}})).ok()).toBeTruthy();

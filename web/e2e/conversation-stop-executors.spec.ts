@@ -47,12 +47,24 @@ async function build(request: APIRequestContext, state: State) {
   const operation = await post(request, `${state.taskRoot}/builder-operations`, { selection: preview.selection, repair: preview.repair, previous_grant_id: preview.previous_grant_id, scope_hash: preview.scope_hash, expires_at: preview.expires_at, allow_unknown_cost: true });
   expect(operation.status, JSON.stringify(operation)).toBe("completed");
   expect(operation.evidence.draft_id).toBeTruthy();
-  return operation.evidence.draft_id as string;
+  const id=operation.evidence.draft_id as string;
+  const draft=(await read(request,`/api/workflow-drafts?project_id=${state.project}`)).drafts.find((entry:any)=>entry.id===id);
+  expect(draft).toBeTruthy();
+  // These tests exercise cancellation, not the planner's model preference.
+  // Explicitly bind its editable Draft to this test's delayed transport so
+  // another model accumulated by the suite cannot make the sample finish early.
+  const modelNodes=draft.nodes.filter((node:any)=>node.model_profile_binding||node.model_binding);
+  expect(modelNodes).toHaveLength(1);
+  modelNodes[0].model_profile_binding={model_profile_id:state.model.id,locked:true};
+  const updated=await request.patch(`/api/workflow-drafts/${id}`,{headers:{"if-match":String(draft.revision)},data:draft});
+  expect(updated.ok(),await updated.text()).toBe(true);
+  return id;
 }
 async function startSample(request: APIRequestContext, state: State, draft: string) {
   const preview = await read(request, `${state.taskRoot}/sample-preview?${new URLSearchParams({ draft_id: draft, request_id: randomUUID() })}`);
   expect(preview.supported).toBe(true);
   expect(preview.image_count).toBe(1);
+  expect(preview.models.map((model:any)=>model.id)).toEqual([state.model.id]);
   const envelope = { request_id: preview.request_id, draft_id: draft, expected_revision: preview.revision, image_indices: [0], authorization_fingerprint: preview.authorization_fingerprint, conversation: { conversation_id: state.conversation, task_id: state.task, previous_grant_id: preview.conversation_budget.previous_grant_id, scope_hash: preview.conversation_budget.scope_hash, expires_at: preview.conversation_budget.expires_at, allow_unknown_cost: true, human_review: true } };
   const operation = await post(request, `/api/projects/${state.project}/sample-operations`, envelope);
   return { operation, envelope, path: `/api/projects/${state.project}/sample-operations/${operation.id}` };

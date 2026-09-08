@@ -222,7 +222,8 @@ test(`future ${bbox?"bbox":"classification"} Schema UI restores the explicit for
   const registry=await read(request,"/api/model-profiles");
   const realModel=registry.models.find((model:any)=>model.id===state.model.id);
   expect(realModel).toBeTruthy();
-  await page.route("**/api/model-profiles",route=>route.fulfill({json:{...registry,models:[realModel,...Array.from({length:33},(_,i)=>({...realModel,id:`TEST-extra-${i}`,display_name:`TEST extra choice ${i}`}))]}}));
+  const modelRegistryUrl=(url:URL)=>url.pathname==="/api/model-profiles";
+  await page.route(modelRegistryUrl,route=>route.fulfill({json:{...registry,models:[realModel,...Array.from({length:33},(_,i)=>({...realModel,id:`TEST-extra-${i}`,display_name:`TEST extra choice ${i}`}))]}}));
   let previews=0;
   page.on("request",req=>{if(req.method()==="GET"&&req.url().includes(`${state.taskRoot}/journey-preview?`))previews++;});
   await builder.getByRole("button",{name:"Review build and sample authorization",exact:true}).click();
@@ -235,7 +236,7 @@ test(`future ${bbox?"bbox":"classification"} Schema UI restores the explicit for
   const response=await previewRequest;expect(response.ok(),await response.text()).toBe(true);
   const preview=await response.json();
   expect(JSON.parse(new URL(response.url()).searchParams.get("allowed_models")!)).toEqual([`model-profile:${state.model.id}`]);
-  await page.unroute("**/api/model-profiles");
+  await page.unroute(modelRegistryUrl);
   expect(preview.consent.schema_id).toBe(saved.schema.id);expect(preview.consent.schema_revision).toBe(1);
   await expect(builder.getByRole("button",{name:"Build plan and test samples",exact:true})).toBeDisabled();
   expect(mutations).toHaveLength(count);expect(await preserved(request,state,value.base_schema)).toEqual(before);

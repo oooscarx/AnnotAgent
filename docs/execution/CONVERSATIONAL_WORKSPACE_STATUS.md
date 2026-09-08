@@ -4442,3 +4442,27 @@ through a held/released real summary endpoint, refreshes, and opens its conversa
 The remaining selected model-scope, initial-goal, pre-admission stop and prior failure tests are
 still running. No full repair-pass claim yet. Real workspace, original screenshots and remotes
 remain untouched; no push or Live model call.
+
+### 2026-09-09 — Targeted verification and independent fixture repairs
+
+Handle 7057 terminated: **5 passed, 4 failed (5.4m)**. Exact Project deep links,
+image-first upload, both initial UI journeys and classification storage-blocked repair passed.
+The prior lost-click failure did not reproduce; this is not evidence of a product race fix.
+Traces are retained at `/tmp/annotagent-repair-traces-rIIyc2/test-results`.
+
+The two future-Schema tests did not inject their oversized registry: the application requests
+`/api/model-profiles?`, whereas their glob matched only the query-less URL. They now match the
+exact URL pathname, preserving the oversized-list and exact selected-binding assertions.
+The Schema test reached a later pre-admission cancellation assertion: server history correctly
+contains no new execution. It now checks the cancellation acknowledgement, rejection, unchanged
+history and read-only refresh restoring the preceding saved build, not a fabricated interruption.
+
+The standalone sample test's actual preview bound another accumulated TEST model, not its slow
+model. Retained receipt proves successful sample inference, not a stuck cancellation worker.
+Its cancellation fixture now explicitly edits the existing Draft through the normal revisioned
+API to bind its own delayed model, and verifies that exact model in the authorization preview.
+This is a test setup change, not a claim to have repaired planner preference or improved quality.
+
+Typecheck and diff check pass. Fresh isolated round two runs on handle 54047 with evidence under
+`/tmp/annotagent-repair-round2`, including future Schema, Schema, stop executors and the previously
+blocked guided-workspace/local-model/model/ready suites. Results are pending; no full-pass claim.
