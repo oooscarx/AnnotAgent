@@ -130,7 +130,7 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   if(scenario==="bbox"){
     await expect(page.getByRole("button",{name:"Retry the same sample request",exact:true})).toBeVisible();
     await expect(start).toBeDisabled({timeout:10_000});
-    await page.getByRole("region",{name:"Test annotation samples",exact:true}).screenshot({path:"../docs/execution/conversational-workspace/sample-outcome-unknown.png",animations:"disabled"});
+    await page.getByLabel("Sample request outcome unknown",{exact:true}).screenshot({path:"../docs/execution/conversational-workspace/sample-outcome-unknown.png",animations:"disabled"});
     await expect.poll(async()=> (await (await request.get(`/api/projects/${project}/sample-operations/${envelope.request_id}`)).json()).status).toBe("succeeded");
     const pendingKey=`annotagent.conversation-sample:${project}:${envelope.conversation.conversation_id}:${envelope.conversation.task_id}:${envelope.draft_id}`;
     expect(await page.evaluate(key=>JSON.parse(sessionStorage.getItem(key)!),pendingKey)).toEqual(envelope);

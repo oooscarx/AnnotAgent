@@ -2483,3 +2483,10 @@ unknown-state explanation and disabled ordinary start. Web typecheck, 123 unit t
 production build passed, with the known chunk warning. Diff check passed. No Rust behavior
 changed; no new full-Rust regression claim. No Live model quality/human usability validation,
 real Workspace mutations, old keys, push or remote changes. Main coordinator scope remains open.
+
+Screenshot correction: the initial whole-sample-region capture visibly included an occluding
+fixed header and clipped leading content. It was not a clean full-panel evidence image.
+Narrowed this asset to the complete unknown-outcome notice itself; the disabled ordinary action
+is proven by the browser assertion, not by that cropped notice. No UI behavior changed.
+Final capture rerun `/tmp/annotagent-guided-e2e-29840` passed 1/1 in 14.0 seconds; the
+notice is fully visible without the fixed-header occlusion.
