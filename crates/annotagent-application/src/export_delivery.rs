@@ -137,6 +137,22 @@ impl LocalApplication {
             if let Some(result) = self.store.completed_conversation_export(id)? {
                 return Ok(serde_json::from_value(result)?);
             }
+            // Explicit retry may repair only a missing receipt from already durable,
+            // verified files. It never re-executes the exporter or trusts a path from the client.
+            if let Ok((_, result)) = self.verified_export_delivery(project, id) {
+                if result.format != format {
+                    bail!("Saved export format does not match this request");
+                }
+                self.store.finish_conversation_export(
+                    id,
+                    Some(&serde_json::to_value(&result)?),
+                    None,
+                )?;
+                // A terminal failure cannot be silently rewritten as success.
+                if let Some(saved) = self.store.completed_conversation_export(id)? {
+                    return Ok(serde_json::from_value(saved)?);
+                }
+            }
             bail!(
                 "This export request is pending, interrupted or failed. Inspect its saved status; it was not executed again."
             );
@@ -194,6 +210,17 @@ impl LocalApplication {
         Ok(directory)
     }
     pub fn open_export_delivery(&self, project: &str, id: Uuid) -> Result<(File, ExportDelivery)> {
+        let (file, result) = self.verified_export_delivery(project, id)?;
+        Ok((
+            file,
+            result.delivery.context("Verified export has no delivery")?,
+        ))
+    }
+    fn verified_export_delivery(
+        &self,
+        project: &str,
+        id: Uuid,
+    ) -> Result<(File, ProjectExportResult)> {
         let root = self.export_delivery_directory(project, id, false)?;
         let report = root.join("export-report.json");
         let archive = root.join("dataset.zip");
@@ -206,6 +233,7 @@ impl LocalApplication {
         let result: ProjectExportResult = serde_json::from_slice(&std::fs::read(report)?)?;
         let metadata = result
             .delivery
+            .as_ref()
             .context("This legacy export has no saved download; export again explicitly")?;
         if metadata.id != id || metadata.bytes > MAX_BYTES {
             bail!("Invalid export delivery identity or size");
@@ -217,7 +245,7 @@ impl LocalApplication {
         {
             bail!("Export archive changed after completion; refusing substituted data");
         }
-        Ok((file, metadata))
+        Ok((file, result))
     }
 }
 

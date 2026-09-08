@@ -4068,3 +4068,32 @@ acceptance remain unfinished.
 
 Final browser rerun after hiding unnecessary one-page navigation passed both paths
 (9.9s/9.8s; 25.0s harness), workspace `/tmp/annotagent-guided-e2e-89881`.
+
+### 2026-09-09 — Recover the durable-file / missing-receipt window
+
+Before adding asynchronous dispatch, added a regression that reserves a real task export,
+writes its actual archive/report through the existing exporter, omits the completion receipt,
+then reopens LocalApplication and retries the original operation. It failed with the previous
+“pending, interrupted or failed” error. The explicit retry now reads the exact owned export
+generation, verifies its archive identity/size/SHA-256 and matching format, then completes
+only an unterminated receipt. It does not regenerate files, change the completion timestamp,
+or execute inference. The same verified reader is shared by download and recovery to avoid
+reading an unverified second manifest. Terminal failures cannot be rewritten as success.
+
+The regression now passes and checks original timestamp/digest equality after reopen. Missing
+files, tampered archives, mismatched formats and an existing terminal failure are separately
+rejected; missing-file retries create no generation directory. This simulates a precise crash
+window with persisted state; it is not a process-kill or background-worker-disconnect test.
+Targeted all-feature integration, strict Application/Server Clippy and formatting pass.
+Full changed-package and browser verification follow below.
+
+This increment repairs receipt recovery, not the whole asynchronous export requirement.
+The HTTP export action still waits for exporter completion; durable Job-ID-first dispatch,
+bounded worker lifecycle and its interruption tests remain necessary, along with the other
+open M4 items. No real workspace, model/credential, service 8787 or remote was changed.
+
+Full Application/Server all-feature tests pass (144/45 unit tests, one billable Application
+smoke ignored). Both complete TEST browser paths pass (10.1s/10.0s; 1.0m harness including
+builds), isolated workspace `/tmp/annotagent-guided-e2e-91081`, screenshots under
+`/tmp/annotagent-export-recovery-evidence`. Production Web build succeeds with the existing
+bundle-size warning; no new frontend visual behavior was introduced in this increment.

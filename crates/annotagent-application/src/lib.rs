@@ -23481,10 +23481,82 @@ export:
         assert_eq!(readiness.accepted_annotations, 1);
         assert_eq!(readiness.unresolved_reviews, 0);
         assert_eq!(readiness.recommended_format.as_deref(), Some("native"));
+        let export_owner = application
+            .conversation_project_identity("label-classification")
+            .unwrap();
+        let export_conversation = application
+            .store
+            .create_conversation(&export_owner)
+            .unwrap();
+        let export_message = annotagent_storage::ConversationMessageInput {
+            id: uuid::Uuid::new_v4(),
+            text: "TEST export recovery".into(),
+            image: None,
+            reference: None,
+        };
+        application
+            .store
+            .append_conversation_message(&export_owner, export_conversation, &export_message)
+            .unwrap();
+        let export_task = uuid::Uuid::new_v4();
+        application
+            .store
+            .begin_conversation_task(
+                &export_owner,
+                export_conversation,
+                &annotagent_storage::BeginConversationTask {
+                    id: export_task,
+                    source_message_id: export_message.id,
+                    schema_revision: "a".repeat(64),
+                },
+            )
+            .unwrap();
+        let export_operation = uuid::Uuid::new_v4();
+        application
+            .store
+            .begin_conversation_export(
+                &export_owner,
+                export_conversation,
+                export_task,
+                export_operation,
+                "native",
+            )
+            .unwrap();
+        // Simulate termination after durable files but before the receipt completion write.
         let export = application
-            .export_project_dataset("label-classification", "native")
+            .export_project_dataset_with_id("label-classification", "native", export_operation)
             .await
             .expect("native Project export");
+        assert!(
+            application
+                .store
+                .completed_conversation_export(export_operation)
+                .unwrap()
+                .is_none()
+        );
+        let reopened = LocalApplication::new(temporary.path()).unwrap();
+        let recovered = reopened
+            .export_from_conversation(
+                "label-classification",
+                export_conversation,
+                export_task,
+                export_operation,
+                "native",
+            )
+            .await
+            .expect("recover completed files without exporting again");
+        assert_eq!(recovered.completed_at, export.completed_at);
+        assert_eq!(
+            recovered.delivery.as_ref().unwrap().sha256,
+            export.delivery.as_ref().unwrap().sha256
+        );
+        assert!(
+            reopened
+                .store
+                .completed_conversation_export(export_operation)
+                .unwrap()
+                .is_some()
+        );
         assert_eq!(export.report.exported_count, 1);
         assert!(export.output_path.join("annotagent-native.json").is_file());
         assert!(export.output_path.join("export-report.json").is_file());
@@ -23534,6 +23606,71 @@ export:
                 .map(|result| &result.completed_at),
             Some(&export.completed_at)
         );
+        for fault in ["missing", "corrupt", "terminal_failure", "wrong_format"] {
+            let id = uuid::Uuid::new_v4();
+            let format = if fault == "wrong_format" {
+                "coco"
+            } else {
+                "native"
+            };
+            application
+                .store
+                .begin_conversation_export(
+                    &export_owner,
+                    export_conversation,
+                    export_task,
+                    id,
+                    format,
+                )
+                .unwrap();
+            if fault != "missing" {
+                let files = application
+                    .export_project_dataset_with_id("label-classification", "native", id)
+                    .await
+                    .unwrap();
+                if fault == "corrupt" {
+                    std::fs::write(
+                        files.output_path.join("dataset.zip"),
+                        b"TEST corrupt archive",
+                    )
+                    .unwrap();
+                }
+            }
+            if fault == "terminal_failure" {
+                application
+                    .store
+                    .finish_conversation_export(id, None, Some("TEST terminal failure"))
+                    .unwrap();
+            }
+            assert!(
+                reopened
+                    .export_from_conversation(
+                        "label-classification",
+                        export_conversation,
+                        export_task,
+                        id,
+                        format
+                    )
+                    .await
+                    .is_err(),
+                "{fault} must not become a completed export"
+            );
+            assert!(
+                application
+                    .store
+                    .completed_conversation_export(id)
+                    .unwrap()
+                    .is_none()
+            );
+            if fault == "missing" {
+                assert!(
+                    application
+                        .export_delivery_directory("label-classification", id, false)
+                        .is_err(),
+                    "retry does not create missing files"
+                );
+            }
+        }
         let second = application
             .export_project_dataset("label-classification", "native")
             .await
