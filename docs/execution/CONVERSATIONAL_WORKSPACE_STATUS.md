@@ -42,7 +42,7 @@ Still open: requirement-by-requirement completion audit, all visual/setup reques
 remaining metadata/thumbnail transfer and long-history performance, assistive-technology/native IME/
 actual 200-percent browser zoom, and final full-browser regression results. Schema repair can still
 require explicit intermediate actions. Live model quality and real-human novice usability are not
-proven. The latest full Rust commands pass; the 166-test browser run remains in progress. Tests and
+proven. The latest full Rust commands pass; the current 170-test browser run remains in progress. Tests and
 their actual scope, failures/fixes and limitations are recorded chronologically below.
 
 ## Direction and baseline (M0, 2026-09-08)
@@ -4638,3 +4638,11 @@ combined browser handle 87265 (evidence `/tmp/annotagent-full-browser-round4`). 
 are pending, not a green-suite claim. Live model quality and real human usability remain
 unverified. Real workspace, existing screenshot edits, remotes and published user data were
 not changed.
+
+Verification checkpoint after `586a7b5`: Web typecheck and **216 unit tests / 44 files** pass.
+Rust handle 7814 terminated with exit 0: fmt, strict all-target/all-feature clippy, complete
+all-feature workspace tests and build all pass. Existing explicitly ignored external/billable
+tests remain ignored (Application: 148 passed, 1 ignored); this does not validate Live quality.
+The 170-test browser round remains running on handle 87265 in isolated workspace
+`/tmp/annotagent-guided-e2e-6319`. Its final outcome must be collected before another browser
+run clears traces. Do not poll completed handles 18377, 56861, 59327, 85864, 40919 or 7814.
