@@ -96,7 +96,7 @@ fn owner(db: &rusqlite::Connection, project: &str, task: Uuid) -> Result<(), Sto
     }
     Ok(())
 }
-fn receipt(
+pub(crate) fn receipt(
     db: &rusqlite::Connection,
     id: Uuid,
 ) -> Result<Option<ConversationCallReceipt>, StorageError> {

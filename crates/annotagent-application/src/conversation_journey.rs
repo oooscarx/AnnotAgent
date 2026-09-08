@@ -119,12 +119,22 @@ impl LocalApplication {
             }
             _ => None,
         };
+        let mut clarification_value = serde_json::json!(clarification);
+        if let Some(schema_id) = clarification.as_ref().and_then(|item| item.schema_draft_id) {
+            // A clarification answer creates revision 1. Later edits are separate
+            // intent and must not inherit this initial journey's authorization.
+            let answered = self.conversation_schema_draft(project, schema_id, Some(1))?;
+            if answered.task_id != task {
+                bail!("Journey clarification Schema belongs to another task");
+            }
+            clarification_value["schema_revision"] = serde_json::json!(answered.revision);
+        }
         if let Some(sample) = sample {
             sample_value["assistance"] =
                 serde_json::json!(self.store.sample_assistance_status(&sample.id)?);
         }
         Ok(
-            serde_json::json!({"record":record,"schema":schema,"clarification":clarification,"builder":builder,"sample":sample_value,"dispatch":dispatch}),
+            serde_json::json!({"record":record,"schema":schema,"clarification":clarification_value,"builder":builder,"sample":sample_value,"dispatch":dispatch}),
         )
     }
 

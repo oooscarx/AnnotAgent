@@ -1908,7 +1908,7 @@ export interface ConversationBuilderOperation {
   id: string; task_id: string; request_hash: string; status: "reserved" | "completed" | "interrupted";
   evidence?: { draft_id?: string; session_id?: string; outcome?: string; error?: string; schema_revision?: number; schema_id?: string };
 }
-export interface ConversationBuilderItem { operation: ConversationBuilderOperation; session?: AgentSession | null; schema_revision?: number | null }
+export interface ConversationBuilderItem { operation: ConversationBuilderOperation; session?: AgentSession | null; schema_id?: string | null; schema_revision?: number | null }
 export interface ConversationCallReceipt {
   id: string; task_id: string; status: "reserved" | "completed" | "failed" | "in_doubt";
   evidence?: { error?: string; decision?: { Err?: string; Ok?: { decision: "draft" | "clarify"; kind?: string; labels?: string[]; question?: string; rationale: string; boundary_rules?: string[] } } };

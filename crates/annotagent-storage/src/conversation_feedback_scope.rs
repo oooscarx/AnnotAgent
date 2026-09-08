@@ -112,7 +112,7 @@ pub fn conversation_feedback_context_digest(context: &Value) -> Result<String, S
     )?))
 }
 
-fn read(
+pub(crate) fn read(
     db: &Connection,
     task: Uuid,
     call: Uuid,
@@ -150,7 +150,7 @@ fn bounded(value: &str, maximum: usize) -> bool {
 }
 
 /// Uses the original completed response, never a synthesized `RequestCorrection`.
-fn validate_clarification_source(
+pub(crate) fn validate_clarification_source(
     db: &Connection,
     project: &str,
     conversation: Uuid,
@@ -209,7 +209,7 @@ fn validate_clarification_source(
 
 /// The Application additionally hashes live file bytes and validates the terminal
 /// sample projection. Here all DB-backed checks share the answer/request INSERT.
-fn validate_live_context(
+pub(crate) fn validate_live_context(
     db: &Connection,
     project: &str,
     conversation: Uuid,
@@ -388,23 +388,23 @@ impl SqliteStore {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use crate::*;
     use chrono::Utc;
     use rusqlite::params;
     use serde_json::json;
     use uuid::Uuid;
 
-    struct Fixture {
-        project: String,
-        conversation: Uuid,
-        task: Uuid,
-        record: ConversationFeedbackAuthorizationRecord,
-        source: ConversationCallReceipt,
-        answer: ConversationFeedbackScopeAnswerInput,
+    pub(crate) struct Fixture {
+        pub(crate) project: String,
+        pub(crate) conversation: Uuid,
+        pub(crate) task: Uuid,
+        pub(crate) record: ConversationFeedbackAuthorizationRecord,
+        pub(crate) source: ConversationCallReceipt,
+        pub(crate) answer: ConversationFeedbackScopeAnswerInput,
     }
 
-    fn fixture(store: &SqliteStore, kind: &str) -> Fixture {
+    pub(crate) fn fixture(store: &SqliteStore, kind: &str) -> Fixture {
         let project = Uuid::new_v4().to_string();
         let conversation = store.create_conversation(&project).unwrap();
         let goal = ConversationMessageInput {

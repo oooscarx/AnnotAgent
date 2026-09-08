@@ -583,7 +583,27 @@ fn owned(db: &rusqlite::Connection, project: &str, task: Uuid) -> Result<(), Sto
     }
     Ok(())
 }
-fn read(
+
+/// Caller owns the transaction and has validated ownership, semantics and provenance.
+/// Plain INSERT intentionally rejects request collisions instead of adopting another draft.
+pub(crate) fn insert_human_schema(
+    db: &rusqlite::Connection,
+    task: Uuid,
+    request: Uuid,
+    definition: &ConversationSchemaDefinition,
+) -> Result<Uuid, StorageError> {
+    let base: String = db.query_row(
+        "SELECT schema_revision FROM conversation_tasks WHERE id=?1",
+        [task.to_string()],
+        |row| row.get(0),
+    )?;
+    let id = Uuid::new_v4();
+    db.execute("INSERT INTO conversation_schema_drafts(id,task_id,source_request_id,base_schema_revision) VALUES(?1,?2,?3,?4)", params![id.to_string(),task.to_string(),request.to_string(),base])?;
+    db.execute("INSERT INTO conversation_schema_revisions(draft_id,revision,request_id,definition_json) VALUES(?1,1,?2,?3)", params![id.to_string(),request.to_string(),serde_json::to_string(definition)?])?;
+    Ok(id)
+}
+
+pub(crate) fn read(
     db: &rusqlite::Connection,
     project: &str,
     id: Uuid,
@@ -623,7 +643,9 @@ impl SqliteStore {
     ) -> Result<Vec<ConversationSchemaDraft>, StorageError> {
         self.with_connection(|db| {
             owned(db, project, task)?;
-            let mut statement = db.prepare("SELECT id FROM conversation_schema_drafts WHERE task_id=?1 AND source_request_id IS NOT NULL ORDER BY rowid DESC")?;
+            // Future-rule forks are reachable through their saved feedback source,
+            // not replacements for the original goal's human Schema card.
+            let mut statement = db.prepare("SELECT d.id FROM conversation_schema_drafts d WHERE d.task_id=?1 AND d.source_request_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM conversation_future_schema_drafts f WHERE f.schema_id=d.id) ORDER BY d.rowid DESC")?;
             let ids = statement.query_map([task.to_string()], |row| row.get::<_, String>(0))?;
             ids.map(|id| read(db, project, Uuid::parse_str(&id?).map_err(|_| invalid("invalid Schema ID"))?, None)).collect()
         })
@@ -666,10 +688,7 @@ impl SqliteStore {
             }
             if question.as_ref().is_some_and(|q|q.schema_draft_id.is_some()){return Err(invalid("This clarification was already answered; edit its saved Schema Draft"));}
             if question.as_ref().is_some_and(|q|q.status=="cancelled"){return Err(invalid("This clarification was cancelled; no answer or Schema Draft was saved"));}
-            let base: String = tx.query_row("SELECT schema_revision FROM conversation_tasks WHERE id=?1", [task.to_string()], |row| row.get(0))?;
-            let id = Uuid::new_v4();
-            tx.execute("INSERT INTO conversation_schema_drafts(id,task_id,source_request_id,base_schema_revision) VALUES(?1,?2,?3,?4)", params![id.to_string(),task.to_string(),request.to_string(),base])?;
-            tx.execute("INSERT INTO conversation_schema_revisions(draft_id,revision,request_id,definition_json) VALUES(?1,1,?2,?3)", params![id.to_string(),request.to_string(),serde_json::to_string(definition)?])?;
+            let id = insert_human_schema(&tx, task, request, definition)?;
             if let Some(reference)=clarification {tx.execute("INSERT INTO conversation_schema_clarification_answers(call_id,request_id,schema_draft_id) VALUES(?1,?2,?3)",params![reference.call_id.to_string(),request.to_string(),id.to_string()])?;}
             tx.commit()?;
             read(db, project, id, None)

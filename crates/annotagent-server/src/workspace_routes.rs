@@ -58,6 +58,7 @@ pub(super) fn routes() -> Router<ServerState> {
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/feedback/{call_id}/execute", post(super::conversation_feedback::execute))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/feedback/{call_id}/human-request", post(super::conversation_feedback::human_request))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/feedback/{call_id}/scope-answer", post(super::conversation_feedback::answer_scope))
+        .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/feedback/{call_id}/future-schema", get(super::conversation_feedback::future_schema).post(super::conversation_feedback::save_future_schema))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/calls/{call_id}/clarification", get(super::conversation_schema::clarification))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/calls/{call_id}/clarification/cancel", post(super::conversation_schema::cancel_clarification))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/schema-authorizations/pending", get(super::conversation_schema::pending_authorization))

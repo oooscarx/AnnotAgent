@@ -4,17 +4,22 @@ import {ConversationBudgetNotice} from "./ConversationBudgetNotice";
 import {projectBudgetAvailability} from "../projectBudget";
 import {conversationSettingsPath,projectBuildPath} from "../navigation";
 import type {OpenConversationSample} from "./ConversationSampleCard";
+import { consentMatchesSchema, journeyMatchesSchema } from "../conversation-schema-history";
 
 type Choice={id:string;name:string};
 const active=(value?:JourneyStatus)=>value?.dispatch?.status==="running" || ["queued","running","cancelling"].includes(value?.sample?.status ?? "");
 const needsUpdate=(value?:JourneyStatus)=>active(value)||value?.sample?.assistance?.status==="waiting";
 
 /** One bounded consent, existing Builder/Sample services. Mount only reads saved work. */
-export function ConversationJourneyCard({project,conversation,task,schema,disabled,onSample,onAssistance,onActiveChange,onSchemaOutcome,prepareRequested}: {
+type JourneyCardProps = {
   project:string;conversation:string;task:string;schema?:{id:string;revision:number};disabled:boolean;
   onSample:OpenConversationSample;onAssistance?:()=>void;onActiveChange?:(active:boolean)=>void;
   onSchemaOutcome?:(receipt:import("../types").ConversationCallReceipt)=>void;prepareRequested?:boolean;
-}) {
+};
+export function ConversationJourneyCard(props: JourneyCardProps) {
+  return <JourneyCard key={`${props.project}:${props.conversation}:${props.task}:${props.schema?.id ?? "goal"}:${props.schema?.revision ?? ""}`} {...props} />;
+}
+function JourneyCard({project,conversation,task,schema,disabled,onSample,onAssistance,onActiveChange,onSchemaOutcome,prepareRequested}: JourneyCardProps) {
   const [saved,setSaved]=useState<JourneyStatus>();
   const [preview,setPreview]=useState<JourneyPreview>();
   const [choices,setChoices]=useState<Choice[]>([]);
@@ -22,13 +27,14 @@ export function ConversationJourneyCard({project,conversation,task,schema,disabl
   const [ready,setReady]=useState(false),[busy,setBusy]=useState(false),[confirmed,setConfirmed]=useState(false),[error,setError]=useState("");
   const alive=useRef(true),pending=useRef(false),frozen=useRef<JourneyConsent|undefined>(undefined);
   const prepared=useRef(false);
-  const storageKey=`annotagent.journey:${project}:${conversation}:${task}`;
-  const usableHistory=(items:JourneyStatus[])=>items.filter(item=>!(schema&&item.record.consent.schema_proposal&&!item.record.resolved_consent&&item.schema?.status==="completed"&&item.schema.evidence?.decision?.Ok?.decision!=="draft"&&!(item.record.consent.continue_after_clarification&&item.clarification?.schema_draft_id===schema.id)));
+  const legacyStorageKey=`annotagent.journey:${project}:${conversation}:${task}`;
+  const storageKey=schema ? `${legacyStorageKey}:${schema.id}:${schema.revision}` : legacyStorageKey;
+  const usableHistory=(items:JourneyStatus[])=>items.filter(item=>journeyMatchesSchema(item,schema));
   const clearFrozen=()=>{frozen.current=undefined;try{sessionStorage.removeItem(storageKey);}catch{/* Server history owns saved consent. */}};
   const apply=(value:JourneyStatus)=>{setSaved(value);if(frozen.current?.id===value.record.consent.id)clearFrozen();};
   useEffect(()=>{
     alive.current=true;const controller=new AbortController();
-    try{const raw=sessionStorage.getItem(storageKey);if(raw){const value=JSON.parse(raw) as JourneyConsent;if(value.task_id===task)frozen.current=value;}}catch{/* Invalid local data grants no permission. */}
+    try{const raw=sessionStorage.getItem(storageKey) ?? sessionStorage.getItem(legacyStorageKey);if(raw){const value=JSON.parse(raw) as JourneyConsent;if(value.task_id===task&&(!schema||consentMatchesSchema(value,schema)))frozen.current=value;}}catch{/* Invalid local data grants no permission. */}
     void api.journeyHistory(project,conversation,task,controller.signal).then(({items})=>{
       if(controller.signal.aborted)return;
       const candidates=usableHistory(items);

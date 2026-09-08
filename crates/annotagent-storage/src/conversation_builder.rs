@@ -40,7 +40,80 @@ fn read(
     })
     .transpose()
 }
+
+fn schema_pair(evidence: Option<&serde_json::Value>) -> Result<Option<(Uuid, u64)>, StorageError> {
+    let Some(evidence) = evidence else {
+        return Ok(None);
+    };
+    match (evidence.get("schema_id"), evidence.get("schema_revision")) {
+        (None, None) => Ok(None),
+        (Some(id), Some(revision)) => {
+            let id = id.as_str().and_then(|value| Uuid::parse_str(value).ok());
+            let revision = revision.as_u64();
+            match (id, revision) {
+                (Some(id), Some(revision)) if !id.is_nil() && revision > 0 => {
+                    Ok(Some((id, revision)))
+                }
+                _ => Err(StorageError::InvalidConversation(
+                    "Invalid Builder Schema identity".into(),
+                )),
+            }
+        }
+        _ => Err(StorageError::InvalidConversation(
+            "Builder evidence requires a complete Schema identity pair".into(),
+        )),
+    }
+}
+
+fn merge_evidence(
+    saved: Option<&serde_json::Value>,
+    incoming: &serde_json::Value,
+) -> Result<serde_json::Value, StorageError> {
+    let original = schema_pair(saved)?;
+    let proposed = schema_pair(Some(incoming))?;
+    if original.is_some() && (proposed.is_some() && proposed != original || !incoming.is_object()) {
+        return Err(StorageError::InvalidConversation(
+            "Builder settlement cannot replace its admitted Schema identity".into(),
+        ));
+    }
+    if let Some(incoming) = incoming.as_object() {
+        let mut merged = saved
+            .and_then(serde_json::Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        merged.extend(incoming.clone());
+        Ok(serde_json::Value::Object(merged))
+    } else {
+        // Legacy unscoped operations historically accepted arbitrary evidence.
+        Ok(incoming.clone())
+    }
+}
+
 impl SqliteStore {
+    /// Freeze the exact owned Schema in the same transaction that admits the Builder.
+    /// Its identity is readable even before an Agent session or seed Draft exists.
+    pub fn reserve_conversation_builder_with_schema(
+        &self,
+        project: &str,
+        task: Uuid,
+        id: Uuid,
+        hash: &str,
+        schema_id: Uuid,
+        schema_revision: u64,
+    ) -> Result<Option<ConversationBuilderOperation>, StorageError> {
+        if id.is_nil() || schema_id.is_nil() || schema_revision == 0 {
+            return Err(StorageError::InvalidConversation(
+                "Builder admission requires a stable operation and Schema identity".into(),
+            ));
+        }
+        self.reserve_conversation_builder_scoped(
+            project,
+            task,
+            id,
+            hash,
+            Some((schema_id, schema_revision)),
+        )
+    }
     /// Only `None` admits new execution. A saved receipt must never be dispatched again.
     pub fn reserve_conversation_builder(
         &self,
@@ -48,6 +121,16 @@ impl SqliteStore {
         task: Uuid,
         id: Uuid,
         hash: &str,
+    ) -> Result<Option<ConversationBuilderOperation>, StorageError> {
+        self.reserve_conversation_builder_scoped(project, task, id, hash, None)
+    }
+    fn reserve_conversation_builder_scoped(
+        &self,
+        project: &str,
+        task: Uuid,
+        id: Uuid,
+        hash: &str,
+        schema: Option<(Uuid, u64)>,
     ) -> Result<Option<ConversationBuilderOperation>, StorageError> {
         if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err(StorageError::InvalidConversation(
@@ -58,11 +141,17 @@ impl SqliteStore {
             let tx = db.unchecked_transaction()?; owned(&tx,project,task)?;
             if let Some(saved) = read(&tx,id)? {
                 if saved.task_id != task || saved.request_hash != hash { return Err(StorageError::InvalidConversation("Builder request key conflicts".into())); }
+                if schema.is_some() && schema_pair(saved.evidence.as_ref())?!=schema {return Err(StorageError::InvalidConversation("Builder request changed its admitted Schema identity".into()));}
                 return Ok(Some(saved));
+            }
+            if let Some((schema_id,revision))=schema {
+                let saved=crate::conversation_schema::read(&tx,project,schema_id,Some(revision))?;
+                if saved.task_id!=task {return Err(StorageError::InvalidConversation("Builder Schema belongs to another task".into()));}
             }
             let collision: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM workflow_drafts WHERE id=?1 UNION ALL SELECT 1 FROM agent_sessions WHERE id=?1 UNION ALL SELECT 1 FROM conversation_model_calls WHERE id=?1)",[id.to_string()],|row|row.get(0))?;
             if collision { return Err(StorageError::InvalidConversation("Builder operation ID is already used by another object".into())); }
-            tx.execute("INSERT INTO conversation_builder_operations(id,task_id,request_hash,status) VALUES(?1,?2,?3,'reserved')",params![id.to_string(),task.to_string(),hash])?;
+            let evidence=schema.map(|(schema_id,revision)|serde_json::json!({"schema_id":schema_id,"schema_revision":revision}).to_string());
+            tx.execute("INSERT INTO conversation_builder_operations(id,task_id,request_hash,status,evidence_json) VALUES(?1,?2,?3,'reserved',?4)",params![id.to_string(),task.to_string(),hash,evidence])?;
             tx.commit()?; Ok(None)
         })
     }
@@ -103,18 +192,261 @@ impl SqliteStore {
         completed: bool,
         evidence: &serde_json::Value,
     ) -> Result<(), StorageError> {
-        self.with_connection(|db| { owned(db,project,task)?;
-            db.execute("UPDATE conversation_builder_operations SET status=?3,evidence_json=?4 WHERE id=?1 AND task_id=?2 AND status='reserved'",params![id.to_string(),task.to_string(),if completed {"completed"} else {"interrupted"},serde_json::to_string(evidence)?])?; Ok(())
+        self.with_connection(|db| {
+            let tx=db.unchecked_transaction()?; owned(&tx,project,task)?;
+            let Some(saved)=read(&tx,id)? else {return Ok(())};
+            if saved.task_id!=task {return Err(StorageError::InvalidConversation("Builder belongs to another task".into()));}
+            let evidence=merge_evidence(saved.evidence.as_ref(),evidence)?;
+            if saved.status!="reserved" {return Ok(())}
+            tx.execute("UPDATE conversation_builder_operations SET status=?3,evidence_json=?4 WHERE id=?1 AND task_id=?2 AND status='reserved'",params![id.to_string(),task.to_string(),if completed {"completed"} else {"interrupted"},serde_json::to_string(&evidence)?])?;
+            tx.commit()?; Ok(())
         })
     }
     pub fn recover_conversation_builders(&self) -> Result<(), StorageError> {
-        self.with_connection(|db| { db.execute("UPDATE conversation_builder_operations SET status='interrupted',evidence_json=?1 WHERE status='reserved'",[serde_json::json!({"error":"Server restarted; saved Draft and model-call receipts remain. No automatic re-execution."}).to_string()])?; Ok(()) })
+        self.with_connection(|db| { db.execute("UPDATE conversation_builder_operations SET status='interrupted',evidence_json=json_patch(COALESCE(evidence_json,'{}'),?1) WHERE status='reserved'",[serde_json::json!({"error":"Server restarted; saved Draft and model-call receipts remain. No automatic re-execution."}).to_string()])?; Ok(()) })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    fn schema(store: &SqliteStore) -> (String, Uuid, crate::ConversationSchemaDraft) {
+        let project = Uuid::new_v4().to_string();
+        let conversation = store.create_conversation(&project).unwrap();
+        let message = crate::ConversationMessageInput {
+            id: Uuid::new_v4(),
+            text: "TEST stable Builder Schema".into(),
+            image: None,
+            reference: None,
+        };
+        store
+            .append_conversation_message(&project, conversation, &message)
+            .unwrap();
+        let task = Uuid::new_v4();
+        store
+            .begin_conversation_task(
+                &project,
+                conversation,
+                &crate::BeginConversationTask {
+                    id: task,
+                    source_message_id: message.id,
+                    schema_revision: "a".repeat(64),
+                },
+            )
+            .unwrap();
+        let schema=store.create_human_conversation_schema_draft(&project,task,Uuid::new_v4(),&crate::ConversationSchemaDefinition{goal:message.text,task:serde_json::from_value(json!({"id":format!("annotation_{}",task.simple()),"kind":"bounding_box","labels":["cup"],"required":true})).unwrap(),boundary_rules:vec![]}).unwrap();
+        (project, task, schema)
+    }
+
+    #[test]
+    fn schema_identity_is_visible_before_builder_seed_and_survives_recovery() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("TEST-builder-admission.db");
+        let store = SqliteStore::open(&path).unwrap();
+        let (project, task, schema) = schema(&store);
+        let id = Uuid::new_v4();
+        let hash = "b".repeat(64);
+        assert!(
+            store
+                .reserve_conversation_builder_with_schema(&project, task, id, &hash, schema.id, 1)
+                .unwrap()
+                .is_none()
+        );
+        let saved = store
+            .conversation_builder_operation(&project, task, id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            saved.evidence,
+            Some(json!({"schema_id":schema.id,"schema_revision":1}))
+        );
+        assert_eq!(
+            store.conversation_builder_history(&project, task).unwrap(),
+            vec![saved.clone()]
+        );
+        assert!(store.get_agent_session(id).is_err());
+        assert_eq!(
+            store
+                .reserve_conversation_builder_with_schema(&project, task, id, &hash, schema.id, 1)
+                .unwrap(),
+            Some(saved)
+        );
+        drop(store);
+        let store = SqliteStore::open(&path).unwrap();
+        store.recover_conversation_builders().unwrap();
+        let recovered = store
+            .conversation_builder_operation(&project, task, id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(recovered.status, "interrupted");
+        assert_eq!(
+            recovered.evidence.as_ref().unwrap()["schema_id"],
+            schema.id.to_string()
+        );
+        assert_eq!(recovered.evidence.as_ref().unwrap()["schema_revision"], 1);
+        assert_eq!(
+            store
+                .reserve_conversation_builder_with_schema(&project, task, id, &hash, schema.id, 1)
+                .unwrap(),
+            Some(recovered)
+        );
+    }
+
+    #[test]
+    fn builder_schema_retry_and_settlement_reject_identity_substitution_and_guard_keeps_pair() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let (project, task, schema) = schema(&store);
+        let id = Uuid::new_v4();
+        let hash = "b".repeat(64);
+        store
+            .reserve_conversation_builder_with_schema(&project, task, id, &hash, schema.id, 1)
+            .unwrap();
+        let saved = store
+            .conversation_builder_operation(&project, task, id)
+            .unwrap();
+        for (candidate, revision) in [
+            (Uuid::new_v4(), 1),
+            (schema.id, 2),
+            (Uuid::nil(), 1),
+            (schema.id, 0),
+        ] {
+            assert!(
+                store
+                    .reserve_conversation_builder_with_schema(
+                        &project, task, id, &hash, candidate, revision
+                    )
+                    .is_err()
+            );
+        }
+        for evidence in [
+            json!({"schema_id":Uuid::new_v4(),"schema_revision":1}),
+            json!({"schema_id":schema.id,"schema_revision":2}),
+            json!({"schema_id":schema.id}),
+            json!("TEST wrong shape"),
+        ] {
+            assert!(
+                store
+                    .settle_conversation_builder(&project, task, id, true, &evidence)
+                    .is_err()
+            );
+            assert_eq!(
+                store
+                    .conversation_builder_operation(&project, task, id)
+                    .unwrap(),
+                saved
+            );
+        }
+        store
+            .settle_conversation_builder(
+                &project,
+                task,
+                id,
+                false,
+                &json!({"error":"TEST guard drop"}),
+            )
+            .unwrap();
+        let interrupted = store
+            .conversation_builder_operation(&project, task, id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(interrupted.status, "interrupted");
+        assert_eq!(
+            interrupted.evidence,
+            Some(json!({"schema_id":schema.id,"schema_revision":1,"error":"TEST guard drop"}))
+        );
+        store
+            .settle_conversation_builder(
+                &project,
+                task,
+                id,
+                true,
+                &json!({"schema_id":schema.id,"schema_revision":1,"result":"TEST too late"}),
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .conversation_builder_operation(&project, task, id)
+                .unwrap(),
+            Some(interrupted)
+        );
+        let success = Uuid::new_v4();
+        store
+            .reserve_conversation_builder_with_schema(&project, task, success, &hash, schema.id, 1)
+            .unwrap();
+        store
+            .settle_conversation_builder(
+                &project,
+                task,
+                success,
+                true,
+                &json!({"schema_id":schema.id,"schema_revision":1,"draft_id":"TEST draft"}),
+            )
+            .unwrap();
+        let finished = store
+            .conversation_builder_operation(&project, task, success)
+            .unwrap()
+            .unwrap();
+        assert_eq!(finished.status, "completed");
+        assert_eq!(
+            finished.evidence.unwrap()["schema_id"],
+            schema.id.to_string()
+        );
+    }
+
+    #[test]
+    fn builder_schema_admission_requires_owned_saved_revision_and_preserves_legacy_receipts() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let (project, task, schema) = schema(&store);
+        let (_, _, foreign) = self::schema(&store);
+        let hash = "b".repeat(64);
+        for (candidate, revision) in [
+            (foreign.id, 1),
+            (Uuid::new_v4(), 1),
+            (schema.id, 2),
+            (schema.id, 0),
+            (Uuid::nil(), 1),
+        ] {
+            assert!(
+                store
+                    .reserve_conversation_builder_with_schema(
+                        &project,
+                        task,
+                        Uuid::new_v4(),
+                        &hash,
+                        candidate,
+                        revision
+                    )
+                    .is_err()
+            );
+        }
+        assert!(
+            store
+                .conversation_builder_history(&project, task)
+                .unwrap()
+                .is_empty()
+        );
+        let legacy = Uuid::new_v4();
+        store
+            .reserve_conversation_builder(&project, task, legacy, &hash)
+            .unwrap();
+        assert!(
+            store
+                .reserve_conversation_builder_with_schema(
+                    &project, task, legacy, &hash, schema.id, 1
+                )
+                .is_err()
+        );
+        assert_eq!(
+            store
+                .conversation_builder_operation(&project, task, legacy)
+                .unwrap()
+                .unwrap()
+                .evidence,
+            None
+        );
+    }
     #[test]
     fn admission_and_restart_keep_one_operation_without_reexecuting_or_rewriting_result() {
         let temp = tempfile::tempdir().unwrap();

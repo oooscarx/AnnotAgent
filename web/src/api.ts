@@ -17,7 +17,7 @@ export type JourneyConsent = {
 export type JourneyStatus = {
   record:{consent:JourneyConsent;resolved_consent?:JourneyConsent|null;revoked:boolean;sample:{draft_id:string;draft_revision:number}|null};
   schema?:import("./types").ConversationCallReceipt|null;
-  clarification?:{schema_draft_id:string|null;status:string}|null;
+  clarification?:{schema_draft_id:string|null;schema_revision?:number|null;status:string}|null;
   builder:import("./types").ConversationBuilderOperation|null; sample:SampleOperation|null;
   dispatch:{attempt_id:string;status:"running"|"settled"|"interrupted";error:string|null}|null;
 };

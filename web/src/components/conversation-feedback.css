@@ -29,3 +29,21 @@
   .conversation-feedback-consent, .conversation-feedback-waiting { padding-inline-start: 8px; }
   .conversation-feedback-actions { align-items: stretch; }
 }
+.conversation-future-schema,
+.conversation-schema-fields,
+.conversation-future-schema-diff {
+  display: grid;
+  gap: .75rem;
+  min-width: 0;
+}
+.conversation-future-schema { margin-top: .75rem; padding-top: 1rem; border-top: 1px solid var(--aa-border); }
+.conversation-future-schema form { display: grid; gap: 1rem; min-width: 0; }
+.conversation-schema-fields label { margin: .25rem 0 0; }
+.conversation-schema-fields :is(textarea, select) { width: 100%; min-width: 0; box-sizing: border-box; }
+.conversation-future-schema :is(p, small, li, h4, h5) { overflow-wrap: anywhere; }
+.conversation-future-schema-diff { padding-block: .75rem; }
+.conversation-future-schema-diff h5 { margin: .5rem 0; font: inherit; font-weight: 600; }
+.conversation-future-schema-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.conversation-future-schema-comparison > div { min-width: 0; }
+.conversation-future-schema-comparison ul { margin: .4rem 0; padding-left: 1.2rem; }
+@media (max-width: 600px) { .conversation-future-schema-comparison { grid-template-columns: minmax(0, 1fr); gap: .5rem; } }

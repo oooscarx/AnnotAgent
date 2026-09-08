@@ -65,6 +65,13 @@ mod control_tests {
             &Method::POST,
             &format!("{root}/feedback/{id}/scope-answer")
         ));
+        assert!(!is_expensive_action(&format!(
+            "{root}/feedback/{id}/future-schema"
+        )));
+        assert!(!is_execution_control(
+            &Method::POST,
+            &format!("{root}/feedback/{id}/future-schema")
+        ));
         assert!(is_execution_control(
             &Method::POST,
             &format!("{root}/calls/{id}/cancel")

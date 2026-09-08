@@ -6,12 +6,17 @@ import { projectBuildPath } from "../navigation";
 import { ConversationSampleCard, type OpenConversationSample } from "./ConversationSampleCard";
 import {ConversationJourneyCard} from "./ConversationJourneyCard";
 import type { ConversationBuilderConsent, ConversationBuilderItem, ConversationBuilderPreview, ConversationSchemaDraft } from "../types";
+import { builderMatchesSchema, consentMatchesSchema } from "../conversation-schema-history";
 
 /** Restoring history only reads. Model work requires a new, explicit consent. */
-export function ConversationBuilderCard({ project, conversation, task, schema, editing, onSample, repairRequest, onAssistance }: {
+type BuilderCardProps = {
   project: string; conversation: string; task: string; schema: Pick<ConversationSchemaDraft,"id"|"revision">; editing: boolean; onAssistance?:()=>void; onSample: OpenConversationSample;
   repairRequest?: {id:string;draft:string};
-}) {
+};
+export function ConversationBuilderCard(props: BuilderCardProps) {
+  return <BuilderCard key={`${props.project}:${props.conversation}:${props.task}:${props.schema.id}:${props.schema.revision}:${props.repairRequest?.id ?? ""}`} {...props} />;
+}
+function BuilderCard({ project, conversation, task, schema, editing, onSample, repairRequest, onAssistance }: BuilderCardProps) {
   const [advanced,setAdvanced]=useState(false);
   const [journeyActive,setJourneyActive]=useState(false);
   const [item,setItem]=useState<ConversationBuilderItem>();
@@ -29,7 +34,7 @@ export function ConversationBuilderCard({ project, conversation, task, schema, e
   useEffect(()=>{
     alive.current=true; const controller=new AbortController();
     void api.conversationBuilderHistory(project,conversation,task,controller.signal).then(async(history)=>{
-      const entry=history.items.find(entry=>repairRequest ? entry.session?.working_draft?.draft_id===repairRequest.draft : entry.session?.working_draft?.build_mode.kind!=="repair_draft");
+      const entry=history.items.find(entry=>builderMatchesSchema(entry,schema) && (repairRequest ? entry.session?.working_draft?.draft_id===repairRequest.draft : entry.session?.working_draft?.build_mode.kind!=="repair_draft"));
       const journeys=entry&&!repairRequest ? await api.journeyHistory(project,conversation,task,controller.signal) : undefined;
       if(!controller.signal.aborted) { setItem(entry);if(entry&&journeys&&!journeys.items.some(journey=>journey.record.consent.builder_operation_id===entry.operation.id))setAdvanced(true);setReady(true); }
     }).catch((error:Error)=>{if(!controller.signal.aborted)setError(error.message);});
@@ -61,7 +66,7 @@ export function ConversationBuilderCard({ project, conversation, task, schema, e
   }
   async function launch() {
     if(pending.current || !preview || !confirmed || editing || (!frozen.current && projectBudgetAvailability(preview.project_call_limit).blocked))return;
-    if(preview.selection.schema_revision!==schema.revision){setError("Labels changed. Review a fresh Builder authorization before continuing.");setPreview(undefined);return;}
+    if(!consentMatchesSchema(preview.selection,schema)){setError("Labels changed. Review a fresh Builder authorization before continuing.");setPreview(undefined);return;}
     pending.current=true;setBusy(true);setError("");setItem(undefined);
     frozen.current ??= {selection:preview.selection,repair:preview.repair,scope_hash:preview.scope_hash,previous_grant_id:preview.previous_grant_id,expires_at:preview.expires_at,allow_unknown_cost:true};
     try {
@@ -90,7 +95,7 @@ export function ConversationBuilderCard({ project, conversation, task, schema, e
   const session=item?.session;
   const draftId=item?.operation.evidence?.draft_id ?? session?.working_draft?.draft_id;
   const builtRevision=preview?.selection.schema_revision ?? item?.schema_revision ?? item?.operation.evidence?.schema_revision;
-  const completed=Boolean(draftId && builtRevision===schema.revision && !editing && !running && !preview && !error && !cancelled && !session?.unresolved_bindings?.length && !item?.operation.evidence?.error && item?.operation.status==="completed" && session?.outcome==="draft_ready_for_human_review");
+  const completed=Boolean(draftId && item && builderMatchesSchema(item,schema) && !editing && !running && !preview && !error && !cancelled && !session?.unresolved_bindings?.length && !item?.operation.evidence?.error && item?.operation.status==="completed" && session?.outcome==="draft_ready_for_human_review");
   const buildDetails=<>
     <h3>{repairRequest ? "Revise the plan from your correction" : "Build the annotation plan"}</h3>
     {repairRequest && <p>Your saved correction is evidence for revising this plan, not proof of improved accuracy. The original plan remains unchanged.</p>}

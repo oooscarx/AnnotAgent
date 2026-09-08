@@ -29,6 +29,10 @@ struct Fixture {
 }
 
 fn fixture(duplicate_candidate_id: bool) -> Fixture {
+    fixture_with_schema(duplicate_candidate_id, false)
+}
+
+fn fixture_with_schema(duplicate_candidate_id: bool, sealed_schema: bool) -> Fixture {
     let temporary = tempfile::tempdir().unwrap();
     let app = LocalApplication::new(temporary.path()).unwrap();
     app.create_project(PROJECT, PROJECT_YAML).unwrap();
@@ -63,11 +67,21 @@ fn fixture(duplicate_candidate_id: bool) -> Fixture {
         .unwrap();
     let (mut sample, mut human) = crate::conversation_human_requests::tests::fixture();
     sample.project_id = PROJECT.into();
-    let baseline: annotagent_core::WorkflowDraft = serde_json::from_value(json!({
+    let mut baseline: annotagent_core::WorkflowDraft = serde_json::from_value(json!({
         "id":sample.draft_id,"project_id":PROJECT,"name":"TEST unchanged baseline",
         "status":"editing","nodes":[],"created_at":chrono::Utc::now(),"updated_at":chrono::Utc::now(),
     }))
     .unwrap();
+    if sealed_schema {
+        let schema = app.save_human_conversation_schema_draft(PROJECT, conversation, task.id, Uuid::new_v4(), &serde_json::from_value(json!({"decision":"draft","kind":"bounding_box","labels":["cup"],"multi_label":false,"attributes":{},"boundary_rules":["TEST original rule"],"rationale":"TEST human baseline"})).unwrap()).unwrap();
+        baseline.annotation_schema = Some(annotagent_core::WorkflowSchemaBinding {
+            schema_draft_id: schema.id.to_string(),
+            revision: schema.revision,
+            goal: schema.definition.goal,
+            task: schema.definition.task,
+            boundary_rules: schema.definition.boundary_rules,
+        });
+    }
     app.store.save_workflow_draft(&baseline).unwrap();
     let baseline = app.store.get_workflow_draft(&sample.draft_id).unwrap();
     sample.draft_revision = baseline.revision;
@@ -88,17 +102,22 @@ fn fixture(duplicate_candidate_id: bool) -> Fixture {
     sample.report.samples[0].outcomes = vec![unrelated.outcome, selected.outcome.clone()];
     app.store.save_workflow_sample_test(&sample).unwrap();
     app.store
-        .reserve_sample_operation(&SampleOperation {
-            id: sample.id.clone(),
-            project_id: PROJECT.into(),
-            draft_id: sample.draft_id.clone(),
-            authorization_fingerprint: "TEST fixture operation".into(),
-            request: json!({"conversation":{"conversation_id":conversation,"task_id":task.id}}),
-            status: "queued".into(),
-            error: None,
-            created_at: chrono::Utc::now().to_rfc3339(),
-            updated_at: chrono::Utc::now().to_rfc3339(),
-        })
+        .reserve_sample_operation_sealed(
+            &SampleOperation {
+                id: sample.id.clone(),
+                project_id: PROJECT.into(),
+                draft_id: sample.draft_id.clone(),
+                authorization_fingerprint: "TEST fixture operation".into(),
+                request: json!({"conversation":{"conversation_id":conversation,"task_id":task.id}}),
+                status: "queued".into(),
+                error: None,
+                created_at: chrono::Utc::now().to_rfc3339(),
+                updated_at: chrono::Utc::now().to_rfc3339(),
+            },
+            sealed_schema
+                .then(|| json!({"annotation_schema":baseline.annotation_schema}))
+                .as_ref(),
+        )
         .unwrap();
     let message = ConversationMessageInput {
         id: Uuid::new_v4(),
@@ -1253,7 +1272,16 @@ async fn scope_fixture() -> (
     TestProvider,
     annotagent_storage::ConversationFeedbackAuthorizationRecord,
 ) {
-    let fixture = fixture(false);
+    scope_fixture_from(fixture(false)).await
+}
+
+async fn scope_fixture_from(
+    fixture: Fixture,
+) -> (
+    Fixture,
+    TestProvider,
+    annotagent_storage::ConversationFeedbackAuthorizationRecord,
+) {
     let record = feedback_authorization(&fixture);
     fixture
         .app
@@ -1284,6 +1312,253 @@ fn scope_input(
     choice: &serde_json::Value,
 ) -> annotagent_storage::ConversationFeedbackScopeAnswerInput {
     serde_json::from_value(json!({"command_id":Uuid::new_v4(),"expected_context_digest":annotagent_storage::conversation_feedback_context_digest(&record.context).unwrap(),"choice":choice})).unwrap()
+}
+
+#[tokio::test]
+async fn future_schema_is_an_independent_human_draft_and_restores_after_later_edits() {
+    for kind in ["classification", "bounding_box"] {
+        let (fixture, provider, source) =
+            scope_fixture_from(fixture_with_schema(false, true)).await;
+        let app = &fixture.app;
+        let call = source.consent.call_id;
+        let answer = scope_input(&source, &json!({"scope":"project_future_rule"}));
+        app.answer_conversation_feedback_scope(
+            PROJECT,
+            fixture.conversation,
+            fixture.task.id,
+            call,
+            &answer,
+        )
+        .unwrap();
+        let preview = app
+            .conversation_future_schema(PROJECT, fixture.conversation, fixture.task.id, call)
+            .unwrap();
+        assert!(preview.record.is_none());
+        let owner = app.conversation_project_identity(PROJECT).unwrap();
+        let calls = app
+            .store
+            .conversation_call_history(&owner, fixture.task.id)
+            .unwrap();
+        let budget = app
+            .conversation_task_budget(PROJECT, fixture.conversation, fixture.task.id)
+            .unwrap();
+        let old_draft = app
+            .store
+            .get_workflow_draft(&fixture.sample.draft_id)
+            .unwrap();
+        let goal = app.project_goal(PROJECT).unwrap();
+        let request: crate::ConversationFutureSchemaRequest = serde_json::from_value(json!({
+            "command_id":Uuid::new_v4(),"expected_scope_answer_command_id":answer.command_id,
+            "expected_context_digest":answer.expected_context_digest,
+            "base_schema_id":preview.base_schema.id,"base_schema_revision":preview.base_schema.revision,
+            "goal":"TEST future images distinguish cups and plates, excluding bottles",
+            "decision":{"decision":"draft","kind":kind,"labels":["cup","plate"],"multi_label":false,"attributes":{},"boundary_rules":["TEST exclude bottles"],"rationale":"TEST explicit human future intent"}
+        })).unwrap();
+        let result = app
+            .save_conversation_future_schema(
+                PROJECT,
+                fixture.conversation,
+                fixture.task.id,
+                call,
+                &request,
+            )
+            .unwrap();
+        let schema = result.schema.unwrap();
+        assert_ne!(schema.id, preview.base_schema.id);
+        assert_eq!(schema.revision, 1);
+        assert_eq!(
+            schema.definition.task.id,
+            preview.base_schema.definition.task.id
+        );
+        assert_eq!(schema.definition.goal, request.goal);
+        assert_eq!(
+            app.conversation_schema_draft(PROJECT, preview.base_schema.id, None)
+                .unwrap(),
+            preview.base_schema
+        );
+        assert_eq!(
+            app.store
+                .get_workflow_draft(&fixture.sample.draft_id)
+                .unwrap(),
+            old_draft
+        );
+        assert_eq!(
+            app.store
+                .get_workflow_sample_test_by_id(&fixture.sample.id)
+                .unwrap()
+                .unwrap(),
+            fixture.sample
+        );
+        assert_eq!(app.project_goal(PROJECT).unwrap(), goal);
+        assert_eq!(
+            app.store
+                .conversation_call_history(&owner, fixture.task.id)
+                .unwrap(),
+            calls
+        );
+        assert_eq!(
+            app.conversation_task_budget(PROJECT, fixture.conversation, fixture.task.id)
+                .unwrap(),
+            budget
+        );
+        assert!(
+            app.conversation_human_requests(PROJECT, fixture.conversation, fixture.task.id)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            app.store
+                .sample_feedback(&fixture.sample.id, &fixture.human.image_id)
+                .unwrap()
+                .is_empty()
+        );
+        let changed: crate::ConversationSchemaDecision = serde_json::from_value(json!({"decision":"draft","kind":kind,"labels":["cup"],"multi_label":false,"attributes":{},"boundary_rules":["TEST subsequent human revision"],"rationale":"TEST preserve later edit"})).unwrap();
+        let edited = app
+            .revise_conversation_schema_draft(PROJECT, schema.id, Uuid::new_v4(), 1, &changed)
+            .unwrap();
+        app.cancel_conversation_schema(PROJECT, fixture.conversation, fixture.task.id, call)
+            .unwrap();
+        let reopened = LocalApplication::new(fixture.temporary.path()).unwrap();
+        let restored = reopened
+            .save_conversation_future_schema(
+                PROJECT,
+                fixture.conversation,
+                fixture.task.id,
+                call,
+                &request,
+            )
+            .unwrap();
+        assert_eq!(restored.schema.unwrap(), edited);
+        assert_eq!(restored.record, result.record);
+        let mut conflict = request.clone();
+        conflict.goal = "TEST conflicting retry".into();
+        assert!(
+            reopened
+                .save_conversation_future_schema(
+                    PROJECT,
+                    fixture.conversation,
+                    fixture.task.id,
+                    call,
+                    &conflict
+                )
+                .is_err()
+        );
+        assert_eq!(provider.requests.lock().unwrap().len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn future_schema_preview_requires_explicit_scope_exact_sealed_base_and_live_source() {
+    for failure in ["scope", "unsealed", "cancelled", "stale", "foreign"] {
+        let (fixture, provider, source) =
+            scope_fixture_from(fixture_with_schema(false, failure != "unsealed")).await;
+        let app = &fixture.app;
+        let call = source.consent.call_id;
+        let answer = scope_input(
+            &source,
+            &json!({"scope":if failure == "scope" {"current_image_class"} else {"project_future_rule"}}),
+        );
+        app.answer_conversation_feedback_scope(
+            PROJECT,
+            fixture.conversation,
+            fixture.task.id,
+            call,
+            &answer,
+        )
+        .unwrap();
+        if failure == "cancelled" {
+            app.cancel_conversation_schema(PROJECT, fixture.conversation, fixture.task.id, call)
+                .unwrap();
+        }
+        if failure == "stale" {
+            let base = app
+                .conversation_future_schema(PROJECT, fixture.conversation, fixture.task.id, call)
+                .unwrap()
+                .base_schema;
+            let changed = serde_json::from_value(json!({"decision":"draft","kind":"bounding_box","labels":["plate"],"multi_label":false,"attributes":{},"boundary_rules":[],"rationale":"TEST newer untested semantics"})).unwrap();
+            app.revise_conversation_schema_draft(
+                PROJECT,
+                base.id,
+                Uuid::new_v4(),
+                base.revision,
+                &changed,
+            )
+            .unwrap();
+        }
+        let conversation = if failure == "foreign" {
+            Uuid::new_v4()
+        } else {
+            fixture.conversation
+        };
+        assert!(
+            app.conversation_future_schema(PROJECT, conversation, fixture.task.id, call)
+                .is_err(),
+            "{failure}"
+        );
+        let owner = app.conversation_project_identity(PROJECT).unwrap();
+        assert!(
+            app.store
+                .future_schema_draft(&owner, fixture.task.id, call)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(provider.requests.lock().unwrap().len(), 1);
+    }
+}
+
+#[test]
+fn builder_history_keeps_schema_identity_and_revision_paired_with_saved_operation() {
+    let fixture = fixture_with_schema(false, true);
+    let owner = fixture.app.conversation_project_identity(PROJECT).unwrap();
+    let binding = fixture
+        .app
+        .store
+        .get_workflow_draft(&fixture.sample.draft_id)
+        .unwrap()
+        .annotation_schema
+        .unwrap();
+    let schema_id = Uuid::parse_str(&binding.schema_draft_id).unwrap();
+    let operation = Uuid::new_v4();
+    fixture
+        .app
+        .store
+        .reserve_conversation_builder_with_schema(
+            &owner,
+            fixture.task.id,
+            operation,
+            &"a".repeat(64),
+            schema_id,
+            binding.revision,
+        )
+        .unwrap();
+    let reserved = fixture
+        .app
+        .conversation_builder_history(PROJECT, fixture.conversation, fixture.task.id)
+        .unwrap();
+    assert_eq!(reserved["items"][0]["schema_id"], schema_id.to_string());
+    assert_eq!(reserved["items"][0]["schema_revision"], binding.revision);
+    assert_eq!(reserved["items"][0]["operation"]["status"], "reserved");
+    assert!(
+        reserved["items"][0]["session"].is_null(),
+        "The identity must survive even before the seed session exists"
+    );
+    fixture
+        .app
+        .store
+        .settle_conversation_builder(
+            &owner,
+            fixture.task.id,
+            operation,
+            false,
+            &json!({"error":"TEST guard interrupted before seed persistence"}),
+        )
+        .unwrap();
+    let history = fixture
+        .app
+        .conversation_builder_history(PROJECT, fixture.conversation, fixture.task.id)
+        .unwrap();
+    assert_eq!(history["items"][0]["schema_id"], schema_id.to_string());
+    assert_eq!(history["items"][0]["schema_revision"], 1);
 }
 
 #[tokio::test]

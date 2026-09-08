@@ -147,11 +147,19 @@ test(`Schema clarification ${mode}: same-task persistence and explicit continuat
   expect(await (await request.get(root)).json()).toHaveLength(1);
   expect(writes).toBe(0);
   await page.screenshot({path:"../docs/execution/conversational-workspace/clarification-sample-result.png",fullPage:true,animations:"disabled"});
+  const oldBuilders=await (await request.get(`${taskRoot}/builder-operations`)).json();
   await page.getByRole("button",{name:"Edit labels and boundary rules",exact:true}).click();
   await page.getByLabel("Labels · one per line",{exact:true}).fill("室内\n室外\n不确定");
   await page.getByRole("button",{name:"Save Schema changes",exact:true}).click();
-  await expect(page.getByText("Labels are now revision 2; this saved operation has not been rebuilt for those changes.",{exact:true})).toBeVisible();
+  await expect(page.getByText("Schema Draft saved · Revision 2",{exact:true})).toBeVisible();
+  // A new Schema revision must not adopt the old revision's completed Builder.
+  // The user can still inspect the original sample in the unchanged canvas.
+  await expect(page.getByRole("button",{name:"Review build and sample authorization",exact:true})).toBeVisible();
   await expect(page.locator(".conversation-completed-stage")).toHaveCount(0);
+  await expect(page.getByRole("button",{name:"View sample results in canvas",exact:true})).toHaveCount(0);
+  await expect(page.getByLabel("Saved sample results",{exact:true})).toBeVisible();
+  expect(await (await request.get(`${taskRoot}/builder-operations`)).json()).toEqual(oldBuilders);
+  expect((await (await request.get(`/api/workflow-drafts/${envelope.draft_id}/sample-test?test_id=${envelope.request_id}`)).json()).sample_test).toEqual(saved);
   expect(await (await request.get(`${taskRoot}/budget`)).json()).toEqual(after);
 });
 }

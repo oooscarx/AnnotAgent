@@ -186,8 +186,19 @@ impl LocalApplication {
                     .ok()
                     .filter(|session| session.project_id.as_deref() == Some(project));
                 let draft_id = session.as_ref().and_then(|session| session.working_draft.as_ref()).map_or_else(|| operation.id.to_string(), |draft| draft.draft_id.clone());
-                let schema_revision=self.store.get_workflow_draft(&draft_id).ok().filter(|draft|draft.project_id==project).and_then(|draft|draft.annotation_schema.map(|binding|binding.revision));
-                serde_json::json!({"operation":operation,"session":session,"schema_revision":schema_revision})
+                // A revision is meaningful only together with its Schema identity.
+                // Prefer the operation's frozen pair: later edits to the working
+                // Draft cannot relabel what this Builder actually consumed.
+                let identity = operation.evidence.as_ref().and_then(|evidence| {
+                    let id = Uuid::parse_str(evidence.get("schema_id")?.as_str()?).ok()?;
+                    let revision = evidence.get("schema_revision")?.as_u64()?;
+                    (!id.is_nil() && revision > 0).then_some((id, revision))
+                }).or_else(|| self.store.get_workflow_draft(&draft_id).ok()
+                    .filter(|draft|draft.project_id == project)
+                    .and_then(|draft|draft.annotation_schema)
+                    .and_then(|binding| Some((Uuid::parse_str(&binding.schema_draft_id).ok()?, binding.revision)))
+                );
+                serde_json::json!({"operation":operation,"session":session,"schema_id":identity.map(|(id,_)|id),"schema_revision":identity.map(|(_,revision)|revision)})
             })
             .collect::<Vec<_>>();
         Ok(serde_json::json!({"items":items}))
@@ -220,11 +231,13 @@ impl LocalApplication {
         let hash = annotagent_image_tools::sha256(&serde_json::to_vec(
             &serde_json::json!({"execution":execution,"model":selected.safe_selection(),"settings":settings}),
         )?);
-        if let Some(saved) = self.store.reserve_conversation_builder(
+        if let Some(saved) = self.store.reserve_conversation_builder_with_schema(
             &owner,
             execution.task_id,
             execution.operation_id,
             &hash,
+            execution.schema_id,
+            execution.schema_revision,
         )? {
             return Ok(saved);
         }

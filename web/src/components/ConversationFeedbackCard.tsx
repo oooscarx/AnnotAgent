@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiRequestError } from "../api";
 import { feedbackApi, type FeedbackConsent, type FeedbackPreview, type FeedbackStatus, type ScopeAnswerInput, type ScopeAnswerRecord } from "../conversation-feedback-api";
 import { feedbackCancellationMatches, feedbackCanDiscardUnaccepted, feedbackNeedsPolling, feedbackPhase, feedbackWaitingRequest, mergeFeedbackStatus, parsePendingFeedback } from "../conversation-feedback";
@@ -8,14 +8,17 @@ import { projectBudgetAvailability } from "../projectBudget";
 import { ConversationBudgetNotice } from "./ConversationBudgetNotice";
 import { ConversationFeedbackScope } from "./ConversationFeedbackScope";
 import { sameScopeAnswerInput } from "../conversation-feedback-scope";
+import { ConversationFutureSchemaCard } from "./ConversationFutureSchemaCard";
+import type { OpenConversationSample } from "./ConversationSampleCard";
 import "./conversation-feedback.css";
 
 /** A saved message is context, not permission. Only explicit buttons authorize or execute. */
-export function ConversationFeedbackCard({ project, message, requests, requestsReady, onOpen, onAssistance, captureCanvasNavigation, onScopeDirtyChange }: {
+export function ConversationFeedbackCard({ project, message, requests, requestsReady, onOpen, onAssistance, captureCanvasNavigation, onScopeDirtyChange, onSample }: {
   project: string; message: ConversationMessage; requests: HumanRequest[]; requestsReady: boolean;
   onOpen: (request: HumanRequest) => void; onAssistance: () => void;
   captureCanvasNavigation: () => (request: HumanRequest) => void;
   onScopeDirtyChange?: (dirty: boolean) => void;
+  onSample: OpenConversationSample;
 }) {
   const conversation = message.conversation_id, task = message.input.reference!.task_id;
   const storageKey = `annotagent.feedback:${project}:${conversation}:${task}:${message.input.id}`;
@@ -27,6 +30,11 @@ export function ConversationFeedbackCard({ project, message, requests, requestsR
   const [error, setError] = useState("");
   const alive = useRef(true), pending = useRef(false), frozen = useRef<FeedbackConsent | undefined>(undefined);
   const revision = useRef(0);
+  const dirtySources = useRef(new Set<string>()), dirtyCallback = useRef(onScopeDirtyChange);
+  dirtyCallback.current = onScopeDirtyChange;
+  const setDirtySource = useCallback((source: string, dirty: boolean) => { if (dirty) dirtySources.current.add(source); else dirtySources.current.delete(source); dirtyCallback.current?.(dirtySources.current.size > 0); }, []);
+  const scopeDirty = useCallback((dirty: boolean) => setDirtySource("scope", dirty), [setDirtySource]);
+  const futureDirty = useCallback((dirty: boolean) => setDirtySource("future", dirty), [setDirtySource]);
   const waiting = feedbackWaitingRequest(message, requests);
   const cancelled = Boolean(saved?.cancelled || feedbackCancellationMatches(cancellation, task, saved?.authorization.consent.call_id ?? frozen.current?.call_id));
   const phase = cancelled ? "cancelled" : feedbackPhase(saved);
@@ -216,7 +224,8 @@ export function ConversationFeedbackCard({ project, message, requests, requestsR
     {saved && <div className="conversation-feedback-result">
       <p role="status">{running ? "Interpreting the saved feedback. Leaving this page does not stop an admitted call." : checking ? "Feedback execution submitted. Checking the saved admission and outcome; no automatic retry." : phase === "cancelled" ? "Cancellation saved. No automatic retry will run; in-flight usage may still be billed." : phase === "expired" ? "Authorization expired before execution. Nothing was automatically renewed." : phase === "authorized" ? "Authorization saved; no model call is recorded. Execution requires your explicit action." : phase === "unknown" ? "Provider outcome unknown. A call may have been billed. This request will not be sent again." : phase === "failed" ? "The feedback request did not produce a result. No correction was applied." : phase === "invalid" ? "The model returned no valid feedback proposal. No correction was applied." : phase === "correction" ? "Correction proposed" : saved.scope_answer ? "Feedback scope recorded" : "Clarify the intended scope"}</p>
       {decision && !cancelled && <><p>{decision.question}</p><p>{decision.rationale}</p><small>Text-only interpretation of your saved message and candidate metadata, not a visual accuracy assessment.</small></>}
-      <ConversationFeedbackScope key={saved.authorization.consent.call_id} project={project} value={saved} cancelled={cancelled} busy={busy} onSave={saveScope} onDirtyChange={onScopeDirtyChange} />
+      <ConversationFeedbackScope key={saved.authorization.consent.call_id} project={project} value={saved} cancelled={cancelled} busy={busy} onSave={saveScope} onDirtyChange={scopeDirty} />
+      {saved.scope_answer?.input.choice.scope === "project_future_rule" && <ConversationFutureSchemaCard key={`${saved.authorization.consent.call_id}:${saved.scope_answer.input.command_id}`} project={project} conversation={conversation} task={task} call={saved.authorization.consent.call_id} sourceAnswer={saved.scope_answer.input.command_id} cancelled={cancelled} onDirtyChange={futureDirty} onSample={onSample} onAssistance={onAssistance} />}
       {canCorrect && !waiting && <button className="primary" disabled={busy} onClick={() => void correct()}>Correct in canvas</button>}
       {phase === "clarify" && !waiting && (!saved.scope_answer || saved.scope_answer.input.choice.scope === "current_candidate") && <><button disabled={busy || !requestsReady} onClick={() => void stop()}>{saved.scope_answer ? "Cancel feedback action" : "Cancel scope question"}</button><small>Cancels this feedback action only. Saved answers, annotations and any existing correction requests remain unchanged.</small></>}
       {(running || checking || recoverable) && <button onClick={() => void stop()}>{running || checking ? "Stop feedback request" : "Cancel saved feedback request"}</button>}

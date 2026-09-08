@@ -3245,3 +3245,115 @@ remaining accessibility/context recovery acceptance are still outstanding. Live 
 native 200% zoom and real-human novice usability were not tested. The overall goal stays active.
 The existing bundle-size warning is not a performance pass. No real workspace, paid Provider,
 old credentials, push or remote edits were used.
+
+### M3 continuation: future-only human Schema forks (verified checkpoint)
+
+The previous scope-answer checkpoint is committed as `245db54`. This slice turns the explicitly
+saved `project_future_rule` intention into a separate editable Schema Draft. It is a human-authored
+fallback and versioning substrate; it does **not** yet implement LLM-authored Schema patches,
+project-wide application, selected-image migration or automatic reinterpretation of old results.
+The overall Conversational Workspace goal remains active.
+
+The source is the candidate message's original Sample Test `sample_scope_seals.annotation_schema`,
+including Schema ID, revision, complete TaskConfig, goal and boundary rules. An unsealed legacy
+test cannot silently borrow the current Draft's Schema. A newer source Schema revision requires
+review/test, not an implicit rebase. Fresh writes require the exact saved future-scope answer,
+owned task, unchanged frozen candidate/image/feedback context and uncancelled original proposal.
+
+Migration 46 stores the feedback/source/command link and creates the new Schema in one SQLite
+transaction using the existing human-Schema insert. The fork has a new Schema ID at revision 1,
+but retains the same task identity. Old Schema/Workflow/Test/Published Version/Run/annotations
+remain unchanged. No model grant, model call, human-correction request, publish or run is created
+by this action. An exact saved semantic command restores the link before live-context checks,
+including after cancellation and subsequent edits to the new Draft. The model-style `rationale`
+is explanatory input, not part of the persisted Schema definition; provenance remains explicitly
+human-authored. Concurrent conflicting requests cannot create two forks from the same answer.
+
+The existing chat feedback card exposes the future-rule editor; extracted Schema fields show
+goal, supported output type, labels and boundary rules with an actual before/after semantic diff.
+Multi-label behavior and attributes are retained. A separate existing SchemaEditor/Builder flow
+handles later edits and fresh authorization. Browser tab state retains unsaved fields and the
+original pending command; GET/mount/reload do not send that command or authorize inference.
+
+Integration findings being verified:
+
+- Builder history previously paired a completed task with only a Schema revision number. Different
+  Schema IDs both at revision 1 could therefore display an old plan/test as complete. The API now
+  returns the frozen operation's ID/revision pair; UI Builder/Journey matching requires both.
+  Initial clarification continuations receive the owned original creation revision, never latest.
+- The initial human-Schema list also returned future forks; its latest-first lookup could replace
+  the original goal card after reload. Future forks must remain in their source feedback card,
+  not impersonate the original goal's answer.
+- A TypeScript projection does not remove actual TaskConfig fields at runtime. Spreading a full
+  server TaskConfig into a bounded decision adds unsupported fields and is rejected correctly.
+  The UI serializer must select actual allowed fields, and saved-record matching uses the real
+  Storage wire shape rather than assuming it is identical to the POST request.
+- The first new Application fixture test incorrectly tried to create a second conversation;
+  that API intentionally returns the project's canonical conversation. A distinct foreign ID now
+  tests the intended ownership rejection. All 30 focused Application feedback checks then passed.
+
+This checkpoint uses isolated TEST transport only; no Live quality or human usability claim is
+made. No real workspace/server, old key, push or remote change is used in this continuation.
+
+The follow-up admission audit found an important companion to exact-ID history filtering:
+between reserving a Builder and persisting its seed, no Schema identity was previously readable.
+The new scoped reservation writes the owned Schema ID/revision in the admission transaction.
+Settlement, Guard interruption and restart keep that pair; conflicting/partial replacement is
+rejected. The original unscoped API remains available for legacy records, but a scoped retry
+cannot invent a missing old identity. A failing admission test preceded the implementation;
+the Application regression now checks history before any seed/session exists and after failure.
+
+Final Rust `cargo fmt --all --check`, strict all-target/all-feature workspace Clippy,
+`cargo test --workspace --all-features -q`, and all-feature workspace build pass. Application
+contains 132 unit tests (131 pass, one explicitly Live-dependent test ignored); Storage has
+97 passing unit tests plus its existing integration suites. Four other explicit expert-weight
+Live tests remain ignored, for five ignored Live-dependent tests overall. Web typecheck,
+163 unit tests across 36 files and production build pass. The existing >500 KB bundle warning
+remains: this is not a history-performance or bundle-performance pass.
+
+The first complete new browser slice passed 5/5 in `/tmp/annotagent-guided-e2e-60242`:
+classification/bbox human forks, unchanged old objects, an actual newly authorized Builder,
+lost save acknowledgement with equal retried commands, read-only refresh, original-goal-card
+preservation, exact new authorization and rejected unrelated/cancelled scope. The HTTP tests
+initially requested an unavailable Draft GET route (405); they now read the existing Project
+Draft list by stable ID. No production endpoint or data-protection check was relaxed.
+
+The broader browser run additionally tests a real separately authorized Sample Test from each
+new fork, with the new exact sealed Schema and actual terminal labels. One old clarification assertion expected a revision-1 Builder to remain displayed
+under revised Schema 2. That is precisely the obsolete association removed here: its replacement
+asserts saved Schema 2 plus fresh authorization, no inherited completed Builder, unchanged
+old Builder history/sample objects, and the original sample still visible in the canvas.
+The 43-case combined run finished in 7.8 minutes in `/tmp/annotagent-guided-e2e-62147`:
+42 passed and that one obsolete clarification assertion failed. The passing cases include all
+24 existing feedback cases, five future-schema cases (both new Builder plus single-image Sample
+chains), nine initial-journey cases, two human-Schema cases, the Schema transport case and
+clarification cancellation. The corrected clarification-answer test and two UI screenshot cases
+then passed **3/3** in 12 seconds in `/tmp/annotagent-guided-e2e-63341`. All 43 scenarios have
+passing evidence across these runs; this is not a claim of one 43/43 green run or a full-repository
+E2E sweep. No production admission or validation was weakened to satisfy the old assertion.
+
+The final screenshots were captured by the existing browser tests and visually inspected:
+
+- `conversational-workspace/future-schema-classification-form.png`: entered future goal, output
+  type, labels/rules and actual semantic differences alongside the unchanged original sample.
+- `conversational-workspace/future-schema-bbox-saved.png`: saved independent human Schema,
+  fresh authorization action, preserved original bbox and sample-only confirmation scope.
+- `conversational-workspace/future-schema-classification-saved.png`: the equivalent saved
+  classification case; old labels in the canvas are intentionally not reinterpreted.
+- `conversational-workspace/future-schema-bbox-390-form.png`: a full component capture taken
+  in a 390×844 viewport, showing wrapped fields/diff/actions; not a whole-screen 844px fit claim.
+
+Desktop evidence uses a real 1280×1800 viewport and keyboard-operated 50% conversation splitter.
+This high evidence viewport does not establish short-height usability, native 200% zoom or
+performance. The initial component capture was clipped by internal scrolling and was replaced
+by real viewport captures, not CSS injection or image editing. A fresh workspace leaves only
+2–3 actual TEST model profiles in the pictured inventory. Synthetic predictions prove protocol
+and state isolation only, not successful cup recognition or indoor/outdoor classification.
+
+Test services 8791/8796 stopped afterward. Historical modified screenshots are excluded from
+this checkpoint; only the four new future-rule images are included. Branch remains `main`, both
+remotes are unchanged and nothing is pushed. Remaining work includes automatic bounded
+LLM-authored Schema patches, image-class scope application, disambiguated chat stop commands,
+other visual requests, long-history/performance and accessibility/context acceptance. Real
+model quality, native 200% zoom and real-human novice usability remain unverified. The overall
+goal is still active; a human-edited fork is not presented as completion of those features.

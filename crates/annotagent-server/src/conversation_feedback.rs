@@ -222,6 +222,39 @@ pub(super) async fn status(
     status_value(&state, &project, conversation, task, call).map(Json)
 }
 
+pub(super) async fn future_schema(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task, call)): AxumPath<(
+        String,
+        uuid::Uuid,
+        uuid::Uuid,
+        uuid::Uuid,
+    )>,
+) -> ApiResult<Json<annotagent_application::ConversationFutureSchemaView>> {
+    state
+        .application
+        .conversation_future_schema(&project, conversation, task, call)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
+pub(super) async fn save_future_schema(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task, call)): AxumPath<(
+        String,
+        uuid::Uuid,
+        uuid::Uuid,
+        uuid::Uuid,
+    )>,
+    Json(request): Json<annotagent_application::ConversationFutureSchemaRequest>,
+) -> ApiResult<Json<annotagent_application::ConversationFutureSchemaView>> {
+    state
+        .application
+        .save_conversation_future_schema(&project, conversation, task, call, &request)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
 pub(super) async fn authorize(
     State(state): State<ServerState>,
     AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
