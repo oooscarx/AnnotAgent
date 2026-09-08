@@ -5044,3 +5044,52 @@ This backend capability is not yet connected to a unified UI repair card, and do
 grant automatic improvement after a future answer under old initial consent. UI scope
 matching, restored-history isolation, and any bounded future-answer opt-in remain open.
 Fixture execution is not Live inference quality evidence. No push or real data changes.
+
+### 2026-09-09 — Unified repair card and source-isolated restoration (verification pending)
+
+Connected the human-correction repair card to the existing joint Journey component.
+Its default action offers one bounded repair/sample consent; the standalone Builder
+and separately authorized sample remain available through the existing advanced entry.
+Legacy standalone receipts restore that advanced view; a Builder owned by a joint
+Journey restores the joint view instead. Current-image class-group repairs still use
+their existing standalone flow; no unsupported scope is silently converted.
+
+Journey history and pending browser envelopes now match both exact Schema identity
+and the correction request/Draft identity. Normal initial cards reject repair history;
+different corrections cannot restore each other's consent. Pending keys include the
+repair source and do not fall back to old normal-goal envelopes. Preview rejects a
+mismatched repair source. The card explicitly says this consent does not cover future
+corrections. One matching helper test was added; typecheck and all 228 Web tests pass.
+
+Browser run **12890** is live (11 tests, workspace `/tmp/annotagent-guided-e2e-19830`,
+evidence `/tmp/annotagent-joint-repair-ui`). Backend joint-repair test passed. The new UI
+test failed because it used `getByRole(region)` for a named authorization div. The
+corrected `getByLabel` locator is saved but the runner had already loaded the old test;
+it needs a fresh rerun after this process ends. Existing sample-flow regression is
+continuing. No UI-completion claim or commit for this increment yet. No rebuild of
+served assets while this run is active, and no real workspace/model/remote changes.
+
+### 2026-09-09 — Unified repair UI verified
+
+Run 12890 completed with **10 passed / 1 locator failure (2.9m)**: all nine existing
+sample scenarios retained the standalone advanced flow. That trace is preserved under
+`/tmp/annotagent-joint-ui-trace-hX3ChR/test-results`. Fresh run 30326 reached successful
+repair execution and reload, but its new test incorrectly expected the original sample
+result card to disappear. Existing initial results must remain, so the assertion now
+checks distinct exact Draft links for the initial result and the correction result.
+That failed test evidence is at `/tmp/annotagent-joint-ui-history-trace-SKmIrF/test-results`.
+
+Fresh run 74368 passed **2/2 (8.7s)**, including actual page authorization, one consent
+POST plus one execution POST, no browser-issued child operation POSTs, restored state
+with no new POSTs, and separate original/correction Draft identities. Screenshot review
+then found the wrapper's advanced button and explanatory text flowing inline. A minimal
+grid/gap class fixes that; an explicit bounding-box separation assertion was added.
+Final run 75590 passed **2/2 (8.8s)** in `/tmp/annotagent-guided-e2e-20339`. Inspected
+`/tmp/annotagent-joint-repair-ui-layout/conversational-workspace/joint-repair-result.png`:
+the next action, advanced entry, explanation and composer are visibly separated.
+Typecheck, all 228 Web unit tests and production build pass (existing chunk-size warning).
+
+This completes the post-correction single-authorization UI slice, not the whole goal.
+Current-image class-group repair and pre-authorized improvement after a future answer
+are not enabled by this UI change. Old grants do not acquire those permissions. Final
+combined full-suite validation and conditional Live/accessibility reporting remain open.

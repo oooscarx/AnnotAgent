@@ -4,7 +4,7 @@ import {ConversationBudgetNotice} from "./ConversationBudgetNotice";
 import {projectBudgetAvailability} from "../projectBudget";
 import {conversationSettingsPath,projectBuildPath} from "../navigation";
 import type {OpenConversationSample} from "./ConversationSampleCard";
-import { consentMatchesSchema, journeyMatchesSchema } from "../conversation-schema-history";
+import { consentMatchesSchema, journeyMatchesSchema, consentMatchesRepair } from "../conversation-schema-history";
 import { journeyModelSelection, MAX_JOURNEY_MODELS } from "../journey-model-selection";
 
 type Choice={id:string;name:string};
@@ -13,14 +13,15 @@ const needsUpdate=(value?:JourneyStatus)=>active(value)||value?.sample?.assistan
 
 /** One bounded consent, existing Builder/Sample services. Mount only reads saved work. */
 type JourneyCardProps = {
+  repairRequest?:{id:string;draft:string};
   project:string;conversation:string;task:string;schema?:{id:string;revision:number};disabled:boolean;
   onSample:OpenConversationSample;onAssistance?:()=>void;onActiveChange?:(active:boolean)=>void;
   onSchemaOutcome?:(receipt:import("../types").ConversationCallReceipt)=>void;prepareRequested?:boolean;
 };
 export function ConversationJourneyCard(props: JourneyCardProps) {
-  return <JourneyCard key={`${props.project}:${props.conversation}:${props.task}:${props.schema?.id ?? "goal"}:${props.schema?.revision ?? ""}`} {...props} />;
+  return <JourneyCard key={`${props.project}:${props.conversation}:${props.task}:${props.schema?.id ?? "goal"}:${props.schema?.revision ?? ""}:${props.repairRequest?.id ?? ""}:${props.repairRequest?.draft ?? ""}`} {...props} />;
 }
-function JourneyCard({project,conversation,task,schema,disabled,onSample,onAssistance,onActiveChange,onSchemaOutcome,prepareRequested}: JourneyCardProps) {
+function JourneyCard({project,conversation,task,schema,repairRequest,disabled,onSample,onAssistance,onActiveChange,onSchemaOutcome,prepareRequested}: JourneyCardProps) {
   const [saved,setSaved]=useState<JourneyStatus>();
   const [preview,setPreview]=useState<JourneyPreview>();
   const [choices,setChoices]=useState<Choice[]>([]);
@@ -29,13 +30,14 @@ function JourneyCard({project,conversation,task,schema,disabled,onSample,onAssis
   const alive=useRef(true),pending=useRef(false),frozen=useRef<JourneyConsent|undefined>(undefined);
   const prepared=useRef(false);
   const legacyStorageKey=`annotagent.journey:${project}:${conversation}:${task}`;
-  const storageKey=schema ? `${legacyStorageKey}:${schema.id}:${schema.revision}` : legacyStorageKey;
-  const usableHistory=(items:JourneyStatus[])=>items.filter(item=>journeyMatchesSchema(item,schema));
+  const schemaStorageKey=schema ? `${legacyStorageKey}:${schema.id}:${schema.revision}` : legacyStorageKey;
+  const storageKey=repairRequest ? `${schemaStorageKey}:repair:${repairRequest.id}:${repairRequest.draft}` : schemaStorageKey;
+  const usableHistory=(items:JourneyStatus[])=>items.filter(item=>journeyMatchesSchema(item,schema)&&consentMatchesRepair(item.record.consent,repairRequest));
   const clearFrozen=()=>{frozen.current=undefined;try{sessionStorage.removeItem(storageKey);}catch{/* Server history owns saved consent. */}};
   const apply=(value:JourneyStatus)=>{setSaved(value);if(frozen.current?.id===value.record.consent.id)clearFrozen();};
   useEffect(()=>{
     alive.current=true;const controller=new AbortController();
-    try{const raw=sessionStorage.getItem(storageKey) ?? sessionStorage.getItem(legacyStorageKey);if(raw){const value=JSON.parse(raw) as JourneyConsent;if(value.task_id===task&&(!schema||consentMatchesSchema(value,schema)))frozen.current=value;}}catch{/* Invalid local data grants no permission. */}
+    try{const raw=sessionStorage.getItem(storageKey) ?? (!repairRequest ? sessionStorage.getItem(legacyStorageKey) : null);if(raw){const value=JSON.parse(raw) as JourneyConsent;if(value.task_id===task&&consentMatchesRepair(value,repairRequest)&&(!schema||consentMatchesSchema(value,schema)))frozen.current=value;}}catch{/* Invalid local data grants no permission. */}
     void api.journeyHistory(project,conversation,task,controller.signal).then(({items})=>{
       if(controller.signal.aborted)return;
       const candidates=usableHistory(items);
@@ -74,7 +76,9 @@ function JourneyCard({project,conversation,task,schema,disabled,onSample,onAssis
       if(!ids.length)throw new Error(options.length ? `Choose 1–${MAX_JOURNEY_MODELS} image models below, then review the authorization. No inference has started.` : "Select an available image model, or connect one in model settings. No inference has started.");
       if(ids.length>MAX_JOURNEY_MODELS)throw new Error(`Choose at most ${MAX_JOURNEY_MODELS} image models. No inference has started.`);
       const source:Record<string,string>=schema?{schema_id:schema.id,schema_revision:String(schema.revision)}:{schema_call_id:crypto.randomUUID()};
+      if(repairRequest)source.repair_request_id=repairRequest.id;
       const value=await api.journeyPreview(project,conversation,task,{consent_id:crypto.randomUUID(),builder_operation_id:crypto.randomUUID(),sample_operation_id:crypto.randomUUID(),...source,allowed_models:JSON.stringify(ids)});
+      if(!consentMatchesRepair(value.consent,repairRequest))throw new Error("The repair authorization does not match this saved correction. No execution was started.");
       if(alive.current)setPreview(value);
     }catch(reason){if(alive.current)setError((reason as Error).message);}
     finally{pending.current=false;if(alive.current)setBusy(false);}
@@ -104,11 +108,12 @@ function JourneyCard({project,conversation,task,schema,disabled,onSample,onAssis
   const effective=saved?.record.resolved_consent ?? saved?.record.consent;
   const stale=Boolean(effective&&schema&&(!saved?.record.consent.schema_proposal||saved.record.resolved_consent)&&(effective.schema_id!==schema.id||effective.schema_revision!==schema.revision));
   return <section className="conversation-builder-card" aria-label="Build and test annotation plan">
-    <h3>{schema?"Try an annotation plan":"Turn your goal into sample results"}</h3><p>{schema?"Build a plan from your saved labels, then test up to three images.":"Propose labels from your goal, build a plan and test up to three images. If the goal needs clarification, ask before image processing."} Results stay in the sample sandbox.</p>
+    <h3>{repairRequest?"Improve from your correction":schema?"Try an annotation plan":"Turn your goal into sample results"}</h3><p>{repairRequest?"Repair the saved plan using this correction, then test up to three images within one explicit authorization.":schema?"Build a plan from your saved labels, then test up to three images.":"Propose labels from your goal, build a plan and test up to three images. If the goal needs clarification, ask before image processing."} Results stay in the sample sandbox.</p>
     {!ready&&<p role="status">Restoring saved work…</p>}
     {!running&&!preview&&!frozen.current&&(!saved||stale)&&<button className="primary" disabled={!ready||busy||disabled} onClick={()=>void prepare()}>Review build and sample authorization</button>}
     {choices.length>0&&!running&&<details open={choices.length>MAX_JOURNEY_MODELS ? true : undefined}><summary>Allowed image models · {selected?.length ?? 0} selected</summary><p>Choose 1–{MAX_JOURNEY_MODELS} models. Only these exact installed bindings may receive the sample images. Changing this list requires a new preview.</p>{choices.length>MAX_JOURNEY_MODELS&&<p>Your registry has {choices.length} available models. No arbitrary subset is selected automatically.</p>}<div className="journey-model-choices">{choices.map(choice=><label key={choice.id}><input type="checkbox" checked={selected?.includes(choice.id) ?? false} disabled={busy||Boolean(frozen.current)||(!selected?.includes(choice.id)&&(selected?.length ?? 0)>=MAX_JOURNEY_MODELS)} onChange={event=>{setSelected(current=>event.target.checked?[...(current??[]),choice.id]:(current??[]).filter(id=>id!==choice.id));setPreview(undefined);setConfirmed(false);}}/>{choice.name}</label>)}</div></details>}
     {preview&&<div className="conversation-consent" aria-label="Build and sample authorization">
+      {preview.consent.repair&&<p>Repair only your saved correction's Draft · revision {preview.consent.repair.revision}. This authorization covers one bounded repair and sample test, not future corrections.</p>}
       <p><strong>Planner: {preview.builder.model_name}</strong> · {preview.builder.destination}</p>
       <p>Saved goal and labels go to the planner. {preview.consent.images.length} sample images may go to:</p>
       <ul>{preview.data.models.map(model=><li key={model.scope.model_id}>{model.display_name} · {model.destination}</li>)}</ul>

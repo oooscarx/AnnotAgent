@@ -46,7 +46,7 @@ function BuilderCard({ project, conversation, task, schema, editing, onSample, r
     const scope=frozen.current ? {operation_id:frozen.current.selection.operation_id} : historyScope;
     void api.conversationBuilderHistory(project,conversation,task,controller.signal,scope).then(async(history)=>{
       const entry=history.items.find(entry=>matches(entry)&&(!frozen.current||entry.operation.id===frozen.current.selection.operation_id));
-      const journeys=entry&&!repair ? await api.journeyHistory(project,conversation,task,controller.signal) : undefined;
+      const journeys=entry&&!imageClassRepair ? await api.journeyHistory(project,conversation,task,controller.signal) : undefined;
       if(!controller.signal.aborted) { setItem(entry);if(entry?.operation.status!=="reserved"&&entry){clearPending();setPreview(undefined);setUncertain(false);}if(entry&&journeys&&!journeys.items.some(journey=>journey.record.consent.builder_operation_id===entry.operation.id))setAdvanced(true);if(frozen.current)setAdvanced(true);setReady(true); }
     }).catch((error:Error)=>{if(!controller.signal.aborted)setError(error.message);});
     return ()=>{alive.current=false;controller.abort();};
@@ -128,13 +128,13 @@ function BuilderCard({ project, conversation, task, schema, editing, onSample, r
     {item && item.operation.status!=="reserved" && <div className="conversation-builder-result"><strong>{item.operation.status==="interrupted" ? "Build interrupted" : completed ? "Saved execution record" : "Builder outcome saved"}</strong><p>{session?.outcome?.replaceAll("_"," ") ?? item.operation.evidence?.outcome?.replaceAll("_"," ") ?? item.operation.status}</p>{item.operation.evidence?.error && <p>{item.operation.evidence.error}</p>}{session?.next_action && <p>{session.next_action}</p>}{session?.unresolved_bindings?.length ? <ul>{session.unresolved_bindings.map((binding,index)=><li key={index}>{binding}</li>)}</ul> : null}<small>No sample result or formal annotation was accepted.</small></div>}
     {error && <p role="alert">{error} Saved operations remain on the server; refreshing will not start another build.</p>}
   </>;
-  if(!repair&&!advanced&&invalidRetry===undefined)return <>
-    <ConversationJourneyCard key={`${project}:${conversation}:${task}`} project={project} conversation={conversation} task={task} schema={schema} disabled={editing||running} onSample={onSample} onAssistance={onAssistance} onActiveChange={setJourneyActive}/>
+  if(!imageClassRepair&&!advanced&&invalidRetry===undefined)return <section className="conversation-plan-actions" aria-label={repair ? "Repair annotation pipeline" : "Build annotation pipeline"}>
+    <ConversationJourneyCard key={`${project}:${conversation}:${task}`} repairRequest={repairRequest} project={project} conversation={conversation} task={task} schema={schema} disabled={editing||running} onSample={onSample} onAssistance={onAssistance} onActiveChange={setJourneyActive}/>
     <button disabled={!ready||busy||editing||running||journeyActive} onClick={()=>{setAdvanced(true);void prepare();}}>Review Builder authorization</button>
     <small>Advanced: build only, then authorize samples separately.</small>
-  </>;
+  </section>;
   return <section className="conversation-builder-card" aria-label={repair ? "Repair annotation pipeline" : "Build annotation pipeline"}>
-    {!repair&&!running&&!busy&&<button onClick={()=>setAdvanced(false)}>Back to build and sample task</button>}
+    {!imageClassRepair&&!running&&!busy&&<button onClick={()=>setAdvanced(false)}>Back to build and sample task</button>}
     {completed ? <details className="conversation-completed-stage"><summary><strong>Builder outcome saved</strong><span>View build details</span></summary><div>{buildDetails}</div></details> : buildDetails}
     {draftId && !running && <a href={projectBuildPath(project,"pipeline",{draftId,agentSessionId:session?.id,workspaceReturn:window.location.pathname+window.location.search})}>Open saved Pipeline details</a>}
     {draftId && !running && <ConversationSampleCard key={`${task}:${draftId}`} project={project} conversation={conversation} task={task} draft={draftId} disabled={editing || busy} onOpen={onSample} onAssistance={onAssistance} />}

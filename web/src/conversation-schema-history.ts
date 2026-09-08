@@ -2,6 +2,9 @@ import type { JourneyConsent, JourneyStatus } from "./api";
 import type { ConversationBuilderItem } from "./types";
 
 type SchemaIdentity = { id: string; revision: number };
+export function consentMatchesRepair(consent: Pick<JourneyConsent, "repair">, repair?: {id:string;draft:string}) {
+  return repair ? consent.repair?.request_id === repair.id && consent.repair.draft_id === repair.draft : !consent.repair;
+}
 export function consentMatchesSchema(consent: Pick<JourneyConsent, "schema_id" | "schema_revision">, schema: SchemaIdentity) {
   return consent.schema_id === schema.id && consent.schema_revision === schema.revision;
 }

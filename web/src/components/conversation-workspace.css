@@ -43,6 +43,7 @@
 .conversation-schema-editor { padding-block: 12px; border-block-start: 1px solid var(--aa-border); }
 .conversation-schema-editor textarea { width: 100%; min-width: 0; resize: vertical; }
 .conversation-builder-card, .conversation-builder-result { display: grid; gap: 12px; min-width: 0; overflow-wrap: anywhere; }
+.conversation-plan-actions { display: grid; gap: 12px; min-width: 0; }
 .conversation-builder-card { padding-block: 16px; border-block-start: 1px solid var(--aa-border); }
 .conversation-builder-card a { white-space: normal; overflow-wrap: anywhere; }
 .journey-model-choices { display: grid; gap: 12px; padding-block: 12px; }

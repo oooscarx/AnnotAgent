@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { test, expect } from "./fixtures";
 import { sample } from "./conversation-feedback-helpers";
+import { isolatedEvidencePath } from "./evidence";
 
 test("one explicit repair consent preserves its exact correction and continues through Builder and sample", async ({ page, request }) => {
   test.setTimeout(180_000);
@@ -40,4 +41,46 @@ test("one explicit repair consent preserves its exact correction and continues t
   const calls = await (await request.get(`${state.taskRoot}/calls`)).json();
   expect((await request.post(execution, { data: {} })).ok()).toBe(true);
   expect(await (await request.get(`${state.taskRoot}/calls`)).json()).toEqual(calls);
+});
+
+test("the correction card authorizes repair and sample together and restores only its own results", async ({ page, request }) => {
+  test.setTimeout(180_000);
+  const state = await sample(request, page, "joint-repair-ui", true);
+  const help = state.savedRequests[0];
+  await page.goto(`${state.url}&request=${help.input.id}`);
+  await page.getByLabel("Correct label", { exact: true }).fill("cup");
+  await page.getByRole("spinbutton", { name: "width", exact: true }).fill("0.12");
+  await page.getByRole("button", { name: "Submit correction", exact: true }).click();
+  const repair = page.getByRole("region", { name: "Repair annotation pipeline", exact: true });
+  const joint = repair.getByRole("region", { name: "Build and test annotation plan", exact: true });
+  await joint.getByRole("button", { name: "Review build and sample authorization", exact: true }).click();
+  const consentPanel = joint.getByLabel("Build and sample authorization", { exact: true });
+  await expect(consentPanel).toContainText("not future corrections");
+  await expect(consentPanel).toContainText("Cost unknown");
+  const posts: string[] = [];
+  page.on("request", req => { if (req.method() === "POST") posts.push(new URL(req.url()).pathname); });
+  const acknowledged = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith(`${state.taskRoot}/journey-consents`));
+  await consentPanel.getByRole("checkbox", { name: /Allow this plan and sample test/ }).check();
+  await consentPanel.getByRole("button", { name: "Build plan and test samples", exact: true }).click();
+  const response = await acknowledged;
+  expect(response.ok(), await response.text()).toBe(true);
+  const saved = await response.json();
+  expect(saved.consent.repair.request_id).toBe(help.input.id);
+  await expect(joint.getByText("Sample results saved", { exact: true })).toBeVisible({ timeout: 75_000 });
+  expect(posts.filter(path => path.endsWith("/journey-consents"))).toHaveLength(1);
+  expect(posts.filter(path => path.endsWith("/execution"))).toHaveLength(1);
+  expect(posts.filter(path => /builder-operations|sample-operations/.test(path))).toEqual([]);
+  const count = posts.length;
+  await page.reload();
+  await expect(joint.getByText("Sample results saved", { exact: true })).toBeVisible();
+  expect(posts).toHaveLength(count);
+  const original = page.getByRole("region", { name: "Annotation Schema proposal", exact: true });
+  await expect(original.getByRole("link", { name: "View actual plan and execution details", exact: true })).toHaveAttribute("href", new RegExp(`draft=${state.record.draft_id}`));
+  await expect(joint.getByRole("link", { name: "View actual plan and execution details", exact: true })).toHaveAttribute("href", new RegExp(`draft=${saved.consent.repair.draft_id}`));
+  expect(saved.consent.repair.draft_id).not.toBe(state.record.draft_id);
+  const advancedButton = await repair.getByRole("button", { name: "Review Builder authorization", exact: true }).boundingBox();
+  const advancedNote = await repair.getByText("Advanced: build only, then authorize samples separately.", { exact: true }).boundingBox();
+  expect(advancedNote!.y).toBeGreaterThanOrEqual(advancedButton!.y + advancedButton!.height + 8);
+  await joint.getByRole("button", { name: "View sample results in canvas", exact: true }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: isolatedEvidencePath("../docs/execution/conversational-workspace/joint-repair-result.png"), fullPage: true });
 });
