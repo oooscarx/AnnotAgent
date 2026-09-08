@@ -1899,3 +1899,40 @@ than making a second model request; other shared human-Schema delivery tests rem
 evidence. Deferral/cancellation UI for this request type and continuous coordination remain open.
 No Live/paid model or real user Workspace was used, no old key, no push or remote change.
 Full-workspace regression and real-human usability have not been repeated for this increment.
+
+### M2 continuation — execute the clarified task through its sample canvas
+
+Extended the clarification browser scenario beyond the authorization panel: the saved answer now
+goes through the real Builder orchestration, compatible model binding, static validation,
+separately authorized sample operation, terminal projection and the existing editable canvas.
+The TEST transport handles both the initial scripted text clarification and subsequent bounded
+Builder/classifier protocol requests; image pixels are not sent by the Schema phase. The test
+uploads the repository synthetic image to its isolated Project, explicitly binds the TEST model,
+asserts an actual classifier node with that model identity and nonempty terminal projection,
+then reloads and reopens the canvas without writes or additional usage. All operations remain
+under the original task. This supersedes the previous increment's authorization-only browser
+limitation, not the remaining product-wide limitations.
+
+Added a compact saved-answer provenance block with an on-demand original question. It is shown
+only after the owned clarification API confirms `applied` and the exact linked Schema Draft ID;
+the client does not infer that an arbitrary human Draft answered a nearby model question.
+Unavailable evidence cannot produce a false “answered” claim. The original model question is
+read-only; editing labels continues to create revisions through the existing Schema editor.
+
+Validation: Web typecheck, 119 unit tests and production build passed. The extended isolated
+browser test passed in `/tmp/annotagent-guided-e2e-18611` (1/1, 8.1 seconds including build/start).
+Inspected `conversational-workspace/clarification-sample-result.png`: the original synthetic
+image and a terminal classification are visible in the real workspace canvas, explicitly
+labelled evaluation-only. Its scripted “室内” output is not a quality assessment of that image.
+The project header identifies TEST data; no Live accuracy or human usability claim is made.
+Combined human-Schema delivery regression is recorded below after completion.
+
+No Rust production change in this increment; prior targeted Rust validation is retained rather
+than represented as a new full-workspace run. No real Workspace, old key, push or remote change.
+The left-hand historical cards remain too long and the default continuous coordinator is still
+incomplete. Deferral/cancellation for clarification and the other HumanRequest types remain open.
+Combined `/tmp/annotagent-guided-e2e-18683` initially failed the next scenario's model-identity
+assertion: the new compatible TEST profile was not included in the suite's existing scenario
+retirement prefix. Fixed the isolated fixture profile naming and prior-scenario retirement,
+without altering production model selection. Re-run `/tmp/annotagent-guided-e2e-18775` passed
+2/2 (17.6 seconds), including the existing human-classification full delivery regression.

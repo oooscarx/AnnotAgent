@@ -16,9 +16,19 @@ export function ConversationHumanSchema({project,conversation,task,schemaId,onSa
   const [busy,setBusy]=useState(false);
   const [uncertain,setUncertain]=useState(false);
   const [error,setError]=useState("");
+  const [answered,setAnswered]=useState<{schema:string;call:string;question:string}>();
   const pending=useRef(false), alive=useRef(true);
   const request=useRef<Parameters<typeof api.saveHumanConversationSchema>[3] | undefined>(undefined);
   useEffect(()=>{alive.current=true; return()=>{alive.current=false;};},[]);
+  useEffect(()=>{
+    if(!schemaId||!clarification)return;
+    const controller=new AbortController();
+    void api.conversationSchemaClarification(project,conversation,task,clarification.call_id,controller.signal).then(saved=>{
+      if(!controller.signal.aborted&&saved.status==="applied"&&saved.schema_draft_id===schemaId)
+        setAnswered({schema:schemaId,call:saved.id,question:saved.question});
+    }).catch(()=>{/* Do not claim an answer link when the owned server evidence is unavailable. */});
+    return()=>controller.abort();
+  },[project,conversation,task,schemaId,clarification?.call_id]);
   useEffect(()=>{if(schemaId)return; onDirtyChange(busy||uncertain||kind!=="bounding_box"||Boolean(labels||rules));return()=>onDirtyChange(false);},[schemaId,busy,uncertain,kind,labels,rules,onDirtyChange]);
   async function save() {
     if(pending.current)return;
@@ -30,7 +40,14 @@ export function ConversationHumanSchema({project,conversation,task,schemaId,onSa
     catch(error){if(alive.current){setError((error as Error).message);const rejected=error instanceof ApiRequestError&&[400,401,403,404,409,422].includes(error.status);setUncertain(!rejected);if(rejected)request.current=undefined;}}
     finally{pending.current=false;if(alive.current)setBusy(false);}
   }
-  if(schemaId)return <><p>Human-defined labels · No model call was used to create this Schema Draft.</p><ConversationSchemaEditor project={project} conversation={conversation} task={task} schemaId={schemaId} onDirtyChange={onDirtyChange} onSample={onSample} onAssistance={onAssistance}/></>;
+  if(schemaId)return <>
+    {answered?.schema===schemaId&&answered?.call===clarification?.call_id ? <aside className="conversation-consent" aria-label="Saved clarification answer">
+      <strong>Clarification answered · Labels saved</strong>
+      <p>Your output type, labels and boundary rules are saved in this task's editable label draft. Saving the answer did not call a model.</p>
+      <details><summary>Why AnnotAgent asked</summary><p>{answered.question}</p><small>The original question remains unchanged. Later label edits create a new Schema revision; they do not rewrite the model's request.</small></details>
+    </aside> : <p>Human-defined labels · No model call was used to create this Schema Draft.</p>}
+    <ConversationSchemaEditor project={project} conversation={conversation} task={task} schemaId={schemaId} onDirtyChange={onDirtyChange} onSample={onSample} onAssistance={onAssistance}/>
+  </>;
   return <section className="conversation-schema-editor" aria-label="Define labels without a model">
     {clarification&&<aside className="conversation-consent" aria-label="Answer annotation clarification"><h4>Clarify this annotation task</h4><p>{clarification.question}</p><small>Your answer defines this task's labels and output. Saving does not call another model or accept dataset annotations.</small></aside>}
     <p>Choose the output and labels yourself. Saving only creates a label draft; building or testing a pipeline still requires compatible models and separate authorization.</p>

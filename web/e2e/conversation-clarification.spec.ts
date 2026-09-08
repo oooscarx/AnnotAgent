@@ -1,17 +1,28 @@
 import {randomUUID} from "node:crypto";
+import {resolve} from "node:path";
 import {expect,test,fetchWithinMutationLimit} from "./fixtures";
 
-test("Schema clarification is answered in the same task without another model call",async({page,request})=>{
+test("Schema clarification saves without inference then continues to authorized Builder and samples",async({page,request})=>{
   test.setTimeout(120_000);
+  // The browser suite shares only this isolated TEST registry between scenarios.
+  // Retire prior scenario transports so fixture template selection is deterministic.
+  const existingProfiles=(await (await request.get("/api/model-profiles")).json()).models;
+  for(const profile of existingProfiles){
+    if(profile.display_name.startsWith("Conversation TEST "))
+      expect((await request.patch(`/api/model-profiles/${profile.id}`,{data:{enabled:false}})).ok()).toBe(true);
+  }
   const provider=await (await request.post("/api/providers",{data:{display_name:"Clarification TEST",adapter:"open_ai_compatible",base_url:"http://127.0.0.1:8796/openai/v1"}})).json();
   expect((await request.post(`/api/providers/${provider.id}/credential`,{data:{source:"workspace_file",secret:"TEST-clarification-only"}})).ok()).toBe(true);
-  const model=await (await request.post("/api/model-profiles",{data:{provider_id:provider.id,display_name:"Clarification TEST text",remote_model_id:"e2e-conversation-clarify",input_modalities:["text"],task_capabilities:["text_generation"],protocol_features:{tool_calls:true,structured_output:true}}})).json();
+  const model=await (await request.post("/api/model-profiles",{data:{provider_id:provider.id,display_name:"Conversation TEST clarification",remote_model_id:"e2e-conversation-clarify",input_modalities:["text","image"],task_capabilities:["text_generation","vision_language","image_classification"],protocol_features:{tool_calls:true,structured_output:true}}})).json();
   expect((await request.post(`/api/providers/${provider.id}/active-probe`,{data:{model_profile_id:model.id,confirmed_billable:true}})).ok()).toBe(true);
   const defaults=await (await request.get("/api/agent-model-bindings")).json();
   expect((await request.put("/api/agent-model-bindings",{data:{...defaults,pipeline_builder:model.id}})).ok()).toBe(true);
   const project=`clarification-${Date.now()}`;
   expect((await request.post("/api/projects",{data:{id:project,yaml:"version: 1\nproject:\n  name: TEST clarification\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n"}})).ok()).toBe(true);
+  expect((await request.put(`/api/projects/${project}/model-bindings`,{data:{bindings:[{capability:"image_classification",role:"classification",match_kind:"capability",model_profile_id:model.id,locked:false}]}})).ok()).toBe(true);
   await page.goto(`/projects/${project}/work`);
+  await page.getByLabel("Add images",{exact:true}).setInputFiles(resolve("../examples/robocup/images/synthetic-robocup.png"));
+  await expect(page.getByText("Images saved on this server. No model has been called.",{exact:true})).toBeVisible();
   await page.getByLabel("Your message",{exact:true}).fill("TEST: annotate these images; help clarify the output");
   await page.getByRole("button",{name:"Save message",exact:true}).click();
   await page.getByRole("button",{name:"Prepare label proposal",exact:true}).click();
@@ -51,4 +62,37 @@ test("Schema clarification is answered in the same task without another model ca
   expect(await (await request.get(`${taskRoot}/budget`)).json()).toEqual(before);
   expect(await (await request.get(root)).json()).toHaveLength(1);
   await page.getByRole("region",{name:"Saved label draft",exact:true}).screenshot({path:"../docs/execution/conversational-workspace/clarification-answer-restored.png",animations:"disabled"});
+  await page.getByRole("checkbox",{name:/Allow this bounded Builder request/}).check();
+  await page.getByRole("button",{name:"Build Pipeline Draft",exact:true}).click();
+  await expect(page.getByRole("button",{name:"Review sample authorization",exact:true})).toBeEnabled();
+  await page.reload();
+  await expect(page.getByText("Builder outcome saved",{exact:true})).toBeVisible();
+  const answered=page.getByLabel("Saved clarification answer",{exact:true});
+  await expect(answered).toContainText("Clarification answered");
+  await answered.getByText("Why AnnotAgent asked",{exact:true}).click();
+  await expect(answered).toContainText(question.question);
+  await page.getByRole("button",{name:"Review sample authorization",exact:true}).click();
+  await page.getByRole("checkbox",{name:/Allow these sample images/}).check();
+  const submitted=page.waitForRequest(req=>req.method()==="POST"&&req.url().endsWith("/sample-operations"));
+  await page.getByRole("button",{name:"Test these samples",exact:true}).click();
+  const envelope=(await submitted).postDataJSON();
+  await expect(page.getByRole("button",{name:"View sample results in canvas",exact:true})).toBeVisible();
+  expect(envelope.conversation.task_id).toBe(task.input.id);
+  const saved=(await (await request.get(`/api/workflow-drafts/${envelope.draft_id}/sample-test?test_id=${envelope.request_id}`)).json()).sample_test;
+  expect(saved.report.validation.valid).toBe(true);
+  expect(saved.report.samples[0].nodes.some((node:any)=>node.metadata.model==="e2e-conversation-clarify")).toBe(true);
+  const projection=saved.report.samples[0].projection;
+  expect(projection.final_candidates.length+projection.review_candidates.length).toBeGreaterThan(0);
+  const after=await (await request.get(`${taskRoot}/budget`)).json();
+  expect(after.planning_reserved_calls).toBeGreaterThan(before.planning_reserved_calls);
+  let writes=0;
+  page.on("request",req=>{if(["POST","PUT","PATCH","DELETE"].includes(req.method()))writes++;});
+  await page.reload();
+  await page.getByRole("button",{name:"View sample results in canvas",exact:true}).click();
+  await expect(page.getByLabel("Saved sample results",{exact:true})).toBeVisible();
+  await expect(page.locator(".conversation-sample-canvas .annotation-canvas image")).toBeVisible();
+  expect(await (await request.get(`${taskRoot}/budget`)).json()).toEqual(after);
+  expect(await (await request.get(root)).json()).toHaveLength(1);
+  expect(writes).toBe(0);
+  await page.screenshot({path:"../docs/execution/conversational-workspace/clarification-sample-result.png",fullPage:true,animations:"disabled"});
 });
