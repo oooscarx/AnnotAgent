@@ -277,6 +277,26 @@ impl LocalApplication {
             .store
             .close_conversation_human_request(&owner, id, false)?)
     }
+    pub fn set_conversation_human_deferral(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+        input: &annotagent_storage::ConversationHumanDeferral,
+    ) -> Result<ConversationHumanRequest> {
+        if !self
+            .conversation_human_requests(project, conversation, task)?
+            .iter()
+            .any(|request| request.input.id == id)
+        {
+            bail!("Human request not found in this task");
+        }
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self
+            .store
+            .set_conversation_human_deferral(&owner, id, input)?)
+    }
     pub fn conversation_human_requests(
         &self,
         project: &str,

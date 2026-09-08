@@ -25,3 +25,12 @@ it("does not show stale actionable requests while their owner is loading",()=>{
   expect(html).toContain("Loading saved requests");
   expect(html).not.toContain("Cancel request");
 });
+it("keeps deferred work unfinished and provides an explicit reopen action",()=>{
+  const deferred={...request("later","current","pending"),deferred:true,deferral_revision:1};
+  const html=renderToStaticMarkup(<ConversationHumanRequests requests={[deferred]} taskId="current" ready onRefresh={()=>{}} onOpen={()=>{}} onCancel={async()=>{}} onRetry={async()=>{}} onDefer={async()=>{}} onInspect={()=>{}}/>);
+  expect(html).toContain("Deferred · not reviewed or completed");
+  expect(html).toContain("1 deferred requests remain unfinished");
+  expect(html).toContain("Reopen request");
+  expect(html).not.toContain("No outstanding visual requests");
+  expect(html).not.toContain("Retry Draft preparation");
+});

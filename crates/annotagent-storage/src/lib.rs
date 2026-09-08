@@ -19,8 +19,8 @@ pub use conversation_calls::{
     ConversationTaskBudget,
 };
 pub use conversation_human_requests::{
-    ConversationHumanRequest, ConversationHumanRequestInput, ConversationHumanRequestStatus,
-    ConversationResumeEvent,
+    ConversationHumanDeferral, ConversationHumanRequest, ConversationHumanRequestInput,
+    ConversationHumanRequestStatus, ConversationResumeEvent,
 };
 pub use conversation_schema::{ConversationSchemaDefinition, ConversationSchemaDraft};
 pub use conversation_task_selection::{ConversationTaskSelection, SelectConversationTask};
@@ -616,6 +616,8 @@ impl SqliteStore {
             transaction.execute_batch(include_str!("../../../migrations/0036_conversation_schema_authorizations.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0037_conversation_schema_clarifications.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0038_conversation_task_selection.sql"))?;
+            transaction.execute_batch(include_str!("../../../migrations/0039_conversation_human_deferrals.sql"))?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(39,'conversation_human_deferrals',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(38,'conversation_task_selection',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(37,'conversation_schema_clarifications',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(36,'conversation_schema_authorizations',?1)",[Utc::now().to_rfc3339()])?;

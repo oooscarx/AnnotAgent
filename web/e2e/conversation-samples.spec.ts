@@ -271,6 +271,30 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   await expect(page.getByRole("button",{name:"Submit correction",exact:true})).toBeVisible();
   expect(new URL(page.url()).searchParams.get("request")).toBe(human.id);
   expect(new URL(page.url()).searchParams.get("task")).toBe(human.task_id);
+  if(scenario==="bbox"){
+    const deferralPath=`${humanRoot}/${human.id}/deferral`;
+    const beforeDeferral=await (await request.get(`${taskRoot}/budget`)).json();
+    await page.route(`**${deferralPath}`,async route=>{const response=await fetchWithinMutationLimit(route);expect(response.ok(),await response.text()).toBe(true);await route.abort("failed");},{times:1});
+    const help=page.getByRole("region",{name:"Human requests",exact:true}).locator("article").filter({hasText:human.question});
+    await help.getByRole("button",{name:"Do this later",exact:true}).click();
+    await expect(page.getByRole("alert").last()).toBeVisible();
+    const afterLost=(await (await request.get(humanRoot)).json()).find((value:any)=>value.input.id===human.id);
+    expect(afterLost.deferred).toBe(true);expect(afterLost.deferral_revision).toBe(1);
+    await help.getByRole("button",{name:"Do this later",exact:true}).click();
+    await expect(page.getByRole("region",{name:"Deferred sample request",exact:true})).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole("region",{name:"Deferred sample request",exact:true})).toBeVisible();
+    await expect(page.getByRole("button",{name:"Submit correction",exact:true})).toHaveCount(0);
+    await expect.poll(async()=>page.getByRole("region",{name:"Deferred sample request",exact:true}).locator("rect.aa-annotation-shape").evaluate(rect=>Number(rect.getAttribute("width"))/(rect.ownerSVGElement?.viewBox.baseVal.width??1))).toBeCloseTo(0.15,5);
+    const lateAnswer=await request.post(`${humanRoot}/${human.id}/answer`,{data:{answer:{...previous,revision_id:randomUUID(),sequence:human.expected_feedback_sequence+1}}});
+    expect(lateAnswer.ok()).toBe(false);expect(await lateAnswer.text()).toContain("deferred");
+    await page.screenshot({path:"../docs/execution/conversational-workspace/deferred-request.png",fullPage:true});
+    await help.getByRole("button",{name:"Reopen request",exact:true}).click();
+    await expect(page.getByRole("button",{name:"Submit correction",exact:true})).toBeVisible();
+    expect(await (await request.get(`${taskRoot}/budget`)).json()).toEqual(beforeDeferral);
+    const resumed=(await (await request.get(humanRoot)).json()).find((value:any)=>value.input.id===human.id);
+    expect(resumed.deferred).toBe(false);expect(resumed.deferral_revision).toBe(2);
+  }
   await page.reload();
   await expect(page.getByRole("button",{name:"Submit correction",exact:true})).toBeVisible();
   await page.getByLabel("Correct label",{exact:true}).fill(kind==="classification" ? "室内" : "cup");

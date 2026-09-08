@@ -71,6 +71,95 @@ mod tests {
     }
 
     #[test]
+    fn deferral_survives_restart_without_answering_or_replaying_old_resume() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TEST-deferral.db");
+        let store = SqliteStore::open(&path).unwrap();
+        let (owner, input, answer) = setup(&store);
+        store
+            .create_conversation_human_request(&owner, &input)
+            .unwrap();
+        let defer = ConversationHumanDeferral {
+            command_id: Uuid::new_v4(),
+            expected_revision: 0,
+            deferred: true,
+        };
+        assert!(
+            store
+                .set_conversation_human_deferral("foreign", input.id, &defer)
+                .is_err()
+        );
+        let saved = store
+            .set_conversation_human_deferral(&owner, input.id, &defer)
+            .unwrap();
+        assert!(saved.deferred);
+        assert_eq!(saved.status, ConversationHumanRequestStatus::Pending);
+        assert!(
+            store
+                .answer_conversation_human_request(&owner, input.id, &answer)
+                .is_err()
+        );
+        assert!(
+            store
+                .pending_conversation_resumes(&owner, input.conversation_id, input.task_id)
+                .unwrap()
+                .is_empty()
+        );
+        drop(store);
+        let store = SqliteStore::open(&path).unwrap();
+        assert_eq!(
+            store
+                .set_conversation_human_deferral(&owner, input.id, &defer)
+                .unwrap(),
+            saved
+        );
+        let resume = ConversationHumanDeferral {
+            command_id: Uuid::new_v4(),
+            expected_revision: 1,
+            deferred: false,
+        };
+        let resumed = store
+            .set_conversation_human_deferral(&owner, input.id, &resume)
+            .unwrap();
+        assert!(!resumed.deferred);
+        assert_eq!(resumed.deferral_revision, 2);
+        assert_eq!(
+            store
+                .set_conversation_human_deferral(&owner, input.id, &defer)
+                .unwrap(),
+            resumed
+        );
+        assert!(
+            store
+                .set_conversation_human_deferral(
+                    &owner,
+                    input.id,
+                    &ConversationHumanDeferral {
+                        command_id: Uuid::new_v4(),
+                        ..defer
+                    }
+                )
+                .is_err()
+        );
+        store
+            .answer_conversation_human_request(&owner, input.id, &answer)
+            .unwrap();
+        assert!(
+            store
+                .set_conversation_human_deferral(
+                    &owner,
+                    input.id,
+                    &ConversationHumanDeferral {
+                        command_id: Uuid::new_v4(),
+                        expected_revision: 2,
+                        deferred: true
+                    }
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
     fn human_answer_and_resume_event_survive_restart_and_duplicate_delivery() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("TEST.db");
@@ -388,6 +477,18 @@ pub struct ConversationHumanRequest {
     pub answer: Option<SampleFeedbackRevision>,
     pub resume_draft_id: Option<String>,
     pub resume_error: Option<String>,
+    #[serde(default)]
+    pub deferred: bool,
+    #[serde(default)]
+    pub deferral_revision: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConversationHumanDeferral {
+    pub command_id: Uuid,
+    pub expected_revision: i64,
+    pub deferred: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -435,7 +536,10 @@ fn read(
         )
         .optional()?;
     let (resume_draft_id, resume_error) = result.unwrap_or_default();
+    let (deferral_revision,deferred)=db.query_row("SELECT revision,deferred FROM conversation_human_deferrals WHERE request_id=?1 ORDER BY revision DESC LIMIT 1",[id.to_string()],|row|Ok((row.get::<_,i64>(0)?,row.get::<_,bool>(1)?))).optional()?.unwrap_or((0,false));
     Ok(ConversationHumanRequest {
+        deferred: deferred && status == "pending",
+        deferral_revision,
         resume_draft_id,
         resume_error,
         input,
@@ -447,6 +551,28 @@ fn read(
 }
 
 impl SqliteStore {
+    /// Human scheduling preference only: no answer, outbox delivery or new spending authority.
+    pub fn set_conversation_human_deferral(
+        &self,
+        project: &str,
+        id: Uuid,
+        input: &ConversationHumanDeferral,
+    ) -> Result<ConversationHumanRequest, StorageError> {
+        self.with_connection(|db|{
+            let tx=db.unchecked_transaction()?;
+            let current=read(&tx,project,id)?;
+            let replay:Option<(String,i64,bool)>=tx.query_row("SELECT request_id,revision,deferred FROM conversation_human_deferrals WHERE command_id=?1",[input.command_id.to_string()],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional()?;
+            if let Some((request,revision,deferred))=replay{
+                if request!=id.to_string()||revision.checked_sub(1)!=Some(input.expected_revision)||deferred!=input.deferred{return Err(invalid("Deferral command conflicts with its saved payload"));}
+                return Ok(current);
+            }
+            if current.status!=ConversationHumanRequestStatus::Pending{return Err(invalid("Only an unanswered request can be deferred or reopened"));}
+            if current.deferral_revision!=input.expected_revision{return Err(invalid("Request scheduling changed; reload before deferring or reopening"));}
+            let revision=input.expected_revision.checked_add(1).filter(|value|*value>0).ok_or_else(||invalid("Invalid deferral revision"))?;
+            tx.execute("INSERT INTO conversation_human_deferrals(command_id,request_id,revision,deferred) VALUES(?1,?2,?3,?4)",params![input.command_id.to_string(),id.to_string(),revision,input.deferred])?;
+            let saved=read(&tx,project,id)?;tx.commit()?;Ok(saved)
+        })
+    }
     /// A superseded or cancelled request cannot accept a late answer. No event is sent.
     pub fn close_conversation_human_request(
         &self,
@@ -571,7 +697,7 @@ impl SqliteStore {
         self.save_sample_feedback_with(answer, |tx| {
             let current=read(tx,project,id)?;
             if let Some(saved)=current.answer { if saved==*answer { return Ok(()); } return Err(invalid("Human answer conflicts with an already saved answer")); }
-            if current.status!=ConversationHumanRequestStatus::Pending { return Err(invalid("Human request is no longer pending")); }
+            if current.status!=ConversationHumanRequestStatus::Pending || current.deferred { return Err(invalid("Human request is no longer pending or is deferred; reopen it before answering")); }
             tx.execute("UPDATE conversation_human_requests SET status='answered',answer_json=?2 WHERE id=?1",params![id.to_string(),serde_json::to_string(answer)?])?;
             tx.execute("INSERT INTO conversation_resume_outbox(request_id,task_id,checkpoint_ref,feedback_revision_id) VALUES(?1,?2,?3,?4)",params![id.to_string(),input.task_id.to_string(),input.resume_checkpoint_ref.to_string(),answer.revision_id])?;
             Ok(())

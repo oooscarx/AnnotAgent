@@ -12,7 +12,8 @@ const reasons: [SampleFeedbackRevision["reason"], string][] = [
   ["cannot_judge", "Cannot judge yet"],
 ];
 
-export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onConfirmed, navigation, onAdopt, projectId, draftId, onImprove, onKeepOriginal, goalOverride, humanSubmission, initialOutcomeId, onReferenceOutcome }: {
+export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onConfirmed, navigation, onAdopt, projectId, draftId, onImprove, onKeepOriginal, goalOverride, humanSubmission, initialOutcomeId, onReferenceOutcome, readOnly=false }: {
+  readOnly?:boolean;
   onReferenceOutcome?:(id:string)=>void;
   sample: WorkflowDryRunReport["samples"][number]; image: ImageItem; testId: string;
   onDirtyChange: (dirty: boolean) => void;
@@ -151,6 +152,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
     setHistory((items) => [...items, annotations]); setAnnotations((items) => [...items, added]); setSelected(added.id);
     setDirty(true); setSaved(false); setReason("missing_target"); setAttentionOpen(true); setShowBefore(false); setShowOriginal(false);
   };
+  if(readOnly)return <section aria-label="Saved sample corrections"><p>Saved sample corrections · Read only</p>{error ? <p role="alert">{error}</p> : !loaded ? <p role="status">Loading saved corrections…</p> : <AnnotationCanvas compactList imageUrl={image.url} annotations={annotations} selectedId={selected} readOnly onSelect={setSelected} onChange={()=>{}}/>}</section>;
   return <div className="sample-feedback-workspace">
     {freshness.status === "checking" && <p role="status">{t("Checking whether this sample still matches the current plan…")}</p>}
     {freshness.status === "stale" && <p role="alert" className="sample-risk-notice">{t("The plan or its inputs changed elsewhere. Your edits are kept and can still be saved as feedback on this sample. Test the current plan before adopting it.")}</p>}

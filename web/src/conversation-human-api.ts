@@ -6,4 +6,6 @@ export type HumanRequest = {
   answer?:SampleFeedbackRevision|null;
   resume_draft_id?:string|null;
   resume_error?:string|null;
+  deferred?:boolean;
+  deferral_revision?:number;
 };

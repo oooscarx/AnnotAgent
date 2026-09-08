@@ -67,6 +67,19 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
     return()=>controller.abort();
   },[project.id,conversation,taskId,sampleTestId,processingOperationId,requestRefresh]);
   const updateRequest=(value:HumanRequest)=>setRequests(items=>items.map(item=>item.input.id===value.input.id ? value : item));
+  const deferralCommands=useRef(new Map<string,{command_id:string;expected_revision:number;deferred:boolean}>());
+  async function deferRequest(value:HumanRequest){
+    if(sampleDirty.current){setError("Save or undo the current correction before deferring or reopening a request.");return;}
+    const deferred=!value.deferred;
+    let command=deferralCommands.current.get(value.input.id);
+    if(!command||command.deferred!==deferred){command={command_id:crypto.randomUUID(),expected_revision:value.deferral_revision??0,deferred};deferralCommands.current.set(value.input.id,command);}
+    try{
+      const saved=await api.deferHumanRequest(project.id,value,command);updateRequest(saved);
+      deferralCommands.current.delete(value.input.id);
+      if(Boolean(saved.deferred)!==deferred)setError("This request changed in another view. Its latest saved state is shown; no model was called.");
+      else setError("");
+    }catch(error){setError((error as Error).message);}
+  }
   async function cancelRequest(value:HumanRequest){
     if(value.input.id===humanRequestId && sampleDirty.current && !window.confirm("Discard unsaved correction and cancel this request?"))return;
     try{updateRequest(await api.cancelHumanRequest(project.id,value));}catch(error){setError((error as Error).message);}
@@ -278,7 +291,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
           {operation.batch_id && operation.id !== processingOperationId && operation.batch_id!==results?.batchId && <ConversationBatchStatus projectId={project.id} batchId={operation.batch_id} />}
           {operation.batch_id && <button onClick={()=>processingNavigate(projectBatchPath(project.id,operation.batch_id!))}>Open processing results</button>}
         </article>)}</section>}
-        {conversation && <ConversationHumanRequests requests={requests} taskId={referenceTask?.id} activeId={humanRequestId} ready={requestsReady} onRefresh={()=>{if(sampleDirty.current){setError("Save or undo this correction before refreshing requests.");return;}setRequestRefresh(value=>value+1);}} onOpen={value=>void openRequest(value)} onCancel={cancelRequest} onRetry={retryContinuation} onInspect={value=>onNavigate(projectBuildPath(project.id,"pipeline",{draftId:value.resume_draft_id!}))}/>}
+        {conversation && <ConversationHumanRequests requests={requests} taskId={referenceTask?.id} activeId={humanRequestId} ready={requestsReady} onRefresh={()=>{if(sampleDirty.current){setError("Save or undo this correction before refreshing requests.");return;}setRequestRefresh(value=>value+1);}} onOpen={value=>void openRequest(value)} onCancel={cancelRequest} onRetry={retryContinuation} onDefer={deferRequest} onInspect={value=>onNavigate(projectBuildPath(project.id,"pipeline",{draftId:value.resume_draft_id!}))}/>}
         {conversation && goalMessage && <ConversationSchemaCard prepareRequested={prepareMessage===goalMessage.input.id} key={`${conversation}:${goalMessage.input.id}`} project={project.id} conversation={conversation} message={goalMessage.input.id} onDirtyChange={schemaDirtyChange} onAssistance={assistanceChanged} onSample={(draft,test,image)=>void openSample(draft,test,image)} onSetup={selectedTask=>onNavigate(conversationSettingsPath(project.id,"providers",projectWorkPath(project.id,{conversationId:conversation,taskId:selectedTask ?? taskId,imageId,draftId,sampleTestId,humanRequestId,referenceMessageId,processingOperationId,results})))} />}
         {conversation && taskId && !goalMessage && <p role="status">{requestsReady ? "The selected annotation task is not available in this conversation. Select a saved message; no other task was substituted." : "Loading the selected annotation task…"}</p>}
         {activeRequest?.status==="applied" && activeRequest.resume_draft_id && <ConversationRepairCard key={activeRequest.input.id} project={project.id} request={activeRequest} editing={repairEditing} onAssistance={assistanceChanged} onSample={(draft,test,image)=>void openSample(draft,test,image)} />}

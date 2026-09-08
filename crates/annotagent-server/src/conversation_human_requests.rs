@@ -5,6 +5,18 @@ use annotagent_storage::{
 };
 use uuid::Uuid;
 
+pub(super) async fn defer(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task, id)): AxumPath<(String, Uuid, Uuid, Uuid)>,
+    Json(input): Json<annotagent_storage::ConversationHumanDeferral>,
+) -> ApiResult<Json<ConversationHumanRequest>> {
+    state
+        .application
+        .set_conversation_human_deferral(&project, conversation, task, id, &input)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
 pub(super) async fn cancel(
     State(state): State<ServerState>,
     AxumPath((project, conversation, task, id)): AxumPath<(String, Uuid, Uuid, Uuid)>,

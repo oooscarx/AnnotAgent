@@ -2205,3 +2205,49 @@ chunk warning remains). No Rust business behavior changed; this is not a new all
 all-browser-suite claim. Test-only workspace/HTTP fixture, no Live quality or human usability
 validation, no real Workspace mutation, no push/remote change. Full coordinator and other recorded
 acceptance gaps remain open.
+
+### M3 continuation — durable defer/reopen for unanswered sample requests
+
+Added explicit “Do this later” / “Reopen request” through the existing Rust request service.
+Migration 39 stores immutable, versioned deferral commands against the existing request ID.
+The answer status stays pending for admission purposes: deferral is an unfinished scheduling
+choice, not cancellation, acceptance, an answer or a resume event. No model call or budget grant
+is created or reset. Independent tasks retain their existing budgets; this increment does not
+relax the existing same-task pending-request spending block or implement independent-image
+scheduling inside that task. The API returns `deferred` and `deferral_revision` alongside existing
+status, which the GUI distinguishes as “Deferred · not reviewed or completed”.
+
+Stable Project/task/conversation ownership is checked by Application; storage uses expected
+revision and immutable command ID in one transaction. Duplicate delivery returns the latest
+saved state and cannot re-defer a request after a newer reopen. Changed/stale commands and
+deferring an answered request are rejected. Answer validation checks deferral inside the same
+feedback transaction, so a late answer cannot write feedback or enqueue continuation while
+deferred. Existing source revision/geometry/answer checks still apply after reopening. Requests
+can still be cancelled. Deferred current history is explicitly counted as unfinished.
+
+GUI retries retain the original command after uncertain responses. Dirty corrections must first
+be saved or undone. The deferred canvas is read-only and reuses `SampleFeedbackEditor`'s persisted
+correction projection, not a separate annotation store or an original-prediction substitute.
+Reopening restores the normal request editor without running inference. A screenshot inspection
+of the first draft caught the original-overlay substitution; the read-only editor reuse fixes it.
+
+Storage contract initially failed to compile before the new deferral API existed. Final storage
+suite passed 62 unit plus 16 integration tests, including reopen-after-SQLite-restart, exact retry,
+stale replay, foreign owner, denied deferred answer and no resume outbox. Server-target all-feature
+Clippy with warnings denied and format check passed. Classification and bbox browser run
+`/tmp/annotagent-guided-e2e-24802` passed 2/2 in 35.3 seconds, including lost deferral response,
+idempotent retry, refresh, denied late answer, reopening and unchanged task budget before the
+existing correction/continuation/formal-export flow. Web typecheck, 123 units and production build
+passed (existing chunk warning remains). The additional geometry assertion in
+`/tmp/annotagent-guided-e2e-25086` initially compared SVG units to fixed 640px image units; corrected
+it to check normalized width against the actual viewBox, matching the stored 0.15 correction.
+Final repeat and screenshot inspection follow below. TEST-only transport/workspace, no old keys,
+Live quality, real Workspace mutation, push or remote changes; no human usability testing.
+This implements deferred sample-correction requests, not every requested HumanRequest kind or
+the remaining bounded automatic coordinator and scope-change requirements.
+Final `/tmp/annotagent-guided-e2e-25213` passed 1/1 in 15.0 seconds. Inspected
+`conversational-workspace/deferred-request.png`: deferred/uncompleted status, read-only canvas and
+the saved corrected box are shown. The browser verifies normalized width 0.15 after refresh,
+not an assumed SVG pixel scale. The synthetic TEST image and cup result are protocol fixtures,
+not representative detection evidence. Diff hygiene passed; unrelated screenshot changes remain
+unstaged. No fresh full Rust workspace suite or native browser zoom validation is claimed here.
