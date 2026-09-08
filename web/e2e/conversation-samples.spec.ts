@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { expect, test } from "./fixtures";
 
 for(const scenario of ["classification","bbox","classification-review"] as const){
@@ -340,6 +341,49 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   if(requiresReview) {
     await formalResults.getByRole("button",{name:"Review this image",exact:true}).click();
     await expect(page).toHaveURL(new RegExp(`/projects/${project}/review/`));
+    if(scenario==="bbox") {
+      const reviewUrl=page.url();
+      const reviewId=new URL(reviewUrl).pathname.split("/").pop()!;
+      await page.route(`**/api/projects/${project}/reviews/${reviewId}/accept-and-next`,route=>route.fulfill({status:503,json:{error:"TEST decision save unavailable"}}),{times:1});
+      await page.getByRole("button",{name:"Accept and next",exact:true}).click();
+      await expect(page.getByRole("alert").filter({hasText:"TEST decision save unavailable"})).toBeVisible();
+      expect(page.url()).toBe(reviewUrl);
+      expect((await (await request.get(`/api/projects/${project}/reviews/${reviewId}`)).json()).annotation.review_status).not.toBe("human_accepted");
+      const beforeEdit=await (await request.get(`/api/projects/${project}/reviews/${reviewId}`)).json();
+      await page.getByRole("button",{name:"Move box with arrow keys",exact:true}).press("ArrowRight");
+      await page.route(`**/api/annotations/${reviewId}`,route=>route.fulfill({status:503,json:{error:"TEST revision save unavailable"}}),{times:1});
+      await page.getByRole("button",{name:"Save changes",exact:true}).click();
+      await expect(page.getByRole("alert").filter({hasText:"TEST revision save unavailable"})).toBeVisible();
+      await expect(page.getByRole("button",{name:"Save changes",exact:true})).toBeVisible();
+      expect((await (await request.get(`/api/projects/${project}/reviews/${reviewId}`)).json()).annotation.value).toEqual(beforeEdit.annotation.value);
+      await page.getByRole("button",{name:"Accept and next",exact:true}).click();
+      await expect(page.getByRole("heading",{name:"Review complete",exact:true})).toBeVisible();
+      const accepted=await (await request.get(`/api/projects/${project}/reviews/${reviewId}`)).json();
+      expect(accepted.annotation?.review_status,JSON.stringify(accepted)).toBe("human_accepted");
+      expect(accepted.annotation.value).not.toEqual(beforeEdit.annotation.value);
+      await page.reload();
+      await expect(page.getByRole("heading",{name:"Review complete",exact:true})).toBeVisible();
+      const readiness=await (await request.get(`/api/projects/${project}/export-readiness`)).json();
+      expect(readiness.accepted_annotations).toBe(1);
+      expect(readiness.unresolved_reviews).toBe(0);
+      expect(readiness.ready,JSON.stringify(readiness)).toBe(true);
+      await page.getByRole("button",{name:"Continue to export",exact:true}).click();
+      const exportResponse=page.waitForResponse(response=>response.url().includes(`/api/projects/${project}/export`) && response.request().method()==="POST");
+      await page.getByRole("button",{name:/^Export .+ dataset$/}).click();
+      const delivered=await (await exportResponse).json();
+      expect(delivered.report.exported_count,JSON.stringify(delivered)).toBe(1);
+      expect(delivered.report.output_files.length).toBeGreaterThan(0);
+      // Real export file in the isolated server workspace, not a mocked download/report.
+      const exported=JSON.parse(readFileSync(delivered.report.output_files.find((path:string)=>path.endsWith("annotagent-native.json")),"utf8"));
+      expect(exported.project.annotations).toHaveLength(1);
+      expect(exported.project.annotations[0].id).toBe(reviewId);
+      expect(exported.project.annotations[0].value).toEqual(accepted.annotation.value);
+      expect(exported.project.annotations[0].review_status).toBe("human_accepted");
+      await expect(page.getByRole("heading",{name:"Dataset exported successfully",exact:true})).toBeVisible();
+      await page.screenshot({path:"../docs/execution/conversational-workspace/formal-export.png",fullPage:true,animations:"disabled"});
+      await page.goBack();
+      await expect(page).toHaveURL(reviewUrl);
+    }
   } else {
     await formalResults.getByRole("button",{name:"Export confirmed results",exact:true}).click();
     await expect(page).toHaveURL(new RegExp(`/projects/${project}/export`));

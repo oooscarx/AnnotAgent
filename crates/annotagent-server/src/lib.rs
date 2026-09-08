@@ -6594,11 +6594,9 @@ fn reviews(state: &ServerState, target: Option<AnnotationId>) -> ApiResult<Vec<V
             if *target_run_id != run.id {
                 continue;
             }
-            if annotation.review_status == ReviewStatus::NeedsReview {
-                vec![annotation.clone()]
-            } else {
-                Vec::new()
-            }
+            // A stable detail link remains readable after a decision. Only the
+            // queue branch below filters to pending review; refresh is not a queue pop.
+            vec![annotation.clone()]
         } else {
             state
                 .application
@@ -14203,6 +14201,48 @@ export:
         .await;
         assert_eq!(accepted.status(), StatusCode::OK);
         let accepted = response_json(accepted).await;
+        let saved_detail = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("/api/projects/review-demo/reviews/{review_id}"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            saved_detail["annotation"]["review_status"],
+            json!("human_accepted")
+        );
+        let pending_after = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                "/api/projects/review-demo/reviews",
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            pending_after["reviews"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|item| item["id"] != json!(review_id))
+        );
+        assert_eq!(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("/api/projects/foreign-project/reviews/{review_id}"),
+                None,
+            )
+            .await
+            .status(),
+            StatusCode::NOT_FOUND
+        );
         assert!(accepted["next_review"].is_object());
         assert_eq!(accepted["progress"]["reviewed_count"], json!(2));
         assert_eq!(accepted["progress"]["remaining_count"], json!(1));

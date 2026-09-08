@@ -1336,3 +1336,33 @@ fixture evidence has no semantic-quality meaning; no Live model or human usabili
 Long conversation stacks and viewport density remain M4 work. No push or real Workspace changes.
 Next: formal Review/save/return and export completion, remaining conversation orchestration and
 default entry, then full acceptance audit. The overall objective is not yet complete.
+
+### M3 continuation — saved Review detail and real export verification (2026-09-08)
+
+Following the formal bbox result through the real Review API exposed a recovery bug: after
+acceptance, `reviews(state, Some(id))` filtered the requested annotation out because it was no
+longer `needs_review`. The UI could display the POST result but refreshing its stable detail
+returned 404. Explicit detail lookup now retains decided annotations; the unscoped pending
+queue branch and summary queue still filter pending results. Owner validation remains in place.
+The server regression checks readable accepted detail, absence from the pending queue, and
+rejection through another Project's detail route. No annotation status was relaxed or rewritten.
+
+Review Save/Accept now share a synchronous mutation lock as well as disabled controls; Save
+cannot race with a decision before React's next render. The existing revise and decide services
+remain the only writers. Failed revisions leave unsaved edits intact, failed decisions do not
+advance, and retries clear the old error before reporting a fresh outcome.
+
+Final browser evidence `/tmp/annotagent-guided-e2e-4127`: **3/3 passed**. The bbox scenario now
+injects one decision failure, moves the actual box one pixel with its keyboard control, injects
+one revision failure, verifies server geometry unchanged and Save still available, then accepts
+through the real server. It verifies changed geometry/human_accepted on detail, reload restoration,
+zero unresolved reviews and export readiness. It performs an actual Native export in the TEST
+workspace and reads the reported JSON file: exactly the accepted object's ID, corrected geometry
+and human_accepted state are present. It returns via Review to the exact conversation result
+context, then the original sample. Inspected `formal-export.png`. This verifies bbox delivery,
+not Live geometry quality; the classification scenarios do not yet include formal editing/export.
+
+Server **37/37**, relevant strict Clippy, Web **112/112 unit tests**, typecheck/production build,
+format and diff checks passed. No Live/paid inference, real Workspace mutation, remote changes
+or push. Formal Review/export remain canonical pages (not yet embedded with an explicit workspace
+return link); full classification delivery, orchestration/default-entry and M4 audits remain.

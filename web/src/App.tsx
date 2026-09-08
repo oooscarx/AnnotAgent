@@ -9150,6 +9150,7 @@ function ReviewPage({
   const [isNew, setIsNew] = useState(false);
   const [editing, setEditing] = useState(false);
   const [decisionBusy, setDecisionBusy] = useState(false);
+  const reviewMutationPending = useRef(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState("wrong_object");
   const [completedProject, setCompletedProject] = useState<ProjectSummary>();
@@ -9446,7 +9447,12 @@ function ReviewPage({
       return false;
     }
   };
-  const save = () => void persistDraft();
+  const save = async () => {
+    if (reviewMutationPending.current) return;
+    reviewMutationPending.current = true; setDecisionBusy(true); onError("");
+    try { await persistDraft(); }
+    finally { reviewMutationPending.current = false; setDecisionBusy(false); }
+  };
   const createShape = (kind: "bounding_box" | "keypoints" | "polyline" | "polygon") => {
     if (!selected) return onError("Select a review item before creating an annotation.");
     const task = reviewProject?.annotation_schema.find((candidate) => candidate.kind === kind);
@@ -9525,7 +9531,7 @@ function ReviewPage({
     decision: "accept" | "reject",
     reasonCode: string,
   ) => {
-    if (decisionBusy || (selected && ["human_accepted", "rejected"].includes(selected.annotation.review_status) && !hasUnsavedAnnotationChanges)) return;
+    if (reviewMutationPending.current || decisionBusy || (selected && ["human_accepted", "rejected"].includes(selected.annotation.review_status) && !hasUnsavedAnnotationChanges)) return;
     if (!selected || !reviewProject) {
       onError("Select the Review item's Project before recording a decision.");
       return;
@@ -9534,7 +9540,9 @@ function ReviewPage({
       onError("Create the new annotation before deciding the original result.");
       return;
     }
+    reviewMutationPending.current = true;
     setDecisionBusy(true);
+    onError("");
     try {
       if (hasUnsavedAnnotationChanges && !(await persistDraft())) return;
       const reasonSkill = skillReasonOptions.find((option) => option.value === reasonCode)?.skillId;
@@ -9567,6 +9575,7 @@ function ReviewPage({
     } catch (error) {
       onError((error as Error).message);
     } finally {
+      reviewMutationPending.current = false;
       setDecisionBusy(false);
     }
   };
@@ -9850,7 +9859,7 @@ function ReviewPage({
             <div className="review-action-bar" aria-label={t("Review decision controls")}>
               <span className="review-shortcuts" aria-label={t("Keyboard shortcuts")}><kbd>A</kbd>{" "}{t("accept")}{" "}<kbd>R</kbd>{" "}{t("reject")}{" "}<kbd>Space</kbd>{" "}{t("original/result")}</span>
               {editing && hasUnsavedAnnotationChanges && (
-                <button onClick={save}>{isNew ? t("Create annotation") : t("Save changes")}</button>
+                <button disabled={decisionBusy} onClick={()=>void save()}>{decisionBusy ? t("Saving…") : isNew ? t("Create annotation") : t("Save changes")}</button>
               )}
               <button onClick={() => setRejectOpen(true)} disabled={decisionBusy}>{t("Reject & next")}</button>
               <button className="primary" disabled={decisionBusy || isNew} onClick={() => void decideAndAdvance("accept", hasUnsavedAnnotationChanges ? reason : "accepted_as_is")} aria-label={t("Accept and next")}>{decisionBusy ? t("Saving decision…") : t("Accept & next")}</button>
