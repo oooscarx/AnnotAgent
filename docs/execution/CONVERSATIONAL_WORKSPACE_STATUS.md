@@ -1396,3 +1396,29 @@ includes broader message intent/reference handling, conditional human requests b
 setup returns, continuous orchestration, default workspace rollout, actual control lifecycle tests,
 multi-tab/recovery/accessibility/responsive audits and full-workspace regressions. This closes the
 tested bbox/classification formal correction/export path, not the complete conversational objective.
+
+### M2 continuation — independent goals from later messages (2026-09-08)
+
+Removed the first-message-only binding in the workspace. Each saved message can explicitly become
+an annotation goal through the existing `beginConversationTask` service. The service's unique
+conversation/source-message identity restores an existing task instead of duplicating it. The URL
+stores the selected task, and the Schema/Builder card resolves its actual source message; a missing
+task shows an error rather than silently falling back to message one. Sample navigation now retains
+that task context. Selecting a goal clears unrelated Draft/Test/request/result selection, does not
+edit other tasks or reset their grants, and invokes no model. Unsaved message/Schema/sample edits
+must be saved or undone before switching. Task changes abort/reload the task history observer to
+prevent an older task-list response from overriding the new selection.
+
+This is an explicit independent-goal control, not yet automatic intent handling for questions,
+stop commands, SchemaPatch or same-task feedback. Those still require the planned coordinator;
+the UI does not pretend that every saved message has been acted on.
+
+Evidence: new `conversation-goals.spec.ts` passes in `/tmp/annotagent-guided-e2e-5489` (and earlier
+5349/5414): two saved messages, two distinct tasks, selected-goal reload, repeat selection without
+a third task, zero authorized/reserved model calls in both ledgers, and invalid-task non-substitution.
+The first test fixture omitted required Review config and was corrected; no production validation
+was weakened. The existing three conversation sample/correction/formal-delivery scenarios passed
+in `/tmp/annotagent-guided-e2e-5198`. Web **114/114** units, typecheck/build and diff checks passed.
+Inspected `independent-goals.png`; added visible Current annotation goal text after noticing that
+aria-pressed alone did not clearly distinguish selection. No Live tests, real data changes or push.
+Full automatic conversation orchestration, setup, richer references, default entry and M4 remain.
