@@ -29,6 +29,22 @@ pub struct ConversationJourneyDataScope {
 }
 
 impl LocalApplication {
+    pub fn resolve_initial_journey_schema(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        resolved: &ConversationJourneyConsent,
+    ) -> Result<ConversationJourneyRecord> {
+        let original = self
+            .conversation_journey_consent(project, conversation, resolved.task_id, resolved.id)?
+            .ok_or_else(|| anyhow!("Journey consent not found"))?;
+        self.validate_conversation_journey_data(project, conversation, &original.consent)?;
+        self.validate_conversation_journey_data(project, conversation, resolved)?;
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self
+            .store
+            .resolve_conversation_journey_schema(&owner, conversation, resolved)?)
+    }
     pub fn conversation_journey_history(
         &self,
         project: &str,
@@ -71,13 +87,22 @@ impl LocalApplication {
         let dispatch = self
             .store
             .conversation_journey_dispatch(&owner, conversation, task, id)?;
+        let schema = record
+            .consent
+            .schema_proposal
+            .as_ref()
+            .map(|proposal| {
+                self.conversation_call_receipt(project, conversation, task, proposal.call_id)
+            })
+            .transpose()?
+            .flatten();
         let mut sample_value = serde_json::json!(sample);
         if let Some(sample) = sample {
             sample_value["assistance"] =
                 serde_json::json!(self.store.sample_assistance_status(&sample.id)?);
         }
         Ok(
-            serde_json::json!({"record":record,"builder":builder,"sample":sample_value,"dispatch":dispatch}),
+            serde_json::json!({"record":record,"schema":schema,"builder":builder,"sample":sample_value,"dispatch":dispatch}),
         )
     }
 
@@ -239,10 +264,23 @@ impl LocalApplication {
         {
             bail!("Journey task belongs to another conversation");
         }
-        let schema = self.conversation_schema_draft(project, schema_id, None)?;
-        if schema.task_id != task || schema.revision != schema_revision {
-            bail!("Journey Schema changed or belongs to another task; review the current goal");
-        }
+        let schema_digest = if schema_id.is_nil() && schema_revision == 0 {
+            let task_record = self
+                .conversation_tasks(project, conversation)?
+                .into_iter()
+                .find(|value| value.input.id == task)
+                .ok_or_else(|| anyhow!("Task not found"))?;
+            if self.project_goal(project)?["revision"] != task_record.input.schema_revision {
+                bail!("Project goal changed since this task started");
+            }
+            task_record.input.schema_revision
+        } else {
+            let schema = self.conversation_schema_draft(project, schema_id, None)?;
+            if schema.task_id != task || schema.revision != schema_revision {
+                bail!("Journey Schema changed or belongs to another task; review the current goal");
+            }
+            annotagent_image_tools::sha256(&serde_json::to_vec(&schema.definition)?)
+        };
         if !(1..=32).contains(&selections.len())
             || selections.iter().collect::<BTreeSet<_>>().len() != selections.len()
         {
@@ -277,7 +315,7 @@ impl LocalApplication {
         Ok(ConversationJourneyDataScope {
             schema_id,
             schema_revision,
-            schema_digest: annotagent_image_tools::sha256(&serde_json::to_vec(&schema.definition)?),
+            schema_digest,
             images,
             models,
         })
@@ -520,6 +558,7 @@ mod tests {
         assert_eq!(scope.images.len(), 1);
         assert_eq!(scope.models[0].destination, provider.endpoint_summary());
         let consent = ConversationJourneyConsent {
+            schema_proposal: None,
             id: Uuid::new_v4(),
             task_id: task,
             builder_operation_id: Uuid::new_v4(),

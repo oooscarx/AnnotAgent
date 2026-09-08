@@ -173,7 +173,7 @@ pub(super) async fn pending_authorization(
         .map_err(ApiError::bad_request)
 }
 
-fn preview_scope(
+pub(super) fn preview_scope(
     state: &ServerState,
     project: &str,
     conversation: uuid::Uuid,
@@ -244,9 +244,28 @@ pub(super) async fn preview(
 }
 
 pub(super) async fn propose(
+    state: State<ServerState>,
+    path: AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+    consent: Json<SchemaConsent>,
+) -> ApiResult<Json<ConversationCallReceipt>> {
+    Box::pin(propose_owned(state, path, consent, true)).await
+}
+
+/// The journey already owns a bounded background worker. Reuse identical consent
+/// validation and call admission without consuming a nested worker permit.
+pub(super) async fn propose_in_journey(
+    state: State<ServerState>,
+    path: AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+    consent: Json<SchemaConsent>,
+) -> ApiResult<Json<ConversationCallReceipt>> {
+    Box::pin(propose_owned(state, path, consent, false)).await
+}
+
+async fn propose_owned(
     State(state): State<ServerState>,
     AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
     Json(consent): Json<SchemaConsent>,
+    detach: bool,
 ) -> ApiResult<Json<ConversationCallReceipt>> {
     if !consent.allow_unknown_cost {
         return Err(ApiError::bad_request(
@@ -288,6 +307,19 @@ pub(super) async fn propose(
         remote_model: selected.model.remote_model_id,
         scope_hash: consent.scope_hash,
     };
+    if !detach {
+        return state
+            .application
+            .execute_conversation_schema(
+                &project,
+                &execution,
+                &provider,
+                CancellationToken::default(),
+            )
+            .await
+            .map(Json)
+            .map_err(ApiError::bad_request);
+    }
     // A dropped HTTP response must not drop an admitted model operation. The
     // existing call receipt/cancellation service remains the execution owner.
     let permit = state.journey_workers.clone().try_acquire_owned().map_err(|_| ApiError {

@@ -11,8 +11,11 @@ pub(super) struct JourneySelection {
     consent_id: uuid::Uuid,
     builder_operation_id: uuid::Uuid,
     sample_operation_id: uuid::Uuid,
+    #[serde(default)]
     schema_id: uuid::Uuid,
+    #[serde(default)]
     schema_revision: u64,
+    schema_call_id: Option<uuid::Uuid>,
     planner_model_id: Option<ModelProfileId>,
     /// JSON array of exact Model Profile / Plugin selection IDs, not model hashes.
     allowed_models: String,
@@ -47,6 +50,70 @@ pub(super) async fn preview(
             &models,
         )
         .map_err(ApiError::bad_request)?;
+    if let Some(call_id) = selection.schema_call_id {
+        if !selection.schema_id.is_nil()
+            || selection.schema_revision != 0
+            || state
+                .application
+                .optional_conversation_builder_budget(&project, conversation, task)
+                .map_err(ApiError::bad_request)?
+                .is_some()
+        {
+            return Err(ApiError::bad_request(
+                "Initial journey requires an unexecuted goal; existing Schema work keeps its original authorization",
+            ));
+        }
+        let (model, mut builder) = conversation_schema::preview_scope(
+            &state,
+            &project,
+            conversation,
+            task,
+            selection.planner_model_id,
+        )?;
+        let expires_at = chrono::Utc::now() + chrono::Duration::minutes(30);
+        let proposal = annotagent_storage::ConversationSchemaAuthorization {
+            call_id,
+            model_id: model.model.id,
+            scope_hash: builder["scope_hash"]
+                .as_str()
+                .ok_or_else(|| ApiError::internal("Schema scope missing"))?
+                .into(),
+            expires_at,
+            allow_unknown_cost: false,
+        };
+        let consent = ConversationJourneyConsent {
+            schema_proposal: Some(proposal.clone()),
+            id: selection.consent_id,
+            task_id: task,
+            builder_operation_id: selection.builder_operation_id,
+            builder_model_id: Some(model.model.id),
+            previous_grant_id: None,
+            sample_operation_id: selection.sample_operation_id,
+            builder_scope_hash: proposal.scope_hash,
+            schema_id: data.schema_id,
+            schema_revision: data.schema_revision,
+            schema_digest: data.schema_digest.clone(),
+            images: data.images.clone(),
+            allowed_models: data
+                .models
+                .iter()
+                .map(|model| model.scope.clone())
+                .collect(),
+            maximum_builder_calls: 8,
+            maximum_sample_calls: 12,
+            expires_at,
+            allow_unknown_cost: false,
+        };
+        builder["maximum_builder_calls"] = json!(8);
+        builder["maximum_calls"] = json!(9);
+        let project_limit = state
+            .application
+            .project_conversation_call_limit(&project)
+            .map_err(ApiError::bad_request)?;
+        return Ok(Json(
+            json!({"consent":consent,"builder":builder,"data":data,"project_call_limit":project_limit,"estimated_cost":null,"operation":"One text-only Schema proposal, then one bounded Builder and sample test using only the listed images/models. Clarification or invalid Schema stops before image inference. No publish or annotation acceptance."}),
+        ));
+    }
     let builder_selection = BuilderSelection {
         operation_id: selection.builder_operation_id,
         schema_id: selection.schema_id,
@@ -63,6 +130,7 @@ pub(super) async fn preview(
         AuthorizationBase::Preview,
     )?;
     let consent = ConversationJourneyConsent {
+        schema_proposal: None,
         id: selection.consent_id,
         task_id: task,
         builder_operation_id: selection.builder_operation_id,
@@ -132,6 +200,27 @@ pub(super) async fn save(
             "Explicitly confirm the bounded journey and unknown cost",
         ));
     }
+    if let Some(proposal) = &consent.schema_proposal {
+        let (_, preview) = conversation_schema::preview_scope(
+            &state,
+            &project,
+            conversation,
+            task,
+            Some(proposal.model_id),
+        )?;
+        if preview["scope_hash"] != proposal.scope_hash
+            || consent.builder_scope_hash != proposal.scope_hash
+        {
+            return Err(ApiError::bad_request(
+                "Initial planning model or goal scope changed",
+            ));
+        }
+        return state
+            .application
+            .save_conversation_journey_consent(&project, conversation, &consent)
+            .map(Json)
+            .map_err(ApiError::bad_request);
+    }
     let selection = BuilderSelection {
         operation_id: consent.builder_operation_id,
         schema_id: consent.schema_id,
@@ -199,6 +288,12 @@ pub(super) async fn revoke(
         .application
         .revoke_conversation_journey_consent(&project, conversation, task, id)
         .map_err(ApiError::bad_request)?;
+    if let Some(proposal) = &saved.consent.schema_proposal {
+        state
+            .application
+            .cancel_conversation_schema(&project, conversation, task, proposal.call_id)
+            .map_err(ApiError::bad_request)?;
+    }
     state
         .application
         .cancel_conversation_schema(
@@ -315,11 +410,88 @@ async fn advance(
     if !current["sample"].is_null() {
         return Ok(Json(current));
     }
-    let saved = state
+    let mut saved = state
         .application
         .require_active_conversation_journey(&project, conversation, task, id)
         .map_err(ApiError::bad_request)?;
-    let consent = &saved.consent;
+    if saved.resolved_consent.is_none() {
+        if let Some(proposal) = saved.consent.schema_proposal.clone() {
+            state
+                .application
+                .validate_conversation_journey_data(&project, conversation, &saved.consent)
+                .map_err(ApiError::bad_request)?;
+            let (_, preview) = conversation_schema::preview_scope(
+                &state,
+                &project,
+                conversation,
+                task,
+                Some(proposal.model_id),
+            )?;
+            if preview["scope_hash"] != proposal.scope_hash {
+                return Err(ApiError::bad_request(
+                    "Initial goal or planning model changed",
+                ));
+            }
+            let receipt = match state
+                .application
+                .conversation_call_receipt(&project, conversation, task, proposal.call_id)
+                .map_err(ApiError::bad_request)?
+            {
+                Some(receipt) => receipt,
+                None => {
+                    Box::pin(conversation_schema::propose_in_journey(
+                        State(state.clone()),
+                        AxumPath((project.clone(), conversation, task)),
+                        Json(proposal.clone()),
+                    ))
+                    .await?
+                    .0
+                }
+            };
+            if receipt.status != annotagent_storage::ConversationCallStatus::Completed
+                || serde_json::to_value(&receipt).map_err(ApiError::internal)?["evidence"]["decision"]
+                    ["Ok"]["decision"]
+                    != "draft"
+            {
+                return status(State(state), AxumPath((project, conversation, task, id))).await;
+            }
+            let schema = state
+                .application
+                .save_conversation_schema_draft(&project, conversation, task, proposal.call_id)
+                .map_err(ApiError::bad_request)?;
+            let (_, builder) = conversation_builder::scope(
+                &state,
+                &project,
+                conversation,
+                task,
+                &BuilderSelection {
+                    operation_id: saved.consent.builder_operation_id,
+                    schema_id: schema.id,
+                    schema_revision: schema.revision,
+                    model_id: saved.consent.builder_model_id,
+                    repair_request_id: None,
+                },
+                AuthorizationBase::Existing(proposal.call_id),
+            )?;
+            let mut resolved = saved.consent.clone();
+            resolved.schema_proposal = None;
+            resolved.schema_id = schema.id;
+            resolved.schema_revision = schema.revision;
+            resolved.schema_digest = annotagent_image_tools::sha256(
+                &serde_json::to_vec(&schema.definition).map_err(ApiError::internal)?,
+            );
+            resolved.builder_scope_hash = builder["scope_hash"]
+                .as_str()
+                .ok_or_else(|| ApiError::internal("Builder scope missing"))?
+                .into();
+            resolved.previous_grant_id = Some(proposal.call_id);
+            saved = state
+                .application
+                .resolve_initial_journey_schema(&project, conversation, &resolved)
+                .map_err(ApiError::bad_request)?;
+        }
+    }
+    let consent = saved.effective_consent();
     if current["builder"].is_null() {
         state
             .application

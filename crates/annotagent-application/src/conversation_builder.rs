@@ -279,6 +279,51 @@ impl LocalApplication {
         };
         let constraints = WorkflowConstraints::default();
         let mut input = self.workflow_advisor_input(project, settings, constraints.clone())?;
+        if let Some(journey) = self.store.conversation_journey_for_builder(
+            &owner,
+            execution.conversation_id,
+            execution.task_id,
+            execution.operation_id,
+        )? {
+            if journey.revoked || journey.consent.expires_at <= chrono::Utc::now() {
+                bail!("Journey authorization was revoked or expired");
+            }
+            let allowed = journey
+                .effective_consent()
+                .allowed_models
+                .iter()
+                .map(|model| model.model_id.as_str())
+                .collect::<std::collections::BTreeSet<_>>();
+            input
+                .model_profiles
+                .retain(|model| allowed.contains(format!("model-profile:{}", model.id).as_str()));
+            input.expert_models.retain(|model| {
+                allowed.contains(model.model_id.as_str())
+                    || match &model.connection {
+                        annotagent_core::ModelConnection::ProviderModel {
+                            provider_id,
+                            remote_model_id,
+                        } => input.model_profiles.iter().any(|profile| {
+                            profile.provider_id == *provider_id
+                                && profile.remote_model_id == *remote_model_id
+                        }),
+                        _ => false,
+                    }
+            });
+            input.model_registry.retain(|model| {
+                allowed.contains(model.id.as_str())
+                    || input.model_profiles.iter().any(|profile| {
+                        profile.remote_model_id == model.id
+                            || profile.remote_model_id == model.model
+                    })
+            });
+            input.provider_profiles.retain(|provider| {
+                input
+                    .model_profiles
+                    .iter()
+                    .any(|model| model.provider_id == provider.id)
+            });
+        }
         let binding = WorkflowSchemaBinding {
             schema_draft_id: schema.id.to_string(),
             revision: schema.revision,

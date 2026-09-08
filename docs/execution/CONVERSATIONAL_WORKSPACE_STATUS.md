@@ -2765,3 +2765,49 @@ claim; all transport is explicit TEST, not Live quality evidence.
 Initial Schema-to-Builder/sample consent integration remains outstanding, as do the other
 incomplete objective items. No real workspace restart/data changes, old keys, push or remote
 changes. The lifecycle correction is a prerequisite, not a redefinition of the full goal.
+
+### M2 first-goal service chain — immutable authorization before Schema exists
+
+Extended the existing journey envelope with an optional, explicit text-only Schema proposal.
+For this source only, nil Schema ID/revision zero denote unresolved output; no placeholder Schema
+is created. The envelope freezes the original Project goal revision, planner scope, one Schema
+call ID, Builder/sample IDs, image digests, exact allowed model bindings, limits and expiry.
+Both unknown-cost acceptances must be explicit. Existing saved-Schema envelopes remain readable.
+
+Migration 42 stores one immutable resolved consent after the actual authorized Schema call
+produces its valid first Draft. Original consent is never rewritten. Resolution verifies task,
+source call, completed draft decision, Schema digest/revision, unchanged images/model set/call
+limits/expiry, and original goal/data state after planning. Another Schema, a later human edit,
+or a different resolved Builder scope cannot replace that seal. This is authorization evidence,
+not another Schema/Workflow implementation or extra budget grant.
+
+The existing bounded background journey now invokes the same Schema service and then Builder
+and Sample Operation. Nested Schema execution reuses the already-owned worker permit rather
+than attempting a second admission. Clarification, invalid output and in-doubt receipts return
+saved state without Builder/image execution. Revoking an initial journey also cancels its Schema
+call. No automatic model retry, publication or formal annotation acceptance. Clarification still
+uses the existing answer UI/service; automatic continuation after an answer is not yet claimed.
+
+Initial `/tmp/annotagent-guided-e2e-39528` passed classification and clarification, but bbox was
+correctly blocked by the sample scope guard: the Builder had selected an earlier TEST project's
+model. Inspected its persisted Draft binding to confirm the mismatch. Fixed the planning context,
+not the permission check: journey Builders now receive only authorized Model Profiles, matching
+expert manifests/vision descriptors and Provider summaries. Existing execution-time sealing is
+retained as a second check. The test intentionally keeps earlier TEST models registered to cover
+that regression. `/tmp/annotagent-guided-e2e-39917` then passed all three scenarios.
+
+Final `/tmp/annotagent-guided-e2e-40408` passed 5/5 in 30.9 s: initial classification, bbox,
+clarification, invalid-empty-label Schema, plus the existing saved-label joint UI. Each initial
+test checks original consent equality, one Schema receipt, real resolved revision and report,
+or absence of Builder/sample for blocked Schema outcomes; explicit replay does not add calls.
+Storage resolution tests cover foreign ownership, unrelated human Schema rejection, changed
+limits, immutable replay/replacement, restart persistence and unchanged call count. Six focused
+Storage journey tests passed. Server 40 tests, Application 101 unit + 1 integration tests passed
+(paid Provider smoke remains explicitly ignored), final Server/E2E-fixture Clippy and format/diff
+checks passed. Production Web build retains the known chunk warning.
+
+This stage exposes the service path, not the new first-goal UI. The current default frontend
+still begins joint execution after saved labels; it needs initial-envelope display, Schema
+progress/clarification handoff and resolved-revision restoration. No new UI screenshot claim here;
+existing UI scenario ran as regression and its regenerated screenshots remain unstaged. No Live
+quality/human-usability claim, old keys, user Workspace migration/restart, push or remote changes.

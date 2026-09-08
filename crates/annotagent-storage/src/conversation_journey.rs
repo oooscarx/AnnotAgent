@@ -27,6 +27,10 @@ pub struct JourneyImageScope {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConversationJourneyConsent {
+    /// Present only when the authorized text call must first produce a Schema.
+    /// Nil `schema_id` and revision zero mean unresolved, never a fake Schema.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_proposal: Option<crate::ConversationSchemaAuthorization>,
     pub id: Uuid,
     pub task_id: Uuid,
     pub builder_operation_id: Uuid,
@@ -68,6 +72,14 @@ pub struct ConversationJourneyRecord {
     pub consent: ConversationJourneyConsent,
     pub revoked: bool,
     pub sample: Option<JourneySampleScope>,
+    pub resolved_consent: Option<ConversationJourneyConsent>,
+}
+
+impl ConversationJourneyRecord {
+    #[must_use]
+    pub fn effective_consent(&self) -> &ConversationJourneyConsent {
+        self.resolved_consent.as_ref().unwrap_or(&self.consent)
+    }
 }
 
 fn invalid(message: &str) -> StorageError {
@@ -85,12 +97,26 @@ fn validate(input: &ConversationJourneyConsent) -> Result<(), StorageError> {
         input.task_id,
         input.builder_operation_id,
         input.sample_operation_id,
-        input.schema_id,
     ];
     if ids.iter().any(Uuid::is_nil)
         || input.builder_model_id.is_none_or(|id| id.0.is_nil())
         || input.builder_operation_id == input.sample_operation_id
-        || input.schema_revision == 0
+        || match &input.schema_proposal {
+            None => input.schema_id.is_nil() || input.schema_revision == 0,
+            Some(proposal) => {
+                !input.schema_id.is_nil()
+                    || input.schema_revision != 0
+                    || proposal.call_id.is_nil()
+                    || proposal.call_id == input.builder_operation_id
+                    || proposal.call_id == input.sample_operation_id
+                    || Some(proposal.model_id) != input.builder_model_id
+                    || proposal.scope_hash != input.builder_scope_hash
+                    || proposal.expires_at != input.expires_at
+                    || !proposal.allow_unknown_cost
+                    || input.previous_grant_id.is_some()
+                    || input.maximum_builder_calls != 8
+            }
+        }
         || !digest(&input.schema_digest)
         || !digest(&input.builder_scope_hash)
         || !(1..=3).contains(&input.images.len())
@@ -180,12 +206,26 @@ fn read(
             consent: serde_json::from_str(&input)?,
             revoked,
             sample: sample.map(|v| serde_json::from_str(&v)).transpose()?,
+            resolved_consent: db.query_row("SELECT resolved_json FROM conversation_journey_schema_resolution WHERE consent_id=?1",[id.to_string()],|row|row.get::<_,String>(0)).optional()?.map(|value|serde_json::from_str(&value)).transpose()?,
         })
     })
     .transpose()
 }
 
 impl SqliteStore {
+    pub fn conversation_journey_for_builder(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        builder: Uuid,
+    ) -> Result<Option<ConversationJourneyRecord>, StorageError> {
+        self.with_connection(|db| {
+            owned(db,project,conversation,task)?;
+            let id:Option<String>=db.query_row("SELECT id FROM conversation_journey_consents WHERE task_id=?1 AND builder_operation_id=?2",params![task.to_string(),builder.to_string()],|row|row.get(0)).optional()?;
+            id.map(|id|read(db,task,Uuid::parse_str(&id).map_err(|_|invalid("Invalid journey ID"))?)).transpose().map(Option::flatten)
+        })
+    }
     pub fn conversation_journey_ids(
         &self,
         project: &str,
@@ -281,12 +321,46 @@ impl SqliteStore {
             }
             let now=Utc::now();
             if input.expires_at<=now || input.expires_at>now+chrono::Duration::minutes(31){return Err(invalid("Journey consent is expired or exceeds its validity window"));}
+            if input.schema_proposal.is_none() {
             let revision=i64::try_from(input.schema_revision).map_err(|_|invalid("Journey Schema revision is out of range"))?;
             let definition:Option<String>=tx.query_row("SELECT r.definition_json FROM conversation_schema_drafts d JOIN conversation_schema_revisions r ON r.draft_id=d.id WHERE d.id=?1 AND d.task_id=?2 AND r.revision=?3",params![input.schema_id.to_string(),input.task_id.to_string(),revision],|row|row.get(0)).optional()?;
             if definition.as_ref().is_none_or(|value|annotagent_image_tools::sha256(value.as_bytes())!=input.schema_digest){return Err(invalid("Journey Schema snapshot is unavailable or belongs to another task"));}
+            } else {
+                let goal:String=tx.query_row("SELECT schema_revision FROM conversation_tasks WHERE id=?1",[input.task_id.to_string()],|row|row.get(0))?;
+                if goal != input.schema_digest {return Err(invalid("Initial journey goal revision changed"));}
+            }
             tx.execute("INSERT INTO conversation_journey_consents(id,task_id,input_json,created_at,builder_operation_id,sample_operation_id) VALUES(?1,?2,?3,?4,?5,?6)",params![input.id.to_string(),input.task_id.to_string(),serde_json::to_string(input)?,now.to_rfc3339(),input.builder_operation_id.to_string(),input.sample_operation_id.to_string()])?;
             tx.commit()?;
-            Ok(ConversationJourneyRecord {consent:input.clone(),revoked:false,sample:None})
+            Ok(ConversationJourneyRecord {consent:input.clone(),revoked:false,sample:None,resolved_consent:None})
+        })
+    }
+    pub fn resolve_conversation_journey_schema(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        resolved: &ConversationJourneyConsent,
+    ) -> Result<ConversationJourneyRecord, StorageError> {
+        validate(resolved)?;
+        self.with_connection(|db| {
+            let tx=db.unchecked_transaction()?;
+            owned(&tx,project,conversation,resolved.task_id)?;
+            let mut saved=read(&tx,resolved.task_id,resolved.id)?.ok_or_else(||invalid("Journey consent not found"))?;
+            if saved.revoked || saved.consent.expires_at<=Utc::now(){return Err(invalid("Journey consent is revoked or expired"));}
+            if let Some(previous)=&saved.resolved_consent {
+                if previous!=resolved{return Err(invalid("Journey Schema resolution is immutable"));}
+                return Ok(saved);
+            }
+            let proposal=saved.consent.schema_proposal.as_ref().ok_or_else(||invalid("Journey already starts with a saved Schema"))?;
+            let mut expected=saved.consent.clone();
+            expected.schema_proposal=None;
+            expected.schema_id=resolved.schema_id;expected.schema_revision=resolved.schema_revision;
+            expected.schema_digest.clone_from(&resolved.schema_digest);expected.builder_scope_hash.clone_from(&resolved.builder_scope_hash);
+            expected.previous_grant_id=Some(proposal.call_id);
+            if expected!=*resolved || resolved.schema_revision!=1{return Err(invalid("Schema resolution expanded the original journey scope"));}
+            let definition:Option<String>=tx.query_row("SELECT r.definition_json FROM conversation_schema_drafts d JOIN conversation_schema_revisions r ON r.draft_id=d.id JOIN conversation_model_calls c ON c.id=d.source_call_id WHERE d.id=?1 AND d.task_id=?2 AND d.source_call_id=?3 AND r.revision=1 AND c.status='completed' AND json_extract(c.evidence_json,'$.decision.Ok.decision')='draft'",params![resolved.schema_id.to_string(),resolved.task_id.to_string(),proposal.call_id.to_string()],|row|row.get(0)).optional()?;
+            if definition.is_none_or(|value|annotagent_image_tools::sha256(value.as_bytes())!=resolved.schema_digest){return Err(invalid("Schema is not the authorized call's valid initial Draft"));}
+            tx.execute("INSERT INTO conversation_journey_schema_resolution(consent_id,resolved_json) VALUES(?1,?2)",params![resolved.id.to_string(),serde_json::to_string(resolved)?])?;
+            tx.commit()?;saved.resolved_consent=Some(resolved.clone());Ok(saved)
         })
     }
     /// Seal one concrete sample continuation. A retry cannot substitute a later
@@ -313,7 +387,7 @@ impl SqliteStore {
                 }
                 return Ok(saved);
             }
-            if saved.consent.expires_at <= Utc::now() || !fits(&saved.consent, sample) {
+            if saved.consent.expires_at <= Utc::now() || !fits(saved.effective_consent(), sample) {
                 return Err(invalid(
                     "Generated sample scope is outside the original journey consent",
                 ));
@@ -445,6 +519,7 @@ mod tests {
             .create_human_conversation_schema_draft(&project, task.id, Uuid::new_v4(), &definition)
             .unwrap();
         let consent = ConversationJourneyConsent {
+            schema_proposal: None,
             id: Uuid::new_v4(),
             task_id: task.id,
             builder_operation_id: Uuid::new_v4(),
@@ -489,6 +564,130 @@ mod tests {
             maximum_calls: 10,
         };
         (project, conversation, consent, sample)
+    }
+
+    #[test]
+    fn initial_schema_resolution_is_owned_immutable_and_does_not_expand_consent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TEST-initial.db");
+        let store = SqliteStore::open(&path).unwrap();
+        let (project, conversation, human, _) = setup(&store);
+        let call = Uuid::new_v4();
+        let mut initial = human.clone();
+        initial.schema_proposal = Some(crate::ConversationSchemaAuthorization {
+            call_id: call,
+            model_id: human.builder_model_id.unwrap(),
+            scope_hash: human.builder_scope_hash.clone(),
+            expires_at: human.expires_at,
+            allow_unknown_cost: true,
+        });
+        initial.schema_id = Uuid::nil();
+        initial.schema_revision = 0;
+        initial.schema_digest = "a".repeat(64);
+        let before = store
+            .save_conversation_journey(&project, conversation, &initial)
+            .unwrap();
+        assert!(before.resolved_consent.is_none());
+        assert_eq!(before.consent, initial);
+        let mut unrelated = human.clone();
+        unrelated.previous_grant_id = Some(call);
+        assert!(
+            store
+                .resolve_conversation_journey_schema(&project, conversation, &unrelated)
+                .is_err()
+        );
+        store
+            .authorize_conversation_calls(
+                &project,
+                &crate::ConversationCallGrant {
+                    id: call,
+                    task_id: initial.task_id,
+                    scope_hash: initial.builder_scope_hash.clone(),
+                    maximum_calls: 1,
+                    expires_at: initial.expires_at,
+                },
+            )
+            .unwrap();
+        store
+            .reserve_conversation_call(
+                &project,
+                initial.task_id,
+                call,
+                &initial.builder_scope_hash,
+                &"c".repeat(64),
+            )
+            .unwrap();
+        store
+            .finish_conversation_call(
+                &project,
+                initial.task_id,
+                call,
+                crate::ConversationCallStatus::Completed,
+                serde_json::json!({"decision":{"Ok":{"decision":"draft"}}}),
+            )
+            .unwrap();
+        let definition = crate::ConversationSchemaDefinition {
+            goal: "TEST classify cups".into(),
+            task: serde_json::from_value(
+                serde_json::json!({"id":"objects","kind":"classification","labels":["cup"]}),
+            )
+            .unwrap(),
+            boundary_rules: vec![],
+        };
+        let schema = store
+            .create_conversation_schema_draft(&project, initial.task_id, call, &definition)
+            .unwrap();
+        let mut resolved = human;
+        resolved.schema_id = schema.id;
+        resolved.previous_grant_id = Some(call);
+        resolved.builder_scope_hash = "d".repeat(64);
+        let mut expanded = resolved.clone();
+        expanded.maximum_sample_calls = 11;
+        assert!(
+            store
+                .resolve_conversation_journey_schema(&project, conversation, &expanded)
+                .is_err()
+        );
+        assert!(
+            store
+                .resolve_conversation_journey_schema("foreign", conversation, &resolved)
+                .is_err()
+        );
+        let saved = store
+            .resolve_conversation_journey_schema(&project, conversation, &resolved)
+            .unwrap();
+        assert_eq!(saved.consent, initial);
+        assert_eq!(saved.effective_consent(), &resolved);
+        assert_eq!(
+            store
+                .resolve_conversation_journey_schema(&project, conversation, &resolved)
+                .unwrap(),
+            saved
+        );
+        let mut replaced = resolved.clone();
+        replaced.builder_scope_hash = "e".repeat(64);
+        assert!(
+            store
+                .resolve_conversation_journey_schema(&project, conversation, &replaced)
+                .is_err()
+        );
+        drop(store);
+        let reopened = SqliteStore::open(path).unwrap();
+        assert_eq!(
+            reopened
+                .conversation_journey(&project, conversation, initial.task_id, initial.id)
+                .unwrap()
+                .unwrap(),
+            saved
+        );
+        assert_eq!(
+            reopened
+                .conversation_call_budget(&project, initial.task_id)
+                .unwrap()
+                .unwrap()
+                .used_calls,
+            1
+        );
     }
 
     #[test]

@@ -400,7 +400,9 @@ async fn openai_completion(
             return Json(json!({"error":"TEST schema proposal must be text only"}));
         }
         let classification = serialized.contains("室内");
-        let arguments = if request["model"] == "e2e-conversation-clarify" {
+        let arguments = if request["model"] == "e2e-conversation-invalid-schema" {
+            json!({"decision":"draft","kind":"classification","labels":[],"multi_label":false,"attributes":{},"boundary_rules":[],"rationale":"TEST invalid empty label set"})
+        } else if request["model"] == "e2e-conversation-clarify" {
             json!({"decision":"clarify","question":"TEST: Which output type and labels should this task use?","rationale":"TEST ambiguous goal; human semantics required"})
         } else {
             json!({"decision":"draft","kind":if classification {"classification"} else {"bounding_box"},"labels":if classification {json!(["室内","室外"])} else {json!(["cup"])},"multi_label":false,"attributes":{},"boundary_rules":["TEST fixture rule"],"rationale":"TEST scripted Schema proposal, not Live model quality evidence"})
