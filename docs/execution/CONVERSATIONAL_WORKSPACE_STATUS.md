@@ -1,6 +1,6 @@
 # Conversational Annotation Workspace — execution record
 
-## Current checkpoint (after `f3345db`, with unified build/sample UI; not a completion declaration)
+## Current checkpoint (after `7a5a87f`, with initial-goal journey UI; not a completion declaration)
 
 The default Project entry now uses the persisted conversation/image workspace. Explicit goal
 selection survives re-entry, sample candidate references are frozen, and clarification/correction
@@ -11,12 +11,13 @@ Authorized valid Schema proposals now become editable Drafts without a separate 
 click; idempotent retry preserves subsequent human edits and never issues another model call.
 Stop/pause commands have a separately bounded admission lane under ordinary write saturation.
 
-Saved labels now offer one bounded build-and-sample authorization, backed by persistent
-background dispatch and the existing Builder/Sample services. Refresh restores owned work;
-explicit phase-by-phase building remains available as an advanced path.
+Initial goals and saved labels now offer one bounded authorization, backed by persistent
+background dispatch and the existing Schema/Builder/Sample services. Valid first proposals
+continue to samples without a second phase consent. Refresh restores owned work;
+explicit phase-by-phase building and manual labels remain available.
 
-Still incomplete: advancing through initial Schema/Builder/sample stages under one matching
-authorization (the unified path currently starts from saved labels); automatic interpretation of scoped conversational feedback;
+Still incomplete: continuing the original bounded authorization after a human clarification
+answer (currently requires a fresh preview from saved labels); automatic interpretation of scoped conversational feedback;
 the other structured visual/setup request kinds; complete scope-change/Schema patch and stop-text
 semantics; large-history performance and the remaining accessibility/context restoration audit.
 Schema setup and repair phase cards still require explicit intermediate actions. Live model quality, native
@@ -2811,3 +2812,48 @@ still begins joint execution after saved labels; it needs initial-envelope displ
 progress/clarification handoff and resolved-revision restoration. No new UI screenshot claim here;
 existing UI scenario ran as regression and its regenerated screenshots remain unstaged. No Live
 quality/human-usability claim, old keys, user Workspace migration/restart, push or remote changes.
+
+### M2 first-goal UI — one explicit authorization through saved sample results
+
+The existing Journey card now accepts an initial goal as well as a saved Schema. The default
+composer prepares an initial envelope with one Schema call plus the bounded Builder/sample
+calls. The acceptance includes both unknown-cost acknowledgements and freezes the original
+envelope before execution. Preview and restoration remain read-only. The UI shows Schema
+progress with direct Stop, hands a completed valid proposal to the existing editable Schema
+card, and restores the resolved revision and existing sample result rather than asking for a
+second phase consent. Manual labels and explicit phase-by-phase execution remain available.
+
+Clarification and invalid output stop before image inference. A saved clarification answer
+returns to its actual human Schema; the unresolved initial record is not presented as a plan
+that can be resumed against unrelated labels. Same-envelope continuation after answering is
+still incomplete: the user currently reviews a new bounded request. Existing data/history are
+retained; this filter does not delete the original authorization. No automatic publish or formal
+annotation acceptance was added.
+
+Isolated `/tmp/annotagent-guided-e2e-42100`: all six initial-journey cases passed (13.6 s),
+including real browser goal submission, initial authorization, reload during slow Schema,
+classification results in the existing canvas, clarification answer save/reload, backend bbox,
+and invalid Schema. Refresh/navigation adds no execution POST; original envelope stays equal,
+one Schema call is recorded, and blocked outcomes create no Builder/sample. Typecheck and all
+123 Web unit tests passed; production build passed with the known chunk-size warning.
+Format and diff checks passed. This frontend stage does not claim a new full Rust regression.
+
+Reviewed screenshots: `initial-goal-consent.png` (bounded scope and unknown cost),
+`initial-goal-result.png` (existing terminal classification canvas), and
+`initial-goal-clarification.png` (actual clarification controls, cropped to that panel).
+The full-page screenshot originally clipped the scrollable clarification panel; the panel
+capture replaces it. TEST synthetic images/HTTP fixture outputs are not Live quality evidence.
+
+The first legacy regression run `/tmp/annotagent-guided-e2e-42189` passed four of six cases.
+One test still expected Schema-only authorization from the now-joint default composer; it now
+explicitly selects the retained phase-by-phase action. The second failure exposed a real
+restoration defect: a pre-admission cancelled Schema with no call receipt looked like an unused
+goal. The initial-mode check now includes saved cancellation records, preserving the cancelled
+screen after refresh. Final rerun results are recorded below.
+
+Final `/tmp/annotagent-guided-e2e-42349`: 6/6 passed (1.1 min), covering clarification
+answer/cancel, both no-LLM manual label types, aborted-client Schema execution/explicit stop,
+and the existing complete Schema authorization/budget/recovery regression. The latter verifies
+cancelled status after refresh and absence of a new proposal action. No user Workspace access,
+new inference authorization, push or remote changes. Other regenerated historical screenshots
+remain unstaged. Goal remains active; this is an initial-goal UI milestone, not final acceptance.

@@ -5,6 +5,7 @@ export type SampleOperation = {
   error?: string | null;
 };
 export type JourneyConsent = {
+  schema_proposal?:import("./types").ConversationSchemaAuthorization;
   id:string; task_id:string; builder_operation_id:string; sample_operation_id:string;
   builder_model_id:string; previous_grant_id:string|null; builder_scope_hash:string;
   schema_id:string; schema_revision:number; schema_digest:string;
@@ -13,7 +14,8 @@ export type JourneyConsent = {
   maximum_builder_calls:number; maximum_sample_calls:number; expires_at:string; allow_unknown_cost:boolean;
 };
 export type JourneyStatus = {
-  record:{consent:JourneyConsent;revoked:boolean;sample:{draft_id:string;draft_revision:number}|null};
+  record:{consent:JourneyConsent;resolved_consent?:JourneyConsent|null;revoked:boolean;sample:{draft_id:string;draft_revision:number}|null};
+  schema?:import("./types").ConversationCallReceipt|null;
   builder:import("./types").ConversationBuilderOperation|null; sample:SampleOperation|null;
   dispatch:{attempt_id:string;status:"running"|"settled"|"interrupted";error:string|null}|null;
 };

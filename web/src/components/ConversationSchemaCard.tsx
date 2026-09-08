@@ -5,11 +5,15 @@ import { ConversationSchemaEditor } from "./ConversationSchemaEditor";
 import { ConversationBudgetNotice } from "./ConversationBudgetNotice";
 import {projectBudgetAvailability} from "../projectBudget";
 import { ConversationHumanSchema } from "./ConversationHumanSchema";
+import {ConversationJourneyCard} from "./ConversationJourneyCard";
 import type { OpenConversationSample } from "./ConversationSampleCard";
 
 /** Restores server objects; mounting never creates a task or invokes a model. */
 export function ConversationSchemaCard({ project, conversation, message, onDirtyChange, onSample, onAssistance, onSetup,prepareRequested }: { prepareRequested?:boolean; project: string; conversation: string; message: string; onDirtyChange: (dirty: boolean) => void; onAssistance?:()=>void; onSample: OpenConversationSample; onSetup?:(task?:string)=>void }) {
   const [task, setTask] = useState<ConversationTask>();
+  const [initialJourney,setInitialJourney]=useState(true);
+  const [initialPrepare,setInitialPrepare]=useState(false);
+  const [journeyActive,setJourneyActive]=useState(false);
   const [manual,setManual]=useState(false);
   const [humanSchema,setHumanSchema]=useState<string>();
   const [preview, setPreview] = useState<ConversationSchemaPreview>();
@@ -29,7 +33,7 @@ export function ConversationSchemaCard({ project, conversation, message, onDirty
     // Only the explicit composer action requests this read-only preview. Mount and
     // reload never create tasks or authorize inference. Task identity was saved first.
     if(prepareRequested&&ready&&task&&!preparationHandled.current&&!receipt&&!manual&&!cancelled){
-      preparationHandled.current=true;void prepare();
+      preparationHandled.current=true;if(initialJourney)void prepareInitial();else void prepare();
     }
   },[prepareRequested,ready,task?.input.id,receipt,manual,cancelled]);
   useEffect(() => {
@@ -40,11 +44,14 @@ export function ConversationSchemaCard({ project, conversation, message, onDirty
       const cancellations = current ? await api.conversationSchemaCancellations(project, conversation, current.input.id, controller.signal) : [];
       const human = current ? await api.humanConversationSchemas(project,conversation,current.input.id,controller.signal) : [];
       const authorization=current ? await api.pendingSchemaAuthorization(project,conversation,current.input.id,controller.signal) : null;
+      const journeys=current ? await api.journeyHistory(project,conversation,current.input.id,controller.signal) : {items:[]};
       if (controller.signal.aborted) return;
       const id = calls[0]?.id ?? authorization?.call_id ?? cancellations.at(-1)?.call_id ?? "";
       setSavedConsent(authorization??undefined);frozen.current=authorization??undefined;
       setTask(current); setReceipt(calls[0]); setCallId(id); setCancelled(cancellations.some((item) => item.call_id === id)); setReady(true);
       setHumanSchema(human[0]?.id); setManual(human.length>0);
+      const initial=journeys.items.find(item=>item.record.consent.schema_proposal);
+      setInitialJourney(Boolean(initial ? !initial.schema || initial.schema.status!=="completed" : !calls.length&&!authorization&&!human.length&&!cancellations.length));
     }).catch((error: Error) => { if (!controller.signal.aborted) setError(error.message); });
     return () => { active.current = false; controller.abort(); };
   }, [project, conversation, message,prepareRequested]);
@@ -57,6 +64,13 @@ export function ConversationSchemaCard({ project, conversation, message, onDirty
     poll(); const interval = window.setInterval(poll, 1500);
     return () => { controller.abort(); window.clearInterval(interval); };
   }, [project, conversation, task?.input.id, callId, receipt?.status, cancelled,savedConsent,busy]);
+  async function prepareInitial(){
+    if(pending.current)return;pending.current=true;setBusy(true);setError("");
+    try{const goal=await api.projectGoal(project);const current=task??await api.beginConversationTask(project,conversation,{id:crypto.randomUUID(),source_message_id:message,schema_revision:goal.revision});
+      if(active.current){setTask(current);setInitialJourney(true);setInitialPrepare(true);if(!task)onAssistance?.();}
+    }catch(reason){if(active.current)setError((reason as Error).message);}
+    finally{pending.current=false;if(active.current)setBusy(false);}
+  }
   async function prepare(human=false) {
     if (pending.current) return; pending.current = true; setBusy(true); setConfirmed(false); setError("");
     try {
@@ -118,6 +132,12 @@ export function ConversationSchemaCard({ project, conversation, message, onDirty
   const clarification = decision?.decision==="clarify"&&task&&receipt ? {call_id:receipt.id,expected_schema_revision:task.input.schema_revision,question:decision.question??""}:undefined;
   const waiting = Boolean(!manual && !cancelled && callId && (!savedConsent||busy) && (!receipt || receipt.status === "reserved"));
   const originalProposal = decision && <div className="conversation-proposal-result">{decision.question && <p>{decision.question}</p>}{decision.kind && <p>{decision.kind === "bounding_box" ? "Object boxes" : "Whole-image categories"}</p>}{decision.labels && <ul>{decision.labels.map((label) => <li key={label}>{label}</li>)}</ul>}<p>{decision.rationale}</p>{decision.boundary_rules?.map((rule) => <p key={rule}>{rule}</p>)}<small>Original model proposal. Editable Schema revisions and Pipeline Drafts are separate; no formal annotations have been accepted.</small></div>;
+  if(initialJourney&&!manual)return <section className="conversation-schema-card" aria-label="Annotation Schema proposal">
+    {task?<ConversationJourneyCard key={`${project}:${conversation}:${task.input.id}`} project={project} conversation={conversation} task={task.input.id} disabled={busy} prepareRequested={initialPrepare} onSample={onSample} onAssistance={onAssistance} onActiveChange={setJourneyActive} onSchemaOutcome={value=>{setReceipt(value);setCallId(value.id);setSavedConsent(undefined);setInitialJourney(false);setJourneyActive(false);}}/>:<><h3>Start from your annotation goal</h3><p>Review one bounded request for labels, an annotation plan and up to three sample images. No dataset annotations are accepted.</p><button className="primary" disabled={!ready||busy} onClick={()=>void prepareInitial()}>Prepare annotation request</button></>}
+    {!journeyActive&&<div className="button-row"><button disabled={!ready||busy} onClick={()=>{setInitialJourney(false);void prepare();}}>Prepare label proposal</button><button disabled={!ready||busy} onClick={()=>{setInitialJourney(false);void prepare(true);}}>Define labels myself · no LLM needed</button></div>}
+    {error&&<p role="alert">{error}</p>}
+    {onSetup&&<button disabled={busy||journeyActive} onClick={()=>onSetup(task?.input.id)}>Review model setup</button>}
+  </section>;
   return <section className="conversation-schema-card" aria-label="Annotation Schema proposal">
     <h3>Define the annotation goal</h3>
     {savedConsent&&!cancelled&&!receipt&&<aside className="conversation-consent" aria-label="Saved Schema authorization"><p>The original Schema request is saved, but no model call was admitted. No automatic retry is running.</p><small>Original model binding retained · Authorization expires {savedConsent.expires_at}. Refreshing the budget does not renew this consent.</small><button disabled={busy} onClick={()=>void prepare()}>Review saved Schema request</button><button disabled={busy} onClick={()=>void stop()}>Cancel saved Schema request</button></aside>}

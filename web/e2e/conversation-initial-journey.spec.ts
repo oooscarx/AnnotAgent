@@ -2,12 +2,13 @@ import {randomUUID} from "node:crypto";
 import {resolve} from "node:path";
 import {test,expect} from "./fixtures";
 
-for(const kind of ["classification","bbox","clarify","invalid-schema"]){
+for(const kind of ["ui-classification","ui-clarify","classification","bbox","clarify","invalid-schema"]){
 test(`initial goal journey ${kind} preserves one consent through actual Schema and child services`,async({page,request})=>{
   test.setTimeout(90_000);
   const provider=await (await request.post("/api/providers",{data:{display_name:"TEST initial journey",adapter:"open_ai_compatible",base_url:"http://127.0.0.1:8796/openai/v1"}})).json();
   expect((await request.post(`/api/providers/${provider.id}/credential`,{data:{source:"workspace_file",secret:"TEST-initial-journey-only"}})).ok()).toBe(true);
-  const model=await (await request.post("/api/model-profiles",{data:{provider_id:provider.id,display_name:`TEST initial ${kind}`,remote_model_id:`e2e-conversation-${kind}`,input_modalities:["text","image"],task_capabilities:["text_generation","vision_language","image_classification"],protocol_features:{tool_calls:true,structured_output:true}}})).json();
+  const remote=kind==="ui-classification"?"e2e-conversation-classification-schema-background":kind==="ui-clarify"?"e2e-conversation-clarify":`e2e-conversation-${kind}`;
+  const model=await (await request.post("/api/model-profiles",{data:{provider_id:provider.id,display_name:`TEST initial ${kind}`,remote_model_id:remote,input_modalities:["text","image"],task_capabilities:["text_generation","vision_language","image_classification"],protocol_features:{tool_calls:true,structured_output:true}}})).json();
   expect((await request.post(`/api/providers/${provider.id}/active-probe`,{data:{model_profile_id:model.id,confirmed_billable:true}})).ok()).toBe(true);
   const project=`TEST-initial-journey-${kind}-${Date.now()}`;
   expect((await request.post("/api/projects",{data:{id:project,yaml:"version: 1\nproject:\n  name: TEST initial journey\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n"}})).ok()).toBe(true);
@@ -17,12 +18,62 @@ test(`initial goal journey ${kind} preserves one consent through actual Schema a
   await expect(page.getByText("Images saved on this server. This upload did not start inference.",{exact:true})).toBeVisible();
   const conversation=(await (await request.post(`/api/projects/${project}/conversations`)).json()).conversation_id;
   const root=`/api/projects/${project}/conversations/${conversation}`;
-  const message=randomUUID(),task=randomUUID();
-  const goal=kind==="classification"?"按室内、室外给图片分类":"Find cups, not bottles. Draw tight bounding boxes.";
-  expect((await request.post(`${root}/messages`,{data:{id:message,text:goal,image:null}})).ok()).toBe(true);
+  const message=randomUUID();let task=randomUUID();
+  const goal=kind.endsWith("classification")?"按室内、室外给图片分类":"Find cups, not bottles. Draw tight bounding boxes.";
   const revision=(await (await request.get(`/api/projects/${project}/goal`)).json()).revision;
-  expect((await request.post(`${root}/tasks`,{data:{id:task,source_message_id:message,schema_revision:revision}})).ok()).toBe(true);
-  const taskRoot=`${root}/tasks/${task}`;
+  if(!kind.startsWith("ui-")){
+    expect((await request.post(`${root}/messages`,{data:{id:message,text:goal,image:null}})).ok()).toBe(true);
+    expect((await request.post(`${root}/tasks`,{data:{id:task,source_message_id:message,schema_revision:revision}})).ok()).toBe(true);
+  }
+  let taskRoot=`${root}/tasks/${task}`;
+  if(kind.startsWith("ui-")){
+    const defaults=await (await request.get("/api/agent-model-bindings")).json();
+    expect((await request.put("/api/agent-model-bindings",{data:{...defaults,pipeline_builder:model.id}})).ok()).toBe(true);
+    await page.goto(`/projects/${project}/work?conversation=${conversation}`);
+    await page.getByLabel("Your message",{exact:true}).fill(goal);
+    await page.getByRole("button",{name:"Save message",exact:true}).click();
+    const admitted=page.waitForResponse(response=>response.url().endsWith("/tasks")&&response.request().method()==="POST");
+    await page.getByRole("button",{name:"Prepare annotation request",exact:true}).click();
+    task=(await (await admitted).json()).input.id;taskRoot=`${root}/tasks/${task}`;
+    const panel=page.getByRole("region",{name:"Build and test annotation plan",exact:true});
+    const authorization=panel.getByLabel("Build and sample authorization",{exact:true});
+    await expect(authorization).toContainText("9 planning calls (including one label proposal)");
+    await authorization.getByRole("checkbox",{name:/Allow this plan and sample test/}).check();
+    if(kind==="ui-classification")await authorization.screenshot({path:"../docs/execution/conversational-workspace/initial-goal-consent.png",animations:"disabled"});
+    const execution=page.waitForResponse(response=>response.url().endsWith("/execution")&&response.request().method()==="POST");
+    await authorization.getByRole("button",{name:"Build plan and test samples",exact:true}).click();
+    const response=await execution;expect(response.ok(),await response.text()).toBe(true);
+    const receipt=await response.json();expect(receipt.record.consent.schema_proposal.allow_unknown_cost).toBe(true);
+    const writes:string[]=[];page.on("request",request=>{if(request.method()==="POST"&&/journey-consents|schema-proposals|builder-operations|sample-operations/.test(request.url()))writes.push(request.url());});
+    await page.reload();
+    if(kind==="ui-clarify"){
+      await expect(page.getByText("Clarification needed",{exact:true})).toBeVisible();
+      await expect(page.getByRole("button",{name:"Answer this clarification",exact:true})).toBeVisible();
+      const state=await (await request.get(`${taskRoot}/journey-consents/${receipt.record.consent.id}/execution`)).json();
+      expect(state.builder).toBeNull();expect(state.sample).toBeNull();
+      await page.getByRole("region",{name:"Annotation Schema proposal",exact:true}).screenshot({path:"../docs/execution/conversational-workspace/initial-goal-clarification.png",animations:"disabled"});
+      expect(writes).toEqual([]);
+      await page.getByRole("button",{name:"Answer this clarification",exact:true}).click();
+      await page.getByLabel("Output type",{exact:true}).selectOption("classification");
+      await page.getByLabel("Labels · one per line",{exact:true}).fill("室内\n室外");
+      await page.getByRole("button",{name:"Save answer and continue",exact:true}).click();
+      await expect(page.getByRole("region",{name:"Saved label draft",exact:true})).toContainText("Revision 1");
+      await page.reload();
+      await expect(panel.getByRole("button",{name:"Review build and sample authorization",exact:true})).toBeVisible();
+      await expect(panel.getByRole("button",{name:"Continue the same saved request",exact:true})).toHaveCount(0);
+    }else{
+      await expect(page.getByRole("button",{name:"Stop build and sample task",exact:true})).toBeVisible();
+      await expect(panel.getByRole("button",{name:"View sample results in canvas",exact:true})).toBeVisible();
+      await expect(page.getByText("Schema Draft saved · Revision 1",{exact:true})).toBeVisible();
+      await expect(page.getByText(/These records use labels revision 0/)).toHaveCount(0);
+      await panel.getByRole("button",{name:"View sample results in canvas",exact:true}).click();
+      await expect(page.getByLabel("Saved sample results",{exact:true})).toBeVisible();
+      const url=page.url();await page.reload();await expect(page).toHaveURL(url);await expect(page.getByLabel("Saved sample results",{exact:true})).toBeVisible();
+      await page.screenshot({path:"../docs/execution/conversational-workspace/initial-goal-result.png",fullPage:true,animations:"disabled"});
+    }
+    expect(writes).toEqual([]);expect((await (await request.get(`${taskRoot}/journey-consents`)).json()).items).toHaveLength(1);
+    return;
+  }
   const selection={consent_id:randomUUID(),schema_call_id:randomUUID(),builder_operation_id:randomUUID(),sample_operation_id:randomUUID(),planner_model_id:model.id,allowed_models:JSON.stringify([`model-profile:${model.id}`])};
   const previewResponse=await request.get(`${taskRoot}/journey-preview?${new URLSearchParams(selection)}`);expect(previewResponse.ok(),await previewResponse.text()).toBe(true);
   const preview=await previewResponse.json();expect(preview.consent.schema_revision).toBe(0);expect(preview.estimated_cost).toBeNull();

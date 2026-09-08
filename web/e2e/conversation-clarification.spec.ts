@@ -37,6 +37,10 @@ test(`Schema clarification ${mode}: same-task persistence and explicit continuat
     await expect(page.getByText("Message saved; goal preparation is not confirmed. Retry uses the same message and restores any saved task.",{exact:true})).toBeVisible();
     await page.getByRole("button",{name:"Retry saving message",exact:true}).click();
     await expect(page).toHaveURL(/task=/);
+    // The default goal entry now previews the joint journey. This scenario
+    // deliberately exercises the retained phase-by-phase clarification path.
+    await expect(page.getByLabel("Build and sample authorization",{exact:true})).toBeVisible();
+    await page.getByRole("button",{name:"Prepare label proposal",exact:true}).click();
     await expect(page.getByLabel("Schema model authorization",{exact:true})).toBeVisible();
     const owner=(await (await request.get(`/api/projects/${project}/conversations`)).json()).conversation_id;
     const task=(await (await request.get(`/api/projects/${project}/conversations/${owner}/tasks`)).json())[0];

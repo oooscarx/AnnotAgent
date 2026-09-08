@@ -10,9 +10,10 @@ const active=(value?:JourneyStatus)=>value?.dispatch?.status==="running" || ["qu
 const needsUpdate=(value?:JourneyStatus)=>active(value)||value?.sample?.assistance?.status==="waiting";
 
 /** One bounded consent, existing Builder/Sample services. Mount only reads saved work. */
-export function ConversationJourneyCard({project,conversation,task,schema,disabled,onSample,onAssistance,onActiveChange}: {
-  project:string;conversation:string;task:string;schema:{id:string;revision:number};disabled:boolean;
+export function ConversationJourneyCard({project,conversation,task,schema,disabled,onSample,onAssistance,onActiveChange,onSchemaOutcome,prepareRequested}: {
+  project:string;conversation:string;task:string;schema?:{id:string;revision:number};disabled:boolean;
   onSample:OpenConversationSample;onAssistance?:()=>void;onActiveChange?:(active:boolean)=>void;
+  onSchemaOutcome?:(receipt:import("../types").ConversationCallReceipt)=>void;prepareRequested?:boolean;
 }) {
   const [saved,setSaved]=useState<JourneyStatus>();
   const [preview,setPreview]=useState<JourneyPreview>();
@@ -20,7 +21,9 @@ export function ConversationJourneyCard({project,conversation,task,schema,disabl
   const [selected,setSelected]=useState<string[]>();
   const [ready,setReady]=useState(false),[busy,setBusy]=useState(false),[confirmed,setConfirmed]=useState(false),[error,setError]=useState("");
   const alive=useRef(true),pending=useRef(false),frozen=useRef<JourneyConsent|undefined>(undefined);
+  const prepared=useRef(false);
   const storageKey=`annotagent.journey:${project}:${conversation}:${task}`;
+  const usableHistory=(items:JourneyStatus[])=>items.filter(item=>!(schema&&item.record.consent.schema_proposal&&!item.record.resolved_consent&&item.schema?.status==="completed"&&item.schema.evidence?.decision?.Ok?.decision!=="draft"));
   const clearFrozen=()=>{frozen.current=undefined;try{sessionStorage.removeItem(storageKey);}catch{/* Server history owns saved consent. */}};
   const apply=(value:JourneyStatus)=>{setSaved(value);if(frozen.current?.id===value.record.consent.id)clearFrozen();};
   useEffect(()=>{
@@ -28,12 +31,15 @@ export function ConversationJourneyCard({project,conversation,task,schema,disabl
     try{const raw=sessionStorage.getItem(storageKey);if(raw){const value=JSON.parse(raw) as JourneyConsent;if(value.task_id===task)frozen.current=value;}}catch{/* Invalid local data grants no permission. */}
     void api.journeyHistory(project,conversation,task,controller.signal).then(({items})=>{
       if(controller.signal.aborted)return;
-      const value=items.find(item=>item.record.consent.id===frozen.current?.id) ?? items[0];
+      const candidates=usableHistory(items);
+      const value=candidates.find(item=>item.record.consent.id===frozen.current?.id) ?? candidates[0];
       if(value)apply(value);setReady(true);
     }).catch((reason:Error)=>{if(!controller.signal.aborted)setError(reason.message);});
     return()=>{alive.current=false;controller.abort();};
   },[project,conversation,task]);
-  useEffect(()=>{setPreview(undefined);setConfirmed(false);},[schema.id,schema.revision]);
+  useEffect(()=>{setPreview(undefined);setConfirmed(false);},[schema?.id,schema?.revision]);
+  useEffect(()=>{if(prepareRequested&&ready&&!saved&&!prepared.current){prepared.current=true;void prepare();}},[prepareRequested,ready,saved]);
+  useEffect(()=>{if(saved?.schema?.status==="completed")onSchemaOutcome?.(saved.schema);},[saved?.schema?.id,saved?.schema?.status]);
   useEffect(()=>{onActiveChange?.(active(saved)||busy||Boolean(frozen.current));},[active(saved),busy,saved,onActiveChange]);
   useEffect(()=>{
     if(!saved || !needsUpdate(saved))return;
@@ -47,7 +53,7 @@ export function ConversationJourneyCard({project,conversation,task,schema,disabl
   },[project,conversation,task,saved?.record.consent.id,needsUpdate(saved)]);
   async function reload(){
     if(pending.current)return;pending.current=true;setBusy(true);
-    try{const history=await api.journeyHistory(project,conversation,task);if(alive.current){const item=history.items.find(item=>item.record.consent.id===(frozen.current?.id ?? saved?.record.consent.id)) ?? history.items[0];if(item)apply(item);setReady(true);setError("");}}
+    try{const history=await api.journeyHistory(project,conversation,task);if(alive.current){const items=usableHistory(history.items);const item=items.find(item=>item.record.consent.id===(frozen.current?.id ?? saved?.record.consent.id)) ?? items[0];if(item)apply(item);setReady(true);setError("");}}
     catch(reason){if(alive.current)setError((reason as Error).message);}
     finally{pending.current=false;if(alive.current)setBusy(false);}
   }
@@ -59,7 +65,8 @@ export function ConversationJourneyCard({project,conversation,task,schema,disabl
       const ids=selected?.filter(id=>options.some(option=>option.id===id)) ?? options.map(option=>option.id);
       if(alive.current){setChoices(options);setSelected(ids);}
       if(!ids.length)throw new Error("Select an available image model, or connect one in model settings. No inference has started.");
-      const value=await api.journeyPreview(project,conversation,task,{consent_id:crypto.randomUUID(),builder_operation_id:crypto.randomUUID(),sample_operation_id:crypto.randomUUID(),schema_id:schema.id,schema_revision:String(schema.revision),allowed_models:JSON.stringify(ids)});
+      const source:Record<string,string>=schema?{schema_id:schema.id,schema_revision:String(schema.revision)}:{schema_call_id:crypto.randomUUID()};
+      const value=await api.journeyPreview(project,conversation,task,{consent_id:crypto.randomUUID(),builder_operation_id:crypto.randomUUID(),sample_operation_id:crypto.randomUUID(),...source,allowed_models:JSON.stringify(ids)});
       if(alive.current)setPreview(value);
     }catch(reason){if(alive.current)setError((reason as Error).message);}
     finally{pending.current=false;if(alive.current)setBusy(false);}
@@ -68,9 +75,9 @@ export function ConversationJourneyCard({project,conversation,task,schema,disabl
     if(pending.current||!ready||disabled||active(saved))return;
     const retry=saved && !saved.record.revoked && !saved.sample && !preview && !frozen.current;
     if(!retry&&!frozen.current&&(!preview||!confirmed||projectBudgetAvailability(preview.project_call_limit).blocked))return;
-    if(preview&&(preview.consent.schema_id!==schema.id||preview.consent.schema_revision!==schema.revision)){setError("Labels changed. Review the updated authorization.");return;}
+    if(preview&&schema&&(preview.consent.schema_id!==schema.id||preview.consent.schema_revision!==schema.revision)){setError("Labels changed. Review the updated authorization.");return;}
     pending.current=true;setBusy(true);setError("");
-    const consent=retry?saved.record.consent:frozen.current ?? {...preview!.consent,allow_unknown_cost:true};
+    const consent=retry?saved.record.consent:frozen.current ?? {...preview!.consent,allow_unknown_cost:true,...(preview!.consent.schema_proposal?{schema_proposal:{...preview!.consent.schema_proposal,allow_unknown_cost:true}}:{})};
     frozen.current=consent;try{sessionStorage.setItem(storageKey,JSON.stringify(consent));}catch{/* In-view retry retains the exact envelope. */}
     try{
       await api.saveJourney(project,conversation,task,consent);
@@ -86,9 +93,10 @@ export function ConversationJourneyCard({project,conversation,task,schema,disabl
     finally{pending.current=false;if(alive.current)setBusy(false);}
   }
   const running=active(saved), draft=saved?.sample?.draft_id ?? saved?.builder?.evidence?.draft_id;
-  const stale=saved && (saved.record.consent.schema_id!==schema.id||saved.record.consent.schema_revision!==schema.revision);
+  const effective=saved?.record.resolved_consent ?? saved?.record.consent;
+  const stale=Boolean(effective&&schema&&(!saved?.record.consent.schema_proposal||saved.record.resolved_consent)&&(effective.schema_id!==schema.id||effective.schema_revision!==schema.revision));
   return <section className="conversation-builder-card" aria-label="Build and test annotation plan">
-    <h3>Try an annotation plan</h3><p>Build a plan from your saved labels, then test up to three images. Results stay in the sample sandbox.</p>
+    <h3>{schema?"Try an annotation plan":"Turn your goal into sample results"}</h3><p>{schema?"Build a plan from your saved labels, then test up to three images.":"Propose labels from your goal, build a plan and test up to three images. If the goal needs clarification, ask before image processing."} Results stay in the sample sandbox.</p>
     {!ready&&<p role="status">Restoring saved work…</p>}
     {!running&&!preview&&!frozen.current&&(!saved||stale)&&<button className="primary" disabled={!ready||busy||disabled} onClick={()=>void prepare()}>Review build and sample authorization</button>}
     {choices.length>0&&!running&&<details><summary>Allowed image models · {selected?.length ?? 0} selected</summary><p>Only these exact installed bindings may receive the sample images. Changing this list requires a new preview.</p><div className="journey-model-choices">{choices.map(choice=><label key={choice.id}><input type="checkbox" checked={selected?.includes(choice.id) ?? false} disabled={busy||Boolean(frozen.current)} onChange={event=>{setSelected(current=>event.target.checked?[...(current??[]),choice.id]:(current??[]).filter(id=>id!==choice.id));setPreview(undefined);setConfirmed(false);}}/>{choice.name}</label>)}</div></details>}
@@ -97,18 +105,19 @@ export function ConversationJourneyCard({project,conversation,task,schema,disabl
       <p>Saved goal and labels go to the planner. {preview.consent.images.length} sample images may go to:</p>
       <ul>{preview.data.models.map(model=><li key={model.scope.model_id}>{model.display_name} · {model.destination}</li>)}</ul>
       <details><summary>Model permissions and frozen bindings</summary>{preview.data.models.map(model=><div key={model.scope.model_id}><strong>{model.display_name}</strong><pre>{JSON.stringify(model.permissions,null,2)}</pre></div>)}</details>
-      <p>Up to {preview.consent.maximum_builder_calls} planning calls + {preview.consent.maximum_sample_calls} image-model calls. Cost unknown. Permission expires at {new Date(preview.consent.expires_at).toLocaleTimeString()}.</p>
+      <p>Up to {preview.consent.maximum_builder_calls+(preview.consent.schema_proposal?1:0)} planning calls{preview.consent.schema_proposal?" (including one label proposal)":""} + {preview.consent.maximum_sample_calls} image-model calls. Cost unknown. Permission expires at {new Date(preview.consent.expires_at).toLocaleTimeString()}.</p>
       <p>No publish, dataset run or annotation acceptance. If the generated plan needs another model or a different scope, testing stops for your decision.</p>
-      <ConversationBudgetNotice value={preview.project_call_limit} maximumCalls={preview.consent.maximum_builder_calls+preview.consent.maximum_sample_calls} busy={busy} onRefresh={()=>void prepare()}/>
+      <ConversationBudgetNotice value={preview.project_call_limit} maximumCalls={preview.consent.maximum_builder_calls+preview.consent.maximum_sample_calls+(preview.consent.schema_proposal?1:0)} busy={busy} onRefresh={()=>void prepare()}/>
       <label><input type="checkbox" checked={confirmed} disabled={busy} onChange={event=>setConfirmed(event.target.checked)}/>Allow this plan and sample test within the listed scope; actual cost is unknown</label>
       <div className="button-row"><button disabled={busy} onClick={()=>{setPreview(undefined);setConfirmed(false);}}>Back</button><button className="primary" disabled={!confirmed||busy||disabled||projectBudgetAvailability(preview.project_call_limit).blocked} onClick={()=>void start()}>Build plan and test samples</button></div>
     </div>}
     {saved&&<div className="conversation-builder-result" aria-live="polite">
-      <strong>{running?saved.sample?"Testing saved sample images":"Building the annotation plan":saved.sample?.status==="succeeded"?"Sample results saved":saved.record.revoked?"Authorization revoked":saved.dispatch?.error?"Execution needs attention":saved.dispatch?.status==="interrupted"?"Execution interrupted":saved.builder?.evidence?.outcome?.replaceAll("_"," ")??"Authorization saved; execution not started"}</strong>
-      {stale&&<p>These records use labels revision {saved.record.consent.schema_revision}, not your current labels. Nothing has been rebuilt automatically.</p>}
-      <details><summary>Saved authorization scope</summary><p>{saved.record.consent.images.length} images · Up to {saved.record.consent.maximum_builder_calls} planning calls + {saved.record.consent.maximum_sample_calls} image-model calls · Cost unknown. Expires {new Date(saved.record.consent.expires_at).toLocaleString()}.</p><p>Exact permitted image-model selections (not today's defaults):</p><ul>{saved.record.consent.allowed_models.map(model=><li key={model.model_id}>{model.model_id}</li>)}</ul><p>This authorization does not publish a plan or accept annotations.</p></details>
+      <strong>{running?saved.sample?"Testing saved sample images":saved.record.consent.schema_proposal&&!saved.record.resolved_consent?"Proposing labels from your goal":"Building the annotation plan":saved.sample?.status==="succeeded"?"Sample results saved":saved.record.revoked?"Authorization revoked":saved.dispatch?.error?"Execution needs attention":saved.dispatch?.status==="interrupted"?"Execution interrupted":saved.builder?.evidence?.outcome?.replaceAll("_"," ")??"Authorization saved; execution not started"}</strong>
+      {stale&&<p>These records use labels revision {effective?.schema_revision}, not your current labels. Nothing has been rebuilt automatically.</p>}
+      <details><summary>Saved authorization scope</summary><p>{saved.record.consent.images.length} images · Up to {saved.record.consent.maximum_builder_calls+(saved.record.consent.schema_proposal?1:0)} planning calls + {saved.record.consent.maximum_sample_calls} image-model calls · Cost unknown. Expires {new Date(saved.record.consent.expires_at).toLocaleString()}.</p><p>Exact permitted image-model selections (not today's defaults):</p><ul>{saved.record.consent.allowed_models.map(model=><li key={model.model_id}>{model.model_id}</li>)}</ul><p>This authorization does not publish a plan or accept annotations.</p></details>
       {running&&<><button disabled={busy||saved.record.revoked} onClick={()=>void stop()}>Stop build and sample task</button><p>Leaving this page does not stop the task. In-flight calls may still be billed.</p></>}
       {saved.dispatch?.error&&<p role="alert">{saved.dispatch.error}</p>}{saved.sample?.error&&<p role="alert">{saved.sample.error}</p>}
+      {saved.schema?.evidence?.error&&<p role="alert">{saved.schema.evidence.error}</p>}
       {saved.sample?.status==="succeeded"&&saved.sample.assistance?.status==="waiting"&&<p role="status">Preparing saved requests for human judgment. No additional inference is running.</p>}
       {saved.sample?.assistance?.status==="failed"&&<p role="alert">Review-request preparation failed: {saved.sample.assistance.error}. Saved sample results can still be opened.</p>}
       {saved.sample?.status==="succeeded"&&<button className="primary" onClick={()=>onSample(saved.sample!.draft_id,saved.sample!.id)}>View sample results in canvas</button>}
