@@ -1,4 +1,4 @@
-import { expect, test } from "./fixtures";
+import { expect, test, fetchWithinMutationLimit } from "./fixtures";
 
 test("saved messages select independent goals without inference or task substitution",async({page,request})=>{
   // This scenario specifically starts without a planner. Earlier scenarios use the
@@ -20,14 +20,63 @@ test("saved messages select independent goals without inference or task substitu
   await page.getByRole("button",{name:"Use message 1 as annotation goal",exact:true}).click();
   await expect(page).toHaveURL(/task=/);
   const first=new URL(page.url()).searchParams.get("task");
+  const selectionPath=`/api/projects/${project}/conversations/${conversation}/task-selection`;
+  let lostSelection=false;
+  await page.route(`**${selectionPath}`,async route=>{
+    if(route.request().method()==="POST"&&!lostSelection){
+      lostSelection=true;
+      const response=await fetchWithinMutationLimit(route);
+      expect(response.ok(),await response.text()).toBe(true);
+      await route.abort("failed");
+    }else await route.continue();
+  });
+  await page.getByRole("button",{name:"Use message 2 as annotation goal",exact:true}).click();
+  await expect(page.getByRole("alert").last()).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("task")).toBe(first);
+  const persistedAfterLoss=await (await request.get(selectionPath)).json();
   await page.getByRole("button",{name:"Use message 2 as annotation goal",exact:true}).click();
   await expect.poll(()=>new URL(page.url()).searchParams.get("task")).not.toBe(first);
+  expect(await (await request.get(selectionPath)).json()).toEqual(persistedAfterLoss);
+  await page.unroute(`**${selectionPath}`);
   const second=new URL(page.url()).searchParams.get("task");
   await page.reload();
   await expect(page.getByRole("button",{name:"Use message 2 as annotation goal",exact:true})).toHaveAttribute("aria-pressed","true");
   await page.screenshot({path:"../docs/execution/conversational-workspace/independent-goals.png",fullPage:true,animations:"disabled"});
   await page.getByRole("button",{name:"Use message 2 as annotation goal",exact:true}).click();
   expect(new URL(page.url()).searchParams.get("task")).toBe(second);
+  const savedSelection=await (await request.get(selectionPath)).json();
+  expect(savedSelection.task_id).toBe(second);
+  let restoreWrites=0;
+  const countRestore=(req:{method:()=>string})=>{if(!["GET","HEAD"].includes(req.method()))restoreWrites++;};
+  page.on("request",countRestore);
+  await page.goto(`/projects/${project}/work`);
+  await expect.poll(()=>new URL(page.url()).searchParams.get("task")).toBe(second);
+  await expect(page.getByRole("button",{name:"Use message 2 as annotation goal",exact:true})).toHaveAttribute("aria-pressed","true");
+  await page.screenshot({path:"../docs/execution/conversational-workspace/task-selection-restored.png",fullPage:true,animations:"disabled"});
+  await page.goto(`/projects/${project}/work?conversation=${conversation}&task=${first}`);
+  await expect(page.getByRole("button",{name:"Use message 1 as annotation goal",exact:true})).toHaveAttribute("aria-pressed","true");
+  expect(await (await request.get(selectionPath)).json()).toEqual(savedSelection);
+  expect(restoreWrites).toBe(0);
+  let releaseSelection!:()=>void;
+  const selectionGate=new Promise<void>(resolve=>{releaseSelection=resolve;});
+  let interceptedSelection=false;
+  await page.route(`**${selectionPath}`,async route=>{
+    if(route.request().method()!=="GET"){await route.continue();return;}
+    interceptedSelection=true;
+    await selectionGate;
+    await route.fulfill({json:savedSelection});
+  });
+  await page.goto(`/projects/${project}/work?conversation=${conversation}`);
+  await expect.poll(()=>interceptedSelection).toBe(true);
+  // Simulate Back/Forward to an explicit task while root restoration is pending.
+  await page.evaluate(url=>{history.pushState({},"",url);window.dispatchEvent(new PopStateEvent("popstate"));},`/projects/${project}/work?conversation=${conversation}&task=${first}`);
+  await expect(page.getByRole("button",{name:"Use message 1 as annotation goal",exact:true})).toHaveAttribute("aria-pressed","true");
+  releaseSelection();
+  await page.unroute(`**${selectionPath}`,undefined);
+  await expect(page.getByText("Saved workspace loaded",{exact:true})).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("task")).toBe(first);
+  expect(restoreWrites).toBe(0);
+  page.off("request",countRestore);
   await page.getByRole("button",{name:"Use message 1 as annotation goal",exact:true}).click();
   await expect.poll(()=>new URL(page.url()).searchParams.get("task")).toBe(first);
   const tasks=await (await request.get(root)).json();

@@ -94,6 +94,28 @@ pub(super) async fn tasks(
         .map_err(ApiError::bad_request)
 }
 
+pub(super) async fn selection(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation)): AxumPath<(String, uuid::Uuid)>,
+) -> ApiResult<Json<annotagent_storage::ConversationTaskSelection>> {
+    state
+        .application
+        .conversation_task_selection(&project, conversation)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+pub(super) async fn select_task(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation)): AxumPath<(String, uuid::Uuid)>,
+    Json(input): Json<annotagent_storage::SelectConversationTask>,
+) -> ApiResult<Json<annotagent_storage::ConversationTaskSelection>> {
+    state
+        .application
+        .select_conversation_task(&project, conversation, &input)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
 pub(super) async fn begin_task(
     State(state): State<ServerState>,
     AxumPath((project, conversation)): AxumPath<(String, uuid::Uuid)>,

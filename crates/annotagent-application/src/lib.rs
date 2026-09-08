@@ -9349,6 +9349,29 @@ impl LocalApplication {
         Ok(self.store.conversation_tasks(&owner, conversation)?)
     }
 
+    pub fn conversation_task_selection(
+        &self,
+        project: &str,
+        conversation: uuid::Uuid,
+    ) -> Result<annotagent_storage::ConversationTaskSelection> {
+        Ok(self.store.conversation_task_selection(
+            &self.conversation_project_identity(project)?,
+            conversation,
+        )?)
+    }
+    pub fn select_conversation_task(
+        &self,
+        project: &str,
+        conversation: uuid::Uuid,
+        input: &annotagent_storage::SelectConversationTask,
+    ) -> Result<annotagent_storage::ConversationTaskSelection> {
+        Ok(self.store.select_conversation_task(
+            &self.conversation_project_identity(project)?,
+            conversation,
+            input,
+        )?)
+    }
+
     /// HTTP callers must validate the concrete Registry/data scope before admission.
     pub fn authorize_conversation_task_calls(
         &self,

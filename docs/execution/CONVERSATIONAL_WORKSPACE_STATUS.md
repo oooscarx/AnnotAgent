@@ -2107,3 +2107,38 @@ cancellation and entry with delayed image restoration. Inspected the settled
 `conversational-workspace/default-project-entry.png`: uploaded TEST pixels are visible beside
 the first-goal composer with no global sidebar. Build/typecheck passed; the existing chunk-size
 warning remains. This is not a new full-browser-suite or native 200-percent-zoom result.
+
+### M1/M4 continuation — durable task selection without replaying execution
+
+Project inventory entry previously restored the journal but could return to its first goal.
+Migration 38 now persists explicit task selections in the canonical conversation, using stable
+Project ownership, an immutable request ID and an expected selection revision. Storage rejects
+foreign tasks and stale writes. An exact retry returns the latest selection, rather than replaying
+an old selection over a newer one. Reopening SQLite preserves the selection and does not reset
+task usage. This is navigation state only, not a new execution service or permission grant.
+
+The existing workspace remembers explicit goal selection and the combined first-goal action.
+Root workspace entry reads the pointer; explicit task/Draft/Sample/Review/processing/result links
+take precedence. GET, mount and refresh never save selections or call a model. Loading disables
+the message composer until saved context is known. Route context changes cancel pending restore
+reads; dirty edits prevent automatic restoration from navigating away. A failed selection response
+keeps the original command for retry and does not falsely navigate to a confirmed selection.
+
+Validation: storage tests passed (61 unit plus 16 integration); server-target Clippy with all
+targets/features and warnings denied passed; cargo format check passed. Web typecheck, 119 unit
+tests and production build passed (existing chunk-size warning remains). Initial focused browser
+run `/tmp/annotagent-guided-e2e-22805` passed 4/4. Final run
+`/tmp/annotagent-guided-e2e-23049` passed 4/4 in 12.4 seconds, including server-success/response-loss
+selection retry without a new revision, root restoration, explicit-link precedence, delayed root
+read followed by a same-document task switch, zero restoration mutations, zero task model usage,
+model-settings return, clarification answer/cancel and default project entry. Storage checks
+also reject changed request reuse and stale revision writes after a newer selection.
+
+Inspected `conversational-workspace/task-selection-restored.png`: the second saved goal is marked
+current after root entry, with the actual TEST empty-image state. This is not model quality or
+human usability evidence. Only the selected task is persisted by this increment; exact image,
+candidate and mode still rely on existing deep links, not a new last-view checkpoint. Restoration
+uses the existing navigation callback; complete browser-history/replace semantics and a full
+multi-tab usability pass remain open. No live 8787 workspace changes, real Provider calls, old
+keys, push or remote changes. The broader coordinator and remaining HumanRequest types are not
+complete. Unrelated regenerated screenshot changes are left unstaged.
