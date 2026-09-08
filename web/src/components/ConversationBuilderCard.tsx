@@ -5,8 +5,8 @@ import { ConversationSampleCard, type OpenConversationSample } from "./Conversat
 import type { ConversationBuilderConsent, ConversationBuilderItem, ConversationBuilderPreview, ConversationSchemaDraft } from "../types";
 
 /** Restoring history only reads. Model work requires a new, explicit consent. */
-export function ConversationBuilderCard({ project, conversation, task, schema, editing, onSample, repairRequest }: {
-  project: string; conversation: string; task: string; schema: Pick<ConversationSchemaDraft,"id"|"revision">; editing: boolean; onSample: OpenConversationSample;
+export function ConversationBuilderCard({ project, conversation, task, schema, editing, onSample, repairRequest, onAssistance }: {
+  project: string; conversation: string; task: string; schema: Pick<ConversationSchemaDraft,"id"|"revision">; editing: boolean; onAssistance?:()=>void; onSample: OpenConversationSample;
   repairRequest?: {id:string;draft:string};
 }) {
   const [item,setItem]=useState<ConversationBuilderItem>();
@@ -95,6 +95,6 @@ export function ConversationBuilderCard({ project, conversation, task, schema, e
     {uncertain && !busy && <button onClick={()=>void launch()} disabled={cancelled}>Retry the same Builder request</button>}
     {item && item.operation.status!=="reserved" && <div className="conversation-builder-result"><strong>{item.operation.status==="interrupted" ? "Build interrupted" : "Builder outcome saved"}</strong><p>{session?.outcome?.replaceAll("_"," ") ?? item.operation.evidence?.outcome?.replaceAll("_"," ") ?? item.operation.status}</p>{item.operation.evidence?.error && <p>{item.operation.evidence.error}</p>}{session?.next_action && <p>{session.next_action}</p>}{session?.unresolved_bindings?.length ? <ul>{session.unresolved_bindings.map((binding,index)=><li key={index}>{binding}</li>)}</ul> : null}{draftId && <a href={projectBuildPath(project,"pipeline",{draftId,agentSessionId:session?.id})}>Open saved Pipeline details</a>}<small>No sample result or formal annotation was accepted.</small></div>}
     {error && <p role="alert">{error} Saved operations remain on the server; refreshing will not start another build.</p>}
-    {draftId && !running && <ConversationSampleCard key={`${task}:${draftId}`} project={project} conversation={conversation} task={task} draft={draftId} disabled={editing || busy} onOpen={onSample} />}
+    {draftId && !running && <ConversationSampleCard key={`${task}:${draftId}`} project={project} conversation={conversation} task={task} draft={draftId} disabled={editing || busy} onOpen={onSample} onAssistance={onAssistance} />}
   </section>;
 }

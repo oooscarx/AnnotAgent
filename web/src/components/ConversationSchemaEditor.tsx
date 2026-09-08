@@ -5,8 +5,8 @@ import { ConversationBuilderCard } from "./ConversationBuilderCard";
 import type { OpenConversationSample } from "./ConversationSampleCard";
 
 /** A semantic draft is not the Project schema, a published workflow or a Run. */
-export function ConversationSchemaEditor({ project, conversation, task, call, onDirtyChange, onSample }: {
-  project: string; conversation: string; task: string; call: string; onDirtyChange: (dirty: boolean) => void; onSample: OpenConversationSample;
+export function ConversationSchemaEditor({ project, conversation, task, call, onDirtyChange, onSample, onAssistance }: {
+  project: string; conversation: string; task: string; call: string; onDirtyChange: (dirty: boolean) => void; onAssistance?:()=>void; onSample: OpenConversationSample;
 }) {
   const [draft, setDraft] = useState<ConversationSchemaDraft>();
   const fieldId = useId();
@@ -68,6 +68,6 @@ export function ConversationSchemaEditor({ project, conversation, task, call, on
     {editing && <><label htmlFor={`${fieldId}-labels`}>Labels · one per line</label><textarea id={`${fieldId}-labels`} rows={3} value={labels} disabled={busy || uncertain} onChange={(event) => setLabels(event.target.value)} /><label htmlFor={`${fieldId}-rules`}>Boundary rules · one per line</label><textarea id={`${fieldId}-rules`} rows={3} value={rules} disabled={busy || uncertain} onChange={(event) => setRules(event.target.value)} /><small>Edits belong to this Schema Draft only. They do not change published workflows or accept annotations.</small></>}
     {(!draft || editing) && <div className="button-row">{editing && <button disabled={busy || uncertain} onClick={() => { setEditing(false); setError(""); }}>Cancel edit</button>}<button disabled={!ready || busy || (editing && !labels.trim())} onClick={() => void save()}>{uncertain ? "Retry same Schema save" : draft ? "Save Schema changes" : "Save as editable Schema Draft"}</button></div>}
     {error && <><p role="alert">{error} Your entered labels remain here.</p>{editing && !uncertain && <button disabled={busy} onClick={() => void reloadBase()}>Load latest revision; keep my edits</button>}</>}
-    {draft && <ConversationBuilderCard project={project} conversation={conversation} task={task} schema={draft} editing={editing || busy || uncertain} onSample={onSample} />}
+    {draft && <ConversationBuilderCard project={project} conversation={conversation} task={task} schema={draft} editing={editing || busy || uncertain} onSample={onSample} onAssistance={onAssistance} />}
   </section>;
 }

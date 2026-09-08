@@ -1,9 +1,10 @@
 export type SampleOperation = {
+  assistance?: {status:"waiting"|"completed"|"failed";error?:string|null}|null;
   id: string; project_id: string; draft_id: string;
   status: "queued" | "running" | "cancelling" | "cancelled" | "interrupted" | "failed" | "succeeded";
   error?: string | null;
 };
-export type ConversationSampleConsent = { conversation_id: string; task_id: string; previous_grant_id: string; scope_hash: string; expires_at: string; allow_unknown_cost: boolean };
+export type ConversationSampleConsent = { conversation_id: string; task_id: string; previous_grant_id: string; scope_hash: string; expires_at: string; allow_unknown_cost: boolean; human_review?:boolean };
 export type ConversationSamplePreview = { project_id: string; revision: number; image_count: number; models: {name: string; destination: string; id: string; revision: number}[]; supported: boolean; other_bindings: string[]; authorization_fingerprint: string; request_limit: number; estimated_cost: null; request_id: string; conversation_budget: { previous_grant_id: string; scope_hash: string; expires_at: string; maximum_calls: number; used_calls: number } };
 export type ProcessingSelection = { draft_id: string; sample_test_id: string; limit?: number };
 export type ProcessingAuthorization = { revision: number; authorization_fingerprint: string; image_count: number; available_images: number; maximum_model_calls: number; sample_feedback_count: number; plan_name: string; goal: { goal?: string }; models: { model_profile_id: string; remote_model_id: string; provider_base_url: string }[]; native_models?: { id: string; name: string; destination: string; revision: number }[] };

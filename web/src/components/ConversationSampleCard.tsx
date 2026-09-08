@@ -3,10 +3,12 @@ import { api, ApiRequestError, type ConversationSamplePreview, type SampleOperat
 
 export type OpenConversationSample = (draft: string, test: string, image?: string) => void;
 const active = (value?: SampleOperation) => !!value && ["queued", "running", "cancelling"].includes(value.status);
+const needsUpdate = (value?:SampleOperation)=>active(value) || (value?.status==="succeeded" && (value.assistance===undefined || value.assistance?.status==="waiting"));
 
 /** A task-scoped view of the existing Sample Operation, never another executor. */
-export function ConversationSampleCard({project, conversation, task, draft, disabled, onOpen}: {
+export function ConversationSampleCard({project, conversation, task, draft, disabled, onOpen, onAssistance}: {
   project: string; conversation: string; task: string; draft: string; disabled: boolean; onOpen: OpenConversationSample;
+  onAssistance?:()=>void;
 }) {
   const [operation,setOperation] = useState<SampleOperation>();
   const [preview,setPreview] = useState<ConversationSamplePreview>();
@@ -16,6 +18,7 @@ export function ConversationSampleCard({project, conversation, task, draft, disa
   const [error,setError] = useState("");
   const [uncertain,setUncertain] = useState(false);
   const pending = useRef(false);
+  const notified = useRef<string | undefined>(undefined);
   const alive = useRef(true);
   const frozen = useRef<Parameters<typeof api.startSampleOperation>[1] | undefined>(undefined);
   const pendingKey=`annotagent.conversation-sample:${project}:${conversation}:${task}:${draft}`;
@@ -29,17 +32,20 @@ export function ConversationSampleCard({project, conversation, task, draft, disa
     return ()=>{alive.current=false;controller.abort();};
   },[project,conversation,task,draft]);
   useEffect(()=>{
-    if(!active(operation))return;
+    if(!needsUpdate(operation))return;
     const controller=new AbortController();let timer:ReturnType<typeof setTimeout>;
     const poll=async()=>{
       try{const saved=await api.sampleOperation(project,operation!.id,controller.signal);
         if(controller.signal.aborted)return;
         if(saved.project_id!==project || saved.draft_id!==draft)throw new Error("Sample scope changed");
-        setOperation(saved);if(active(saved))timer=setTimeout(()=>void poll(),1000);
+        setOperation(saved);if(needsUpdate(saved))timer=setTimeout(()=>void poll(),1000);
       }catch(error){if(!controller.signal.aborted){setError((error as Error).message);timer=setTimeout(()=>void poll(),2000);}}
     };
     void poll();return()=>{controller.abort();clearTimeout(timer);};
-  },[project,draft,operation?.id,operation?.status]);
+  },[project,draft,operation?.id,operation?.status,operation?.assistance?.status]);
+  useEffect(()=>{
+    if(operation?.assistance?.status==="completed" && notified.current!==operation.id){notified.current=operation.id;onAssistance?.();}
+  },[operation?.id,operation?.assistance?.status,onAssistance]);
   async function prepare(){
     if(pending.current || disabled || active(operation) || uncertain)return;
     pending.current=true;setBusy(true);setError("");
@@ -53,7 +59,7 @@ export function ConversationSampleCard({project, conversation, task, draft, disa
     if(pending.current || disabled || (!frozen.current && (!preview || !confirmed)))return;
     pending.current=true;setBusy(true);setError("");
     if(!frozen.current && preview){const budget=preview.conversation_budget;
-      frozen.current={request_id:preview.request_id,draft_id:draft,expected_revision:preview.revision,image_indices:Array.from({length:preview.image_count},(_,i)=>i),authorization_fingerprint:preview.authorization_fingerprint,conversation:{conversation_id:conversation,task_id:task,previous_grant_id:budget.previous_grant_id,scope_hash:budget.scope_hash,expires_at:budget.expires_at,allow_unknown_cost:true}};
+      frozen.current={request_id:preview.request_id,draft_id:draft,expected_revision:preview.revision,image_indices:Array.from({length:preview.image_count},(_,i)=>i),authorization_fingerprint:preview.authorization_fingerprint,conversation:{conversation_id:conversation,task_id:task,previous_grant_id:budget.previous_grant_id,scope_hash:budget.scope_hash,expires_at:budget.expires_at,allow_unknown_cost:true,human_review:true}};
     }
     try{sessionStorage.setItem(pendingKey,JSON.stringify(frozen.current));}catch{/* Explicit retry in this mounted view still uses the frozen envelope. */}
     try{const saved=await api.startSampleOperation(project,frozen.current!);
@@ -70,6 +76,7 @@ export function ConversationSampleCard({project, conversation, task, draft, disa
     {!active(operation) && !preview && !uncertain && <button disabled={disabled || busy || !ready} onClick={()=>void prepare()}>Review sample authorization</button>}
     {preview && <div className="conversation-consent" aria-label="Sample model authorization">
       <p>Draft revision {preview.revision} · {preview.image_count} images · Up to {preview.request_limit} model calls</p>
+      <p>Results needing human judgment can create a saved request here. This does not accept annotations or authorize another model call.</p>
       <ul>{preview.models.map(model=><li key={model.id}>{model.name} · {model.destination}</li>)}</ul>
       <p>{preview.conversation_budget.used_calls} calls already used · Cumulative limit {preview.conversation_budget.maximum_calls} · Cost unknown</p>
       {(!preview.supported || !preview.image_count) && <p role="status">{!preview.image_count ? "Upload images before testing." : "This Draft needs compatible model bindings before bounded testing."}</p>}
@@ -77,6 +84,8 @@ export function ConversationSampleCard({project, conversation, task, draft, disa
       <div className="button-row"><button disabled={busy || uncertain} onClick={()=>setPreview(undefined)}>Back</button><button className="primary" disabled={busy || disabled || !confirmed || !preview.supported || !preview.image_count} onClick={()=>void launch()}>Test these samples</button></div>
     </div>}
     {active(operation) && <><p role="status">Sample task: {operation!.status}</p><button disabled={operation!.status==="cancelling"} onClick={()=>void stop()}>Stop sample test</button><p>Leaving does not stop the task. An in-flight remote request may still be billed.</p></>}
+    {operation?.status==="succeeded" && operation.assistance?.status==="waiting" && <p role="status">Preparing saved requests for human judgment… No additional inference is running.</p>}
+    {operation?.assistance?.status==="failed" && <p role="alert">Sample report saved, but human-request preparation failed: {operation.assistance.error}. You can still inspect and correct the saved sample.</p>}
     {operation && !active(operation) && <div className="conversation-builder-result"><strong>{operation.status==="succeeded" ? "Sample report saved" : `Sample task: ${operation.status}`}</strong>{operation.error && <p role="alert">{operation.error}</p>}{operation.status==="succeeded" && <><small>Open the report to inspect results, quality risks and any failed nodes.</small><button onClick={()=>onOpen(draft,operation.id)}>View sample results in canvas</button></>}</div>}
     {uncertain && <button disabled={busy || disabled} onClick={()=>void launch()}>Retry the same sample request</button>}
     {error && <p role="alert">{error} Saved tasks remain on the server. Reloading never starts a test.</p>}

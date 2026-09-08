@@ -67,7 +67,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
     return () => { current = false; mounted.current = false; };
   }, [projectId, draftId, image.image_id, image.content_hash]);
   const [hint, setHint] = useState(true);
-  const [attentionOpen, setAttentionOpen] = useState(false);
+  const [attentionOpen, setAttentionOpen] = useState(Boolean(humanSubmission));
   const selectedAnnotation = annotations.find((item) => item.id === selected);
   const selectedMaskIsRaster = selectedAnnotation && (selectedAnnotation.value.kind === "semantic_mask" || selectedAnnotation.value.kind === "instance_mask") && selectedAnnotation.value.mask.encoding !== "polygon";
   useEffect(() => {

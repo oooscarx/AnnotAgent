@@ -1111,3 +1111,29 @@ existing saved request bodies or real user history. Next: wire the flag and visi
 delivery outcomes into the conversation's sample card, then test automatic request
 creation/answer in both browser paths. No real server restart/mutation, Live calls,
 push or remote change. No new UI screenshot claim.
+
+### Automatic assistance surfaced in the conversation (M3 increment)
+
+New sample consents explicitly opt into local human-review request preparation. Existing
+saved consent bodies remain unchanged. Sample cards poll only pending execution/delivery,
+restore the saved outcome, and refresh the owned request list on completed delivery without
+automatically changing the selected image. Delivery failure is separate from report failure.
+Opening a request expands its relevant correction editor; answering remains Sandbox-only.
+
+Browser regression: `conversation-samples.spec.ts` **2/2 passed** in isolated TEST workspace
+`/tmp/annotagent-guided-e2e-97797`. Bbox completion produces a visible automatic request,
+opens its exact result, saves a correction and restores it after reload without extra model
+calls. Ready classification results correctly produce no request. Web typecheck, **108/108**
+unit tests, production build, fixture strict Clippy, Rust formatting and diff checks passed.
+Inspected `conversational-workspace/automatic-human-request.png`: correction fields are
+visible; the tall editor/sticky composer still needs M4 layout refinement. This screenshot
+uses synthetic TEST pixels, not Live quality evidence or a usability claim.
+
+An additional low-confidence classification experiment exposed a separate real defect:
+in `/tmp/annotagent-guided-e2e-97049`, confidence 0.4 selected `review`, but the controlled
+classification plan connected the gate directly to Commit, which correctly rejected an
+unvalidated artifact (`unsafe_commit_input`). There was no terminal candidate to review.
+The fixture now supports an explicit `-review` model scenario for reproducing this. It is
+NOT fixed by the UI change; next work must introduce conditional review routing while
+preserving the direct high-confidence path and Commit safety. No real workspace changes,
+Live calls, push or remote modification; broader goal and M3/M4 requirements remain open.

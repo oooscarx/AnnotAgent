@@ -43,6 +43,19 @@ test(`conversation ${kind} authorizes HTTP fixture samples and restores editable
   expect(envelope.conversation.allow_unknown_cost).toBe(true);
   const taskRoot=`/api/projects/${project}/conversations/${envelope.conversation.conversation_id}/tasks/${envelope.conversation.task_id}`;
   const calls=await (await request.get(`${taskRoot}/calls`)).json();
+  expect(envelope.conversation.human_review).toBe(true);
+  if(kind==="bbox"){
+  await expect.poll(async()=> (await (await request.get(`${taskRoot}/human-requests`)).json()).length).toBe(1);
+  const initialAutomatic=(await (await request.get(`${taskRoot}/human-requests`)).json())[0];
+  expect(initialAutomatic.input.reason_code).toBe("terminal_result_requires_review");
+  expect(initialAutomatic.status).toBe("pending");
+  await expect(page.getByText(initialAutomatic.input.question,{exact:true})).toBeVisible();
+  // Retain explicit manual-request API coverage below without leaving a task budget blocker.
+  expect((await request.post(`${taskRoot}/human-requests/${initialAutomatic.input.id}/cancel`)).ok()).toBe(true);
+  } else {
+    await expect.poll(async()=> (await (await request.get(`/api/projects/${project}/sample-operations/${envelope.request_id}`)).json()).assistance?.status).toBe("completed");
+    expect(await (await request.get(`${taskRoot}/human-requests`)).json()).toEqual([]);
+  }
   expect(calls.some((call:any)=>call.evidence?.phase==="sample_inference" && call.status==="completed")).toBe(true);
   if (kind === "bbox") {
     const saved = await (await request.get(`/api/workflow-drafts/${envelope.draft_id}/sample-test?test_id=${envelope.request_id}`)).json();
@@ -104,14 +117,14 @@ test(`conversation ${kind} authorizes HTTP fixture samples and restores editable
   expect((await request.post(humanRoot,{data:human})).ok()).toBe(true);
   await page.setViewportSize({width:1280,height:800});
   await page.getByRole("button",{name:"Refresh requests",exact:true}).click();
-  await page.getByRole("button",{name:"Open requested result",exact:true}).click();
+  await page.locator("article").filter({hasText:human.question}).getByRole("button",{name:"Open requested result",exact:true}).click();
   await expect(page.getByRole("button",{name:"Submit correction",exact:true})).toBeVisible();
   expect(new URL(page.url()).searchParams.get("request")).toBe(human.id);
   expect(new URL(page.url()).searchParams.get("task")).toBe(human.task_id);
   await page.reload();
   await expect(page.getByRole("button",{name:"Submit correction",exact:true})).toBeVisible();
   await page.getByLabel("Correct label",{exact:true}).fill(kind==="classification" ? "室内" : "cup");
-  if(kind==="bbox"){await page.getByText("Result needs attention",{exact:true}).click();await page.getByRole("spinbutton",{name:"width",exact:true}).fill("0.12");}
+  if(kind==="bbox")await page.getByRole("spinbutton",{name:"width",exact:true}).fill("0.12");
   await page.locator(".conversation-panel").evaluate(element=>{const card=element.querySelector<HTMLElement>('[aria-label="Human requests"]');if(card)element.scrollTop=card.offsetTop-element.getBoundingClientRect().top;});
   await page.locator(".conversation-image-panel").evaluate(element=>element.scrollTop=0);
   await page.screenshot({path:`../docs/execution/conversational-workspace/human-request-${kind}.png`,fullPage:true});
@@ -134,7 +147,7 @@ test(`conversation ${kind} authorizes HTTP fixture samples and restores editable
   expect((await request.post(`${humanRoot}/${human.id}/answer`,{data:{answer:{...answer,note:"changed retry"}}})).ok()).toBe(false);
   expect((await (await request.get(feedbackPath)).json()).revisions).toHaveLength(revisions.length+1);
   await page.reload();
-  const restored=await (await request.get(humanRoot)).json();
+  const restored=(await (await request.get(humanRoot)).json()).filter((value:any)=>value.input.id===human.id);
   expect(restored).toHaveLength(1);
   expect(restored[0].answer.revision_id).toBe(answer.revision_id);
   expect(restored[0].status).toBe("applied");
@@ -208,5 +221,25 @@ test(`conversation ${kind} authorizes HTTP fixture samples and restores editable
   await origin.evaluate(element=>element.scrollIntoView({block:"start"}));
   await page.screenshot({path:`../docs/execution/conversational-workspace/comparison-origin-${kind}.png`,fullPage:true});
   expect(await (await request.get(`${taskRoot}/calls`)).json()).toEqual(afterComparison);
+  if(kind==="bbox"){
+  const comparisonId=new URL(comparisonUrl).searchParams.get("test");
+  await expect.poll(async()=> (await (await request.get(humanRoot)).json()).filter((value:any)=>value.input.sample_test_id===comparisonId).length).toBe(1);
+  const automatic=(await (await request.get(humanRoot)).json()).find((value:any)=>value.input.sample_test_id===comparisonId);
+  expect(automatic.status).toBe("pending");
+  const automaticCard=page.locator("article").filter({hasText:automatic.input.question}).filter({has:page.getByText("pending",{exact:true})});
+  await expect(automaticCard).toBeVisible();
+  await automaticCard.getByRole("button",{name:"Open requested result",exact:true}).click();
+  await expect(page).toHaveURL(new RegExp(`request=${automatic.input.id}`));
+  await expect(page.getByRole("button",{name:"Submit correction",exact:true})).toBeVisible();
+  await page.getByRole("spinbutton",{name:"width",exact:true}).fill("0.14");
+  await automaticCard.evaluate(element=>element.scrollIntoView({block:"start"}));
+  await page.screenshot({path:"../docs/execution/conversational-workspace/automatic-human-request.png",fullPage:true});
+  await page.getByRole("button",{name:"Submit correction",exact:true}).click();
+  await expect.poll(async()=> (await (await request.get(humanRoot)).json()).find((value:any)=>value.input.id===automatic.input.id)?.status).toBe("applied");
+  expect(await (await request.get(`${taskRoot}/calls`)).json()).toEqual(afterComparison);
+  await page.reload();
+  await expect(page.getByText("Correction saved and revision Draft prepared without model calls. Later repairs and tests have separate operation records.",{exact:true})).toBeVisible();
+  expect(await (await request.get(`${taskRoot}/calls`)).json()).toEqual(afterComparison);
+  }
 });
 }

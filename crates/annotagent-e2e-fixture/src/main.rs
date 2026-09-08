@@ -301,6 +301,15 @@ fn tool_arguments(name: &str, tool: &Value, request: &Value) -> Option<Value> {
             "detections": [{"label": "football", "bbox": [0.35, 0.35, 0.2, 0.2], "confidence": 0.9}],
         })),
         "submit_classifications" => {
+            // Explicit TEST scenario: exercise human assistance without changing live policy.
+            let confidence = if request["model"]
+                .as_str()
+                .is_some_and(|model| model.ends_with("-review"))
+            {
+                0.4
+            } else {
+                0.9
+            };
             let properties =
                 tool.pointer("/function/parameters/properties/classifications/items/properties")?;
             let label = properties
@@ -323,8 +332,8 @@ fn tool_arguments(name: &str, tool: &Value, request: &Value) -> Option<Value> {
                     "subject_artifact_id": subject.get("artifact_id"),
                     "subject_item_id": subject.get("item_id").cloned().unwrap_or(Value::Null),
                     "label": label,
-                    "confidence": 0.9,
-                    "scores": {label: 0.9},
+                    "confidence": confidence,
+                    "scores": {label: confidence},
                 })).collect::<Vec<_>>(),
             }))
         }

@@ -5,8 +5,8 @@ import { ConversationBuilderCard } from "./ConversationBuilderCard";
 import type { OpenConversationSample } from "./ConversationSampleCard";
 
 /** Restore the exact Sandbox Schema; fetching this card never invokes a model. */
-export function ConversationRepairCard({project, request, editing, onSample}: {
-  project:string; request:HumanRequest; editing:boolean; onSample:OpenConversationSample;
+export function ConversationRepairCard({project, request, editing, onSample, onAssistance}: {
+  project:string; request:HumanRequest; editing:boolean; onAssistance?:()=>void; onSample:OpenConversationSample;
 }) {
   const [schema,setSchema]=useState<{id:string;revision:number}>();
   const [error,setError]=useState("");
@@ -23,5 +23,5 @@ export function ConversationRepairCard({project, request, editing, onSample}: {
   },[project,request.input.id,request.input.sample_test_id]);
   if(error)return <p role="alert">{error}</p>;
   if(!schema)return <p role="status">Loading the saved correction's plan context…</p>;
-  return <ConversationBuilderCard project={project} conversation={request.input.conversation_id} task={request.input.task_id} schema={schema} editing={editing} onSample={onSample} repairRequest={{id:request.input.id,draft:request.resume_draft_id!}} />;
+  return <ConversationBuilderCard project={project} conversation={request.input.conversation_id} task={request.input.task_id} schema={schema} editing={editing} onSample={onSample} onAssistance={onAssistance} repairRequest={{id:request.input.id,draft:request.resume_draft_id!}} />;
 }
