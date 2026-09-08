@@ -5003,3 +5003,11 @@ The corrected command uses `web/node_modules/.bin/playwright` from `web`. Curren
 **46539** runs the complete Guided Workspace file against a fresh isolated workspace,
 evidence `/tmp/annotagent-guided-summary-repair`. Do not count either failed invocation
 as a passing check. No real workspace/remote/credential changes or push.
+
+Handle 46539 is now terminal/exit 0: **36/36 Guided Workspace tests passed (39.3s)**,
+including publication/default-version selection, all formerly skipped Review/export,
+keyboard, compact reflow and Run deletion/restore/provenance tests. The fresh runner
+confirms the exact Project summary destructuring correction. This is not a new full-suite
+green run, and the “200 percent reflow boundary” remains a viewport test, not native zoom.
+Conversation fixture/scroll repairs are committed as `ae9a7d0`; source recovery as
+`d483800`. The complete objective and automatic repair-authorization work remain open.

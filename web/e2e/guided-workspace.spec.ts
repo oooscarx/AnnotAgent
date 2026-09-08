@@ -785,8 +785,9 @@ test("Dry Run reports real summary metrics and publishes an immutable version", 
   sampleEvidenceTestId = new URL(page.url()).searchParams.get("test") ?? "";
   expect(sampleEvidenceTestId).toBeTruthy();
 
-  const state = await dashboard(request);
-  const project = state.projects.find((item: { id: string }) => item.id === projectId);
+  const projectResponse = await request.get(`/api/projects/${projectId}/summary`);
+  expect(projectResponse.ok()).toBeTruthy();
+  const { project } = await projectResponse.json();
   expect(project.default_workflow_version.status).toBe("published");
   const started = await request.post(`/api/projects/${projectId}/runs`, {
     headers: { "idempotency-key": `e2e-${stamp}` },
