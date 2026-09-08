@@ -221,6 +221,7 @@ pub(super) fn routes() -> Router<ServerState> {
             get(get_export_readiness),
         )
         .route("/api/projects/{project_id}/export", post(export_dataset))
+        .route("/api/projects/{project_id}/exports/{export_id}/download", get(super::download_export))
         .route("/api/runs/{run_id}", get(get_run))
         .route("/api/runs/{run_id}/provenance", get(get_run_provenance))
         .route(

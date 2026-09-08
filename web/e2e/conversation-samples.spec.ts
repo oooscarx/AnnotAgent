@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { expect as baseExpect, test, fetchWithinMutationLimit } from "./fixtures";
 
@@ -425,13 +425,21 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
     let release!:()=>void;
     const gate=new Promise<void>(resolve=>{release=resolve;});
     let intercepted=false;
+    // Switching tasks may abort the stale lookup before the gate is released.
+    // Both response and cancellation are legitimate terminal transport events.
+    let settleLookup!:()=>void;
+    const lookupSettled=new Promise<void>(resolve=>{settleLookup=resolve;});
+    const onResponse=(value:import("@playwright/test").Response)=>{if(value.url().endsWith(operationPath))settleLookup();};
+    const onFailure=(value:import("@playwright/test").Request)=>{if(value.url().endsWith(operationPath))settleLookup();};
+    page.on("response",onResponse);page.on("requestfailed",onFailure);
     await page.route(`**${operationPath}`,async route=>{intercepted=true;await gate;await route.fulfill(lateError ? {status:503,json:{error:"TEST stale request lookup failed"}} : {json:operationSnapshot});},{times:1});
     await help.locator("article").filter({hasText:human.question}).getByRole("button",{name:"Open requested result",exact:true}).click();
     await expect.poll(()=>intercepted).toBe(true);
     const taskOnly=new URL(page.url());taskOnly.searchParams.set("task",lateError ? independentTask : human.task_id);
     await page.evaluate(url=>{history.pushState({},"",url);window.dispatchEvent(new PopStateEvent("popstate"));},taskOnly.toString());
     await expect(page.getByRole("button",{name:lateError ? /Use message 2 as annotation goal/ : /Use message 1 as annotation goal/})).toHaveAttribute("aria-pressed","true");
-    const response=page.waitForResponse(value=>value.url().endsWith(operationPath));release();await response;
+    release();await lookupSettled;
+    page.off("response",onResponse);page.off("requestfailed",onFailure);
     await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
     expect(page.url()).toBe(taskOnly.toString());
     await expect(page.getByRole("alert").filter({hasText:"TEST stale request lookup failed"})).toHaveCount(0);
@@ -722,6 +730,19 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
       expect(exported.project.annotations[0].value).toEqual(accepted.annotation.value);
       expect(exported.project.annotations[0].review_status).toBe("human_accepted");
       await expect(page.getByRole("heading",{name:"Dataset exported successfully",exact:true})).toBeVisible();
+      for (const restored of [false,true]) {
+        if(restored) await page.reload();
+        const downloadEvent=page.waitForEvent("download");
+        await page.getByRole("link",{name:"Download annotation archive",exact:true}).click();
+        const download=await downloadEvent;
+        expect(await download.failure()).toBeNull();
+        expect(download.suggestedFilename()).toBe(`annotagent-export-${delivered.delivery.id}.zip`);
+        const archive=readFileSync((await download.path())!);
+        expect(archive.length).toBe(delivered.delivery.bytes);
+        expect(archive.subarray(0,2).toString()).toBe("PK");
+        expect(createHash("sha256").update(archive).digest("hex")).toBe(delivered.delivery.sha256);
+      }
+      expect((await request.get(`/api/projects/${project}/exports/${randomUUID()}/download`)).ok()).toBe(false);
       await page.screenshot({path:evidencePath(`formal-export-${kind}.png`),fullPage:true,animations:"disabled"});
       await page.goBack();
       await expect(page).toHaveURL(reviewUrl);

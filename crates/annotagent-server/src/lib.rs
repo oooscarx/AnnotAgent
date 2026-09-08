@@ -7883,6 +7883,34 @@ async fn export_dataset(
     Ok(Json(json!(result)))
 }
 
+async fn download_export(
+    State(state): State<ServerState>,
+    AxumPath((project, id)): AxumPath<(String, uuid::Uuid)>,
+) -> ApiResult<axum::response::Response> {
+    let application = state.application.clone();
+    let (file, delivery) =
+        tokio::task::spawn_blocking(move || application.open_export_delivery(&project, id))
+            .await
+            .map_err(ApiError::internal)?
+            .map_err(ApiError::bad_request)?;
+    axum::response::Response::builder()
+        .header("content-type", "application/zip")
+        .header(
+            "content-disposition",
+            format!(
+                "attachment; filename=\"annotagent-export-{}.zip\"",
+                delivery.id
+            ),
+        )
+        .header("content-length", delivery.bytes.to_string())
+        .header("cache-control", "private, no-store")
+        .header("x-content-type-options", "nosniff")
+        .body(axum::body::Body::from_stream(
+            tokio_util::io::ReaderStream::new(tokio::fs::File::from_std(file)),
+        ))
+        .map_err(ApiError::internal)
+}
+
 async fn get_settings(State(state): State<ServerState>) -> Json<Value> {
     let settings = state.settings.read().await.clone();
     let mut settings = serde_json::to_value(settings).expect("Settings always serialize");

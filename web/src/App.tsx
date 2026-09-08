@@ -2795,6 +2795,14 @@ function ProjectExportPage({
 
           {result && <section className="export-success" aria-live="polite">
             <div className="export-success-heading"><span aria-hidden="true">✓</span><div><span className="eyebrow">{t("Export complete")}</span><h2>{t("Dataset exported successfully")}</h2><p>{result.report.exported_count} annotation{result.report.exported_count === 1 ? "" : t("s")} exported · {result.report.skipped_count} skipped · {new Date(result.completed_at).toLocaleString(localeTag())}</p></div></div>
+            {result.delivery && project && (
+              <div className="button-row">
+                <a className="button primary"
+                  href={`/api/projects/${encodeURIComponent(project.id)}/exports/${encodeURIComponent(result.delivery.id)}/download`}
+                  download>{t("Download annotation archive")}</a>
+                <small>{t("Generated annotation files and report. Original images are not bundled unless the exporter includes them.")} · {result.delivery.bytes.toLocaleString()} bytes</small>
+              </div>
+            )}
             <div className="export-result-path"><span>{t("Result folder")}</span><code>{result.output_path}</code><button onClick={copyOutputPath}>{t("Copy folder path")}</button>{copyStatus && <small role="status">{copyStatus}</small>}<small>{t("This folder is on the AnnotAgent server, not necessarily on this device.")}</small></div>
             <details className="export-report"><summary>{t("View export report")}</summary><dl>
               <div><dt>{t("Format")}</dt><dd>{result.format}</dd></div>

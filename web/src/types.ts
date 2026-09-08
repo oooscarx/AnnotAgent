@@ -2017,6 +2017,7 @@ export interface ExportReport {
 }
 
 export interface ProjectExportResult {
+  delivery?: { id:string; bytes:number; sha256:string } | null;
   format: string;
   output_path: string;
   completed_at: string;

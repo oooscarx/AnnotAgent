@@ -33,7 +33,9 @@ pub use conversation_schema::{
     ConversationOutputKind, ConversationSchemaAttempt, ConversationSchemaDecision,
     ConversationSchemaExecution, parse_conversation_schema_response, propose_conversation_schema,
 };
+mod export_delivery;
 mod management;
+pub use export_delivery::ExportDelivery;
 mod published_run;
 mod result_projection;
 mod sample_limits;
@@ -6392,6 +6394,8 @@ pub struct ExportFormatCompatibility {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectExportResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<ExportDelivery>,
     pub format: String,
     pub output_path: PathBuf,
     pub completed_at: String,
@@ -10085,7 +10089,8 @@ impl LocalApplication {
                 compatibility.unsupported_task_kinds.join(", ")
             );
         }
-        let output_path = data.project_root.join("exports").join(&format);
+        let delivery_id = uuid::Uuid::new_v4();
+        let output_path = self.export_delivery_directory(project_id, delivery_id, true)?;
         let source_fingerprint = sha256(&serde_json::to_vec(&data.snapshot)?);
         let mut report = dataset_exporter(&format)?
             .export(ExportRequest {
@@ -10097,6 +10102,11 @@ impl LocalApplication {
         let report_path = output_path.join("export-report.json");
         report.output_files.push(report_path.clone());
         let result = ProjectExportResult {
+            delivery: Some(export_delivery::package(
+                &output_path,
+                delivery_id,
+                &report,
+            )?),
             format,
             output_path,
             completed_at: chrono::Utc::now().to_rfc3339(),
@@ -10105,6 +10115,19 @@ impl LocalApplication {
         };
         std::fs::write(&report_path, serde_json::to_vec_pretty(&result)?)
             .with_context(|| format!("cannot write export report {}", report_path.display()))?;
+        let latest = data.project_root.join("exports").join(&result.format);
+        if latest.is_symlink() {
+            bail!("Export latest-result directory must not be a symlink");
+        }
+        std::fs::create_dir_all(&latest)?;
+        let pointer = latest.join(format!(".report-{delivery_id}.tmp"));
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&pointer)?;
+        std::io::Write::write_all(&mut file, &serde_json::to_vec_pretty(&result)?)?;
+        file.sync_all()?;
+        std::fs::rename(pointer, latest.join("export-report.json"))?;
         Ok(result)
     }
 
@@ -23456,6 +23479,35 @@ export:
         assert_eq!(export.report.exported_count, 1);
         assert!(export.output_path.join("annotagent-native.json").is_file());
         assert!(export.output_path.join("export-report.json").is_file());
+        let delivery = export.delivery.as_ref().expect("saved download");
+        let (file, _) = application
+            .open_export_delivery("label-classification", delivery.id)
+            .expect("download");
+        let mut archive = zip::ZipArchive::new(file).expect("valid zip");
+        let native: serde_json::Value = serde_json::from_reader(
+            archive
+                .by_name("annotagent-native.json")
+                .expect("native annotation file"),
+        )
+        .expect("native JSON");
+        assert_eq!(
+            native["project"]["annotations"]
+                .as_array()
+                .expect("annotations")
+                .len(),
+            1
+        );
+        assert!(archive.by_name("delivery-report.json").is_ok());
+        assert!(
+            application
+                .open_export_delivery("missing-project", delivery.id)
+                .is_err()
+        );
+        assert!(
+            application
+                .open_export_delivery("label-classification", uuid::Uuid::new_v4())
+                .is_err()
+        );
         let persisted = application
             .export_readiness("label-classification")
             .expect("persisted Export result");
@@ -23465,6 +23517,33 @@ export:
                 .as_ref()
                 .map(|result| &result.completed_at),
             Some(&export.completed_at)
+        );
+        let second = application
+            .export_project_dataset("label-classification", "native")
+            .await
+            .expect("second independent export");
+        assert_ne!(second.delivery.as_ref().unwrap().id, delivery.id);
+        assert_ne!(second.output_path, export.output_path);
+        assert!(
+            application
+                .open_export_delivery("label-classification", delivery.id)
+                .is_ok(),
+            "previous delivery remains available"
+        );
+        std::fs::write(
+            export.output_path.join("dataset.zip"),
+            b"substituted archive",
+        )
+        .expect("isolated tamper test");
+        assert!(
+            application
+                .open_export_delivery("label-classification", delivery.id)
+                .is_err()
+        );
+        assert!(
+            application
+                .open_export_delivery("label-classification", second.delivery.unwrap().id)
+                .is_ok()
         );
 
         let image_root = temporary.path().join("label-classification/images");

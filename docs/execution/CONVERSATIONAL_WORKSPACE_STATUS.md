@@ -3969,3 +3969,42 @@ Strict all-target/all-feature Clippy, fmt check and workspace build pass. Web ty
 bundle-size warning. No real workspace/service8787/credential/remote was modified and no push
 was performed. Screenshot changes predating this work remain untouched. Goal remains active;
 browser delivery, broader long-history/performance and accessibility acceptance remain open.
+
+### 2026-09-09 — Real export archive delivery
+
+Completed the missing browser delivery boundary using the existing Project exporter. Each
+explicit export creates a unique generation and ZIP of exporter-produced files plus a delivery
+summary. The latest-result pointer is atomically replaced; old generations remain intact.
+The owner-scoped download endpoint takes an export UUID, never a filesystem path, and checks
+the persisted size/SHA-256 before streaming the archive. It neither runs an exporter nor calls
+a model. Directory/file symlinks, outside-generation source paths, oversized manifests and
+archives, missing IDs and altered archives are rejected. Download is bounded to 512 MiB;
+this is an annotation-file delivery, not a promise to bundle all original images.
+
+The export success view now exposes a download link with the same persisted metadata after
+refresh. Legacy reports still load but do not pretend to have a downloadable asset. Browser
+tests now actually receive a download before and after refresh, compare bytes and SHA-256,
+and check the suggested ZIP filename; the Rust integration reads the native annotations
+inside ZIP, checks independent generations and refuses a tampered old archive.
+
+Validation: Application/Server all-feature tests pass (144 Application passed, one explicitly
+billable smoke ignored; 45 Server passed). Strict targeted all-target Clippy, fmt, Web
+typecheck and 199 Web unit tests pass. The two full TEST bbox/classification-review browser
+paths passed with actual downloads (44.4s total). Screenshot review found the initial anchor
+was unstyled, so it now uses a visible, keyboard-focusable primary download treatment;
+post-style browser verification is recorded below. Evidence is isolated under
+`/tmp/annotagent-export-delivery-evidence`, not overwriting earlier repository screenshots.
+
+Remaining: persistent conversation export job/card integration, complete long-history and
+accessibility acceptance. This is TEST backend evidence, not Live model quality or human
+usability validation. No real Project data, service 8787, credentials or remotes changed;
+no push. The overall goal remains incomplete.
+
+Post-style rerun initially exposed an existing bbox race-test harness hang: after switching
+tasks the old lookup can be cancelled, but the test awaited only a response. It now subscribes
+before navigation to either response or request failure and retains the same stale-result /
+stale-error rejection assertions. Final rerun passed both complete scenarios (9.3s each,
+23.9s harness) on `/tmp/annotagent-guided-e2e-88140`. The styled download success screenshot
+was inspected; no fake file-manager control was added. Production build retains the known
+bundle-size warning. Broader workspace tests were not rerun in this increment; the two changed
+Rust packages were fully tested instead.

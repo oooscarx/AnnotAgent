@@ -127,12 +127,14 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2",
  "tempfile",
  "tokio",
  "tokio-util",
  "toml",
  "uuid",
  "walkdir",
+ "zip",
 ]
 
 [[package]]

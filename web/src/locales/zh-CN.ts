@@ -1,5 +1,7 @@
 /** English source messages are stable keys; untranslated technical copy falls back to English. */
 export const zhCN: Record<string, string> = {
+  "Download annotation archive": "下载标注归档",
+  "Generated annotation files and report. Original images are not bundled unless the exporter includes them.": "包含生成的标注文件和报告；仅当导出器包含原图时，归档才包含原图。",
   "Review this class in the current image": "审核本图中的这类目标",
   "Compare conflicting class decisions": "对比发生冲突的审核决定",
   "My unsaved class decisions": "我的未保存决定",
