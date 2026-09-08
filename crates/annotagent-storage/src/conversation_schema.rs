@@ -56,6 +56,100 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_clarification_survives_restart_and_rejects_late_answers() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("TEST-cancel-clarification.db");
+        let store = SqliteStore::open(&path).unwrap();
+        let project = Uuid::new_v4().to_string();
+        let task = task(&store, &project);
+        let grant = ConversationCallGrant {
+            id: Uuid::new_v4(),
+            task_id: task,
+            scope_hash: "a".repeat(64),
+            maximum_calls: 2,
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(5),
+        };
+        store
+            .authorize_conversation_calls(&project, &grant)
+            .unwrap();
+        let call = Uuid::new_v4();
+        store
+            .reserve_conversation_call(&project, task, call, &grant.scope_hash, &"b".repeat(64))
+            .unwrap();
+        store.finish_conversation_call(&project,task,call,ConversationCallStatus::Completed,serde_json::json!({"decision":{"Ok":{"decision":"clarify","question":"TEST clarify output"}}})).unwrap();
+        let reference = crate::SchemaClarificationRef {
+            call_id: call,
+            expected_schema_revision: "a".repeat(64),
+        };
+        assert!(
+            store
+                .cancel_schema_clarification("foreign", task, &reference)
+                .is_err()
+        );
+        assert!(
+            store
+                .cancel_schema_clarification(
+                    &project,
+                    task,
+                    &crate::SchemaClarificationRef {
+                        expected_schema_revision: "stale".into(),
+                        ..reference.clone()
+                    }
+                )
+                .is_err()
+        );
+        let cancelled = store
+            .cancel_schema_clarification(&project, task, &reference)
+            .unwrap();
+        assert_eq!(cancelled.status, "cancelled");
+        drop(store);
+        let store = SqliteStore::open(&path).unwrap();
+        assert_eq!(
+            store
+                .cancel_schema_clarification(&project, task, &reference)
+                .unwrap(),
+            cancelled
+        );
+        assert!(
+            store
+                .create_human_schema_with_clarification(
+                    &project,
+                    task,
+                    Uuid::new_v4(),
+                    &definition(),
+                    Some(&reference)
+                )
+                .unwrap_err()
+                .to_string()
+                .contains("cancelled")
+        );
+        assert!(
+            store
+                .human_conversation_schema_drafts(&project, task)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            store
+                .reserve_conversation_call(
+                    &project,
+                    task,
+                    Uuid::new_v4(),
+                    &grant.scope_hash,
+                    &"b".repeat(64)
+                )
+                .is_err()
+        );
+        assert_eq!(
+            store
+                .conversation_task_budget(&project, task)
+                .unwrap()
+                .planning_reserved_calls,
+            1
+        );
+    }
+
+    #[test]
     fn clarification_answer_is_atomic_owned_and_unblocks_without_resetting_usage() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("TEST-clarification.db");
@@ -203,6 +297,11 @@ mod tests {
             .unwrap();
         assert_eq!(answered.status, "applied");
         assert_eq!(answered.schema_draft_id, Some(draft.id));
+        assert!(
+            store
+                .cancel_schema_clarification(&project, task, &reference)
+                .is_err()
+        );
         assert_eq!(
             store
                 .conversation_task_budget(&project, task)
@@ -566,6 +665,7 @@ impl SqliteStore {
                 return read(&tx, project, id, None);
             }
             if question.as_ref().is_some_and(|q|q.schema_draft_id.is_some()){return Err(invalid("This clarification was already answered; edit its saved Schema Draft"));}
+            if question.as_ref().is_some_and(|q|q.status=="cancelled"){return Err(invalid("This clarification was cancelled; no answer or Schema Draft was saved"));}
             let base: String = tx.query_row("SELECT schema_revision FROM conversation_tasks WHERE id=?1", [task.to_string()], |row| row.get(0))?;
             let id = Uuid::new_v4();
             tx.execute("INSERT INTO conversation_schema_drafts(id,task_id,source_request_id,base_schema_revision) VALUES(?1,?2,?3,?4)", params![id.to_string(),task.to_string(),request.to_string(),base])?;

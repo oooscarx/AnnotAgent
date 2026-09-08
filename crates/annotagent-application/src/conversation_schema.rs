@@ -208,6 +208,20 @@ impl crate::LocalApplication {
             call,
         )?)
     }
+    pub fn cancel_schema_clarification(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        reference: &annotagent_storage::SchemaClarificationRef,
+    ) -> Result<annotagent_storage::SchemaClarification> {
+        self.optional_conversation_builder_budget(project, conversation, task)?;
+        Ok(self.store.cancel_schema_clarification(
+            &self.conversation_project_identity(project)?,
+            task,
+            reference,
+        )?)
+    }
     pub fn save_human_schema_with_clarification(
         &self,
         project: &str,

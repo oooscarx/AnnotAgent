@@ -45,6 +45,7 @@ pub(crate) fn read(
             StorageError::InvalidConversation("Saved clarification has no question".into())
         })?;
     let draft:Option<String>=db.query_row("SELECT schema_draft_id FROM conversation_schema_clarification_answers WHERE call_id=?1",[call.to_string()],|r|r.get(0)).optional()?;
+    let cancelled:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM conversation_call_cancellations WHERE call_id=?1 AND task_id=?2)",params![call.to_string(),task.to_string()],|r|r.get(0))?;
     let id = |value: String| {
         Uuid::parse_str(&value).map_err(|_| {
             StorageError::InvalidConversation("Invalid saved clarification identity".into())
@@ -61,6 +62,8 @@ pub(crate) fn read(
         expected_schema_revision: revision,
         status: if draft.is_some() {
             "applied"
+        } else if cancelled {
+            "cancelled"
         } else {
             "pending"
         }
@@ -70,6 +73,28 @@ pub(crate) fn read(
 }
 
 impl SqliteStore {
+    /// Cancels only a still-unanswered clarification. Existing call cancellation storage
+    /// keeps the decision durable; it neither deletes evidence nor refunds used calls.
+    pub fn cancel_schema_clarification(
+        &self,
+        project: &str,
+        task: Uuid,
+        reference: &SchemaClarificationRef,
+    ) -> Result<SchemaClarification, StorageError> {
+        self.with_connection(|db|{
+            let tx=db.unchecked_transaction()?;
+            let saved=read(&tx,project,task,reference.call_id)?;
+            if saved.expected_schema_revision!=reference.expected_schema_revision {
+                return Err(StorageError::InvalidConversation("Clarification Schema revision changed".into()));
+            }
+            if saved.status=="applied" {
+                return Err(StorageError::InvalidConversation("This clarification was already answered; its saved labels were not cancelled".into()));
+            }
+            tx.execute("INSERT OR IGNORE INTO conversation_call_cancellations(call_id,task_id,requested_at) VALUES(?1,?2,?3)",params![reference.call_id.to_string(),task.to_string(),chrono::Utc::now().to_rfc3339()])?;
+            tx.commit()?;
+            read(db,project,task,reference.call_id)
+        })
+    }
     pub fn conversation_schema_clarification(
         &self,
         project: &str,

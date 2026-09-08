@@ -4,7 +4,8 @@ import { ConversationSchemaEditor } from "./ConversationSchemaEditor";
 import type { OpenConversationSample } from "./ConversationSampleCard";
 
 /** Human semantics use the same versioned Schema and Builder, without a model receipt. */
-export function ConversationHumanSchema({project,conversation,task,schemaId,onSaved,onDirtyChange,onSample,onAssistance,clarification}: {
+export function ConversationHumanSchema({project,conversation,task,schemaId,onSaved,onDirtyChange,onSample,onAssistance,clarification,onCancelClarification,cancelling}: {
+  onCancelClarification?:()=>void; cancelling?:boolean;
   clarification?:{call_id:string;expected_schema_revision:string;question:string};
   project:string; conversation:string; task:string; schemaId?:string; onSaved:(id:string)=>void;
   onDirtyChange:(dirty:boolean)=>void; onSample:OpenConversationSample; onAssistance?:()=>void;
@@ -31,7 +32,7 @@ export function ConversationHumanSchema({project,conversation,task,schemaId,onSa
   },[project,conversation,task,schemaId,clarification?.call_id]);
   useEffect(()=>{if(schemaId)return; onDirtyChange(busy||uncertain||kind!=="bounding_box"||Boolean(labels||rules));return()=>onDirtyChange(false);},[schemaId,busy,uncertain,kind,labels,rules,onDirtyChange]);
   async function save() {
-    if(pending.current)return;
+    if(pending.current||cancelling)return;
     pending.current=true; setBusy(true);setError("");
     request.current ??= {request_id:crypto.randomUUID(),clarification:clarification?{call_id:clarification.call_id,expected_schema_revision:clarification.expected_schema_revision}:undefined,decision:{decision:"draft",kind,
       labels:labels.split("\n").map(value=>value.trim()).filter(Boolean),multi_label:false,attributes:{},
@@ -57,6 +58,7 @@ export function ConversationHumanSchema({project,conversation,task,schemaId,onSa
     <label htmlFor={`${id}-rules`}>Boundary rules · optional</label><textarea id={`${id}-rules`} rows={2} value={rules} disabled={busy||uncertain} onChange={event=>setRules(event.target.value)}/>
     <p role="status">{busy?"Saving label draft…":uncertain?"Save outcome unknown. Retry keeps the same request; refresh checks saved drafts.":"These labels have not been saved yet."}</p>
     {error&&<p role="alert">{error} Your input remains here.</p>}
-    <button className="primary" disabled={busy||!labels.trim()} onClick={()=>void save()}>{uncertain?"Retry same label save":clarification?"Save answer and continue":"Save label draft without a model"}</button>
+    <button className="primary" disabled={busy||cancelling||!labels.trim()} onClick={()=>void save()}>{uncertain?"Retry same label save":clarification?"Save answer and continue":"Save label draft without a model"}</button>
+    {onCancelClarification&&<button disabled={busy||uncertain||cancelling} onClick={onCancelClarification}>Cancel clarification</button>}
   </section>;
 }

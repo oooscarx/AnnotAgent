@@ -42,6 +42,26 @@ pub(super) async fn clarification(
         .map_err(ApiError::bad_request)
 }
 
+pub(super) async fn cancel_clarification(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task, call)): AxumPath<(
+        String,
+        uuid::Uuid,
+        uuid::Uuid,
+        uuid::Uuid,
+    )>,
+    Json(reference): Json<annotagent_storage::SchemaClarificationRef>,
+) -> ApiResult<Json<annotagent_storage::SchemaClarification>> {
+    if call != reference.call_id {
+        return Err(ApiError::bad_request("Clarification identity changed"));
+    }
+    state
+        .application
+        .cancel_schema_clarification(&project, conversation, task, &reference)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
 pub(super) async fn human_drafts(
     State(state): State<ServerState>,
     AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,

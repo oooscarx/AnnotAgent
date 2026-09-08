@@ -2,7 +2,8 @@ import {randomUUID} from "node:crypto";
 import {resolve} from "node:path";
 import {expect,test,fetchWithinMutationLimit} from "./fixtures";
 
-test("Schema clarification saves without inference then continues to authorized Builder and samples",async({page,request})=>{
+for(const mode of ["answer","cancel"] as const){
+test(`Schema clarification ${mode}: same-task persistence and explicit continuation`,async({page,request})=>{
   test.setTimeout(120_000);
   // The browser suite shares only this isolated TEST registry between scenarios.
   // Retire prior scenario transports so fixture template selection is deterministic.
@@ -39,6 +40,25 @@ test("Schema clarification saves without inference then continues to authorized 
   const question=await (await request.get(questionPath)).json();
   expect(question.status).toBe("pending");expect(question.kind).toBe("clarify_task");expect(question.task_id).toBe(task.input.id);
   const before=await (await request.get(`${taskRoot}/budget`)).json();
+  if(mode==="cancel"){
+    await page.getByRole("button",{name:"Answer this clarification",exact:true}).click();
+    await page.getByLabel("Labels · one per line",{exact:true}).fill("TEST unsaved answer");
+    await page.route(`**${questionPath}/cancel`,async route=>{const response=await fetchWithinMutationLimit(route);expect(response.ok(),await response.text()).toBe(true);await route.abort("failed");},{times:1});
+    page.once("dialog",dialog=>dialog.accept());
+    await page.getByRole("button",{name:"Cancel clarification",exact:true}).click();
+    await expect(page.getByRole("alert")).toContainText("Cancellation is not confirmed");
+    await page.reload();
+    await expect(page.getByText(/^Clarification cancelled\./)).toBeVisible();
+    await expect(page.getByRole("button",{name:"Answer this clarification",exact:true})).toHaveCount(0);
+    const reference={call_id:call,expected_schema_revision:question.expected_schema_revision};
+    expect((await request.post(`${questionPath}/cancel`,{data:reference})).ok()).toBe(true);
+    expect((await request.post(`${taskRoot}/human-schema-drafts`,{data:{request_id:randomUUID(),clarification:reference,decision:{decision:"draft",kind:"classification",labels:["TEST late"],multi_label:false,attributes:{},boundary_rules:[],rationale:"TEST late answer"}}})).ok()).toBe(false);
+    expect(await (await request.get(`${taskRoot}/human-schema-drafts`)).json()).toEqual([]);
+    expect((await (await request.get(questionPath)).json()).status).toBe("cancelled");
+    expect(await (await request.get(`${taskRoot}/budget`)).json()).toEqual(before);
+    await page.getByRole("region",{name:"Annotation Schema proposal",exact:true}).screenshot({path:"../docs/execution/conversational-workspace/clarification-cancelled.png",animations:"disabled"});
+    return;
+  }
   await page.reload();
   await page.getByRole("button",{name:"Answer this clarification",exact:true}).click();
   await expect(page.getByLabel("Answer annotation clarification",{exact:true})).toContainText(question.question);
@@ -110,3 +130,4 @@ test("Schema clarification saves without inference then continues to authorized 
   await expect(page.locator(".conversation-completed-stage")).toHaveCount(0);
   expect(await (await request.get(`${taskRoot}/budget`)).json()).toEqual(after);
 });
+}

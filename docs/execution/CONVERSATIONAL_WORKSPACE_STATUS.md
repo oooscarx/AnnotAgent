@@ -1969,3 +1969,36 @@ link to be exposed without opening the new disclosure; the test now opens the re
 control before verifying its href. The link itself and route were not removed or substituted.
 Current typecheck and diff hygiene passed. Production build passed via the harness, retaining
 the known large-chunk warning. No new Rust changes or claim of a new full Rust regression.
+
+### M2/M4 continuation — durable cancellation of unanswered Schema clarification
+
+An unanswered clarification now has an explicit Cancel action before or during form entry.
+The confirmation states that unsaved input is discarded while the question and consumed calls
+remain saved. The API validates exact Project/conversation/task/call ownership and expected
+Schema revision, then reuses the existing durable call-cancellation table. No migration, new
+executor, grant reset or history deletion is involved. Already-applied answers cannot be
+cancelled through this action; cancellation and answer creation serialize in their existing
+SQLite transactions. A cancelled question rejects a late answer without creating a Draft and
+continues to block further model admission from this unanswered task. Starting another goal
+uses the existing independent task mechanism and cannot erase the Project-wide usage total.
+
+Cancellation has no optimistic success label: on uncertain transport failure the entered form
+remains with an explicit unconfirmed message; refresh reads the server's saved cancellation.
+Answer-save-in-flight/unknown states disable the local Cancel action rather than silently
+discarding an uncertain successful answer. The cancelled view retains the original question
+with a cancelled title, no answer action, and an explanation of how to start a separate goal.
+This is cancellation, not temporary deferral or completed human review.
+
+Validation: all 60 Storage units + 16 integrations passed, including stale/foreign rejection,
+restart and duplicate cancellation, late-answer rejection, preserved call count, blocked new
+admission and refusal to cancel an applied answer. Server all-target/all-feature clippy passed.
+Web typecheck and 119 units passed. Isolated `/tmp/annotagent-guided-e2e-19606` passed both answer
+and cancel paths (2/2, 20.2 seconds including build/start): the cancellation response was lost
+after the server accepted it, refresh recovered the cancelled state, API retry was idempotent,
+late answer produced no human Schema Draft and usage stayed unchanged. Final wording/screenshot
+verification is recorded below. No real Workspace mutation, old key, Live model, push or remote
+change. Broader coordinator work, other HumanRequest types and real-human usability remain open.
+Final `/tmp/annotagent-guided-e2e-19837` passed 2/2 (8.9 seconds). Inspected
+`conversational-workspace/clarification-cancelled.png` with the cancellation explanation and
+original question visible together. Production build passed with the existing chunk-size warning;
+fmt and diff hygiene passed. No full-workspace Rust or full-browser-suite pass is claimed here.
