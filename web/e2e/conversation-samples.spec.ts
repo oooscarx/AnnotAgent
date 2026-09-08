@@ -325,10 +325,35 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   await page.screenshot({path:`../docs/execution/conversational-workspace/processing-linked-${scenario}.png`,fullPage:true});
   const savedWorkspaceUrl=page.url();
   await processingCard.getByRole("button",{name:"Open processing results",exact:true}).click();
-  await expect(page).toHaveURL(new RegExp(`/projects/${project}/batches/${started.batch_id}`));
+  await expect(page).toHaveURL(new RegExp(`batch=${started.batch_id}`));
   await expect(page.getByRole("region",{name:"Processing results",exact:true})).toBeVisible();
-  await page.screenshot({path:`../docs/execution/conversational-workspace/processing-results-${scenario}.png`,fullPage:true,animations:"disabled"});
+  expect(new URL(page.url()).pathname).toBe(`/projects/${project}/work`);
+  expect(new URL(page.url()).searchParams.get("test")).toBe(selection.sample_test_id);
+  const formalResults=page.getByRole("region",{name:"Processing results",exact:true});
+  await formalResults.getByRole("button",{name:"Show original",exact:true}).click();
+  await expect(page).toHaveURL(/result_view=original/);
+  await page.reload();
+  await expect(formalResults.getByRole("button",{name:"Show results",exact:true})).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("result_image")).toBeTruthy();
+  await formalResults.getByRole("button",{name:"Show results",exact:true}).click();
+  const formalUrl=page.url();
+  if(requiresReview) {
+    await formalResults.getByRole("button",{name:"Review this image",exact:true}).click();
+    await expect(page).toHaveURL(new RegExp(`/projects/${project}/review/`));
+  } else {
+    await formalResults.getByRole("button",{name:"Export confirmed results",exact:true}).click();
+    await expect(page).toHaveURL(new RegExp(`/projects/${project}/export`));
+  }
   await page.goBack();
+  await expect(page).toHaveURL(formalUrl);
+  await expect(formalResults).toBeVisible();
+  await page.screenshot({path:`../docs/execution/conversational-workspace/processing-results-${scenario}.png`,fullPage:true,animations:"disabled"});
+  const foreignUrl=new URL(page.url());foreignUrl.searchParams.set("batch",crypto.randomUUID());
+  await page.goto(foreignUrl.toString());
+  await expect(page.getByRole("alert").filter({hasText:"This Batch is not linked to this conversation"})).toBeVisible();
+  await expect(page.getByRole("region",{name:"Processing results",exact:true})).toHaveCount(0);
+  await page.goto(formalUrl);
+  await page.getByRole("button",{name:"Return to sample canvas",exact:true}).click();
   await expect(page).toHaveURL(savedWorkspaceUrl);
   await expect(page.getByRole("region",{name:"Saved processing tasks",exact:true})).toBeVisible();
   expect(await (await request.get(`${taskRoot}/processing-operations`)).json()).toHaveLength(1);

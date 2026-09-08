@@ -1,4 +1,7 @@
 export type BuildStep = "data" | "labels" | "pipeline" | "test";
+export interface ConversationResultsContext {
+  batchId: string; imageId?: string; status?: string; annotationId?: string; canvasView?: "original";
+}
 export type SettingsSection =
   | "providers"
   | "models"
@@ -11,7 +14,7 @@ export type WorkspaceRoute =
   | { kind: "home"; canonicalPath: string }
   | { kind: "projects"; canonicalPath: string; create?: boolean }
   | { kind: "project"; canonicalPath: string; projectId: string }
-  | { kind: "conversation"; canonicalPath: string; projectId: string; conversationId?: string; imageId?: string; draftId?: string; sampleTestId?: string; taskId?: string; humanRequestId?: string; processingOperationId?:string }
+  | { kind: "conversation"; canonicalPath: string; projectId: string; conversationId?: string; imageId?: string; draftId?: string; sampleTestId?: string; taskId?: string; humanRequestId?: string; processingOperationId?:string; results?: ConversationResultsContext }
   | { kind: "journey"; canonicalPath: string; projectId: string; scene: "images" | "goal" | "samples" | "model" | "confirm" | "revise"; draftId?: string; sampleTestId?: string; imageId?: string; agentSessionId?: string; sampleOperationId?: string; processingOperationId?: string; sampleView?: "authorize"; modelPurpose?: "vision"; returnScene?: "revise" }
   | { kind: "export"; canonicalPath: string; projectId: string }
   | {
@@ -183,12 +186,19 @@ export function projectJourneyPath(projectId: string, scene: "images" | "goal" |
   return `/projects/${encodeURIComponent(projectId)}/task/${scene}${params.size ? `?${canonicalSearch(params)}` : ""}`;
 }
 
-export function projectWorkPath(projectId: string, context: { conversationId?: string; imageId?: string; draftId?: string; sampleTestId?: string; taskId?:string; humanRequestId?:string; processingOperationId?:string } = {}): string {
+export function projectWorkPath(projectId: string, context: { conversationId?: string; imageId?: string; draftId?: string; sampleTestId?: string; taskId?:string; humanRequestId?:string; processingOperationId?:string; results?: ConversationResultsContext } = {}): string {
   const params = new URLSearchParams();
   if (context.conversationId) params.set("conversation", context.conversationId);
   if (context.taskId) params.set("task", context.taskId);
   if (context.humanRequestId) params.set("request", context.humanRequestId);
   if (context.processingOperationId) params.set("processing", context.processingOperationId);
+  if (context.results) {
+    params.set("batch", context.results.batchId);
+    if (context.results.imageId) params.set("result_image", context.results.imageId);
+    if (context.results.status) params.set("result_status", context.results.status);
+    if (context.results.annotationId) params.set("result_annotation", context.results.annotationId);
+    if (context.results.canvasView) params.set("result_view", context.results.canvasView);
+  }
   if (context.draftId) params.set("draft", context.draftId);
   if (context.sampleTestId) params.set("test", context.sampleTestId);
   if (context.imageId) params.set("image", context.imageId);
@@ -332,7 +342,8 @@ export function parseWorkspaceRoute(
     const projectId = decodePathSegment(conversation[1]);
     if (!projectId) return { kind: "notFound", invalidPath: clean, canonicalPath: clean };
     const context = { conversationId: params.get("conversation") || undefined, imageId: params.get("image") || undefined, draftId: params.get("draft") || undefined, sampleTestId: params.get("test") || undefined, taskId: params.get("task") || undefined, humanRequestId: params.get("request") || undefined, processingOperationId:params.get("processing") || undefined };
-    return { kind: "conversation", projectId, ...context, canonicalPath: projectWorkPath(projectId, context) };
+    const results: ConversationResultsContext | undefined = params.get("batch") ? { batchId: params.get("batch")!, imageId: params.get("result_image") || undefined, status: params.get("result_status") || undefined, annotationId: params.get("result_annotation") || undefined, canvasView: params.get("result_view") === "original" ? "original" : undefined } : undefined;
+    return { kind: "conversation", projectId, ...context, results, canonicalPath: projectWorkPath(projectId, { ...context, results }) };
   }
   const journey = clean.match(/^\/projects\/([^/]+)\/task\/(images|goal|samples|model|confirm|revise)$/);
   if (journey) {

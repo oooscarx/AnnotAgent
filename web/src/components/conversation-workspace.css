@@ -85,3 +85,7 @@
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
+.conversation-formal-results { display: grid; gap: 16px; min-width: 0; }
+.conversation-formal-results .journey-scene { padding: 0; }
+.conversation-formal-results .journey-intro h2 { font-size: 1.35rem; line-height: 1.3; }
+.conversation-formal-results .journey-actions { position: static; display: flex; flex-wrap: wrap; gap: 10px; }

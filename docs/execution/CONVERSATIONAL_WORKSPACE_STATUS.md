@@ -1302,3 +1302,37 @@ Final styled conversation rerun passed **3/3** in `/tmp/annotagent-guided-e2e-28
 No Live inference, real Workspace changes, push or remote changes. Full-workspace Rust
 regressions, real control lifecycle browser evidence, default entry, broader conversation
 intent/reference handling, formal Review/export embedding and M4 usability audits remain.
+
+### M3 continuation — formal results on the conversation canvas (2026-09-08)
+
+`Open processing results` now replaces the workspace's right-hand sample canvas with the
+existing `JourneyBatch` terminal results presentation. It does not navigate to global history
+or create another result engine. The same result projection, original/results switch, status
+filters, annotation list, geometry-risk notice and supported controls are retained. An explicit
+banner distinguishes formal dataset candidates from Sandbox sample corrections. Actual Review
+and Export remain the canonical existing pages, one action away; the editor is not yet embedded
+and full formal acceptance/export round-trip is still required.
+
+The typed conversation route carries separate Batch result context (Batch, result image, filter,
+selected candidate, original/results view), preserving original sample image, Draft, Test, task
+and request keys. Returning to the sample removes only result context. Switching result views
+does not steal page heading focus. The wrapper requires the Batch to be linked to this owned
+conversation's processing receipts, then checks server Project identity; invalid links show an
+explicit unavailable message, not another canvas. Formal missing-annotation editor guards compose
+with the conversation dirty guard. Messages cannot silently refer to the sample while formal
+results are displayed: without an explicitly selected formal image they are Project-level.
+
+The confirmation/history observer yields while its Batch is on the canvas, avoiding duplicate
+controls/pollers. Existing query cache, result services and coordinator remain authoritative.
+No model call, publish, control mutation or acceptance is caused by viewing/reloading results.
+
+Tests: Web typecheck, **112/112 unit tests**, production build and diff/format checks passed.
+Final isolated TEST browser run `/tmp/annotagent-guided-e2e-3353`: **3/3 passed** for normal
+classification, bbox and review classification. It verifies formal results stay on `/work`,
+same-image original/results restoration on reload, Review/Export navigation plus Back to the
+exact result URL, invalid Batch link rejection, and return to the original sample URL. Reviewed
+`processing-results-bbox.png` showing the existing final projection and quality risks. Synthetic
+fixture evidence has no semantic-quality meaning; no Live model or human usability test ran.
+Long conversation stacks and viewport density remain M4 work. No push or real Workspace changes.
+Next: formal Review/save/return and export completion, remaining conversation orchestration and
+default entry, then full acceptance audit. The overall objective is not yet complete.

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { api, type ProcessingReceipt } from "../api";
-import { projectWorkPath, projectBuildPath, projectBatchPath } from "../navigation";
+import { projectWorkPath, projectBuildPath, projectBatchPath, parseWorkspaceRoute, type ConversationResultsContext } from "../navigation";
 import type { ConversationMessage, ConversationMessageInput, ImageItem, ProjectSummary } from "../types";
 import "./conversation-workspace.css";
 import { ConversationSchemaCard } from "./ConversationSchemaCard";
@@ -8,13 +8,15 @@ import { ConversationSampleCanvas } from "./ConversationSampleCanvas";
 import { ConversationRepairCard } from "./ConversationRepairCard";
 import { JourneyConfirm } from "./JourneyConfirm";
 import { ConversationBatchStatus } from "./ConversationBatchStatus";
+import { ConversationBatchResults } from "./ConversationBatchResults";
 import { conversationSampleRelation } from "../conversation-context";
 import type { HumanRequest } from "../conversation-human-api";
 
 /** The journal and image importer share the existing Project; neither starts inference. */
-export function ConversationWorkspace({ project, conversationId, imageId, draftId, sampleTestId, taskId, humanRequestId, processingOperationId, onNavigate, onNavigationGuardChange }: {
+export function ConversationWorkspace({ project, conversationId, imageId, draftId, sampleTestId, taskId, humanRequestId, processingOperationId, results, onNavigate, onNavigationGuardChange }: {
   project: ProjectSummary; conversationId?: string; imageId?: string; draftId?:string; sampleTestId?:string;
   taskId?:string; humanRequestId?:string; processingOperationId?:string;
+  results?: ConversationResultsContext;
   onNavigate: (path: string) => void;
   onNavigationGuardChange: (guard?: () => boolean) => void;
 }) {
@@ -69,15 +71,17 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   const unsent = useRef("");
   const schemaDirty = useRef(false);
   const sampleDirty = useRef(false);
+  const formalGuard = useRef<(() => boolean) | undefined>(undefined);
+  const formalGuardChange = useCallback((guard?:()=>boolean)=>{formalGuard.current=guard;},[]);
   const sampleDirtyChange = useCallback((dirty:boolean)=>{sampleDirty.current=dirty;setRepairEditing(dirty);},[]);
   const schemaDirtyChange = useCallback((dirty: boolean) => { schemaDirty.current = dirty; }, []);
   const frozen = useRef<ConversationMessageInput | undefined>(undefined);
   const alive = useRef(true);
   const selected = images.find((image) => image.image_id === imageId) ?? (!imageId ? images[0] : undefined);
-  const referenceImage = frozen.current ? images.find((image) => image.image_id === frozen.current?.image?.image_id) : selected;
+  const referenceImage = frozen.current ? images.find((image) => image.image_id === frozen.current?.image?.image_id) : results ? images.find(image=>image.image_id===results.imageId) : selected;
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
-    const guard = () => selectingImage.current || (!pending.current && (!(unsent.current || schemaDirty.current || sampleDirty.current) || window.confirm("Leave with unsaved message, Schema or sample edits? Saved workspace data remains on the server.")));
+    const guard = () => (!formalGuard.current || formalGuard.current()) && (selectingImage.current || (!pending.current && (!(unsent.current || schemaDirty.current || sampleDirty.current) || window.confirm("Leave with unsaved message, Schema or sample edits? Saved workspace data remains on the server."))));
     const unload = (event: BeforeUnloadEvent) => { if (pending.current || unsent.current || schemaDirty.current || sampleDirty.current) event.preventDefault(); };
     onNavigationGuardChange(guard);
     window.addEventListener("beforeunload", unload);
@@ -104,7 +108,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   }, [project.id, conversationId]);
   async function send() {
     if (pending.current || !ready || !text.trim()) return;
-    frozen.current ??= { id: crypto.randomUUID(), text, image: selected ? { image_id: selected.image_id, sha256: selected.content_hash } : null };
+    frozen.current ??= { id: crypto.randomUUID(), text, image: referenceImage ? { image_id: referenceImage.image_id, sha256: referenceImage.content_hash } : null };
     const input = frozen.current;
     pending.current = true; setBusy(true); setError(""); setStatus("Saving message…");
     try {
@@ -137,6 +141,16 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
     try { onNavigate(projectWorkPath(project.id, { conversationId: conversation, imageId: id, draftId, sampleTestId, taskId, humanRequestId })); }
     finally { selectingImage.current = false; }
   };
+  const showResults = (next?:ConversationResultsContext) => {
+    onNavigate(projectWorkPath(project.id,{conversationId:conversation,imageId,draftId,sampleTestId,taskId,humanRequestId,processingOperationId,results:next}));
+    setMobileView("images");
+  };
+  const processingNavigate = (path:string) => {
+    const url=new URL(path,window.location.origin);
+    const route=parseWorkspaceRoute(url.pathname,url.search);
+    if(route.kind==="projectBatch" && route.projectId===project.id)showResults({batchId:route.batchId});
+    else onNavigate(path);
+  };
   async function openSample(draft:string,test:string,image?:string){
     const request=++sampleNavigation.current;
     try{const {sample_test}=await api.workflowSampleTest(draft,undefined,test);
@@ -166,9 +180,9 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
           }}>Referenced image · {images.find((image) => image.image_id === message.input.image?.image_id)?.name ?? message.input.image.image_id}</button>}<small>Saved · {message.sequence}</small></li>)}
         </ol>
         {conversation && draftId && sampleTestId && <section className="conversation-processing" aria-label="Process this dataset">
-          {processingOperationId ? <JourneyConfirm key={`${draftId}:${sampleTestId}`} projectId={project.id} draftId={draftId} testId={sampleTestId} imageId={imageId} operationId={processingOperationId==="preview" ? undefined : processingOperationId} expectedConversation={conversation} stayOnReceipt
+          {processingOperationId ? <JourneyConfirm key={`${draftId}:${sampleTestId}`} projectId={project.id} draftId={draftId} testId={sampleTestId} imageId={imageId} operationId={processingOperationId==="preview" ? undefined : processingOperationId} expectedConversation={conversation} viewingBatchId={results?.batchId} stayOnReceipt
             confirmationPath={id=>projectWorkPath(project.id,{conversationId:conversation,draftId,sampleTestId,imageId,taskId,humanRequestId,processingOperationId:id})}
-            backPath={projectWorkPath(project.id,{conversationId:conversation,draftId,sampleTestId,imageId,taskId,humanRequestId})} onNavigate={onNavigate} />
+            backPath={projectWorkPath(project.id,{conversationId:conversation,draftId,sampleTestId,imageId,taskId,humanRequestId})} onNavigate={processingNavigate} />
           : <button disabled={repairEditing} onClick={()=>onNavigate(projectWorkPath(project.id,{conversationId:conversation,draftId,sampleTestId,imageId,taskId,humanRequestId,processingOperationId:"preview"}))}>Review dataset processing</button>}
         </section>}
         {processing.length>0 && <section className="conversation-consent" aria-label="Saved processing tasks"><h3>Processing tasks</h3>{processing.map(operation=><article className="conversation-consent" key={operation.id}>
@@ -176,8 +190,8 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
           <p>{operation.phase==="started" ? "Processing was started. Open its saved results for current progress." : operation.phase==="published_start_failed" ? "Plan published; processing did not start." : `Saved operation: ${operation.phase}`}</p>
           <p>{operation.authorization.image_count} images · Schema revision {operation.authorization.conversation?.schema.revision} · Plan revision {operation.authorization.revision}</p>
           {operation.error && <p role="alert">{operation.error}</p>}
-          {operation.batch_id && operation.id !== processingOperationId && <ConversationBatchStatus projectId={project.id} batchId={operation.batch_id} />}
-          {operation.batch_id && <button onClick={()=>onNavigate(projectBatchPath(project.id,operation.batch_id!))}>Open processing results</button>}
+          {operation.batch_id && operation.id !== processingOperationId && operation.batch_id!==results?.batchId && <ConversationBatchStatus projectId={project.id} batchId={operation.batch_id} />}
+          {operation.batch_id && <button onClick={()=>processingNavigate(projectBatchPath(project.id,operation.batch_id!))}>Open processing results</button>}
         </article>)}</section>}
         {conversation && <section aria-label="Human requests"><h3>Requests for your help</h3><button onClick={()=>{if(sampleDirty.current){setError("Save or undo this correction before refreshing requests.");return;}setRequestRefresh(value=>value+1);}}>Refresh requests</button>{requests.map(value=><article key={value.input.id} className="conversation-consent"><p>{value.input.question}</p><p>{value.resume_draft_id ? "Correction saved · revision Draft available" : value.status==="answered" ? "Correction saved · awaiting task continuation" : value.status}</p>{value.resume_error && <p role="alert">Correction saved, but Draft preparation failed: {value.resume_error}</p>}<button onClick={()=>void openRequest(value)}>Open requested result</button>{value.status==="answered" && <button onClick={()=>void retryContinuation(value)}>Retry Draft preparation</button>}{value.resume_draft_id && <button onClick={()=>onNavigate(projectBuildPath(project.id,"pipeline",{draftId:value.resume_draft_id!}))}>Inspect revision Draft</button>}{value.status==="pending" && <button onClick={()=>void cancelRequest(value)}>Cancel request</button>}</article>)}</section>}
         {conversation && messages[0] && <ConversationSchemaCard key={`${conversation}:${messages[0].input.id}`} project={project.id} conversation={conversation} message={messages[0].input.id} onDirtyChange={schemaDirtyChange} onAssistance={assistanceChanged} onSample={(draft,test,image)=>void openSample(draft,test,image)} />}
@@ -194,10 +208,12 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
         onPointerDown={(event) => event.currentTarget.setPointerCapture(event.pointerId)}
         onPointerMove={(event) => { if (!event.currentTarget.hasPointerCapture(event.pointerId)) return; const bounds = root.current?.getBoundingClientRect(); if (bounds) setWidth(Math.round(Math.max(25, Math.min(50, (event.clientX - bounds.left) / bounds.width * 100)))); }} />
       <section className="conversation-image-panel" aria-label="Project images">
+        {results ? <><div className="conversation-image-tools"><h2>Dataset results</h2><button onClick={()=>showResults()}>Return to sample canvas</button></div>{!requestsReady ? <p role="status">Loading saved processing tasks…</p> : processing.some(operation=>operation.batch_id===results.batchId) ? <ConversationBatchResults key={results.batchId} project={project} context={results} onSelect={showResults} onNavigate={onNavigate} onNavigationGuardChange={formalGuardChange} /> : <p role="alert">This Batch is not linked to this conversation. No other result was substituted.</p>}</> : <>
         {activeRequest && (requestRelation==="baseline" || requestRelation==="comparison") && <aside className="conversation-consent" aria-label="Sample origin"><p>{requestRelation==="comparison" ? "Sample from the revised plan. The original correction remains separate; improvement has not been established." : "Another image from the original sample. The requested correction belongs to a different image."}</p><button onClick={()=>void openRequest(activeRequest)}>Return to original correction</button></aside>}
         <div className="conversation-image-tools"><h2>{images.length ? `${images.length} images` : "Your images"}</h2><label className="conversation-upload">Add images<input type="file" accept="image/png,image/jpeg" multiple disabled={busy || !ready} onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; void upload(files); }} /></label></div>
         {humanRequestId && (!activeRequest || requestRelation==="unrelated") ? <p role="status">{requestsReady ? "Human request not found in this task. No other result was substituted." : "Loading saved human request…"}</p> : draftId && sampleTestId ? <ConversationSampleCanvas project={project.id} draft={draftId} test={sampleTestId} image={selected} humanRequest={requestRelation==="subject" ? activeRequest : undefined} onAnswered={updateRequest} onDirtyChange={sampleDirtyChange} onOpen={(draft,test,image)=>void openSample(draft,test,image)} /> : imageId && !selected && ready ? <p role="alert">This image is not available in this Project. Select an existing image below.</p> : selected ? <figure className="conversation-image"><img src={selected.url} alt={selected.name} /><figcaption>{selected.name} · Original image · No annotation overlay</figcaption></figure> : <div className="conversation-image-empty"><h3>Start with your own images</h3><p>PNG or JPEG · up to 25 MB per image. Files are uploaded to this AnnotAgent server, not sent to a model.</p></div>}
         <nav className="conversation-thumbnails" aria-label="Select image">{images.map((image) => <button key={image.image_id} aria-label={image.name} aria-current={image.image_id === selected?.image_id ? "true" : undefined} onClick={() => openImage(image.image_id)}><img loading="lazy" src={image.url} alt="" /><span>{image.name}</span></button>)}</nav>
+        </>}
       </section>
     </div>
     <p className="conversation-status" role="status">{status || (ready ? "Saved workspace loaded" : "Loading saved workspace…")}</p>
