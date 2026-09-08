@@ -113,9 +113,14 @@ pub(super) async fn conversation_preview(
         selection.request_id,
         None,
     )?;
+    let project_limit = state
+        .application
+        .project_conversation_call_limit(&project)
+        .map_err(ApiError::bad_request)?;
     let Json(mut preview) =
         preview_workflow_samples(State(state), AxumPath(selection.draft_id)).await?;
     preview["conversation_budget"] = budget;
+    preview["project_call_limit"] = json!(project_limit);
     preview["request_id"] = json!(selection.request_id);
     Ok(Json(preview))
 }

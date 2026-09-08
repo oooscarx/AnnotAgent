@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiRequestError } from "../api";
+import { ConversationBudgetNotice } from "./ConversationBudgetNotice";
+import {projectBudgetAvailability} from "../projectBudget";
 import { projectBuildPath } from "../navigation";
 import { ConversationSampleCard, type OpenConversationSample } from "./ConversationSampleCard";
 import type { ConversationBuilderConsent, ConversationBuilderItem, ConversationBuilderPreview, ConversationSchemaDraft } from "../types";
@@ -45,7 +47,7 @@ export function ConversationBuilderCard({ project, conversation, task, schema, e
     return ()=>{controller.abort();window.clearInterval(timer);};
   },[running,project,conversation,task,item?.operation.id]);
   async function prepare() {
-    if(pending.current || running || editing)return; pending.current=true;setBusy(true);setError("");
+    if(pending.current || running || editing)return; pending.current=true;setBusy(true);setConfirmed(false);setError("");
     try {
       const result=await api.conversationBuilderPreview(project,conversation,task,{operation_id:crypto.randomUUID(),schema_id:schema.id,schema_revision:schema.revision,repair_request_id:repairRequest?.id});
       if(alive.current){setPreview(result);setConfirmed(false);setCancelled(false);}
@@ -53,7 +55,7 @@ export function ConversationBuilderCard({ project, conversation, task, schema, e
     finally {pending.current=false;if(alive.current)setBusy(false);}
   }
   async function launch() {
-    if(pending.current || !preview || !confirmed || editing)return;
+    if(pending.current || !preview || !confirmed || editing || (!frozen.current && projectBudgetAvailability(preview.project_call_limit).blocked))return;
     if(preview.selection.schema_revision!==schema.revision){setError("Labels changed. Review a fresh Builder authorization before continuing.");setPreview(undefined);return;}
     pending.current=true;setBusy(true);setError("");setItem(undefined);
     frozen.current ??= {selection:preview.selection,repair:preview.repair,scope_hash:preview.scope_hash,previous_grant_id:preview.previous_grant_id,expires_at:preview.expires_at,allow_unknown_cost:true};
@@ -89,7 +91,7 @@ export function ConversationBuilderCard({ project, conversation, task, schema, e
     <p>{builtRevision ? `This operation uses Schema revision ${builtRevision}.` : `A new build will use saved labels at revision ${schema.revision}.`} This step builds a Draft; it does not test images or publish.</p>
     {builtRevision && builtRevision!==schema.revision && <p role="status">Labels are now revision {schema.revision}; this saved operation has not been rebuilt for those changes.</p>}
     {!running && !preview && <button disabled={!ready || busy || editing} onClick={()=>void prepare()}>{item ? "Review another build request" : "Review Builder authorization"}</button>}
-    {preview && !running && <div className="conversation-consent" aria-label="Builder model authorization"><strong>{preview.model_name}</strong><span>{preview.remote_model} · {preview.destination}</span><p>{preview.data_scope}</p><p>Up to {preview.maximum_builder_calls} text calls · {preview.used_calls} calls already used · Cumulative limit {preview.maximum_calls} · Cost unknown</p><p>{preview.operation}</p><label><input type="checkbox" checked={confirmed} onChange={(event)=>setConfirmed(event.target.checked)} />Allow this bounded Builder request; actual cost is unknown</label><div className="button-row"><button onClick={()=>setPreview(undefined)}>Back</button><button className="primary" disabled={!confirmed || busy || editing} onClick={()=>void launch()}>Build Pipeline Draft</button></div></div>}
+    {preview && !running && <div className="conversation-consent" aria-label="Builder model authorization"><ConversationBudgetNotice value={preview.project_call_limit} maximumCalls={preview.maximum_builder_calls} busy={busy} onRefresh={()=>void prepare()}/><strong>{preview.model_name}</strong><span>{preview.remote_model} · {preview.destination}</span><p>{preview.data_scope}</p><p>Up to {preview.maximum_builder_calls} text calls · {preview.used_calls} calls already used · Cumulative limit {preview.maximum_calls} · Cost unknown</p><p>{preview.operation}</p><label><input type="checkbox" checked={confirmed} disabled={busy} onChange={(event)=>setConfirmed(event.target.checked)} />Allow this bounded Builder request; actual cost is unknown</label><div className="button-row"><button disabled={busy} onClick={()=>setPreview(undefined)}>Back</button><button className="primary" disabled={!confirmed || busy || editing || projectBudgetAvailability(preview.project_call_limit).blocked} onClick={()=>void launch()}>Build Pipeline Draft</button></div></div>}
     {running && <><p role="status">{session?.phase ? `Builder stage: ${session.phase.replaceAll("_"," ")}` : "Submitting or restoring the saved Builder operation…"}</p>{session?.next_action && <p>{session.next_action}</p>}<button onClick={()=>void stop()}>Stop Builder</button><small>Leaving this page does not stop the server task. No images are being tested.</small></>}
     {cancelled && <p role="status">{running ? "Cancellation saved. Waiting for the server to settle any in-flight call; its cost may be unknown." : "Cancellation saved. The operation has stopped; any prior call cost remains recorded separately."}</p>}
     {uncertain && !busy && <button onClick={()=>void launch()} disabled={cancelled}>Retry the same Builder request</button>}

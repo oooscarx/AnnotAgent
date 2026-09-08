@@ -189,8 +189,17 @@ pub(super) async fn preview(
     AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
     Query(selection): Query<ModelSelection>,
 ) -> ApiResult<Json<Value>> {
-    preview_scope(&state, &project, conversation, task, selection.model_id)
-        .map(|(_, preview)| Json(preview))
+    preview_scope(&state, &project, conversation, task, selection.model_id).and_then(
+        |(_, mut preview)| {
+            preview["project_call_limit"] = json!(
+                state
+                    .application
+                    .project_conversation_call_limit(&project)
+                    .map_err(ApiError::bad_request)?
+            );
+            Ok(Json(preview))
+        },
+    )
 }
 
 pub(super) async fn propose(

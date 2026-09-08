@@ -13,7 +13,7 @@ function cleanPath(path: string) {
 }
 
 export async function fetchWithinMutationLimit(route: Route): Promise<APIResponse> {
-  const deadline = Date.now() + 45_000;
+  const deadline = Date.now() + 65_000;
   const original = route.request();
   let headers = original.headers();
   while (true) {
@@ -55,7 +55,7 @@ function protectedRequestContext(request: APIRequestContext): APIRequestContext 
   // The full suite can exceed the real local API's 120 mutations/minute guard.
   // Retry only that pre-execution rejection, never Provider errors or executed model actions.
   const withinLocalRateLimit = async (send: () => Promise<APIResponse>) => {
-    const deadline = Date.now() + 45_000;
+    const deadline = Date.now() + 65_000;
     while (true) {
       const response = await send();
       if (response.status() !== 429 || Date.now() >= deadline) return response;

@@ -139,7 +139,15 @@ pub(super) async fn preview(
         &selection,
         AuthorizationBase::Preview,
     )
-    .map(|(_, preview)| Json(preview))
+    .and_then(|(_, mut preview)| {
+        preview["project_call_limit"] = json!(
+            state
+                .application
+                .project_conversation_call_limit(&project)
+                .map_err(ApiError::bad_request)?
+        );
+        Ok(Json(preview))
+    })
 }
 pub(super) async fn history(
     State(state): State<ServerState>,

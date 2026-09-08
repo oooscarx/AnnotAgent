@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { expect, test } from "./fixtures";
 
 test("authorized conversation Schema crosses actual HTTP Provider transport once and restores receipts", async ({ page, request }) => {
+  test.setTimeout(120_000);
   const provider = await (await request.post("/api/providers", { data: { display_name:"Conversation TEST fixture", adapter:"open_ai_compatible",base_url:"http://127.0.0.1:8796/openai/v1" } })).json();
   expect((await request.post(`/api/providers/${provider.id}/credential`,{data:{source:"workspace_file",secret:"TEST-conversation-protocol-only"}})).ok()).toBeTruthy();
   const model = await (await request.post("/api/model-profiles",{data:{provider_id:provider.id,display_name:"Conversation TEST text model",remote_model_id:"e2e-conversation-schema",input_modalities:["text"],task_capabilities:["text_generation"],protocol_features:{tool_calls:true,structured_output:true}}})).json();
@@ -168,7 +169,21 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
   await page.goto(`/projects/${cancelProject}/work`);
   await page.getByLabel("Your message",{exact:true}).fill("TEST cancel before sending");
   await page.getByRole("button",{name:"Save message",exact:true}).click();
+  const cancelLimit=`/api/projects/${cancelProject}/conversation-call-limit`;
+  expect((await request.post(cancelLimit,{data:{id:randomUUID(),expected_revision:0,maximum_calls:0}})).ok()).toBe(true);
   await page.getByRole("button",{name:"Prepare label proposal",exact:true}).click();
+  await page.getByRole("checkbox",{name:/Allow this text request/}).check();
+  await expect(page.getByRole("button",{name:"Generate label proposal",exact:true})).toBeDisabled();
+  await expect(page.getByLabel("Schema model authorization",{exact:true})).toContainText("Project call limit exhausted");
+  expect((await request.post(cancelLimit,{data:{id:randomUUID(),expected_revision:1,maximum_calls:1}})).ok()).toBe(true);
+  let releaseRefresh!:()=>void;
+  const refreshHeld=new Promise<void>(resolve=>{releaseRefresh=resolve;});
+  await page.route("**/schema-preview*",async route=>{await refreshHeld;await route.fallback();},{times:1});
+  await page.getByLabel("Schema model authorization",{exact:true}).getByRole("button",{name:"Refresh authorization and Project budget",exact:true}).click();
+  await expect(page.getByRole("checkbox",{name:/Allow this text request/})).not.toBeChecked();
+  await expect(page.getByRole("checkbox",{name:/Allow this text request/})).toBeDisabled();
+  releaseRefresh();
+  await expect(page.getByLabel("Schema model authorization",{exact:true})).toContainText("Project has 1 calls remaining");
   await page.getByRole("checkbox",{name:/Allow this text request/}).check();
   let release!: () => void;
   const held = new Promise<void>((resolve)=>{release=resolve;});
@@ -177,11 +192,11 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
   await page.getByRole("button",{name:"Generate label proposal",exact:true}).click();
   const pending = await submitted;
   await page.getByRole("button",{name:"Stop Schema request",exact:true}).click();
-  await expect(page.getByText(/^Cancellation saved/)).toBeVisible();
+  await expect(page.getByText(/^Cancellation saved/)).toBeVisible({timeout:70_000});
   const rejected = page.waitForResponse((res)=>res.url()===pending.url());
   release(); expect((await rejected).status()).toBe(400);
   await page.reload();
-  await expect(page.getByText(/^Cancellation saved/)).toBeVisible();
+  await expect(page.getByText(/^Cancellation saved/)).toBeVisible({timeout:70_000});
   await expect(page.getByRole("button",{name:"Prepare label proposal",exact:true})).toHaveCount(0);
   await expect(page.getByText("Schema proposal saved",{exact:true})).toHaveCount(0);
   await page.screenshot({path:"../docs/execution/conversational-workspace/schema-cancelled.png",fullPage:true,animations:"disabled"});

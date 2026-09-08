@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { ConversationBudgetNotice } from "./ConversationBudgetNotice";
+import {projectBudgetAvailability} from "../projectBudget";
 import { api, ApiRequestError, type ConversationSamplePreview, type SampleOperation } from "../api";
 
 export type OpenConversationSample = (draft: string, test: string, image?: string) => void;
@@ -48,7 +50,7 @@ export function ConversationSampleCard({project, conversation, task, draft, disa
   },[operation?.id,operation?.assistance?.status,onAssistance]);
   async function prepare(){
     if(pending.current || disabled || active(operation) || uncertain)return;
-    pending.current=true;setBusy(true);setError("");
+    pending.current=true;setBusy(true);setConfirmed(false);setError("");
     try{const value=await api.conversationSamplePreview(project,conversation,task,draft,crypto.randomUUID());
       if(value.project_id!==project)throw new Error("Sample belongs to another Project");
       if(alive.current){setPreview(value);setConfirmed(false);}
@@ -56,7 +58,7 @@ export function ConversationSampleCard({project, conversation, task, draft, disa
     finally{pending.current=false;if(alive.current)setBusy(false);}
   }
   async function launch(){
-    if(pending.current || disabled || (!frozen.current && (!preview || !confirmed)))return;
+    if(pending.current || disabled || (!frozen.current && (!preview || !confirmed || projectBudgetAvailability(preview.project_call_limit).blocked)))return;
     pending.current=true;setBusy(true);setError("");
     if(!frozen.current && preview){const budget=preview.conversation_budget;
       frozen.current={request_id:preview.request_id,draft_id:draft,expected_revision:preview.revision,image_indices:Array.from({length:preview.image_count},(_,i)=>i),authorization_fingerprint:preview.authorization_fingerprint,conversation:{conversation_id:conversation,task_id:task,previous_grant_id:budget.previous_grant_id,scope_hash:budget.scope_hash,expires_at:budget.expires_at,allow_unknown_cost:true,human_review:true}};
@@ -75,13 +77,14 @@ export function ConversationSampleCard({project, conversation, task, draft, disa
     <h3>Try this plan on your images</h3><p>Sample results and corrections stay in the evaluation sandbox. This does not publish or accept dataset annotations.</p>
     {!active(operation) && !preview && !uncertain && <button disabled={disabled || busy || !ready} onClick={()=>void prepare()}>Review sample authorization</button>}
     {preview && <div className="conversation-consent" aria-label="Sample model authorization">
+      <ConversationBudgetNotice value={preview.project_call_limit} maximumCalls={preview.request_limit} busy={busy||uncertain} onRefresh={()=>void prepare()}/>
       <p>Draft revision {preview.revision} · {preview.image_count} images · Up to {preview.request_limit} model calls</p>
       <p>Results needing human judgment can create a saved request here. This does not accept annotations or authorize another model call.</p>
       <ul>{preview.models.map(model=><li key={model.id}>{model.name} · {model.destination}</li>)}</ul>
       <p>{preview.conversation_budget.used_calls} calls already used · Cumulative limit {preview.conversation_budget.maximum_calls} · Cost unknown</p>
       {(!preview.supported || !preview.image_count) && <p role="status">{!preview.image_count ? "Upload images before testing." : "This Draft needs compatible model bindings before bounded testing."}</p>}
-      <label><input type="checkbox" checked={confirmed} onChange={event=>setConfirmed(event.target.checked)}/>Allow these sample images to be sent to the listed models; actual cost is unknown</label>
-      <div className="button-row"><button disabled={busy || uncertain} onClick={()=>setPreview(undefined)}>Back</button><button className="primary" disabled={busy || disabled || !confirmed || !preview.supported || !preview.image_count} onClick={()=>void launch()}>Test these samples</button></div>
+      <label><input type="checkbox" checked={confirmed} disabled={busy || uncertain} onChange={event=>setConfirmed(event.target.checked)}/>Allow these sample images to be sent to the listed models; actual cost is unknown</label>
+      <div className="button-row"><button disabled={busy || uncertain} onClick={()=>setPreview(undefined)}>Back</button><button className="primary" disabled={busy || disabled || !confirmed || !preview.supported || !preview.image_count || projectBudgetAvailability(preview.project_call_limit).blocked} onClick={()=>void launch()}>Test these samples</button></div>
     </div>}
     {active(operation) && <><p role="status">Sample task: {operation!.status}</p><button disabled={operation!.status==="cancelling"} onClick={()=>void stop()}>Stop sample test</button><p>Leaving does not stop the task. An in-flight remote request may still be billed.</p></>}
     {operation?.status==="succeeded" && operation.assistance?.status==="waiting" && <p role="status">Preparing saved requests for human judgment… No additional inference is running.</p>}

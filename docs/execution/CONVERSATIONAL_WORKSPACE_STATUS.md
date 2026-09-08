@@ -1782,3 +1782,47 @@ through Builder, sample repair, formal processing, Review/export and candidate r
 an explicit 64-call shared ceiling. The Project count matches planning plus actual Batch use.
 No real Workspace mutations, paid/Live Provider calls, old keys, push or remote changes. No
 Live accuracy or real-human usability validation; production-build chunk-size warning remains.
+
+### M2 continuation — show shared budget before new inference (2026-09-08)
+
+Schema, Builder (including repair) and sample authorization previews now include an owned
+Project ceiling snapshot. It is presentation metadata, not another model grant or a replacement
+for transactional admission. Shared UI distinguishes an unconfigured ceiling, remaining calls,
+exhaustion and unavailable/malformed accounting. New call actions are disabled at an exhausted
+or unavailable snapshot; a partial remaining allowance warns that the step may stop at the limit.
+Uncertain already-submitted request recovery remains separate. Refresh explicitly re-reads the
+authorization; it does not raise the ceiling or start inference. Existing saved receipts are not
+rewritten with current usage. The no-ceiling state still explains that task limits apply.
+
+Browser testing exposed a real refresh race: a previously checked consent could be clicked again
+while a preview was refreshing, then cleared by the response. All three cards now clear consent
+at refresh start and disable it while busy. Builder Back is also disabled during refresh so a
+late response cannot reopen a card the user just closed. A held-response browser assertion checks
+the unchecked/disabled consent before releasing the new preview. The combined run's cancellation
+check failed twice. Trace inspection proved repeated pre-execution 429 responses: the TEST helper
+stopped after 45 seconds, shorter than the real 60-second rate window. Its bound is now 65 seconds,
+and this combined test's observation/overall limits allow that wait. Production limits are unchanged.
+Stop actions sharing this general write limiter remain a separate responsiveness concern to assess.
+The exhausted notice also opens the existing Project limit panel in place and focuses its numeric
+input; it does not navigate away or change the limit. Saving and refreshing remain explicit actions.
+
+119 Web units, typecheck, Server all-target/all-feature clippy and formatting passed. Expanded
+browser paths exercise zero-budget Builder, sample and Schema previews, explicit external ceiling
+updates, authorization refresh/reconfirmation and continuing the existing TEST sample-to-delivery
+journey. Inspected `sample-project-budget-exhausted.png`: cumulative usage, non-authorizing scope
+explanation and refresh action are visible without overflow. Final combined result follows below.
+
+Still open: if another task consumes the last call after preview but before Schema admission,
+the first grant may already be saved when the reservation fails. The UI must preserve the exact
+original consent for recovery instead of creating a new grant identity. This is not resolved by
+the preview gate and remains a required next step. Continuous coordination, richer human requests,
+default compact layout and the broader original acceptance matrix remain unfinished. No paid/Live
+Provider, original Workspace changes, old credentials, push or remote modifications in this step.
+Combined run `/tmp/annotagent-guided-e2e-16089` passed 2/2 (1.1 minutes), including the held
+Schema-preview response and cancelled-request recovery. Testing the new in-place budget entry
+then exposed another real race: Reload saved limit kept the old revision and editable input on
+screen while its GET was pending. A late read could overwrite the new number before Save.
+The budget editor now explicitly marks loading, hides the old snapshot and disables editing,
+confirmation and Save until the read finishes. Final full human-classification delivery run
+`/tmp/annotagent-guided-e2e-16340` passed 1/1 with actual in-page ceiling editing, focus restoration,
+refresh and resumed Builder/sample actions. Web typecheck, 119 units and diff hygiene passed again.

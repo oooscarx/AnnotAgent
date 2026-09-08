@@ -1876,7 +1876,9 @@ export interface ConversationTask {
   input: { id: string; source_message_id: string; schema_revision: string };
   created_at: string;
 }
+export interface ProjectCallLimitSnapshot {revision:number;maximum_calls:number|null;reserved_calls:number}
 export interface ConversationSchemaPreview {
+  project_call_limit?: ProjectCallLimitSnapshot;
   model_id: string; model_name: string; remote_model: string; destination: string;
   scope_hash: string; maximum_calls: number; image_count: number; estimated_cost: null;
   expires_at: string; maximum_output_tokens: number; data_scope: string; operation: string;
@@ -1891,6 +1893,7 @@ export interface ConversationSchemaDraft {
 export interface ConversationBuilderRepair { request_id:string; draft_id:string; revision:number; content_hash:string }
 export interface ConversationBuilderSelection { operation_id: string; schema_id: string; schema_revision: number; model_id?: string; repair_request_id?:string }
 export interface ConversationBuilderPreview {
+  project_call_limit?: ProjectCallLimitSnapshot;
   repair?: ConversationBuilderRepair | null;
   selection: ConversationBuilderSelection; previous_grant_id: string | null; scope_hash: string; expires_at: string;
   model_name: string; remote_model: string; destination: string; maximum_builder_calls: number; maximum_calls: number;

@@ -54,18 +54,53 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   await page.getByRole("button",{name:"Save as editable Schema Draft",exact:true}).click();
   }
   const builderPreviewPromise=page.waitForResponse(response=>response.url().includes("/builder-preview"));
+  const changeCeiling=async(maximum:number)=>{
+    const path=`/api/projects/${project}/conversation-call-limit`,current=await (await request.get(path)).json();
+    expect((await request.post(path,{data:{id:randomUUID(),expected_revision:current.revision,maximum_calls:maximum}})).ok()).toBe(true);
+  };
+  if(scenario==="human-classification")await changeCeiling(0);
   await page.getByRole("button",{name:"Review Builder authorization",exact:true}).click();
   const builderPreview=await (await builderPreviewPromise).json();
   if(humanSchema){
     expect(builderPreview.previous_grant_id).toBeNull();expect(builderPreview.maximum_calls).toBe(8);expect(builderPreview.used_calls).toBe(0);
   }
   await page.getByRole("checkbox",{name:/Allow this bounded Builder request/}).check();
+  if(scenario==="human-classification"){
+    const authorization=page.getByLabel("Builder model authorization",{exact:true});
+    await expect(authorization).toContainText("Project call limit exhausted");
+    await expect(authorization.getByRole("button",{name:"Build Pipeline Draft",exact:true})).toBeDisabled();
+    await authorization.getByRole("button",{name:"Review Project call limit",exact:true}).click();
+    const ceiling=page.getByRole("region",{name:"Project call limit",exact:true});
+    await expect(ceiling.getByLabel("Cumulative maximum calls",{exact:true})).toBeFocused();
+    await ceiling.getByRole("button",{name:"Reload saved limit",exact:true}).click();
+    await expect(ceiling).toContainText("0 cumulative maximum · Revision 2");
+    await ceiling.getByLabel("Cumulative maximum calls",{exact:true}).fill("64");await ceiling.getByRole("checkbox").check();
+    await ceiling.getByRole("button",{name:"Save Project limit",exact:true}).click();
+    await expect(ceiling).toContainText("64 cumulative maximum · Revision 3");
+    await page.getByText("Project call limit",{exact:true}).click();
+    await authorization.getByRole("button",{name:"Refresh authorization and Project budget",exact:true}).click();
+    await expect(authorization).toContainText("Project has 64 calls remaining");
+    await page.getByRole("checkbox",{name:/Allow this bounded Builder request/}).check();
+  }
   await page.getByRole("button",{name:"Build Pipeline Draft",exact:true}).click();
+  if(scenario==="human-classification"){
+    await expect(page.getByRole("button",{name:"Review sample authorization",exact:true})).toBeEnabled();
+    const current=await (await request.get(`/api/projects/${project}/conversation-call-limit`)).json();
+    await changeCeiling(current.reserved_calls);
+  }
   await page.getByRole("button",{name:"Review sample authorization",exact:true}).click();
   const authorization=page.getByLabel("Sample model authorization",{exact:true});
   await expect(authorization).toContainText("Cost unknown");
   await page.getByRole("checkbox",{name:/Allow these sample images/}).check();
   const start=page.getByRole("button",{name:"Test these samples",exact:true});
+  if(scenario==="human-classification"){
+    await expect(authorization).toContainText("Project call limit exhausted");await expect(start).toBeDisabled();
+    await authorization.getByLabel("Project budget before inference",{exact:true}).screenshot({path:"../docs/execution/conversational-workspace/sample-project-budget-exhausted.png",animations:"disabled"});
+    await changeCeiling(64);
+    await authorization.getByRole("button",{name:"Refresh authorization and Project budget",exact:true}).click();
+    await expect(authorization).toContainText(/Project has \d+ calls remaining/);
+    await page.getByRole("checkbox",{name:/Allow these sample images/}).check();
+  }
   await expect(start).toBeEnabled();
   let envelope:any;
   await page.route(`**/api/projects/${project}/sample-operations`,async route=>{
