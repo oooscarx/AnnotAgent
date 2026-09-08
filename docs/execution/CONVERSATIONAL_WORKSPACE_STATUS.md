@@ -4520,3 +4520,31 @@ terminal results, and zero writes during navigation/reload. This transport pertu
 a real revised-plan lineage or accuracy demonstration. Typecheck passes; browser execution is
 pending so it is not counted as passed. Full handle 21905 remains live (last observed test 31),
 and its pre-change server has not been rebuilt or interrupted.
+
+### 2026-09-09 — Reference-target request backend foundation
+
+Human requests now distinguish an existing optional `outcome_id` from a new optional
+`addition_id`. Exactly one is permitted. Existing serialized candidate requests remain readable;
+new reference requests require their own UUID and `identify_target` reason, never an invented
+model outcome. Application validation still checks the exact saved Sandbox/image hash/Project.
+Storage binds the answer to the same target and feedback sequence, reuses existing missing-target
+feedback validation, and commits feedback plus the resume outbox atomically. Another request
+cannot reuse the reference identity; an exact retry restores its original record.
+
+New Storage regression covers foreign/ambiguous subjects, wrong-answer rejection, one feedback
+and one resume on duplicates, unchanged prediction, conflicting target and database reopen.
+New Application regression covers a candidate-free image, changed pixels, foreign ownership and
+invalid identity. Existing correction/feedback tests adapt to the optional ID without substituting
+another candidate. **This is not yet the complete IdentifyTarget UI/Agent feature**: the canvas
+truthfully rejects a new-reference request for now; no new default request is generated and no
+fake candidate/working button was introduced. Next step is the actual reference drawing and
+request creation/continuation integration, with browser evidence.
+
+`cargo clippy --workspace --all-targets --all-features -- -D warnings` and
+`cargo test --workspace --all-features` completed exit 0 (handle 38102). Application: 146 passed,
+one explicitly gated billable smoke ignored; other Live-gated tests retain their exclusions.
+Web typecheck and **207 unit tests** pass. Cargo fmt/diff check pass. No updated server/build
+has been launched into the running full-browser baseline, so it does not verify this contract.
+Full browser handle 21905 is still live, observed through test 74 with failures at 49
+(independent goal selection) and 67 (multi-label class canvas). Causes still need inspection;
+do not call the suite green or silently restart it. No push or real workspace modification.

@@ -181,7 +181,7 @@ fn fixture_with_schema_class_and_box(
     human.task_id = task.id;
     human.image_id = image.image_id.to_string();
     human.content_hash = image.content_hash;
-    human.outcome_id = selected.outcome.id;
+    human.outcome_id = Some(selected.outcome.id);
     Fixture {
         temporary,
         app,
@@ -750,7 +750,7 @@ async fn changed_feedback_sequence_invalidates_frozen_context_without_spending()
         image_id: fixture.human.image_id.clone(),
         sequence: 1,
         reason: SampleFeedbackReason::CannotJudge,
-        outcome_id: Some(fixture.human.outcome_id.clone()),
+        outcome_id: fixture.human.outcome_id.clone(),
         corrected_value: None,
         corrected_label: None,
         addition_id: None,
@@ -1246,11 +1246,12 @@ async fn predictable_request_identity_cannot_restore_a_conflicting_question_or_s
         conflicting.reason_code = "poor_boundary".into();
         conflicting.question = "Please correct the selected box boundary.".into();
         if change_subject {
-            conflicting.outcome_id = fixture.sample.report.samples[0].projection.final_candidates
-                [0]
-            .outcome
-            .id
-            .clone();
+            conflicting.outcome_id = Some(
+                fixture.sample.report.samples[0].projection.final_candidates[0]
+                    .outcome
+                    .id
+                    .clone(),
+            );
         } else {
             conflicting.question = "TEST conflicting question under a predictable ID".into();
         }

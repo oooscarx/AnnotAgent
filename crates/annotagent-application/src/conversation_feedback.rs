@@ -264,7 +264,8 @@ impl LocalApplication {
             sample_test_id: sample_test_id.clone(),
             image_id: image.image_id.clone(),
             content_hash: image.sha256.clone(),
-            outcome_id: candidate_id.clone(),
+            outcome_id: Some(candidate_id.clone()),
+            addition_id: None,
             expected_feedback_sequence: context.expected_feedback_sequence,
             reason_code: reason.into(),
             question,
@@ -322,7 +323,7 @@ impl LocalApplication {
                 && item.input.image_id == image.image_id
                 && item.status == ConversationHumanRequestStatus::Pending
         }) {
-            if existing.input.outcome_id == *candidate_id
+            if existing.input.outcome_id.as_ref() == Some(candidate_id)
                 && existing.input.expected_feedback_sequence == context.expected_feedback_sequence
                 && !existing.deferred
             {

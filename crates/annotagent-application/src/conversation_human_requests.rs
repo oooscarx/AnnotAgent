@@ -57,6 +57,15 @@ fn validate_subject(
             "Sample has no result; intermediate detections cannot become human correction targets",
         )?
         .projection;
+    if let (None, Some(id)) = (&input.outcome_id, &input.addition_id) {
+        if Uuid::parse_str(id).is_ok() && input.reason_code == "identify_target" {
+            return Ok(());
+        }
+        bail!("Reference target requires its own UUID and an identification request");
+    }
+    if input.addition_id.is_some() {
+        bail!("A human request cannot target both a model outcome and a new reference");
+    }
     let terminal = projection
         .final_candidates
         .iter()
@@ -66,7 +75,7 @@ fn validate_subject(
                 .iter()
                 .map(|review| &review.candidate),
         )
-        .any(|candidate| candidate.outcome.id == input.outcome_id);
+        .any(|candidate| Some(&candidate.outcome.id) == input.outcome_id.as_ref());
     if !terminal {
         bail!("Requested outcome is not a terminal candidate on this sample image");
     }
@@ -156,7 +165,7 @@ impl LocalApplication {
             let input = ConversationHumanRequestInput {
                 id, task_id:task, conversation_id:conversation, sample_test_id:sample_id.to_owned(),
                 image_id:image.image_id.clone(), content_hash:image.content_hash.clone(),
-                outcome_id:candidate.outcome.id.clone(),
+                outcome_id:Some(candidate.outcome.id.clone()), addition_id:None,
                 expected_feedback_sequence:prior.last().map_or(0, |revision| revision.sequence),
                 reason_code:"terminal_result_requires_review".into(),
                 question:"This saved sample result requires human review. Check the selected object or class and correct it if needed; this does not accept dataset annotations.".into(),
@@ -397,7 +406,8 @@ pub(crate) mod tests {
             sample_test_id: "sample".into(),
             image_id: "image".into(),
             content_hash: "pixels".into(),
-            outcome_id: "final".into(),
+            outcome_id: Some("final".into()),
+            addition_id: None,
             expected_feedback_sequence: 0,
             reason_code: "boundary".into(),
             question: "TEST".into(),
@@ -440,10 +450,28 @@ pub(crate) mod tests {
         assert!(validate_subject("TEST", &test, &input, "pixels").is_ok());
         assert!(validate_subject("foreign", &test, &input, "pixels").is_err());
         assert!(validate_subject("TEST", &test, &input, "changed-pixels").is_err());
-        input.outcome_id = "coarse-intermediate".into();
+        input.outcome_id = Some("coarse-intermediate".into());
         assert!(validate_subject("TEST", &test, &input, "pixels").is_err());
-        input.outcome_id = "final".into();
+        input.outcome_id = Some("final".into());
         test.report.samples[0].projection = annotagent_core::ResultProjection::default();
+        assert!(validate_subject("TEST", &test, &input, "pixels").is_err());
+    }
+
+    #[test]
+    fn reference_subject_does_not_require_or_fabricate_a_terminal_outcome() {
+        let (mut test, mut input) = fixture();
+        test.report.samples[0].projection = annotagent_core::ResultProjection::default();
+        test.report.samples[0].outcomes.clear();
+        input.outcome_id = None;
+        input.addition_id = Some(Uuid::new_v4().to_string());
+        input.reason_code = "identify_target".into();
+        assert!(validate_subject("TEST", &test, &input, "pixels").is_ok());
+        assert!(validate_subject("foreign", &test, &input, "pixels").is_err());
+        assert!(validate_subject("TEST", &test, &input, "changed-pixels").is_err());
+        input.outcome_id = Some("fabricated".into());
+        assert!(validate_subject("TEST", &test, &input, "pixels").is_err());
+        input.outcome_id = None;
+        input.addition_id = Some("not-an-identity".into());
         assert!(validate_subject("TEST", &test, &input, "pixels").is_err());
     }
 
@@ -544,7 +572,7 @@ pub(crate) mod tests {
             image_id: input.image_id.clone(),
             sequence: 1,
             reason: annotagent_storage::SampleFeedbackReason::Correct,
-            outcome_id: Some(input.outcome_id.clone()),
+            outcome_id: input.outcome_id.clone(),
             corrected_value: outcome.value,
             corrected_label: None,
             addition_id: None,

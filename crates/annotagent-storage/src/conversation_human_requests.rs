@@ -13,7 +13,11 @@ pub struct ConversationHumanRequestInput {
     pub sample_test_id: String,
     pub image_id: String,
     pub content_hash: String,
-    pub outcome_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome_id: Option<String>,
+    /// A new human reference has its own identity, never a fabricated model outcome.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub addition_id: Option<String>,
     pub expected_feedback_sequence: u64,
     pub reason_code: String,
     pub question: String,
@@ -25,6 +29,109 @@ pub struct ConversationHumanRequestInput {
 mod tests {
     use super::*;
     use crate::{BeginConversationTask, ConversationMessageInput, SampleOperation};
+
+    #[test]
+    fn new_reference_answer_is_distinct_atomic_and_idempotent() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("TEST-reference.db");
+        let store = SqliteStore::open(&path).unwrap();
+        let (owner, mut input, mut answer) = setup(&store);
+        let prediction = store
+            .get_workflow_sample_test_by_id(&input.sample_test_id)
+            .unwrap();
+        input.outcome_id = None;
+        input.addition_id = Some(Uuid::new_v4().to_string());
+        input.reason_code = "identify_target".into();
+        assert!(
+            store
+                .create_conversation_human_request("foreign", &input)
+                .is_err()
+        );
+        let mut ambiguous = input.clone();
+        ambiguous.outcome_id = answer.outcome_id.clone();
+        assert!(
+            store
+                .create_conversation_human_request(&owner, &ambiguous)
+                .is_err()
+        );
+        store
+            .create_conversation_human_request(&owner, &input)
+            .unwrap();
+        let mut duplicate = input.clone();
+        duplicate.id = Uuid::new_v4();
+        assert!(
+            store
+                .create_conversation_human_request(&owner, &duplicate)
+                .is_err()
+        );
+        assert!(
+            store
+                .answer_conversation_human_request(&owner, input.id, &answer)
+                .is_err()
+        );
+        answer.outcome_id = None;
+        answer.addition_id = input.addition_id.clone();
+        answer.corrected_label = Some("ball".into());
+        answer.reason = crate::SampleFeedbackReason::MissingTarget;
+        let saved = store
+            .answer_conversation_human_request(&owner, input.id, &answer)
+            .unwrap();
+        assert_eq!(saved.status, ConversationHumanRequestStatus::Answered);
+        assert_eq!(
+            store
+                .answer_conversation_human_request(&owner, input.id, &answer)
+                .unwrap(),
+            saved
+        );
+        assert_eq!(
+            store
+                .create_conversation_human_request(&owner, &input)
+                .unwrap(),
+            saved
+        );
+        assert_eq!(
+            store
+                .sample_feedback(&input.sample_test_id, &input.image_id)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .pending_conversation_resumes(&owner, input.conversation_id, input.task_id)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .get_workflow_sample_test_by_id(&input.sample_test_id)
+                .unwrap(),
+            prediction
+        );
+        let mut conflicting = answer.clone();
+        conflicting.addition_id = Some(Uuid::new_v4().to_string());
+        assert!(
+            store
+                .answer_conversation_human_request(&owner, input.id, &conflicting)
+                .is_err()
+        );
+        drop(store);
+        let restored = SqliteStore::open(&path).unwrap();
+        assert_eq!(
+            restored
+                .conversation_human_request(&owner, input.id)
+                .unwrap(),
+            saved
+        );
+        assert_eq!(
+            restored
+                .pending_conversation_resumes(&owner, input.conversation_id, input.task_id)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
 
     fn setup(
         store: &SqliteStore,
@@ -61,7 +168,8 @@ mod tests {
             sample_test_id: answer.sample_test_id.clone(),
             image_id: answer.image_id.clone(),
             content_hash: "content-hash".into(),
-            outcome_id: answer.outcome_id.clone().unwrap(),
+            outcome_id: answer.outcome_id.clone(),
+            addition_id: None,
             expected_feedback_sequence: 0,
             reason_code: "poor_boundary".into(),
             question: "TEST: correct this boundary".into(),
@@ -115,7 +223,7 @@ mod tests {
                     draft_id: "draft-1".into(),
                     draft_revision: 1,
                     sample_test_id: input.sample_test_id.clone(),
-                    candidate_id: input.outcome_id.clone(),
+                    candidate_id: input.outcome_id.clone().unwrap(),
                     source_artifact_id: artifact,
                 }),
             },
@@ -943,11 +1051,12 @@ pub(crate) fn validate_feedback_request_subject(
     if message.conversation_id != input.conversation_id
         || *task_id != input.task_id
         || *sample_test_id != input.sample_test_id
-        || *candidate_id != input.outcome_id
+        || input.outcome_id.as_ref() != Some(candidate_id)
+        || input.addition_id.is_some()
         || image.image_id != input.image_id
         || image.sha256 != input.content_hash
         || subject["expected_feedback_sequence"].as_u64() != Some(input.expected_feedback_sequence)
-        || subject["candidate"]["outcome"]["id"] != input.outcome_id
+        || subject["candidate"]["outcome"]["id"].as_str() != input.outcome_id.as_deref()
         || subject["candidate"]["source_artifact_id"] != source_artifact_id.to_string()
         || subject["pixels_supplied"] != false
         || input.id != Uuid::new_v5(&source.id, b"feedback-human-request-v1")
@@ -1124,14 +1233,23 @@ impl SqliteStore {
                 image.image_id == input.image_id && image.content_hash == input.content_hash
             })
             .ok_or_else(|| invalid("Human request image does not match the saved sample"))?;
-        if !sample.report.samples.get(index).is_some_and(|result| {
-            result
-                .outcomes
-                .iter()
-                .any(|outcome| outcome.id == input.outcome_id)
-        }) {
+        let valid_subject = match (&input.outcome_id, &input.addition_id) {
+            (Some(id), None) => sample
+                .report
+                .samples
+                .get(index)
+                .is_some_and(|result| result.outcomes.iter().any(|outcome| &outcome.id == id)),
+            (None, Some(id)) => {
+                Uuid::parse_str(id).is_ok()
+                    && input.reason_code == "identify_target"
+                    && sample.report.sandbox
+                    && sample.report.samples.get(index).is_some()
+            }
+            _ => false,
+        };
+        if !valid_subject {
             return Err(invalid(
-                "Human request outcome does not belong to the sample image",
+                "Human request requires an owned outcome or a distinct new reference target",
             ));
         }
         self.with_connection(|db| {
@@ -1139,6 +1257,10 @@ impl SqliteStore {
             owned(&tx,project,input.task_id,input.conversation_id)?;
             let exists: bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_human_requests WHERE id=?1)",[input.id.to_string()],|row|row.get(0))?;
             if exists { let saved=read(&tx,project,input.id)?; if saved.input!=*input { return Err(invalid("Human request idempotency conflict")); } return Ok(saved); }
+            if let Some(addition) = &input.addition_id {
+                let used:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM sample_feedback_revisions WHERE sample_test_id=?1 AND image_id=?2 AND json_extract(feedback_json,'$.addition_id')=?3) OR EXISTS(SELECT 1 FROM conversation_human_requests WHERE json_extract(request_json,'$.sample_test_id')=?1 AND json_extract(request_json,'$.image_id')=?2 AND json_extract(request_json,'$.addition_id')=?3)",params![input.sample_test_id,input.image_id,addition],|row|row.get(0))?;
+                if used {return Err(invalid("Reference target identity already belongs to saved feedback"));}
+            }
             if let Some(source) = feedback_source {
                 if let Some(answer) = scope_answer {
                     crate::conversation_feedback_scope::validate_scoped_request(&tx, project, input, source, answer)?;
@@ -1192,8 +1314,8 @@ impl SqliteStore {
         let input = &request.input;
         if answer.sample_test_id != input.sample_test_id
             || answer.image_id != input.image_id
-            || answer.outcome_id.as_deref() != Some(&input.outcome_id)
-            || answer.addition_id.is_some()
+            || answer.outcome_id != input.outcome_id
+            || answer.addition_id != input.addition_id
             || input.expected_feedback_sequence.checked_add(1) != Some(answer.sequence)
         {
             return Err(invalid(

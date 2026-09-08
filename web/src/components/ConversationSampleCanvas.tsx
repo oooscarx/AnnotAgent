@@ -48,6 +48,7 @@ export function ConversationSampleCanvas({project, draft, test, image, onDirtyCh
     return <section className="conversation-sample-canvas" aria-label="Referenced sample candidate"><header><h2>{image.name}</h2><p>Original saved candidate · Draft revision {ref.draft_revision}</p></header><p>{messageReference.text}</p><p>This historical prediction is read-only. Later sample corrections and formal annotations remain separate.</p><AnnotationCanvas imageUrl={image.url} annotations={sampleAnnotations([candidate[0].outcome],image.image_id,test)} selectedId={ref.candidate_id} readOnly compactList onSelect={()=>{}} onChange={()=>{}}/><button onClick={()=>onOpen(draft,test,image.image_id)}>View current sample corrections</button></section>;
   }
   const outcomes=[...projection.final_candidates.map(candidate=>candidate.outcome),...projection.review_candidates.map(item=>item.candidate.outcome)];
+  if(humanRequest && !humanRequest.input.outcome_id)return <p role="alert">This request requires a new reference target. Reference-target editing is not yet available in this canvas; no model candidate was substituted.</p>;
   if(humanRequest && !outcomes.some(outcome=>outcome.id===humanRequest.input.outcome_id))return <p role="alert">The requested candidate is not in this sample's terminal results. No replacement was selected.</p>;
   const terminal={...sample,outcomes:outcomes.filter((item,index,items)=>items.findIndex(other=>other.id===item.id)===index)};
   if(imageClassReview){
@@ -66,7 +67,7 @@ export function ConversationSampleCanvas({project, draft, test, image, onDirtyCh
         onReference({image:{image_id:image.image_id,sha256:source.content_hash},reference:{scope:"sample_candidate",task_id:referenceTask.id,project_schema_revision:referenceTask.schema_revision,draft_id:record.draft_id,draft_revision:record.draft_revision,sample_test_id:record.id,candidate_id:id,source_artifact_id:candidates[0].source_artifact_id}},image.name);
       }:undefined}
       initialOutcomeId={humanRequest?.input.outcome_id}
-      humanSubmission={humanRequest?.status==="pending" ? {outcomeId:humanRequest.input.outcome_id,save:async revision=>{const saved=await api.answerHumanRequest(project,humanRequest,revision);if(!saved.answer)throw new Error("Server did not return a saved correction");onAnswered?.(saved);return saved.answer;}} : undefined}
+      humanSubmission={humanRequest?.status==="pending" && humanRequest.input.outcome_id ? {outcomeId:humanRequest.input.outcome_id,save:async revision=>{const saved=await api.answerHumanRequest(project,humanRequest,revision);if(!saved.answer)throw new Error("Server did not return a saved correction");onAnswered?.(saved);return saved.answer;}} : undefined}
       navigation={<nav className="button-row" aria-label="Tested images"><button disabled={index===0} onClick={()=>onOpen(draft,test,record.inputs[index-1].image_id)}>Previous image</button><span>{index+1}/{record.inputs.length}</span><button disabled={index===record.inputs.length-1} onClick={()=>onOpen(draft,test,record.inputs[index+1].image_id)}>Next image</button></nav>} />
   </section>;
 }
