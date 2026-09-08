@@ -134,10 +134,25 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
   await expect(page.getByText("Schema proposal saved",{exact:true})).toBeVisible();
   await page.reload();
   await expect(page.getByText("Schema proposal saved",{exact:true})).toBeVisible();
-  await expect(page.getByText("Object boxes",{exact:true})).toBeVisible();
+  const originalProposal=page.locator(".conversation-proposal-details");
+  await expect(originalProposal).not.toHaveAttribute("open", "");
+  await expect(originalProposal.getByText("Object boxes",{exact:true})).toBeHidden();
+  const proposalToggle=originalProposal.locator("summary");
+  let detailWrites=0;
+  const countDetailWrites=(req:{method:()=>string;url:()=>string})=>{
+    if(!["GET","HEAD","OPTIONS"].includes(req.method())&&req.url().includes("/api/"))detailWrites++;
+  };
+  page.on("request",countDetailWrites);
+  await proposalToggle.focus();
+  await page.keyboard.press("Enter");
+  await expect(originalProposal.getByText("Object boxes",{exact:true})).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(originalProposal.getByText("Object boxes",{exact:true})).toBeHidden();
+  await expect(proposalToggle).toBeFocused();
+  page.off("request",countDetailWrites);
+  expect(detailWrites).toBe(0);
   await expect(page.getByText("Schema Draft saved · Revision 1",{exact:true})).toBeVisible();
   await expect(page.getByRole("button",{name:"Save as editable Schema Draft",exact:true})).toHaveCount(0);
-  await expect(page.getByText("Schema Draft saved · Revision 1",{exact:true})).toBeVisible();
   await page.getByRole("button",{name:"Edit labels and boundary rules",exact:true}).click();
   await page.getByLabel("Labels · one per line",{exact:true}).fill("TEST edited cup");
   await expect(page.getByText("Unsaved edits · Based on revision 1",{exact:true})).toBeVisible();
@@ -225,7 +240,7 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
   await page.getByRole("checkbox",{name:/Allow this text request/}).check();
   let release!: () => void;
   const held = new Promise<void>((resolve)=>{release=resolve;});
-  await page.route("**/schema-proposals",async(route)=>{await held;await route.continue();},{times:1});
+  await page.route("**/schema-proposals",async(route)=>{await held;await route.fallback();},{times:1});
   const submitted = page.waitForRequest((req)=>req.method()==="POST" && req.url().endsWith("/schema-proposals"));
   await page.getByRole("button",{name:"Generate label proposal",exact:true}).click();
   const pending = await submitted;

@@ -1,12 +1,15 @@
 # Conversational Annotation Workspace — execution record
 
-## Current checkpoint (after `c13f92d`; not a completion declaration)
+## Current checkpoint (after `54ae0d5`; not a completion declaration)
 
 The default Project entry now uses the persisted conversation/image workspace. Explicit goal
 selection survives re-entry, sample candidate references are frozen, and clarification/correction
 requests can be saved, cancelled or (for corrections) deferred/reopened without resetting budgets.
 The isolated bbox/classification tests exercise real Rust services through TEST HTTP model
 transports, including correction, revision, formal confirmation, review and export.
+Authorized valid Schema proposals now become editable Drafts without a separate local-save
+click; idempotent retry preserves subsequent human edits and never issues another model call.
+Stop/pause commands have a separately bounded admission lane under ordinary write saturation.
 
 Still incomplete: the bounded coordinator that advances through Schema/Builder/sample stages
 under one matching authorization; automatic interpretation of scoped conversational feedback;
@@ -2392,3 +2395,33 @@ seconds. Re-inspected the regenerated automatic-label-draft screenshot: the bott
 correctly describes message saving only; saved revision 1 and label editing are immediately
 available. Final Web typecheck and 123 unit tests passed, as did server Clippy and format checks.
 These are isolated TEST results, not Live inference quality or human usability evidence.
+
+### M2 continuation — keep original Schema evidence available without duplicating the working labels
+
+The inspected automatic-label-draft screenshot showed the same labels twice: the original
+model proposal and the current editable revision. Only completed draft proposals now put their
+original output/rationale in a native same-page details disclosure. The editable saved labels,
+authorization entry and any real clarification question remain directly visible. This is not a
+new modal, route, execution or store; folding history does not hide a question awaiting an answer.
+Native summary keeps keyboard activation/focus and uses the established color/font tokens.
+The Schema browser test checks collapsed content after refresh, Enter to open/close, restored
+summary focus, then continues actual editing/Builder/cancellation. Existing clarification and
+five terminal sample scenarios are being rerun in isolation. Web typecheck, 123 unit tests and
+production build passed; the existing >500 kB chunk warning remains.
+
+Combined `/tmp/annotagent-guided-e2e-28294` passed 7/8 in 2.4 minutes: both clarification
+paths and all five sample scenarios passed. The final Schema test's held cancellation request
+used `route.continue`, bypassing TEST-only mutation pacing, and received a pre-execution 429
+instead of the expected cancellation 400. Changed that interceptor to `route.fallback`, like
+the existing held Builder test; production limits/retry semantics are unchanged. The native
+proposal disclosure also explicitly checks no API writes on keyboard open/close. Inspected the
+updated automatic-label-draft screenshot: the duplicate proposal is folded, with editable labels
+visible. It also exposes a separate legacy message→Schema task synchronization gap: the parent
+request panel can still say “Select an annotation goal” after the child creates a task.
+
+Schema-only `/tmp/annotagent-guided-e2e-28518` passed 1/1 in 8.1 seconds. Final combined
+rerun `/tmp/annotagent-guided-e2e-28593` passed all 8/8 in 2.4 minutes, including the final
+held-request fallback and keyboard/no-write checks. Format/diff checks passed. No full Rust
+suite was rerun for this presentation-only follow-up; the preceding Schema Rust tests and
+Clippy evidence remain scoped to `54ae0d5`. No Live/real-human validation, user data mutation,
+push or remote change. The full coordinator and other gaps listed at the top remain unfinished.
