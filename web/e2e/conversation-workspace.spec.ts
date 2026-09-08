@@ -42,11 +42,37 @@ test("conversation journal restores, freezes image references and retries withou
   const divider = page.getByRole("separator", { name: "Resize conversation panel" });
   await divider.focus(); await page.keyboard.press("ArrowRight");
   await expect(divider).toHaveAttribute("aria-valuenow", "34");
+  await divider.press("End");
+  await expect(divider).toHaveAttribute("aria-valuenow", "50");
+  await divider.press("Home");
+  await expect(divider).toHaveAttribute("aria-valuenow", "25");
+  await expect(divider).toHaveAttribute("aria-valuetext", "25% conversation panel");
+  await divider.dispatchEvent("keydown", {key:"ArrowRight",isComposing:true});
+  await expect(divider).toHaveAttribute("aria-valuenow", "25");
+  await divider.press("Control+ArrowRight");
+  await expect(divider).toHaveAttribute("aria-valuenow", "25");
+  const selectedUrl=page.url();
+  await page.getByLabel("Your message", {exact:true}).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(divider).toHaveAttribute("aria-valuenow", "25");
+  expect(page.url()).toBe(selectedUrl);
+  await page.emulateMedia({reducedMotion:"reduce"});
   for (const width of [1440, 1280, 1024, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
-    if (width === 390) await page.getByRole("button", { name: "Images (1)", exact: true }).click();
-    await page.screenshot({ path: `../docs/execution/conversational-workspace/journal-${width}.png`, fullPage: true, animations: "disabled" });
+    if (width === 390) {
+      await expect(divider).toBeHidden();
+      const imagesTab=page.getByRole("button", {name:"Images (1)",exact:true});
+      await imagesTab.focus();await page.keyboard.press("Enter");
+      await expect(page.getByLabel("Your message",{exact:true})).toBeHidden();
+      await expect(page.getByRole("navigation",{name:"Select image",exact:true})).toBeVisible();
+      const conversationTab=page.getByRole("button", {name:"Conversation",exact:true});
+      await conversationTab.focus();await page.keyboard.press("Enter");
+      await expect(page.getByLabel("Your message",{exact:true})).toBeVisible();
+      await imagesTab.focus();await page.keyboard.press("Enter");
+    }
+    expect(page.url()).toBe(selectedUrl);
+    await page.screenshot({ path: resolve(process.env.ANNOTAGENT_E2E_EVIDENCE_DIR ?? "../docs/execution/conversational-workspace",`journal-${width}.png`), fullPage: true, animations: "disabled" });
   }
   expect(charged).toEqual([]);
 });

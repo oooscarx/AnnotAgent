@@ -4223,3 +4223,27 @@ This increment does not change Rust code, the real workspace/service, credential
 No push. Overall M4 remains open for the broader accessibility/performance and final acceptance
 audit; Live model and human usability testing remain unexecuted. This navigation fix is not a
 claim of model-quality improvement or overall goal completion.
+
+### 2026-09-09 — Keyboard-operable split pane and narrow-panel checks
+
+The existing splitter supported arrows but lacked range-end keys and a readable percentage.
+A browser regression first failed (End left aria-valuenow at 34 rather than 50). The same
+component now supports Home/End within its existing 25–50% bounds, reports the conversation
+percentage, and ignores composition/229 and modified system shortcuts. No new layout or
+business state was introduced. Arrow input in the message textarea does not resize the pane.
+
+The isolated journal test passes after the fix, including actual keyboard activation of the
+mobile Conversation/Images buttons, hidden desktop splitter on mobile, preserved object URL,
+and no inference requests. It exercises 1440, 1280, 1024 and 390 widths with reduced-motion
+media enabled. This checks supported basic switching under that preference, not a screen-reader
+session, native Chinese IME session, or actual browser 200% zoom; those remain unverified here.
+Its synthetic source image is explicitly TEST data and demonstrates layout, not model quality.
+
+Final browser run: 1 passed, 6.0s harness, workspace `/tmp/annotagent-guided-e2e-95174`.
+Screenshots now honor the existing optional isolated evidence directory, avoiding modification
+of prior repository PNGs: `/tmp/annotagent-conversation-keyboard-evidence/journal-{width}.png`.
+The 390px screenshot was visually inspected: header, panel switch, upload and entire image
+are visible without horizontal overflow. Web 203 unit tests and typecheck pass. The browser
+harness rebuilt production assets successfully, retaining the existing bundle-size warning.
+No real workspace, paid model, credential, remote or push action occurred. Overall goal stays
+open; this is bounded keyboard evidence, not a claim that all accessibility requirements pass.
