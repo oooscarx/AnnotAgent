@@ -86,6 +86,11 @@ impl SqliteStore {
         batch.event_sequence = 0;
         self.with_connection(|connection| {
             let transaction = connection.unchecked_transaction()?;
+            if crate::conversation_stop::processing_requested(&transaction, &batch.id.to_string())? {
+                return Err(StorageError::InvalidConversation(
+                    "Processing was stopped before Batch admission; no Batch was created".into(),
+                ));
+            }
             insert_batch(&transaction, &batch)?;
             if batch.workflow_snapshot.get("guided_processing").is_some() {
                 let maximum = batch.budget_limits.max_request_count.filter(|limit| *limit > 0).ok_or_else(|| StorageError::InvalidEnum("Confirmed processing requires a positive model-call allowance".into()))?;
@@ -576,47 +581,35 @@ impl SqliteStore {
         status: BatchStatus,
         now: DateTime<Utc>,
     ) -> Result<BatchRecord, StorageError> {
+        self.set_batch_status_inner(batch_id, status, now, false)
+    }
+
+    /// A chat command may race completion or be replayed after a lost acknowledgement.
+    /// Preserve settled results and avoid duplicate state events for an already-stopped Batch.
+    pub fn cancel_active_batch(
+        &self,
+        batch_id: BatchId,
+        now: DateTime<Utc>,
+    ) -> Result<BatchRecord, StorageError> {
+        self.set_batch_status_inner(batch_id, BatchStatus::Cancelled, now, true)
+    }
+
+    fn set_batch_status_inner(
+        &self,
+        batch_id: BatchId,
+        status: BatchStatus,
+        now: DateTime<Utc>,
+        active_only: bool,
+    ) -> Result<BatchRecord, StorageError> {
         self.with_connection(|connection| {
             let transaction = connection.unchecked_transaction()?;
-            let mut batch = read_batch(&transaction, batch_id)?;
-            if batch.status.is_terminal() && batch.status != status {
-                return Err(StorageError::InvalidEnum(format!(
-                    "terminal batch {:?} cannot transition to {status:?}",
-                    batch.status
-                )));
-            }
-            batch.status = status;
-            batch.updated_at = now;
-            if status != BatchStatus::Running {
-                batch.lease_owner = None;
-                batch.lease_expires_at = None;
-            }
-            if status == BatchStatus::Cancelled {
-                release_unfinished_reservations(&transaction, &mut batch)?;
-                transaction.execute(
-                    "UPDATE batch_images SET status = 'cancelled', lease_owner = NULL,
-                         reservation_json = ?2, updated_at = ?3
-                     WHERE batch_id = ?1 AND status IN ('pending', 'leased', 'running')",
-                    params![
-                        batch_id.to_string(),
-                        serde_json::to_string(&BatchUsage::default())?,
-                        now.to_rfc3339()
-                    ],
-                )?;
-            } else if status == BatchStatus::Paused {
-                release_leased_reservations(&transaction, &mut batch)?;
-            }
-            update_batch_runtime(&transaction, &batch)?;
-            append_event(
-                &transaction,
-                batch_id,
-                "batch_status_changed",
-                None,
-                &serde_json::json!({"status": status}),
-                now,
-            )?;
+            let batch = if active_only {
+                cancel_active_batch_in(&transaction, batch_id, now)?
+            } else {
+                set_batch_status_in(&transaction, batch_id, status, now)?
+            };
             transaction.commit()?;
-            read_batch(connection, batch_id)
+            Ok(batch)
         })
     }
 
@@ -811,6 +804,68 @@ fn insert_batch(transaction: &Transaction<'_>, batch: &BatchRecord) -> Result<()
     Ok(())
 }
 
+/// Join an existing stop-command transaction without rewriting a completed Batch.
+pub(crate) fn cancel_active_batch_in(
+    transaction: &Transaction<'_>,
+    batch_id: BatchId,
+    now: DateTime<Utc>,
+) -> Result<BatchRecord, StorageError> {
+    let batch = read_batch(transaction, batch_id)?;
+    if !matches!(
+        batch.status,
+        BatchStatus::Pending | BatchStatus::Running | BatchStatus::Paused
+    ) {
+        return Ok(batch);
+    }
+    set_batch_status_in(transaction, batch_id, BatchStatus::Cancelled, now)
+}
+
+fn set_batch_status_in(
+    transaction: &Transaction<'_>,
+    batch_id: BatchId,
+    status: BatchStatus,
+    now: DateTime<Utc>,
+) -> Result<BatchRecord, StorageError> {
+    let mut batch = read_batch(transaction, batch_id)?;
+    if batch.status.is_terminal() && batch.status != status {
+        return Err(StorageError::InvalidEnum(format!(
+            "terminal batch {:?} cannot transition to {status:?}",
+            batch.status
+        )));
+    }
+    batch.status = status;
+    batch.updated_at = now;
+    if status != BatchStatus::Running {
+        batch.lease_owner = None;
+        batch.lease_expires_at = None;
+    }
+    if status == BatchStatus::Cancelled {
+        release_unfinished_reservations(transaction, &mut batch)?;
+        transaction.execute(
+            "UPDATE batch_images SET status='cancelled', lease_owner=NULL,
+                 reservation_json=?2, updated_at=?3
+             WHERE batch_id=?1 AND status IN ('pending','leased','running')",
+            params![
+                batch_id.to_string(),
+                serde_json::to_string(&BatchUsage::default())?,
+                now.to_rfc3339()
+            ],
+        )?;
+    } else if status == BatchStatus::Paused {
+        release_leased_reservations(transaction, &mut batch)?;
+    }
+    update_batch_runtime(transaction, &batch)?;
+    append_event(
+        transaction,
+        batch_id,
+        "batch_status_changed",
+        None,
+        &serde_json::json!({"status":status}),
+        now,
+    )?;
+    read_batch(transaction, batch_id)
+}
+
 fn update_batch_runtime(
     transaction: &Transaction<'_>,
     batch: &BatchRecord,
@@ -966,19 +1021,7 @@ fn reclaim_stale_images(
     transaction: &Transaction<'_>,
     batch: &mut BatchRecord,
 ) -> Result<(), StorageError> {
-    let reservations = {
-        let mut statement = transaction.prepare(
-            "SELECT reservation_json FROM batch_images
-             WHERE batch_id = ?1 AND status IN ('leased', 'running')",
-        )?;
-        statement
-            .query_map([batch.id.to_string()], |row| row.get::<_, String>(0))?
-            .map(|row| Ok(serde_json::from_str::<BatchUsage>(&row?)?))
-            .collect::<Result<Vec<_>, StorageError>>()?
-    };
-    for reservation in reservations {
-        batch.budget_ledger.reserved = batch.budget_ledger.reserved.saturating_sub(&reservation);
-    }
+    release_unfinished_reservations(transaction, batch)?;
     transaction.execute(
         "UPDATE batch_images SET status = 'pending', lease_owner = NULL,
              reservation_json = ?2, child_run_id = NULL
@@ -995,7 +1038,23 @@ fn release_unfinished_reservations(
     transaction: &Transaction<'_>,
     batch: &mut BatchRecord,
 ) -> Result<(), StorageError> {
-    reclaim_stale_images(transaction, batch)
+    // Accounting only. Cancellation must retain child Run IDs so its caller can
+    // signal the actual workers after committing and restore lineage after restart.
+    // Recovery separately clears stale child IDs when it requeues their images.
+    let reservations = {
+        let mut statement = transaction.prepare(
+            "SELECT reservation_json FROM batch_images
+             WHERE batch_id = ?1 AND status IN ('leased', 'running')",
+        )?;
+        statement
+            .query_map([batch.id.to_string()], |row| row.get::<_, String>(0))?
+            .map(|row| Ok(serde_json::from_str::<BatchUsage>(&row?)?))
+            .collect::<Result<Vec<_>, StorageError>>()?
+    };
+    for reservation in reservations {
+        batch.budget_ledger.reserved = batch.budget_ledger.reserved.saturating_sub(&reservation);
+    }
+    Ok(())
 }
 
 fn release_leased_reservations(

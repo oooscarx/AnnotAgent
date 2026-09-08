@@ -6,6 +6,7 @@ mod conversation_calls;
 mod conversation_feedback;
 mod conversation_feedback_scope;
 mod conversation_future_schema;
+mod conversation_stop;
 pub use conversation_feedback::{
     ConversationFeedbackAuthorization, ConversationFeedbackAuthorizationRecord,
 };
@@ -16,6 +17,10 @@ pub use conversation_feedback_scope::{
 };
 pub use conversation_future_schema::{
     ConversationFutureSchemaInput, ConversationFutureSchemaRecord,
+};
+pub use conversation_stop::{
+    ConversationOperationCallState, ConversationStopRequest, ConversationStopStatus,
+    ConversationStopTarget, ConversationStopTargetKind, ConversationStopTargetRef,
 };
 mod conversation_clarifications;
 pub use conversation_clarifications::{SchemaClarification, SchemaClarificationRef};
@@ -649,6 +654,8 @@ impl SqliteStore {
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(45,'conversation_feedback_scope_answers',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute_batch(include_str!("../../../migrations/0046_conversation_future_schema_drafts.sql"))?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(46,'conversation_future_schema_drafts',?1)",[Utc::now().to_rfc3339()])?;
+            transaction.execute_batch(include_str!("../../../migrations/0047_conversation_stop_requests.sql"))?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(47,'conversation_stop_requests',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(41,'conversation_journey_dispatch',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(39,'conversation_human_deferrals',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(38,'conversation_task_selection',?1)",[Utc::now().to_rfc3339()])?;
@@ -2671,14 +2678,38 @@ impl SqliteStore {
         })
     }
 
+    /// Processing publication must remain behind its exact durable stop command.
+    pub fn publish_workflow_draft_for_processing(
+        &self,
+        draft: &WorkflowDraft,
+        content_hash: String,
+        snapshot: WorkflowSnapshot,
+        processing_id: &str,
+    ) -> Result<PublishedWorkflowVersion, StorageError> {
+        self.publish_workflow_draft_inner(draft, content_hash, snapshot, Some(processing_id))
+    }
+
     pub fn publish_workflow_draft(
         &self,
         draft: &WorkflowDraft,
         content_hash: String,
         snapshot: WorkflowSnapshot,
     ) -> Result<PublishedWorkflowVersion, StorageError> {
+        self.publish_workflow_draft_inner(draft, content_hash, snapshot, None)
+    }
+
+    fn publish_workflow_draft_inner(
+        &self,
+        draft: &WorkflowDraft,
+        content_hash: String,
+        snapshot: WorkflowSnapshot,
+        processing_id: Option<&str>,
+    ) -> Result<PublishedWorkflowVersion, StorageError> {
         self.with_connection(|connection| {
             let transaction = connection.unchecked_transaction()?;
+            if let Some(id)=processing_id {
+                Self::validate_processing_publication(&transaction,draft,&content_hash,&snapshot,id)?;
+            }
             let (current_revision, current_hash) = transaction
                 .query_row(
                     "SELECT revision, content_hash FROM workflow_drafts
@@ -2781,6 +2812,114 @@ impl SqliteStore {
             transaction.commit()?;
             Ok(version)
         })
+    }
+
+    /// The scope fence and the publication mutation use one SQLite transaction.
+    fn validate_processing_publication(
+        db: &Connection,
+        draft: &WorkflowDraft,
+        content_hash: &str,
+        snapshot: &WorkflowSnapshot,
+        processing_id: &str,
+    ) -> Result<(), StorageError> {
+        let invalid = || {
+            StorageError::InvalidConversation("Processing publication differs from its saved Project, Draft, sample or model authorization".into())
+        };
+        if conversation_stop::processing_requested(db, processing_id)? {
+            return Err(StorageError::InvalidConversation("Processing was stopped before publication; no version or Project default was changed".into()));
+        }
+        let (project, request, state): (String, String, String) = db
+            .query_row(
+                "SELECT project_id,request_json,state_json FROM processing_operations WHERE id=?1",
+                [processing_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?
+            .ok_or_else(invalid)?;
+        let request: serde_json::Value = serde_json::from_str(&request)?;
+        let state: serde_json::Value = serde_json::from_str(&state)?;
+        let authorization = &state["authorization"];
+        let sample = authorization["sample_test_id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or_else(invalid)?;
+        let material_hash = annotagent_image_tools::sha256(&draft.content_hash_material()?);
+        if project != draft.project_id
+            || state["project_id"] != draft.project_id
+            || state["id"] != processing_id
+            || state["draft_id"] != draft.id
+            || state["sample_test_id"] != sample
+            || state["request"] != request
+            || request["request_id"] != processing_id
+            || request["selection"]["draft_id"] != draft.id
+            || request["selection"]["sample_test_id"] != sample
+            || request["expected_revision"].as_u64() != Some(draft.revision)
+            || authorization["project_id"] != draft.project_id
+            || authorization["draft_id"] != draft.id
+            || authorization["revision"].as_u64() != Some(draft.revision)
+            || authorization["draft_content_hash"] != material_hash
+            || request["authorization_fingerprint"] != authorization["authorization_fingerprint"]
+            || snapshot.draft.as_ref().is_none_or(|saved| {
+                saved.id != draft.id
+                    || saved.project_id != draft.project_id
+                    || saved.revision != draft.revision
+            })
+            || snapshot
+                .draft
+                .as_ref()
+                .map(WorkflowDraft::content_hash_material)
+                .transpose()?
+                .is_none_or(|value| annotagent_image_tools::sha256(&value) != material_hash)
+            || annotagent_image_tools::sha256(&snapshot.content_hash_material()?) != content_hash
+            || serde_json::to_value(&snapshot.model_profiles)? != authorization["models"]
+            || serde_json::to_value(&snapshot.plugin_models)?
+                != authorization
+                    .get("plugin_models")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!([]))
+        {
+            return Err(invalid());
+        }
+        let matching_sample:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM workflow_sample_tests WHERE id=?1 AND project_id=?2 AND draft_id=?3 AND draft_revision=?4 AND request_revision=?4 AND draft_content_hash=?5)",params![sample,project,draft.id,i64::try_from(draft.revision).map_err(|_|invalid())?,material_hash],|row|row.get(0))?;
+        let current_project: Option<String> = db
+            .query_row(
+                "SELECT project_id FROM workflow_drafts WHERE id=?1",
+                [&draft.id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if !matching_sample || current_project.as_deref() != Some(project.as_str()) {
+            return Err(invalid());
+        }
+        let seal: String = db
+            .query_row(
+                "SELECT scope_json FROM sample_scope_seals WHERE sample_test_id=?1",
+                [sample],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or_else(invalid)?;
+        let seal: serde_json::Value = serde_json::from_str(&seal)?;
+        if authorization["project_schema_hash"]
+            .as_str()
+            .is_none_or(str::is_empty)
+            || seal["project_schema_hash"] != authorization["project_schema_hash"]
+            || seal["models"] != authorization["models"]
+            || seal
+                .get("plugin_models")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([]))
+                != authorization
+                    .get("plugin_models")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!([]))
+            || draft.annotation_schema.as_ref().is_some_and(|schema| {
+                serde_json::to_value(schema).is_ok_and(|value| seal["annotation_schema"] != value)
+            })
+        {
+            return Err(invalid());
+        }
+        Ok(())
     }
 
     pub fn list_published_workflow_versions(

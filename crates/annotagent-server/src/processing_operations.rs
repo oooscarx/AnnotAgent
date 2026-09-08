@@ -229,6 +229,17 @@ pub(super) async fn confirm(
             .store()
             .reserve_processing_operation(&input.request_id, &project, &request, value)
             .map_err(ApiError::bad_request)?;
+        if state
+            .application
+            .store()
+            .processing_stop_requested(&input.request_id)
+            .map_err(ApiError::internal)?
+        {
+            // Exact retry restores the stopped confirmation, never republishes or starts it.
+            let mut stopped = value.clone();
+            stopped["stop_requested"] = json!(true);
+            return Ok(Json(stopped));
+        }
         if value["phase"] == "started" {
             return Ok(Json(owned(&state, &project, &input.request_id)?));
         }
@@ -287,6 +298,14 @@ pub(super) async fn confirm(
         });
         receipt["error"] = error.body["error"].clone();
     }
+    if state
+        .application
+        .store()
+        .processing_stop_requested(&input.request_id)
+        .map_err(ApiError::internal)?
+    {
+        receipt["stop_requested"] = json!(true);
+    }
     state
         .application
         .store()
@@ -303,6 +322,7 @@ async fn execute_confirmation(
     settings: &Settings,
     receipt: &mut Value,
 ) -> ApiResult<()> {
+    require_processing_not_stopped(state, &input.request_id)?;
     let batch_id = parse_batch_id(&input.request_id)?;
     if let Ok(batch) = state.application.store().get_batch(batch_id) {
         if batch.project_id != project {
@@ -349,6 +369,7 @@ async fn execute_confirmation(
     let published = if let Some(version) = published {
         version
     } else {
+        require_processing_not_stopped(state, &input.request_id)?;
         receipt["phase"] = json!("publishing");
         state
             .application
@@ -374,7 +395,12 @@ async fn execute_confirmation(
         };
         state
             .application
-            .publish_workflow_with_approval(&input.selection.draft_id, settings, Some(&approval))
+            .publish_workflow_for_processing_with_approval(
+                &input.selection.draft_id,
+                settings,
+                &approval,
+                &input.request_id,
+            )
             .map_err(ApiError::bad_request)?
     };
     receipt["workflow_id"] = json!(published.workflow_id);
@@ -388,6 +414,9 @@ async fn execute_confirmation(
     let (provider, credential) =
         resolve_published_runtime_provider(state, &published.workflow_id, published.version)
             .await?;
+    // Cancellation may arrive while credentials/providers are being resolved. The Store's
+    // Batch admission and model-call guards also enforce this fence in their transactions.
+    require_processing_not_stopped(state, &input.request_id)?;
     let mut execution_settings = settings.clone();
     execution_settings.budget.max_requests = authorization["maximum_model_calls"].as_u64();
     if authorization.get("conversation").is_some() {
@@ -433,5 +462,19 @@ async fn execute_confirmation(
             .execute(batch.id, credential)
             .await;
     });
+    Ok(())
+}
+
+fn require_processing_not_stopped(state: &ServerState, id: &str) -> ApiResult<()> {
+    if state
+        .application
+        .store()
+        .processing_stop_requested(id)
+        .map_err(ApiError::internal)?
+    {
+        return Err(ApiError::bad_request(
+            "This processing confirmation was stopped. Already published versions and saved results remain; no new processing will be started by retrying it.",
+        ));
+    }
     Ok(())
 }

@@ -29,6 +29,9 @@ use super::{
 
 pub(super) fn routes() -> Router<ServerState> {
     Router::new()
+        .route("/api/projects/{project_id}/conversations/{conversation_id}/stop-requests", post(super::conversation_stop::begin))
+        .route("/api/projects/{project_id}/conversations/{conversation_id}/stop-requests/{message_id}", get(super::conversation_stop::get))
+        .route("/api/projects/{project_id}/conversations/{conversation_id}/stop-requests/{message_id}/select", post(super::conversation_stop::select))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/task-selection", get(super::conversations::selection).post(super::conversations::select_task))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/budget", get(super::processing_operations::conversation_budget))
         .route("/api/projects/{project_id}/conversation-call-limit", get(super::conversations::call_limit).post(super::conversations::set_call_limit))

@@ -3357,3 +3357,116 @@ LLM-authored Schema patches, image-class scope application, disambiguated chat s
 other visual requests, long-history/performance and accessibility/context acceptance. Real
 model quality, native 200% zoom and real-human novice usability remain unverified. The overall
 goal is still active; a human-edited fork is not presented as completion of those features.
+
+### M3 continuation: explicit chat stop commands
+
+The preceding human-authored future-Schema checkpoint is committed as `7fa067c`.
+The active goal is unchanged. This continuation implements deterministic, persisted stop
+commands through existing cancellation boundaries, not another Agent or execution engine.
+
+Baseline failure: `npm --prefix web run test:e2e -- conversation-stop.spec.ts` in
+`/tmp/annotagent-guided-e2e-64293` failed its first assertion: an empty conversation receiving
+the standalone message `停止` created one annotation Task and offered a goal authorization.
+No Provider was configured and no inference was run. Its Playwright failure trace and screenshot
+are in `web/test-results/conversation-stop-standalo-03c83-t-create-an-annotation-goal-chromium/`.
+The isolated 8791/8796 servers exited afterward; the real 8787 service was untouched.
+
+A second initial failing test verifies that the exact new stop endpoints use the existing
+bounded control lane, not model admission or a broad suffix bypass. Four new web unit tests
+cover exact standalone recognition, frozen task/no image scope, non-goal classification and
+same-conversation message merging; their initial failure preceded the helper implementation.
+
+Design constraints: a saved stop message freezes the explicit Task or the owned Conversation
+scope, snapshots actionable targets, and cancels a unique target or asks for an explicit choice.
+Retry uses that original command and target snapshot. It never stops a newly appeared task,
+promotes candidate feedback to a goal, or executes on GET/refresh. Pending authorization and
+pre-Batch processing must be included, not hidden by filtering truncated history. Journey
+parents and their children are deduplicated only when the relationship is unambiguous.
+Existing results, immutable versions, budgets, current image and unsaved edits remain intact.
+Cancellation receipts must distinguish a persisted request from a settled remote result;
+unknown remote completion/cost is not reported as zero. Implementation and verification follow.
+
+Implementation uses the existing Conversation journal and task cancellation services. Migration
+47 adds a saved command/target snapshot, not a new executor. Standalone `stop` (case-insensitive)
+or `停止` has an explicit `stop_request` reference; prose and candidate feedback keep their
+existing meaning. The server rejects stop references through the normal message/goal endpoints.
+The same composer remains available on the canonical `work?...&processing=<id>` page: an audit
+found that its old conditional hid the input precisely during dataset processing. Direct Batch
+Cancel remains available; the fix reuses the input rather than adding a second chat mode.
+
+The frozen targets include pending call authorization, Schema calls, Builder, Sample, Journey,
+and confirmed processing before or after Batch creation. Discovery is not truncated to a recent
+history page. Multiple independent targets require a choice; an explicit Task never falls back
+to the latest Task. Shared Journey children are only grouped when ownership is unambiguous.
+Selection is transactional and idempotent, including when a target finishes or gains a parent
+after the snapshot. A late retry cannot discover or stop a new task. Reads only observe saved
+state; they do not resend control commands, restart inference or authorize new work.
+
+Three publication tests cover another audited race: a pre-publication check alone leaves a gap
+before the actual INSERT. The processing-specific publication entry now verifies the exact
+saved Project, Draft/revision, sample seal, models and confirmation inside the existing SQLite
+publication transaction. Stop winning that transaction prevents a new Version or default;
+publication winning first preserves the already-created immutable Version. Scope mismatch and
+SQL failure roll back all publication writes. The old standalone publication API is unchanged.
+
+The first expanded executor browser run in `/tmp/annotagent-guided-e2e-66964` passed 10/11 and
+found a real Batch cancellation bug. The reused cancellation helper called stale-image recovery,
+which cleared `child_run_id` before the post-transaction signaller could find active children.
+The Batch said cancelled while its child actually completed, and lineage was lost. The fix
+separates reservation release from stale recovery: cancellation keeps real child Run IDs and
+consumed usage; recovery retains its existing requeue/clear-stale-child behavior. A failing
+Storage lineage test preceded the fix; all six persistent Batch tests then passed. The browser
+regression additionally requires each actual child Run to settle as cancelled, not merely a
+cancelled parent status. Final aggregate verification is recorded below when complete.
+
+The final browser command `npm --prefix web run test:e2e -- conversation-stop.spec.ts
+conversation-stop-executors.spec.ts` passes **13/13** in one 1.4-minute run using
+`/tmp/annotagent-guided-e2e-67739`. This includes actual delayed TEST Schema, Journey Builder,
+standalone Sample and dataset Batch executors. The dataset test submits `停止` through the
+normal processing-page composer and requires the original child Run to become cancelled while
+preserving its association, immutable workflow, saved sample and admitted call count. Other
+cases verify multiple-target selection, explicit Task A while Task B remains running, frozen
+no-work commands, original command/selection recovery after lost acknowledgements, refresh and
+Back without POST, new work not replacing a stopped target, rejected foreign objects, unknown
+fields and missing CSRF. Existing server tests also prove the narrowly matched control lane
+remains usable when ordinary mutation admission is saturated, without bypassing same-origin
+protection. All browser services on 8791/8796 exited after the run.
+
+Three new screenshots were captured by those browser tests and visually inspected:
+
+- `conversational-workspace/chat-stop-schema-receipt.png`: an interrupted actual TEST Schema
+  call, with truthful unknown remote completion/cost and preserved task scope.
+- `conversational-workspace/chat-stop-selected-390.png`: a compact selected-target receipt in
+  a 390px viewport. This is an element capture, not proof that the entire page fits one screen.
+- `conversational-workspace/chat-stop-batch-workspace.png`: the real 1280×800 processing-page
+  view scrolled to the saved stop message alongside its unchanged sample canvas. This is not a
+  claim that every processing control is simultaneously visible; the image/prediction is TEST.
+
+The stop parser uses only exact standalone words and no LLM. The browser composition check
+dispatches DOM composition events; it is not a native Chinese IME acceptance test. A late GET
+cannot erase a selected target or roll settled state back to pending (unit coverage); the UI
+disables selection during initial restoration/manual reload, so no E2E artificially unlocks a
+disabled control to manufacture a race. Selection and whole-command lost acknowledgements do
+have real browser/network recovery coverage. No Live inference, model-quality evaluation,
+native 200% zoom, full-repository E2E sweep or real-human usability test is claimed here.
+
+Final formatting and strict Clippy pass (`cargo fmt --all --check` and
+`cargo clippy --workspace --all-targets --all-features -- -D warnings`). The complete
+`cargo test --workspace --all-features -q` run exits successfully: Application has 133 passed
+and one explicit Live-dependent ignored unit test, Storage has 117 passing unit tests plus
+integration suites, including six persistent Batch tests. Four additional explicit expert-weight
+Live tests remain ignored, for five ignored Live-dependent tests overall.
+`cargo build --workspace --all-features` also passes. Web typecheck,
+171 unit tests in 37 files and production build pass. The existing >500 KB bundle warning
+remains; no bundle-size or long-history performance improvement is claimed by these results.
+
+Only this checkpoint's source/tests, migration, execution log and three new chat-stop images
+are staged for its local commit. Pre-existing modified/untracked historical screenshots remain
+untouched and excluded. Branch is `main`; origin and tsinghua remote URLs are unchanged and
+nothing is pushed. The real workspace and 8787 server are not migrated/restarted for this
+checkpoint, so it is not yet a claim that the running user instance serves the new code.
+
+The overall goal stays active. Remaining slices include bounded LLM-authored Schema patches,
+image-class scope application, other visual Human Requests, long-history/performance and the
+broader accessibility/context acceptance matrix. This checkpoint completes the explicit chat
+stop-command slice only. Real-model quality and real-human usability remain unverified.

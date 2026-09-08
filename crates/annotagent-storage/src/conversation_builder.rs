@@ -144,6 +144,7 @@ impl SqliteStore {
                 if schema.is_some() && schema_pair(saved.evidence.as_ref())?!=schema {return Err(StorageError::InvalidConversation("Builder request changed its admitted Schema identity".into()));}
                 return Ok(Some(saved));
             }
+            crate::conversation_stop::require_admission_clear(&tx,task,&id.to_string(),true)?;
             if let Some((schema_id,revision))=schema {
                 let saved=crate::conversation_schema::read(&tx,project,schema_id,Some(revision))?;
                 if saved.task_id!=task {return Err(StorageError::InvalidConversation("Builder Schema belongs to another task".into()));}

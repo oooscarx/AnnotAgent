@@ -25,6 +25,11 @@ impl SqliteStore {
     ) -> Result<(), StorageError> {
         self.with_connection(|connection| {
             let tx=connection.unchecked_transaction()?;
+            if crate::conversation_stop::processing_requested(&tx, &batch_id.to_string())? {
+                return Err(StorageError::InvalidConversation(
+                    "Processing was stopped before model admission; no request was sent".into(),
+                ));
+            }
             let task:Option<String>=tx.query_row("SELECT json_extract(state_json,'$.authorization.conversation.task_id') FROM processing_operations WHERE id=?1",[batch_id.to_string()],|r|r.get(0)).optional()?.flatten();
             if let Some(task)=task {
                 let project:String=tx.query_row("SELECT c.project_id FROM conversation_tasks t JOIN project_conversations c ON c.id=t.conversation_id WHERE t.id=?1",[task],|r|r.get(0))?;

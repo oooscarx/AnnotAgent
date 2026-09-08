@@ -464,7 +464,7 @@ impl SqliteStore {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -524,7 +524,7 @@ mod tests {
         );
     }
 
-    fn setup(
+    pub(crate) fn setup(
         store: &SqliteStore,
     ) -> (String, Uuid, ConversationJourneyConsent, JourneySampleScope) {
         let project = Uuid::new_v4().to_string();

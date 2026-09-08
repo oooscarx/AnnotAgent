@@ -41,6 +41,24 @@ mod control_tests {
         assert!(!is_execution_control(&Method::POST, &path));
     }
     #[test]
+    fn conversation_stop_has_a_precise_control_lane_not_a_model_action() {
+        let id = Uuid::new_v4();
+        let root = format!("/api/projects/test/conversations/{id}/stop-requests");
+        for path in [root.clone(), format!("{root}/{id}/select")] {
+            assert!(is_execution_control(&Method::POST, &path), "{path}");
+            assert!(!is_expensive_action(&path), "{path}");
+            assert!(!is_execution_control(&Method::GET, &path));
+        }
+        for path in [
+            format!("{root}/{id}"),
+            format!("{root}/{id}/select/extra"),
+            format!("{root}/not-a-uuid/select"),
+            format!("{root}/{id}/execute"),
+        ] {
+            assert!(!is_execution_control(&Method::POST, &path), "{path}");
+        }
+    }
+    #[test]
     fn feedback_dispatch_is_expensive_but_its_stop_uses_existing_control_lane() {
         let id = Uuid::new_v4();
         let root = format!("/api/projects/test/conversations/{id}/tasks/{id}");
@@ -181,6 +199,10 @@ mod control_tests {
                 "/api/runs/{id}/resume",
                 post(|| async { StatusCode::NO_CONTENT }),
             )
+            .route(
+                "/api/projects/{project}/conversations/{conversation}/stop-requests",
+                post(|| async { StatusCode::NO_CONTENT }),
+            )
             .layer(middleware::from_fn_with_state(
                 security.clone(),
                 protect_local_api,
@@ -204,6 +226,25 @@ mod control_tests {
                 .unwrap()
                 .status(),
             StatusCode::NO_CONTENT
+        );
+        let chat_stop = format!("/api/projects/test/conversations/{id}/stop-requests");
+        assert_eq!(
+            router
+                .clone()
+                .oneshot(request(&security, &chat_stop, true))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            router
+                .clone()
+                .oneshot(request(&security, &chat_stop, false))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
         );
         assert_eq!(
             router
@@ -353,6 +394,26 @@ fn is_execution_control(method: &Method, path: &str) -> bool {
     let segments: Vec<_> = path.split('/').collect();
     let uuid = |id: &str| Uuid::parse_str(id).is_ok();
     match segments.as_slice() {
+        [
+            "",
+            "api",
+            "projects",
+            project,
+            "conversations",
+            conversation,
+            "stop-requests",
+        ] => !project.is_empty() && uuid(conversation),
+        [
+            "",
+            "api",
+            "projects",
+            project,
+            "conversations",
+            conversation,
+            "stop-requests",
+            id,
+            "select",
+        ] => !project.is_empty() && uuid(conversation) && uuid(id),
         ["", "api", "runs" | "batches", id, "cancel" | "pause"]
         | ["", "api", "agent-sessions", id, "cancel"] => uuid(id),
         [

@@ -34,6 +34,176 @@ fn batch(limits: BatchBudgetLimits) -> BatchRecord {
 }
 
 #[test]
+fn scoped_stop_is_idempotent_and_does_not_change_completed_or_review_results() {
+    let directory = tempfile::tempdir().expect("TEST temp");
+    let database = directory.path().join("TEST-chat-stop.db");
+    let store = SqliteStore::open(&database).unwrap();
+    let now = Utc::now();
+    for status in [
+        BatchStatus::Pending,
+        BatchStatus::Running,
+        BatchStatus::Paused,
+        BatchStatus::Completed,
+        BatchStatus::AwaitingReview,
+    ] {
+        let record = batch(BatchBudgetLimits::default());
+        store
+            .create_batch(record.clone(), &[(ImageId::new(), "TEST.png".into())])
+            .unwrap();
+        let before = store.set_batch_status(record.id, status, now).unwrap();
+        let stopped = store
+            .cancel_active_batch(record.id, now + ChronoDuration::seconds(1))
+            .unwrap();
+        if matches!(
+            status,
+            BatchStatus::Pending | BatchStatus::Running | BatchStatus::Paused
+        ) {
+            assert_eq!(stopped.status, BatchStatus::Cancelled);
+            assert_eq!(stopped.event_sequence, before.event_sequence + 1);
+        } else {
+            assert_eq!(stopped, before);
+        }
+        assert_eq!(
+            store
+                .cancel_active_batch(record.id, now + ChronoDuration::seconds(2))
+                .unwrap(),
+            stopped
+        );
+        let reopened = SqliteStore::open(&database).unwrap();
+        assert_eq!(
+            reopened
+                .cancel_active_batch(record.id, now + ChronoDuration::seconds(3))
+                .unwrap(),
+            stopped
+        );
+    }
+}
+
+#[test]
+fn cancellation_preserves_running_child_lineage_and_releases_only_reservations() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("TEST-cancel-lineage.db");
+    let store = SqliteStore::open(&path).unwrap();
+    let record = batch(BatchBudgetLimits::default());
+    let images = (0..4)
+        .map(|n| (ImageId::new(), format!("TEST-{n}.png")))
+        .collect::<Vec<_>>();
+    store.create_batch(record.clone(), &images).unwrap();
+    let now = Utc::now();
+    store
+        .acquire_batch_lease(record.id, "TEST-worker", Duration::from_secs(60), now)
+        .unwrap();
+    let reservation = BatchUsage {
+        request_count: 1,
+        image_count: 1,
+        cost: Decimal::new(25, 2),
+        ..Default::default()
+    };
+    let consumed = BatchUsage {
+        request_count: 1,
+        image_count: 1,
+        cost: Decimal::new(20, 2),
+        ..Default::default()
+    };
+    let completed_run = RunId::new();
+    let running_run = RunId::new();
+    for (index, child) in [(0, Some(completed_run)), (1, Some(running_run)), (2, None)] {
+        assert!(matches!(
+            store
+                .claim_batch_image(record.id, "TEST-worker", &reservation, now)
+                .unwrap(),
+            BatchClaimResult::Claimed(_)
+        ));
+        if let Some(child) = child {
+            store
+                .mark_batch_image_running(record.id, images[index].0, "TEST-worker", child, now)
+                .unwrap();
+        }
+        if index == 0 {
+            store
+                .finish_batch_image(
+                    record.id,
+                    images[0].0,
+                    "TEST-worker",
+                    BatchImageStatus::Completed,
+                    &consumed,
+                    &BatchImageCheckpoint::default(),
+                    None,
+                    now,
+                )
+                .unwrap();
+        }
+    }
+    let before = store.get_batch(record.id).unwrap();
+    assert_eq!(before.budget_ledger.reserved.request_count, 2);
+    let cancelled = store
+        .cancel_active_batch(record.id, now + ChronoDuration::seconds(1))
+        .unwrap();
+    let rows = store.list_batch_images(record.id).unwrap();
+    assert_eq!(
+        rows[1].child_run_id,
+        Some(running_run),
+        "the post-transaction signaller needs the real running child ID"
+    );
+    assert_eq!(rows[0].child_run_id, Some(completed_run));
+    assert_eq!(rows[0].status, BatchImageStatus::Completed);
+    assert_eq!(rows[0].actual_usage, consumed);
+    for row in &rows[1..] {
+        assert_eq!(row.status, BatchImageStatus::Cancelled);
+        assert_eq!(row.reservation, BatchUsage::default());
+        assert!(row.lease_owner.is_none());
+    }
+    assert_eq!(cancelled.budget_ledger.reserved, BatchUsage::default());
+    assert_eq!(cancelled.budget_ledger.consumed, consumed);
+    assert_eq!(cancelled.event_sequence, before.event_sequence + 1);
+    assert!(cancelled.lease_owner.is_none());
+    assert!(cancelled.lease_expires_at.is_none());
+    drop(store);
+    let store = SqliteStore::open(&path).unwrap();
+    assert!(
+        store
+            .recover_orphaned_batch_leases(now + ChronoDuration::seconds(2))
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(store.list_batch_images(record.id).unwrap(), rows);
+    assert_eq!(
+        store
+            .cancel_active_batch(record.id, now + ChronoDuration::seconds(3))
+            .unwrap(),
+        cancelled
+    );
+    assert_eq!(store.list_batch_images(record.id).unwrap(), rows);
+    // A response that was already sent may still report usage after cancellation;
+    // retain that accounting and its child lineage without admitting another run.
+    store
+        .finish_batch_image(
+            record.id,
+            images[1].0,
+            "TEST-worker",
+            BatchImageStatus::Cancelled,
+            &consumed,
+            &BatchImageCheckpoint::default(),
+            Some("TEST cancelled"),
+            now + ChronoDuration::seconds(4),
+        )
+        .unwrap();
+    let settled = store.get_batch(record.id).unwrap();
+    assert_eq!(settled.budget_ledger.reserved, BatchUsage::default());
+    assert_eq!(settled.budget_ledger.consumed.request_count, 2);
+    assert_eq!(
+        store.list_batch_images(record.id).unwrap()[1].child_run_id,
+        Some(running_run)
+    );
+    assert_eq!(
+        store
+            .cancel_active_batch(record.id, now + ChronoDuration::seconds(5))
+            .unwrap(),
+        settled
+    );
+}
+
+#[test]
 fn startup_requeues_orphaned_image_and_checkpoint_survives_reopen() {
     let directory = tempfile::tempdir().expect("temp");
     let database = directory.path().join("history.db");
@@ -60,6 +230,9 @@ fn startup_requeues_orphaned_image_and_checkpoint_survives_reopen() {
                 .expect("claim"),
             BatchClaimResult::Claimed(_)
         ));
+        store
+            .mark_batch_image_running(batch.id, image_id, "worker-a", RunId::new(), now)
+            .expect("orphaned running child");
     }
 
     let store = SqliteStore::open(&database).expect("reopened store");
@@ -75,6 +248,12 @@ fn startup_requeues_orphaned_image_and_checkpoint_survives_reopen() {
         .expect("take over expired lease");
     let recovered = store.get_batch(batch.id).expect("batch");
     assert_eq!(recovered.budget_ledger.reserved, BatchUsage::default());
+    assert!(
+        store.list_batch_images(batch.id).unwrap()[0]
+            .child_run_id
+            .is_none(),
+        "recovery still clears the stale child before a new attempt"
+    );
     let reservation = BatchUsage {
         request_count: 1,
         image_count: 1,

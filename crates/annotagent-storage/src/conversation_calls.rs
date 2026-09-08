@@ -96,6 +96,47 @@ fn owner(db: &rusqlite::Connection, project: &str, task: Uuid) -> Result<(), Sto
     }
     Ok(())
 }
+pub(crate) fn request_cancel_in(
+    db: &rusqlite::Connection,
+    project: &str,
+    task: Uuid,
+    call: Uuid,
+) -> Result<ConversationCallCancellation, StorageError> {
+    owner(db, project, task)?;
+    if receipt(db, call)?.is_some_and(|saved| saved.task_id != task) {
+        return Err(invalid("call belongs to another task"));
+    }
+    let foreign:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM conversation_builder_operations WHERE id=?1 AND task_id!=?2 UNION ALL SELECT 1 FROM conversation_authorization_revisions WHERE id=?1 AND task_id!=?2 UNION ALL SELECT 1 FROM conversation_feedback_authorizations WHERE call_id=?1 AND task_id!=?2)",params![call.to_string(),task.to_string()],|r|r.get(0))?;
+    if foreign {
+        return Err(invalid(
+            "operation or authorization belongs to another task",
+        ));
+    }
+    let existing: Option<(String, String)> = db
+        .query_row(
+            "SELECT task_id,requested_at FROM conversation_call_cancellations WHERE call_id=?1",
+            [call.to_string()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    if let Some((owner, requested_at)) = existing {
+        if owner != task.to_string() {
+            return Err(invalid("cancellation belongs to another task"));
+        }
+        return Ok(ConversationCallCancellation {
+            call_id: call,
+            task_id: task,
+            requested_at,
+        });
+    }
+    let requested_at = Utc::now().to_rfc3339();
+    db.execute("INSERT INTO conversation_call_cancellations(call_id,task_id,requested_at) VALUES(?1,?2,?3)",params![call.to_string(),task.to_string(),requested_at])?;
+    Ok(ConversationCallCancellation {
+        call_id: call,
+        task_id: task,
+        requested_at,
+    })
+}
 pub(crate) fn receipt(
     db: &rusqlite::Connection,
     id: Uuid,
@@ -272,20 +313,9 @@ impl SqliteStore {
     ) -> Result<ConversationCallCancellation, StorageError> {
         self.with_connection(|db| {
             let tx = db.unchecked_transaction()?;
-            owner(&tx,project,task)?;
-            if receipt(&tx,call)?.is_some_and(|saved| saved.task_id != task) { return Err(invalid("call belongs to another task")); }
-            let foreign_builder: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_builder_operations WHERE id=?1 AND task_id!=?2)",params![call.to_string(),task.to_string()],|row|row.get(0))?;
-            if foreign_builder { return Err(invalid("Builder belongs to another task")); }
-            let foreign_feedback: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_feedback_authorizations WHERE call_id=?1 AND task_id!=?2)",params![call.to_string(),task.to_string()],|row|row.get(0))?;
-            if foreign_feedback { return Err(invalid("Feedback authorization belongs to another task")); }
-            let existing: Option<(String,String)> = tx.query_row("SELECT task_id,requested_at FROM conversation_call_cancellations WHERE call_id=?1", [call.to_string()], |row| Ok((row.get(0)?,row.get(1)?))).optional()?;
-            if let Some((saved_task,requested_at)) = existing {
-                if saved_task != task.to_string() { return Err(invalid("cancellation belongs to another task")); }
-                return Ok(ConversationCallCancellation { call_id:call,task_id:task,requested_at });
-            }
-            let requested_at = Utc::now().to_rfc3339();
-            tx.execute("INSERT INTO conversation_call_cancellations(call_id,task_id,requested_at) VALUES(?1,?2,?3)", params![call.to_string(),task.to_string(),requested_at])?;
-            tx.commit()?; Ok(ConversationCallCancellation { call_id:call,task_id:task,requested_at })
+            let saved = request_cancel_in(&tx, project, task, call)?;
+            tx.commit()?;
+            Ok(saved)
         })
     }
 
@@ -493,6 +523,7 @@ impl SqliteStore {
                 return Ok(ConversationCallAdmission::Existing(saved));
             }
             require_call_admission_clear(&tx, task, id)?;
+            crate::conversation_stop::require_admission_clear(&tx,task,&id.to_string(),true)?;
             let grant: Option<(String,u32,String,bool)> = tx.query_row("SELECT scope_hash,maximum_calls,expires_at,revoked FROM conversation_call_grants WHERE task_id=?1", [task.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).optional()?;
             let Some((scope,maximum,expires,revoked)) = grant else { return Err(invalid("explicit task authorization required")); };
             if scope != scope_hash || revoked || DateTime::parse_from_rfc3339(&expires).map_err(|_| invalid("invalid authorization expiry"))? <= Utc::now() { return Err(invalid("task authorization changed, expired or was revoked")); }

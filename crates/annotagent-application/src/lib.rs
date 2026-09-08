@@ -22,7 +22,9 @@ mod conversation_references;
 pub use conversation_feedback::{ConversationFeedbackContext, ConversationFeedbackResult};
 pub use conversation_feedback_intent::{ConversationFeedbackDecision, ConversationFeedbackReason};
 mod conversation_schema;
+mod conversation_stop;
 pub use conversation_provider::ConversationTaskProvider;
+pub use conversation_stop::ConversationStopObservation;
 mod guidance;
 pub use conversation_schema::{
     ConversationOutputKind, ConversationSchemaAttempt, ConversationSchemaDecision,
@@ -9432,6 +9434,14 @@ impl LocalApplication {
         conversation_id: uuid::Uuid,
         input: &annotagent_storage::ConversationMessageInput,
     ) -> Result<annotagent_storage::ConversationMessage> {
+        if matches!(
+            input.reference,
+            Some(annotagent_storage::ConversationSelectionRef::StopRequest { .. })
+        ) {
+            bail!(
+                "Stop commands must use the explicit stop endpoint so their target snapshot is saved atomically"
+            );
+        }
         let owner = self.conversation_project_identity(project_id)?;
         if self
             .store
@@ -17679,6 +17689,33 @@ impl LocalApplication {
         settings: &Settings,
         approval: Option<&PublicationApproval>,
     ) -> Result<PublishedWorkflowVersion> {
+        self.publish_workflow_with_processing_guard(draft_id, settings, approval, None)
+    }
+
+    /// The same publication boundary, with a transaction-local cancellation fence for
+    /// an explicitly confirmed processing command. This is not automatic publication.
+    pub fn publish_workflow_for_processing_with_approval(
+        &self,
+        draft_id: &str,
+        settings: &Settings,
+        approval: &PublicationApproval,
+        processing_id: &str,
+    ) -> Result<PublishedWorkflowVersion> {
+        self.publish_workflow_with_processing_guard(
+            draft_id,
+            settings,
+            Some(approval),
+            Some(processing_id),
+        )
+    }
+
+    fn publish_workflow_with_processing_guard(
+        &self,
+        draft_id: &str,
+        settings: &Settings,
+        approval: Option<&PublicationApproval>,
+        processing_id: Option<&str>,
+    ) -> Result<PublishedWorkflowVersion> {
         let draft = self.store.get_workflow_draft(draft_id)?;
         let scope = self.management_scope(&draft.project_id)?;
         let object = annotagent_core::ManagementObjectRef {
@@ -17695,7 +17732,7 @@ impl LocalApplication {
             &owner,
             chrono::Duration::minutes(30),
         )?;
-        let result = self.publish_workflow_unleased(draft_id, settings, approval);
+        let result = self.publish_workflow_unleased(draft_id, settings, approval, processing_id);
         let release = self
             .store
             .release_management_lease(&scope, &object, "publication", &owner);
@@ -17711,6 +17748,7 @@ impl LocalApplication {
         draft_id: &str,
         settings: &Settings,
         approval: Option<&PublicationApproval>,
+        processing_id: Option<&str>,
     ) -> Result<PublishedWorkflowVersion> {
         let mut draft = self.store.get_workflow_draft(draft_id)?;
         if matches!(
@@ -17792,9 +17830,17 @@ impl LocalApplication {
             .with_safety_compatibility(annotagent_core::WorkflowSafetyCompatibility::Safe);
         let serialized = snapshot.content_hash_material()?;
         let content_hash = annotagent_image_tools::sha256(&serialized);
-        let published = self
-            .store
-            .publish_workflow_draft(&draft, content_hash, snapshot)?;
+        let published = if let Some(processing_id) = processing_id {
+            self.store.publish_workflow_draft_for_processing(
+                &draft,
+                content_hash,
+                snapshot,
+                processing_id,
+            )?
+        } else {
+            self.store
+                .publish_workflow_draft(&draft, content_hash, snapshot)?
+        };
         if !published.snapshot.plugin_models.is_empty() {
             let mut registry = self
                 .plugin_registry

@@ -13,14 +13,20 @@ import type { OpenConversationSample } from "./ConversationSampleCard";
 import "./conversation-feedback.css";
 
 /** A saved message is context, not permission. Only explicit buttons authorize or execute. */
-export function ConversationFeedbackCard({ project, message, requests, requestsReady, onOpen, onAssistance, captureCanvasNavigation, onScopeDirtyChange, onSample }: {
+type FeedbackCardProps = {
   project: string; message: ConversationMessage; requests: HumanRequest[]; requestsReady: boolean;
   onOpen: (request: HumanRequest) => void; onAssistance: () => void;
   captureCanvasNavigation: () => (request: HumanRequest) => void;
   onScopeDirtyChange?: (dirty: boolean) => void;
   onSample: OpenConversationSample;
-}) {
-  const conversation = message.conversation_id, task = message.input.reference!.task_id;
+};
+export function ConversationFeedbackCard(props: FeedbackCardProps) {
+  const reference = props.message.input.reference;
+  if (reference?.scope !== "sample_candidate") return null;
+  return <FeedbackCard {...props} task={reference.task_id} />;
+}
+function FeedbackCard({ project, message, requests, requestsReady, onOpen, onAssistance, captureCanvasNavigation, onScopeDirtyChange, onSample, task }: FeedbackCardProps & { task: string }) {
+  const conversation = message.conversation_id;
   const storageKey = `annotagent.feedback:${project}:${conversation}:${task}:${message.input.id}`;
   const [saved, setSaved] = useState<FeedbackStatus>();
   const [preview, setPreview] = useState<FeedbackPreview>();

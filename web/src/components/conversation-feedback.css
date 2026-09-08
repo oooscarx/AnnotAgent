@@ -47,3 +47,20 @@
 .conversation-future-schema-comparison > div { min-width: 0; }
 .conversation-future-schema-comparison ul { margin: .4rem 0; padding-left: 1.2rem; }
 @media (max-width: 600px) { .conversation-future-schema-comparison { grid-template-columns: minmax(0, 1fr); gap: .5rem; } }
+.conversation-stop-card form, .conversation-stop-card fieldset { display: grid; min-width: 0; gap: .75rem; }
+.conversation-stop-card fieldset { border: 0; margin: 0; padding: .5rem 0; }
+.conversation-stop-card legend { font-weight: 600; padding: 0; }
+.conversation-stop-card label { display: flex; align-items: start; gap: .6rem; min-width: 0; }
+.conversation-stop-card label input { flex: none; margin-top: .3rem; }
+.conversation-stop-card label span { min-width: 0; overflow-wrap: anywhere; }
+.conversation-stop-card label small { display: block; margin-top: .3rem; }
+.conversation-stop-card form > button { justify-self: start; }
+.conversation-stop-target { display: grid; gap: .4rem; min-width: 0; }
+.conversation-stop-target-summary { display: grid; gap: .2rem; }
+.conversation-stop-target-summary strong { font-size: .9rem; font-weight: 600; line-height: 1.5; }
+.conversation-stop-card .conversation-stop-target-summary small { margin: 0; color: var(--aa-text-muted); }
+.conversation-stop-target-details { font-size: .8rem; min-width: 0; }
+.conversation-stop-target-details summary { width: fit-content; cursor: pointer; }
+.conversation-stop-target-details dl { display: grid; gap: .3rem; margin-block: .6rem; }
+.conversation-stop-target-details dt { font-weight: 600; }
+.conversation-stop-target-details dd { margin: 0 0 .4rem; overflow-wrap: anywhere; }

@@ -5,6 +5,7 @@ mod conversation_feedback;
 mod conversation_human_requests;
 mod conversation_journey;
 mod conversation_schema;
+mod conversation_stop;
 mod conversations;
 mod processing_operations;
 mod sample_operations;

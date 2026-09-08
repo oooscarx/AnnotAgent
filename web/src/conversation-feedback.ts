@@ -49,7 +49,7 @@ export function feedbackCancellationMatches(value: ConversationCallCancellation 
 /** This is a navigation hint only. Server admission still enforces all blockers. */
 export function feedbackWaitingRequest(message: ConversationMessage, requests: HumanRequest[]) {
   const reference = message.input.reference;
-  if (!reference) return undefined;
+  if (!reference || reference.scope !== "sample_candidate") return undefined;
   const waiting = requests.filter(value => value.status === "pending" && value.input.task_id === reference.task_id && value.input.conversation_id === message.conversation_id);
   const exact = waiting.find(value => value.input.sample_test_id === reference.sample_test_id && value.input.image_id === message.input.image?.image_id && value.input.content_hash === message.input.image.sha256 && value.input.outcome_id === reference.candidate_id);
   return exact ? { request: exact, sameSubject: true } : waiting[0] ? { request: waiting[0], sameSubject: false } : undefined;

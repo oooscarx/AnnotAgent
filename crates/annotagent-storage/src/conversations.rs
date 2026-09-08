@@ -16,6 +16,9 @@ pub struct ConversationImageRef {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "scope", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ConversationSelectionRef {
+    StopRequest {
+        task_id: Option<Uuid>,
+    },
     SampleCandidate {
         task_id: Uuid,
         project_schema_revision: String,
@@ -49,7 +52,7 @@ fn invalid(message: &str) -> StorageError {
     StorageError::InvalidConversation(message.into())
 }
 
-fn require_owner(
+pub(crate) fn require_owner(
     db: &rusqlite::Connection,
     project: &str,
     conversation: Uuid,
@@ -118,6 +121,14 @@ impl SqliteStore {
         conversation: Uuid,
         input: &ConversationMessageInput,
     ) -> Result<ConversationMessage, StorageError> {
+        if matches!(
+            input.reference,
+            Some(ConversationSelectionRef::StopRequest { .. })
+        ) {
+            return Err(invalid(
+                "stop messages require the atomic stop-command service",
+            ));
+        }
         if input.text.trim().is_empty() || input.text.len() > 65_536 {
             return Err(invalid(
                 "message text must be nonempty and at most 65536 bytes",

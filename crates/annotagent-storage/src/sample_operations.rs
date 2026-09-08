@@ -67,6 +67,10 @@ impl SqliteStore {
                 }
                 return Ok(false);
             }
+            if let Some(task)=value.request["conversation"]["task_id"].as_str() {
+                let task=uuid::Uuid::parse_str(task).map_err(|_|StorageError::InvalidSampleOperation("invalid conversation task".into()))?;
+                crate::conversation_stop::require_admission_clear(&transaction,task,&value.id,true)?;
+            }
             let active: u32 = transaction.query_row("SELECT COUNT(*) FROM sample_operations WHERE status IN ('queued','running','cancelling')", [], |row| row.get(0))?;
             if active >= 2 {
                 return Err(StorageError::InvalidSampleOperation("two sample tasks are already active; wait or stop one before starting another".to_owned()));
@@ -122,10 +126,7 @@ impl SqliteStore {
     }
 
     pub fn cancel_sample_operation(&self, id: &str, project_id: &str) -> Result<(), StorageError> {
-        self.with_connection(|connection| {
-            connection.execute("UPDATE sample_operations SET status='cancelling',updated_at=?3 WHERE id=?1 AND project_id=?2 AND status IN ('queued','running')", params![id,project_id,Utc::now().to_rfc3339()])?;
-            Ok(())
-        })
+        self.with_connection(|connection| cancel_in(connection, id, project_id))
     }
 
     pub fn finish_sample_operation(
@@ -150,6 +151,15 @@ impl SqliteStore {
             Ok(())
         })
     }
+}
+
+pub(crate) fn cancel_in(
+    db: &rusqlite::Connection,
+    id: &str,
+    project: &str,
+) -> Result<(), StorageError> {
+    db.execute("UPDATE sample_operations SET status='cancelling',updated_at=?3 WHERE id=?1 AND project_id=?2 AND status IN ('queued','running')",params![id,project,Utc::now().to_rfc3339()])?;
+    Ok(())
 }
 
 #[cfg(test)]

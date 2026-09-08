@@ -15,6 +15,10 @@ import type { HumanRequest } from "../conversation-human-api";
 import { ConversationHumanRequests } from "./ConversationHumanRequests";
 import { ConversationFeedbackCard } from "./ConversationFeedbackCard";
 import { feedbackNavigationStillCurrent } from "../conversation-feedback";
+import { composerIntent, isAnnotationGoalMessage, isStopCommand, isStopMessage, makeStopMessage, mergeConversationMessages, parsePendingStop } from "../conversation-control";
+import { stopApi, type StopRequestRecord } from "../conversation-stop-api";
+import { ConversationStopCard } from "./ConversationStopCard";
+import { t } from "../i18n";
 
 /** The journal and image importer share the existing Project; neither starts inference. */
 export function ConversationWorkspace({ project, conversationId, imageId, draftId, sampleTestId, taskId, humanRequestId, referenceMessageId, processingOperationId, results, onNavigate, onNavigationGuardChange }: {
@@ -26,11 +30,13 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
 }) {
   const [conversation, setConversation] = useState<string>();
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [stopRecords, setStopRecords] = useState<Record<string, StopRequestRecord>>({});
   const [tasks, setTasks] = useState<ConversationTask[]>([]);
   const [images, setImages] = useState<ImageItem[]>([]);
   const [text, setText] = useState("");
   const [pinnedSelection,setPinnedSelection]=useState<{input:Pick<ConversationMessageInput,"image"|"reference">;name:string}>();
   const messageInput=useRef<HTMLTextAreaElement>(null);
+  const composing = useRef(false);
   useEffect(()=>setPinnedSelection(undefined),[project.id,conversationId,taskId]);
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -120,16 +126,20 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   const sampleDirtyChange = useCallback((dirty:boolean)=>{sampleDirty.current=dirty;setRepairEditing(dirty);},[]);
   const schemaDirtyChange = useCallback((dirty: boolean) => { schemaDirty.current = dirty; }, []);
   const frozen = useRef<ConversationMessageInput | undefined>(undefined);
+  const stopConversation = useRef<string | null>(null);
+  const stopStorageKey = `annotagent.stop-send:${project.id}`;
   const alive = useRef(true);
   const selected = images.find((image) => image.image_id === imageId) ?? (!imageId ? images[0] : undefined);
-  const goalMessage = taskId ? messages.find(message=>message.input.id===tasks.find(task=>task.input.id===taskId)?.input.source_message_id) : messages[0];
+  const goalMessage = taskId ? messages.find(message=>isAnnotationGoalMessage(message) && message.input.id===tasks.find(task=>task.input.id===taskId)?.input.source_message_id) : messages.find(isAnnotationGoalMessage);
+  const stopTaskNames = Object.fromEntries(tasks.map(task => [task.input.id, messages.find(message => message.input.id === task.input.source_message_id)?.input.text ?? task.input.id]));
+  const stopComposer = frozen.current ? isStopMessage(frozen.current) : isStopCommand(text);
   const referenceTask=tasks.find(task=>taskId ? task.input.id===taskId : task.input.source_message_id===goalMessage?.input.id)?.input;
   const referencedMessage=messages.find(message=>message.input.id===referenceMessageId);
-  const frozenReference=referencedMessage?.input.reference;
+  const frozenReference=referencedMessage?.input.reference?.scope === "sample_candidate" ? referencedMessage.input.reference : undefined;
   const referenceMatches=Boolean(frozenReference && referencedMessage?.conversation_id===conversation && frozenReference.task_id===taskId && frozenReference.draft_id===draftId && frozenReference.sample_test_id===sampleTestId && referencedMessage?.input.image?.image_id===imageId && !humanRequestId && !results);
   function openMessageReference(message:ConversationMessage){
     const reference=message.input.reference,image=message.input.image;
-    if(!reference||!image)return;
+    if(reference?.scope !== "sample_candidate"||!image)return;
     onNavigate(projectWorkPath(project.id,{conversationId:message.conversation_id,taskId:reference.task_id,draftId:reference.draft_id,sampleTestId:reference.sample_test_id,imageId:image.image_id,referenceMessageId:message.input.id}));
     setMobileView("images");
   }
@@ -157,7 +167,26 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
         } while (page.length === 100);
       }
       if (controller.signal.aborted) return;
-      setConversation(current.conversation_id ?? undefined); setImages(dataset.images); setMessages(saved);
+      setConversation(current.conversation_id ?? undefined); setImages(dataset.images); setMessages(previous => current.conversation_id ? mergeConversationMessages(previous, saved, current.conversation_id) : []);
+      try {
+        const previous = parsePendingStop(sessionStorage.getItem(stopStorageKey));
+        if (previous && (!previous.conversation_id || previous.conversation_id === current.conversation_id) && !pending.current) {
+          // Retain identity before the status GET: a failed GET is not evidence
+          // that the original cancellation was rejected or safe to replace.
+          if (!frozen.current && !unsent.current) {
+            frozen.current = previous.input; stopConversation.current = previous.conversation_id; preparingGoal.current = false; unsent.current = previous.input.text; setText(previous.input.text);
+            setStatus(t("The stop request acknowledgement is unknown. Retry preserves the original task scope; nothing was retried on reload."));
+          }
+          const receipt = current.conversation_id ? await stopApi.read(project.id, current.conversation_id, previous.input.id, controller.signal) : null;
+          if (controller.signal.aborted) return;
+          if (receipt) {
+            setMessages(items => mergeConversationMessages(items, [receipt.message], receipt.message.conversation_id));
+            setStopRecords(items => ({ ...items, [receipt.message.input.id]: receipt }));
+            try { sessionStorage.removeItem(stopStorageKey); } catch { /* The saved receipt is enough for recovery. */ }
+            if (frozen.current?.id === previous.input.id) { frozen.current = undefined; stopConversation.current = null; unsent.current = ""; setText(""); }
+          }
+        }
+      } catch (reason) { if (!controller.signal.aborted) setError((reason as Error).message); }
       if(current.conversation_id&&!taskId&&!draftId&&!sampleTestId&&!humanRequestId&&!referenceMessageId&&!processingOperationId&&!results){
         const selection=await api.conversationTaskSelection(project.id,current.conversation_id,controller.signal);
         if(controller.signal.aborted)return;
@@ -175,18 +204,38 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
     return () => controller.abort();
   }, [project.id, conversationId, taskId, draftId, sampleTestId, humanRequestId, referenceMessageId, processingOperationId, Boolean(results)]);
   async function send(prepareGoal=false) {
-    if (pending.current || !ready || !text.trim()) return;
-    if(!frozen.current)preparingGoal.current=prepareGoal&&!pinnedSelection?.input.reference;
-    frozen.current ??= { id: crypto.randomUUID(), text, image: referenceImage ? { image_id: referenceImage.image_id, sha256: referenceImage.content_hash } : null, ...pinnedSelection?.input };
+    if (pending.current || !ready || !text.trim() || composing.current) return;
+    if(!frozen.current) {
+      const intent = composerIntent(text, prepareGoal && !pinnedSelection?.input.reference);
+      preparingGoal.current = intent.prepareGoal;
+      frozen.current = intent.kind === "stop" ? makeStopMessage(crypto.randomUUID(), text, taskId ?? null) : { id: crypto.randomUUID(), text, image: referenceImage ? { image_id: referenceImage.image_id, sha256: referenceImage.content_hash } : null, ...pinnedSelection?.input };
+    }
     const input = frozen.current;
+    const stopping = isStopMessage(input);
+    const retainStop = (id: string | null) => { stopConversation.current = id; try { sessionStorage.setItem(stopStorageKey, JSON.stringify({ conversation_id: id, input })); } catch { /* The frozen input and existing dirty guard protect in-view retry. */ } };
+    const acceptStop = (record: StopRequestRecord) => {
+      if (!isStopMessage(record.message.input) || record.message.input.id !== input.id || record.message.input.text !== input.text || record.message.input.reference.task_id !== input.reference?.task_id || record.message.conversation_id !== stopConversation.current) throw new Error("The stop receipt does not match the original command. No other task was selected.");
+      setConversation(record.message.conversation_id); setMessages(items => mergeConversationMessages(items, [record.message], record.message.conversation_id)); setStopRecords(items => ({ ...items, [input.id]: record }));
+      frozen.current = undefined; stopConversation.current = null; unsent.current = ""; setText(""); preparingGoal.current = false;
+      try { sessionStorage.removeItem(stopStorageKey); } catch { /* Refresh can recover the same saved server record. */ }
+      setStatus(t("Stop request saved. No LLM was called; saved annotations and the current canvas are unchanged.")); assistanceChanged();
+    };
+    if (stopping) retainStop(stopConversation.current ?? conversation ?? null);
     pending.current = true; setBusy(true); setError(""); setStatus("Saving message…");
     let messageSaved=false;
     try {
-      const id = conversation ?? (await api.createConversation(project.id)).conversation_id;
+      const id = (stopping ? stopConversation.current : conversation) ?? conversation ?? (await api.createConversation(project.id)).conversation_id;
+      if (stopping) {
+        retainStop(id);
+        const record = await stopApi.begin(project.id, id, input);
+        messageSaved = true;
+        if (alive.current) acceptStop(record);
+        return;
+      }
       const saved = await api.sendConversationMessage(project.id, id, input);
       messageSaved=true;
       if (!alive.current) return;
-      setConversation(id); setMessages((items) => [...items.filter((item) => item.input.id !== saved.input.id), saved].sort((a, b) => a.sequence - b.sequence));
+      setConversation(id); setMessages((items) => mergeConversationMessages(items, [saved], id));
       let selectedTask:ConversationTask|undefined;
       if(preparingGoal.current){
         const existing=await api.conversationTasks(project.id,id);
@@ -203,11 +252,16 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
         setPrepareMessage(saved.input.id);
         setStatus("Goal saved. Preparing model authorization; no model has been called.");
       }
-    } catch (error) { if (alive.current) { setError((error as Error).message); setStatus(messageSaved ? "Message saved; goal preparation is not confirmed. Retry uses the same message and restores any saved task." : "Not confirmed saved. Retry sends the same message and frozen image reference."); } }
+    } catch (error) { if (alive.current) {
+      if (stopping && stopConversation.current) {
+        try { const record = await stopApi.read(project.id, stopConversation.current, input.id); if (alive.current && record) { acceptStop(record); return; } } catch { /* Preserve exact stop command; do not repeat its POST. */ }
+      }
+      setError((error as Error).message); setStatus(stopping ? t("The stop request acknowledgement is unknown. Retry preserves the original task scope; nothing was retried on reload.") : messageSaved ? "Message saved; goal preparation is not confirmed. Retry uses the same message and restores any saved task." : "Not confirmed saved. Retry sends the same message and frozen image reference.");
+    } }
     finally { pending.current = false; if (alive.current) setBusy(false); }
   }
   async function useMessageAsGoal(message: ConversationMessage) {
-    if (!conversation || pending.current) return;
+    if (!conversation || pending.current || !isAnnotationGoalMessage(message)) return;
     if (schemaDirty.current || sampleDirty.current || unsent.current) { setError("Save or undo current edits before switching annotation goals."); return; }
     sampleNavigation.current++;
     pending.current=true;setBusy(true);setError("");
@@ -284,7 +338,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
             const image = images.find((item) => item.image_id === reference?.image_id);
             if (!reference || !image || image.content_hash !== reference.sha256) { setError("The referenced image was removed or changed. Its historical reference remains saved; current pixels cannot stand in for that evidence."); return; }
             openImage(image.image_id);
-          }}>Referenced image · {images.find((image) => image.image_id === message.input.image?.image_id)?.name ?? message.input.image.image_id}</button>}<small>Saved · {message.sequence}{goalMessage?.input.id===message.input.id ? " · Current annotation goal" : ""}</small>{!message.input.reference && <button disabled={busy || !ready} aria-pressed={goalMessage?.input.id===message.input.id} onClick={()=>void useMessageAsGoal(message)}>Use message {message.sequence} as annotation goal</button>}{message.input.reference && <><button onClick={()=>openMessageReference(message)}>Open referenced candidate</button><small>Only this sample candidate · {message.input.reference.candidate_id} · Draft revision {message.input.reference.draft_revision}. This is not a project-wide goal.</small><ConversationFeedbackCard key={`${project.id}:${message.input.id}`} project={project.id} message={message} requests={requests} requestsReady={requestsReady} onAssistance={assistanceChanged} onSample={(draft,test,image)=>void openSample(draft,test,image)} captureCanvasNavigation={captureFeedbackNavigation} onScopeDirtyChange={dirty=>{if(dirty)feedbackScopeDirty.current.add(message.input.id);else feedbackScopeDirty.current.delete(message.input.id);}} onOpen={value=>void openRequest(value)} /></>}</li>)}
+          }}>Referenced image · {images.find((image) => image.image_id === message.input.image?.image_id)?.name ?? message.input.image.image_id}</button>}<small>Saved · {message.sequence}{goalMessage?.input.id===message.input.id ? " · Current annotation goal" : ""}</small>{isAnnotationGoalMessage(message) && <button disabled={busy || !ready} aria-pressed={goalMessage?.input.id===message.input.id} onClick={()=>void useMessageAsGoal(message)}>Use message {message.sequence} as annotation goal</button>}{message.input.reference?.scope === "sample_candidate" && <><button onClick={()=>openMessageReference(message)}>Open referenced candidate</button><small>Only this sample candidate · {message.input.reference.candidate_id} · Draft revision {message.input.reference.draft_revision}. This is not a project-wide goal.</small><ConversationFeedbackCard key={`${project.id}:${message.input.id}`} project={project.id} message={message} requests={requests} requestsReady={requestsReady} onAssistance={assistanceChanged} onSample={(draft,test,image)=>void openSample(draft,test,image)} captureCanvasNavigation={captureFeedbackNavigation} onScopeDirtyChange={dirty=>{if(dirty)feedbackScopeDirty.current.add(message.input.id);else feedbackScopeDirty.current.delete(message.input.id);}} onOpen={value=>void openRequest(value)} /></>}{message.input.reference?.scope === "stop_request" && <ConversationStopCard project={project.id} message={message} initial={stopRecords[message.input.id]} taskNames={stopTaskNames} onChanged={assistanceChanged} onDirtyChange={dirty => { if (dirty) feedbackScopeDirty.current.add(message.input.id); else feedbackScopeDirty.current.delete(message.input.id); }} />}</li>)}
         </ol>
         {conversation && draftId && sampleTestId && <section className="conversation-processing" aria-label="Process this dataset">
           {processingOperationId ? <JourneyConfirm key={`${draftId}:${sampleTestId}`} projectId={project.id} draftId={draftId} testId={sampleTestId} imageId={imageId} operationId={processingOperationId==="preview" ? undefined : processingOperationId} expectedConversation={conversation} viewingBatchId={results?.batchId} stayOnReceipt
@@ -304,12 +358,12 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
         {conversation && goalMessage && <ConversationSchemaCard prepareRequested={prepareMessage===goalMessage.input.id} key={`${conversation}:${goalMessage.input.id}`} project={project.id} conversation={conversation} message={goalMessage.input.id} onDirtyChange={schemaDirtyChange} onAssistance={assistanceChanged} onSample={(draft,test,image)=>void openSample(draft,test,image)} onSetup={selectedTask=>onNavigate(conversationSettingsPath(project.id,"providers",projectWorkPath(project.id,{conversationId:conversation,taskId:selectedTask ?? taskId,imageId,draftId,sampleTestId,humanRequestId,referenceMessageId,processingOperationId,results})))} />}
         {conversation && taskId && !goalMessage && <p role="status">{requestsReady ? "The selected annotation task is not available in this conversation. Select a saved message; no other task was substituted." : "Loading the selected annotation task…"}</p>}
         {activeRequest?.status==="applied" && activeRequest.resume_draft_id && <ConversationRepairCard key={activeRequest.input.id} project={project.id} request={activeRequest} editing={repairEditing} onAssistance={assistanceChanged} onSample={(draft,test,image)=>void openSample(draft,test,image)} />}
-        {(!processingOperationId || pinnedSelection) && <form onSubmit={(event) => { event.preventDefault(); void send(!goalMessage&&!pinnedSelection); }} className="conversation-composer">
+        <form onSubmit={(event) => { event.preventDefault(); if (!composing.current) void send(!goalMessage&&!pinnedSelection); }} className="conversation-composer">
           <label htmlFor="conversation-message">Your message</label>
-          <textarea ref={messageInput} id="conversation-message" value={text} disabled={!ready || busy || Boolean(frozen.current)} rows={3} placeholder="Find cups, but not bottles" onChange={(event) => { unsent.current = event.target.value; setText(event.target.value); }} />
-          {pinnedSelection ? <div className="conversation-candidate-reference" aria-label="Message candidate reference"><strong>Only this saved candidate</strong><span>{pinnedSelection.name} · {pinnedSelection.input.reference?.candidate_id} · Draft revision {pinnedSelection.input.reference?.draft_revision}</span><small>Changing the displayed image does not change this reference. Saving the message does not edit the annotation.</small><button type="button" disabled={busy||Boolean(frozen.current)} onClick={()=>setPinnedSelection(undefined)}>Remove candidate reference</button></div> : <small>{referenceImage ? `Image reference: ${referenceImage.name}` : "No image reference · Project-level message"}</small>}
-          {!goalMessage&&!pinnedSelection&&!frozen.current ? <><button className="primary" disabled={!ready||busy||!text.trim()} type="submit">Save goal and prepare labels</button><button disabled={!ready||busy||!text.trim()} type="button" onClick={()=>void send(false)}>Save message</button><small>Preparing labels opens the model and data authorization. It does not call a model or publish a workflow.</small></> : <button className="primary" disabled={!ready || busy || !text.trim()} type="submit">{busy ? "Saving…" : frozen.current ? "Retry saving message" : "Save message"}</button>}
-        </form>}
+          <textarea ref={messageInput} id="conversation-message" value={text} disabled={!ready || busy || Boolean(frozen.current)} rows={3} placeholder="Find cups, but not bottles" onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} onChange={(event) => { unsent.current = event.target.value; setText(event.target.value); }} />
+          {stopComposer ? <small>{t("Standalone stop control · No LLM or image submission. Multiple active operations require an explicit choice.")}</small> : pinnedSelection?.input.reference?.scope === "sample_candidate" ? <div className="conversation-candidate-reference" aria-label="Message candidate reference"><strong>Only this saved candidate</strong><span>{pinnedSelection.name} · {pinnedSelection.input.reference.candidate_id} · Draft revision {pinnedSelection.input.reference.draft_revision}</span><small>Changing the displayed image does not change this reference. Saving the message does not edit the annotation.</small><button type="button" disabled={busy||Boolean(frozen.current)} onClick={()=>setPinnedSelection(undefined)}>Remove candidate reference</button></div> : <small>{referenceImage ? `Image reference: ${referenceImage.name}` : "No image reference · Project-level message"}</small>}
+          {stopComposer ? <button className="danger-button" disabled={!ready || busy} type="submit">{t(busy ? "Saving stop request…" : frozen.current ? "Retry same stop request" : taskId ? "Stop selected task" : "Stop active work")}</button> : !goalMessage&&!pinnedSelection&&!frozen.current ? <><button className="primary" disabled={!ready||busy||!text.trim()} type="submit">Save goal and prepare labels</button><button disabled={!ready||busy||!text.trim()} type="button" onClick={()=>void send(false)}>Save message</button><small>Preparing labels opens the model and data authorization. It does not call a model or publish a workflow.</small></> : <button className="primary" disabled={!ready || busy || !text.trim()} type="submit">{busy ? "Saving…" : frozen.current ? "Retry saving message" : "Save message"}</button>}
+        </form>
       </section>
       <div className="conversation-divider" role="separator" aria-label="Resize conversation panel" aria-orientation="vertical" tabIndex={0} aria-valuemin={25} aria-valuemax={50} aria-valuenow={width}
         onKeyDown={(event) => { if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); setWidth((current) => Math.max(25, Math.min(50, current + (event.key === "ArrowRight" ? 2 : -2)))); } }}

@@ -39,7 +39,7 @@ export function ConversationSampleCanvas({project, draft, test, image, onDirtyCh
   if(!sample.projection)return <section><p role="alert">This older test has no terminal-result projection. Intermediate boxes are not final results.</p><figure className="conversation-image"><img src={image.url} alt={image.name}/></figure></section>;
   const projection=sample.projection;
   if(messageReference){
-    const ref=messageReference.reference;
+    const ref=messageReference.reference?.scope === "sample_candidate" ? messageReference.reference : undefined;
     const candidate=[...projection.final_candidates,...projection.review_candidates.map(item=>item.candidate)].filter(item=>item.outcome.id===ref?.candidate_id && item.source_artifact_id===ref?.source_artifact_id);
     if(!ref || ref.draft_revision!==record.draft_revision || ref.draft_id!==draft || ref.sample_test_id!==test || messageReference.image?.sha256!==source.content_hash || candidate.length!==1)return <p role="alert">The referenced candidate, Artifact or revision is not available in this saved sample. No replacement was selected.</p>;
     return <section className="conversation-sample-canvas" aria-label="Referenced sample candidate"><header><h2>{image.name}</h2><p>Original saved candidate · Draft revision {ref.draft_revision}</p></header><p>{messageReference.text}</p><p>This historical prediction is read-only. Later sample corrections and formal annotations remain separate.</p><AnnotationCanvas imageUrl={image.url} annotations={sampleAnnotations([candidate[0].outcome],image.image_id,test)} selectedId={ref.candidate_id} readOnly compactList onSelect={()=>{}} onChange={()=>{}}/><button onClick={()=>onOpen(draft,test,image.image_id)}>View current sample corrections</button></section>;
