@@ -382,6 +382,47 @@ async fn openai_completion(
         return Json(response);
     }
     let tools = tools_by_name(&request);
+    if tools.contains_key("propose_candidate_feedback") {
+        // Deterministic TEST transport only. These scenarios validate bounded
+        // orchestration and persisted evidence, not LLM semantic reliability.
+        let remote = request["model"].as_str().unwrap_or_default();
+        if remote.ends_with("-feedback-slow") {
+            tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+        }
+        if remote.ends_with("-feedback-unknown") {
+            // A request reached the transport, but no usable completion or usage
+            // receipt came back. The client cannot assume a free, safe retry.
+            return Json(json!({"error":"TEST unusable completion after request admission"}));
+        }
+        let context = request["messages"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|message| message["role"] == "user")
+            .filter_map(message_text)
+            .filter_map(|text| serde_json::from_str::<Value>(&text).ok())
+            .find(|value| value.get("saved_candidate_context").is_some());
+        let Some(context) = context else {
+            return Json(json!({"error":"TEST feedback requires saved candidate context"}));
+        };
+        if request.to_string().contains("image_url") {
+            return Json(json!({"error":"TEST feedback interpretation must not send pixels"}));
+        }
+        let candidate = &context["saved_candidate_context"]["candidate"]["outcome"];
+        let message = context["saved_user_message"].as_str().unwrap_or_default();
+        let arguments = if remote.ends_with("-feedback-invalid") {
+            json!({"decision":"request_correction","reason":"poor_boundary","question":"TEST unauthorized coordinates","rationale":"TEST invalid output must not become feedback","bbox":[0.0,0.0,1.0,1.0]})
+        } else if remote.ends_with("-feedback-clarify") {
+            json!({"decision":"clarify_scope","question":"TEST: remove this candidate, or change the label definition?","rationale":"TEST ambiguous scope; no change was authorized"})
+        } else {
+            json!({"decision":"request_correction","reason":if candidate["value"]["kind"] == "bounding_box" {"poor_boundary"} else {"wrong_label"},"question":"TEST: confirm the correction to this saved candidate","rationale":format!("TEST frozen candidate {} and saved message: {}", candidate["id"].as_str().unwrap_or_default(), message)})
+        };
+        return Json(json!({
+            "id":format!("TEST-feedback-{}",uuid::Uuid::new_v4()),"object":"chat.completion",
+            "choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"test-feedback-call","type":"function","function":{"name":"propose_candidate_feedback","arguments":arguments.to_string()}}]},"finish_reason":"tool_calls"}],
+            "usage":{"prompt_tokens":40,"completion_tokens":8,"total_tokens":48}
+        }));
+    }
     if request["model"] == "e2e-conversation-classification-schema-background"
         && tools.contains_key("propose_annotation_schema")
     {

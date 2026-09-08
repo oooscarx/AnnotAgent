@@ -1,0 +1,23 @@
+.conversation-feedback-card, .conversation-feedback-consent, .conversation-feedback-result, .conversation-feedback-waiting {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.conversation-feedback-card {
+  border-block-start: 1px solid var(--aa-border);
+  padding-block-start: 12px;
+}
+.conversation-feedback-card h3 { font-size: 1rem; line-height: 1.4; margin: 0; }
+.conversation-feedback-card p, .conversation-feedback-card small { line-height: 1.5; }
+.conversation-feedback-card > button, .conversation-feedback-result > button, .conversation-feedback-waiting > button { justify-self: start; }
+.conversation-feedback-consent, .conversation-feedback-waiting { padding-inline-start: 12px; border-inline-start: 3px solid var(--aa-primary); }
+.conversation-feedback-consent > label { display: flex; align-items: start; gap: 10px; min-width: 0; }
+.conversation-feedback-consent > label input { flex: none; margin-block-start: 4px; }
+.conversation-feedback-consent > label span { min-width: 0; line-height: 1.5; }
+.conversation-feedback-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.conversation-feedback-card button { max-width: 100%; min-width: 0; white-space: normal; height: auto; }
+@media (max-width: 420px) {
+  .conversation-feedback-consent, .conversation-feedback-waiting { padding-inline-start: 8px; }
+  .conversation-feedback-actions { align-items: stretch; }
+}

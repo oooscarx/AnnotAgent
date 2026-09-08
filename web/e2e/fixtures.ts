@@ -51,17 +51,25 @@ function privilegedAction(method: string, path: string): string | undefined {
   return privileged ? `${method} ${target}` : undefined;
 }
 
-function protectedRequestContext(request: APIRequestContext): APIRequestContext {
+export function protectedRequestContext(request: APIRequestContext): APIRequestContext {
   // The full suite can exceed the real local API's 120 mutations/minute guard.
   // Retry only that pre-execution rejection, never Provider errors or executed model actions.
-  const withinLocalRateLimit = async (send: () => Promise<APIResponse>) => {
-    const deadline = Date.now() + 65_000;
+  const withinLocalRateLimit = async (
+    send: () => Promise<APIResponse>,
+    beforeRetry?: (deadline: number) => Promise<APIResponse | undefined>,
+    deadline = Date.now() + 65_000,
+  ): Promise<APIResponse> => {
     while (true) {
       const response = await send();
       if (response.status() !== 429 || Date.now() >= deadline) return response;
       const body = await response.json().catch(() => ({}));
       if (body.code !== "mutation_rate_limited") return response;
       await new Promise((resolve) => setTimeout(resolve, 1_000));
+      if (Date.now() >= deadline) return response;
+      // Only a proven pre-execution rejection permits nonce renewal. The
+      // confirmation wait shares this deadline; it cannot extend the retry cap.
+      const stopped = await beforeRetry?.(deadline);
+      if (stopped) return stopped;
     }
   };
   let session: Promise<string> | undefined;
@@ -81,19 +89,25 @@ function protectedRequestContext(request: APIRequestContext): APIRequestContext 
       "x-annotagent-csrf": csrf,
     };
     const action = privilegedAction(method, path);
-    if (action) {
+    const renewConfirmation = async (deadline?: number): Promise<APIResponse | undefined> => {
       const confirmation = await withinLocalRateLimit(() => request.post("/api/session/privileged-confirmation", {
         headers: { "x-annotagent-csrf": csrf },
         data: { action, confirmed: true },
-      }));
-      if (!confirmation.ok()) {
-        throw new Error(`privileged confirmation failed: ${await confirmation.text()}`);
-      }
+      }), undefined, deadline);
+      if (!confirmation.ok()) return confirmation;
       const payload = await confirmation.json() as { confirmation_token?: string };
       if (!payload.confirmation_token) throw new Error("privileged confirmation omitted its token");
       headers["x-annotagent-privileged-confirmation"] = payload.confirmation_token;
+      return undefined;
+    };
+    if (action) {
+      const failed = await renewConfirmation();
+      if (failed) throw new Error(`privileged confirmation failed: ${await failed.text()}`);
     }
-    return withinLocalRateLimit(() => request.fetch(path, { ...options, method, headers }));
+    return withinLocalRateLimit(
+      () => request.fetch(path, { ...options, method, headers }),
+      action ? renewConfirmation : undefined,
+    );
   };
   return new Proxy(request, {
     get(target, property, receiver) {

@@ -41,6 +41,29 @@ mod control_tests {
         assert!(!is_execution_control(&Method::POST, &path));
     }
     #[test]
+    fn feedback_dispatch_is_expensive_but_its_stop_uses_existing_control_lane() {
+        let id = Uuid::new_v4();
+        let root = format!("/api/projects/test/conversations/{id}/tasks/{id}");
+        assert!(is_expensive_action(&format!(
+            "{root}/feedback/{id}/execute"
+        )));
+        assert!(!is_execution_control(
+            &Method::POST,
+            &format!("{root}/feedback/{id}/execute")
+        ));
+        assert!(!is_expensive_action(&format!(
+            "{root}/feedback-authorizations"
+        )));
+        assert!(!is_execution_control(
+            &Method::POST,
+            &format!("{root}/feedback/{id}/human-request")
+        ));
+        assert!(is_execution_control(
+            &Method::POST,
+            &format!("{root}/calls/{id}/cancel")
+        ));
+    }
+    #[test]
     fn control_allowlist_rejects_resume_and_suffix_impostors() {
         let id = Uuid::new_v4();
         for path in [
@@ -425,6 +448,7 @@ fn is_mutation(method: &Method) -> bool {
 
 fn is_expensive_action(path: &str) -> bool {
     (path.contains("/journey-consents/") && path.ends_with("/execution"))
+        || (path.contains("/feedback/") && path.ends_with("/execute"))
         || path.ends_with("/active-probe")
         || path.ends_with("/schema-proposals")
         // A human answer may explicitly resume its already-authorized journey.

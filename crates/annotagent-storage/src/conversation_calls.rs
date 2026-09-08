@@ -121,6 +121,34 @@ fn receipt(
     .transpose()
 }
 
+pub(crate) fn require_call_admission_clear(
+    db: &rusqlite::Connection,
+    task: Uuid,
+    call: Uuid,
+) -> Result<(), StorageError> {
+    let waiting: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM conversation_human_requests WHERE task_id=?1 AND status='pending')", [task.to_string()], |row| row.get(0))?;
+    if waiting {
+        return Err(invalid(
+            "Task is waiting for human input; no model call was admitted",
+        ));
+    }
+    let clarification:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM conversation_model_calls m WHERE m.task_id=?1 AND m.status='completed' AND json_extract(m.evidence_json,'$.decision.Ok.decision')='clarify' AND NOT EXISTS(SELECT 1 FROM conversation_schema_clarification_answers a WHERE a.call_id=m.id))",[task.to_string()],|row|row.get(0))?;
+    if clarification {
+        return Err(invalid(
+            "Task is waiting for its Schema clarification answer; no model call was admitted",
+        ));
+    }
+    let cancelled: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM conversation_call_cancellations WHERE call_id=?1)",
+        [call.to_string()],
+        |row| row.get(0),
+    )?;
+    if cancelled {
+        return Err(invalid("call cancelled before admission; no request sent"));
+    }
+    Ok(())
+}
+
 impl SqliteStore {
     pub fn conversation_task_budget(
         &self,
@@ -197,6 +225,16 @@ impl SqliteStore {
         previous: Uuid,
         grant: &ConversationCallGrant,
     ) -> Result<(), StorageError> {
+        self.advance_conversation_authorization_with(project, previous, grant, |_, _| Ok(()))
+    }
+
+    pub(crate) fn advance_conversation_authorization_with(
+        &self,
+        project: &str,
+        previous: Uuid,
+        grant: &ConversationCallGrant,
+        after_write: impl FnOnce(&rusqlite::Transaction<'_>, bool) -> Result<(), StorageError>,
+    ) -> Result<(), StorageError> {
         if !digest(&grant.scope_hash)
             || !(1..=128).contains(&grant.maximum_calls)
             || grant.id == previous
@@ -208,6 +246,8 @@ impl SqliteStore {
             let saved: Option<(String,Option<String>,String,u32,String)> = tx.query_row("SELECT task_id,previous_id,scope_hash,maximum_calls,expires_at FROM conversation_authorization_revisions WHERE id=?1", [grant.id.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).optional()?;
             if let Some((task,base,scope,maximum,expiry)) = saved {
                 if task != grant.task_id.to_string() || base != Some(previous.to_string()) || scope != grant.scope_hash || maximum != grant.maximum_calls || expiry != grant.expires_at.to_rfc3339() { return Err(invalid("authorization revision retry conflicts")); }
+                after_write(&tx, false)?;
+                tx.commit()?;
                 return Ok(());
             }
             let current: Option<(String,u32,bool)> = tx.query_row("SELECT id,maximum_calls,revoked FROM conversation_call_grants WHERE task_id=?1", [grant.task_id.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional()?;
@@ -219,6 +259,7 @@ impl SqliteStore {
             if active { return Err(invalid("settle active calls before changing authorization scope")); }
             tx.execute("INSERT INTO conversation_authorization_revisions(id,task_id,previous_id,scope_hash,maximum_calls,expires_at) VALUES(?1,?2,?3,?4,?5,?6)",params![grant.id.to_string(),grant.task_id.to_string(),previous.to_string(),grant.scope_hash,grant.maximum_calls,grant.expires_at.to_rfc3339()])?;
             tx.execute("UPDATE conversation_call_grants SET id=?2,scope_hash=?3,maximum_calls=?4,expires_at=?5 WHERE task_id=?1",params![grant.task_id.to_string(),grant.id.to_string(),grant.scope_hash,grant.maximum_calls,grant.expires_at.to_rfc3339()])?;
+            after_write(&tx, true)?;
             tx.commit()?; Ok(())
         })
     }
@@ -235,6 +276,8 @@ impl SqliteStore {
             if receipt(&tx,call)?.is_some_and(|saved| saved.task_id != task) { return Err(invalid("call belongs to another task")); }
             let foreign_builder: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_builder_operations WHERE id=?1 AND task_id!=?2)",params![call.to_string(),task.to_string()],|row|row.get(0))?;
             if foreign_builder { return Err(invalid("Builder belongs to another task")); }
+            let foreign_feedback: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_feedback_authorizations WHERE call_id=?1 AND task_id!=?2)",params![call.to_string(),task.to_string()],|row|row.get(0))?;
+            if foreign_feedback { return Err(invalid("Feedback authorization belongs to another task")); }
             let existing: Option<(String,String)> = tx.query_row("SELECT task_id,requested_at FROM conversation_call_cancellations WHERE call_id=?1", [call.to_string()], |row| Ok((row.get(0)?,row.get(1)?))).optional()?;
             if let Some((saved_task,requested_at)) = existing {
                 if saved_task != task.to_string() { return Err(invalid("cancellation belongs to another task")); }
@@ -383,29 +426,39 @@ impl SqliteStore {
         grant: &ConversationCallGrant,
         request: Option<&ConversationSchemaAuthorization>,
     ) -> Result<(), StorageError> {
+        self.authorize_initial_request_with(project, grant, request, |_, _| Ok(()))
+    }
+
+    pub(crate) fn authorize_initial_request_with(
+        &self,
+        project: &str,
+        grant: &ConversationCallGrant,
+        request: Option<&ConversationSchemaAuthorization>,
+        after_write: impl FnOnce(&rusqlite::Transaction<'_>, bool) -> Result<(), StorageError>,
+    ) -> Result<(), StorageError> {
         if !digest(&grant.scope_hash) || !(1..=128).contains(&grant.maximum_calls) {
             return Err(invalid("invalid bounded call authorization"));
         }
         self.with_connection(|db| {
             let tx = db.unchecked_transaction()?;
             owner(&tx, project, grant.task_id)?;
-            let authorize = || -> Result<(), StorageError> {
+            let authorize = || -> Result<bool, StorageError> {
             let historical: Option<(String,String,u32,String)> = tx.query_row("SELECT task_id,scope_hash,maximum_calls,expires_at FROM conversation_authorization_revisions WHERE id=?1 AND previous_id IS NULL", [grant.id.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).optional()?;
             if let Some((task,scope,maximum,expires)) = historical {
                 if task != grant.task_id.to_string() || scope != grant.scope_hash || maximum != grant.maximum_calls || expires != grant.expires_at.to_rfc3339() { return Err(invalid("initial authorization retry conflicts")); }
-                return Ok(());
+                return Ok(false);
             }
             let existing: Option<(String,String,u32,String)> = tx.query_row("SELECT id,scope_hash,maximum_calls,expires_at FROM conversation_call_grants WHERE task_id=?1", [grant.task_id.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).optional()?;
             if let Some((id,scope,maximum,expires)) = existing {
                 if id != grant.id.to_string() || scope != grant.scope_hash || maximum != grant.maximum_calls || expires != grant.expires_at.to_rfc3339() { return Err(invalid("task authorization already exists; retries cannot change its scope or reset its budget")); }
-                return Ok(());
+                return Ok(false);
             }
             if grant.expires_at <= Utc::now() { return Err(invalid("task authorization expired")); }
             tx.execute("INSERT INTO conversation_call_grants(task_id,id,scope_hash,maximum_calls,expires_at) VALUES(?1,?2,?3,?4,?5)", params![grant.task_id.to_string(),grant.id.to_string(),grant.scope_hash,grant.maximum_calls,grant.expires_at.to_rfc3339()])?;
             tx.execute("INSERT INTO conversation_authorization_revisions(id,task_id,scope_hash,maximum_calls,expires_at) VALUES(?1,?2,?3,?4,?5)",params![grant.id.to_string(),grant.task_id.to_string(),grant.scope_hash,grant.maximum_calls,grant.expires_at.to_rfc3339()])?;
-            Ok(())
+            Ok(true)
             };
-            authorize()?;
+            let created = authorize()?;
             if let Some(input)=request {
                 let saved:Option<String>=tx.query_row("SELECT input_json FROM conversation_schema_authorizations WHERE call_id=?1",[input.call_id.to_string()],|row|row.get(0)).optional()?;
                 if let Some(saved)=saved {
@@ -414,6 +467,7 @@ impl SqliteStore {
                     tx.execute("INSERT INTO conversation_schema_authorizations(call_id,task_id,input_json) VALUES(?1,?2,?3)",params![input.call_id.to_string(),grant.task_id.to_string(),serde_json::to_string(input)?])?;
                 }
             }
+            after_write(&tx, created)?;
             tx.commit()?; Ok(())
         })
     }
@@ -438,12 +492,7 @@ impl SqliteStore {
                 if original_scope != scope_hash { return Err(invalid("call scope changed")); }
                 return Ok(ConversationCallAdmission::Existing(saved));
             }
-            let waiting: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_human_requests WHERE task_id=?1 AND status='pending')", [task.to_string()], |row| row.get(0))?;
-            if waiting { return Err(invalid("Task is waiting for human input; no model call was admitted")); }
-            let clarification:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_model_calls m WHERE m.task_id=?1 AND m.status='completed' AND json_extract(m.evidence_json,'$.decision.Ok.decision')='clarify' AND NOT EXISTS(SELECT 1 FROM conversation_schema_clarification_answers a WHERE a.call_id=m.id))",[task.to_string()],|row|row.get(0))?;
-            if clarification{return Err(invalid("Task is waiting for its Schema clarification answer; no model call was admitted"));}
-            let cancelled: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_call_cancellations WHERE call_id=?1)", [id.to_string()], |row| row.get(0))?;
-            if cancelled { return Err(invalid("call cancelled before admission; no request sent")); }
+            require_call_admission_clear(&tx, task, id)?;
             let grant: Option<(String,u32,String,bool)> = tx.query_row("SELECT scope_hash,maximum_calls,expires_at,revoked FROM conversation_call_grants WHERE task_id=?1", [task.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).optional()?;
             let Some((scope,maximum,expires,revoked)) = grant else { return Err(invalid("explicit task authorization required")); };
             if scope != scope_hash || revoked || DateTime::parse_from_rfc3339(&expires).map_err(|_| invalid("invalid authorization expiry"))? <= Utc::now() { return Err(invalid("task authorization changed, expired or was revoked")); }

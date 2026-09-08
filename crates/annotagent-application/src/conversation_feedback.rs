@@ -174,6 +174,7 @@ impl LocalApplication {
             saved
                 .receipt
                 .evidence
+                .as_ref()
                 .context("Feedback evidence missing")?["context"]["subject"]
                 .clone(),
         )?;
@@ -274,8 +275,11 @@ impl LocalApplication {
         self.validate_conversation_correction_subject(project, &input)?;
         let owner = self.conversation_project_identity(project)?;
         Ok(Some(
-            self.store
-                .create_exclusive_conversation_human_request(&owner, &input)?,
+            self.store.create_conversation_feedback_human_request(
+                &owner,
+                &input,
+                &saved.receipt,
+            )?,
         ))
     }
 

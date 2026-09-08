@@ -210,7 +210,7 @@ async function secureFetch(path: string, init?: RequestInit, retry = true): Prom
   return response;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await secureFetch(path, {
     ...init,
     headers: { "content-type": "application/json", ...init?.headers },

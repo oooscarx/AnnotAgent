@@ -1,4 +1,4 @@
-//! Offline application integration checks; all projects and images live in TempDir.
+//! Offline application integration checks; all projects and images live in `TempDir`.
 use super::*;
 use crate::conversation_feedback_intent::{
     ConversationFeedbackDecision, ConversationFeedbackReason,
@@ -234,7 +234,7 @@ impl VisionModelProvider for TestProvider {
             }],
             usage: TokenUsage::known(120, 80, UsageSource::Mock),
             request_id: Some("TEST feedback usage receipt".into()),
-            provider_metadata: Default::default(),
+            provider_metadata: std::collections::BTreeMap::default(),
         })
     }
 }
@@ -249,6 +249,219 @@ fn provider() -> TestProvider {
             "rationale":"The saved message says the box is too big; its pixels were not inspected.",
         }),
     }
+}
+
+fn feedback_authorization(
+    fixture: &Fixture,
+) -> annotagent_storage::ConversationFeedbackAuthorizationRecord {
+    let call = Uuid::new_v4();
+    let expiry = chrono::Utc::now() + chrono::Duration::minutes(20);
+    annotagent_storage::ConversationFeedbackAuthorizationRecord {
+        consent: annotagent_storage::ConversationFeedbackAuthorization {
+            call_id: call,
+            message_id: fixture.message.id,
+            model_id: annotagent_core::ModelProfileId(Uuid::new_v4()),
+            previous_grant_id: None,
+            scope_hash: "f".repeat(64),
+            expires_at: expiry,
+            allow_unknown_cost: true,
+        },
+        context: serde_json::to_value(fixture.context()).unwrap(),
+        summary: json!({"model_name":"TEST feedback","destination":"TEST offline provider"}),
+        grant: ConversationCallGrant {
+            id: call,
+            task_id: fixture.task.id,
+            scope_hash: "f".repeat(64),
+            maximum_calls: 1,
+            expires_at: expiry,
+        },
+    }
+}
+
+#[test]
+fn authorization_restores_original_message_and_scope_without_inference_after_restart() {
+    let fixture = fixture(false);
+    let record = feedback_authorization(&fixture);
+    let call = record.consent.call_id;
+    fixture
+        .app
+        .authorize_conversation_feedback(PROJECT, fixture.conversation, fixture.task.id, &record)
+        .unwrap();
+    let status = fixture
+        .app
+        .conversation_feedback_status(PROJECT, fixture.conversation, fixture.task.id, call)
+        .unwrap();
+    assert!(status["receipt"].is_null());
+    assert!(status["decision"].is_null());
+    assert_eq!(status["authorization"]["context"], record.context);
+    let app = LocalApplication::new(fixture.temporary.path()).unwrap();
+    assert_eq!(
+        app.conversation_feedback_status(PROJECT, fixture.conversation, fixture.task.id, call)
+            .unwrap(),
+        status
+    );
+    assert_eq!(
+        app.conversation_feedback_for_message(
+            PROJECT,
+            fixture.conversation,
+            fixture.task.id,
+            fixture.message.id
+        )
+        .unwrap(),
+        Some(record.clone())
+    );
+    assert!(
+        app.conversation_feedback_authorization(PROJECT, Uuid::new_v4(), fixture.task.id, call)
+            .is_err()
+    );
+    let mut conflict = record.clone();
+    conflict.context["pixels_supplied"] = json!(true);
+    assert!(
+        app.authorize_conversation_feedback(
+            PROJECT,
+            fixture.conversation,
+            fixture.task.id,
+            &conflict
+        )
+        .is_err()
+    );
+    let image = fixture
+        .app
+        .project_image_path(
+            PROJECT,
+            ImageId(Uuid::parse_str(&fixture.human.image_id).unwrap()),
+        )
+        .unwrap();
+    std::fs::write(image, b"TEST changed original image").unwrap();
+    assert_eq!(
+        app.authorize_conversation_feedback(
+            PROJECT,
+            fixture.conversation,
+            fixture.task.id,
+            &record
+        )
+        .unwrap(),
+        record
+    );
+    assert_eq!(
+        app.conversation_feedback_status(PROJECT, fixture.conversation, fixture.task.id, call)
+            .unwrap(),
+        status
+    );
+    assert!(
+        app.conversation_schema_calls(PROJECT, fixture.conversation, fixture.task.id)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn interrupted_feedback_restores_unknown_receipt_with_original_subject_and_budget() {
+    let fixture = fixture(false);
+    let record = feedback_authorization(&fixture);
+    let call = record.consent.call_id;
+    fixture
+        .app
+        .authorize_conversation_feedback(PROJECT, fixture.conversation, fixture.task.id, &record)
+        .unwrap();
+    let owner = fixture.app.conversation_project_identity(PROJECT).unwrap();
+    fixture
+        .app
+        .store
+        .reserve_conversation_call(
+            &owner,
+            fixture.task.id,
+            call,
+            &record.consent.scope_hash,
+            &"c".repeat(64),
+        )
+        .unwrap();
+    let app = LocalApplication::new(fixture.temporary.path()).unwrap();
+    let status = app
+        .conversation_feedback_status(PROJECT, fixture.conversation, fixture.task.id, call)
+        .unwrap();
+    assert_eq!(status["receipt"]["status"], "in_doubt");
+    assert!(status["decision"].is_null());
+    assert!(status["error"].as_str().unwrap().contains("unknown"));
+    assert_eq!(status["authorization"]["context"], record.context);
+    assert_eq!(status["authorization"]["summary"], record.summary);
+    assert_eq!(
+        app.conversation_builder_budget(PROJECT, fixture.conversation, fixture.task.id)
+            .unwrap()
+            .used_calls,
+        1
+    );
+    assert_eq!(
+        app.conversation_schema_calls(PROJECT, fixture.conversation, fixture.task.id)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn saved_feedback_status_separates_valid_decision_from_human_answer_and_cancellation() {
+    let fixture = fixture(false);
+    let record = feedback_authorization(&fixture);
+    let call = record.consent.call_id;
+    fixture
+        .app
+        .authorize_conversation_feedback(PROJECT, fixture.conversation, fixture.task.id, &record)
+        .unwrap();
+    let mut execution = fixture.execution();
+    execution.call_id = call;
+    let provider = provider();
+    fixture
+        .app
+        .execute_conversation_feedback(
+            PROJECT,
+            &execution,
+            &fixture.context(),
+            &provider,
+            CancellationToken::default(),
+        )
+        .await
+        .unwrap();
+    let status = fixture
+        .app
+        .conversation_feedback_status(PROJECT, fixture.conversation, fixture.task.id, call)
+        .unwrap();
+    assert_eq!(status["decision"]["Ok"]["reason"], "poor_boundary");
+    assert_eq!(status["receipt"]["status"], "completed");
+    assert_eq!(provider.requests.lock().unwrap().len(), 1);
+    assert!(
+        fixture
+            .app
+            .conversation_human_requests(PROJECT, fixture.conversation, fixture.task.id)
+            .unwrap()
+            .is_empty()
+    );
+    fixture
+        .app
+        .cancel_conversation_schema(PROJECT, fixture.conversation, fixture.task.id, call)
+        .unwrap();
+    let stopped = fixture
+        .app
+        .conversation_feedback_status(PROJECT, fixture.conversation, fixture.task.id, call)
+        .unwrap();
+    assert_eq!(stopped["cancelled"], true);
+    assert!(
+        stopped["decision"]["Err"]
+            .as_str()
+            .unwrap()
+            .contains("cancelled")
+    );
+    assert!(
+        fixture
+            .app
+            .prepare_conversation_feedback_request(
+                PROJECT,
+                fixture.conversation,
+                fixture.task.id,
+                call
+            )
+            .is_err()
+    );
 }
 
 #[test]
@@ -483,14 +696,16 @@ async fn authorized_interpretation_records_one_call_and_replays_after_image_chan
         })
     ));
     assert_eq!(provider.requests.lock().unwrap().len(), 1);
-    let requests = provider.requests.lock().unwrap();
-    assert!(requests[0].images.is_empty());
-    let sent: serde_json::Value = serde_json::from_str(&requests[0].messages[1].content).unwrap();
-    assert_eq!(
-        sent["saved_candidate_context"],
-        serde_json::to_value(&context).unwrap()
-    );
-    drop(requests);
+    {
+        let requests = provider.requests.lock().unwrap();
+        assert!(requests[0].images.is_empty());
+        let sent: serde_json::Value =
+            serde_json::from_str(&requests[0].messages[1].content).unwrap();
+        assert_eq!(
+            sent["saved_candidate_context"],
+            serde_json::to_value(&context).unwrap()
+        );
+    }
     let evidence = result.receipt.evidence.as_ref().unwrap();
     assert_eq!(evidence["phase"], "feedback_text");
     assert_eq!(

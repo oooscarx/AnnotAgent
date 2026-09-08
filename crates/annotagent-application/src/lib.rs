@@ -11,6 +11,7 @@ mod conversation_vision_calls;
 pub use conversation_builder::{ConversationBuilderExecution, ConversationBuilderRepair};
 pub use conversation_vision_calls::ConversationVisionCalls;
 mod conversation_feedback;
+mod conversation_feedback_authorization;
 mod conversation_feedback_intent;
 mod conversation_references;
 pub use conversation_feedback::{ConversationFeedbackContext, ConversationFeedbackResult};

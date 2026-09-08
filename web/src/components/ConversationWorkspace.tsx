@@ -13,6 +13,8 @@ import { conversationSampleRelation } from "../conversation-context";
 import { ConversationProjectBudget } from "./ConversationProjectBudget";
 import type { HumanRequest } from "../conversation-human-api";
 import { ConversationHumanRequests } from "./ConversationHumanRequests";
+import { ConversationFeedbackCard } from "./ConversationFeedbackCard";
+import { feedbackNavigationStillCurrent } from "../conversation-feedback";
 
 /** The journal and image importer share the existing Project; neither starts inference. */
 export function ConversationWorkspace({ project, conversationId, imageId, draftId, sampleTestId, taskId, humanRequestId, referenceMessageId, processingOperationId, results, onNavigate, onNavigationGuardChange }: {
@@ -99,6 +101,12 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   const pending = useRef(false);
   const selectingImage = useRef(false);
   const sampleNavigation = useRef(0);
+  const captureFeedbackNavigation = () => {
+    const ticket = ++sampleNavigation.current;
+    return (value: HumanRequest) => {
+      if (feedbackNavigationStillCurrent(ticket, sampleNavigation.current, alive.current)) void openRequest(value);
+    };
+  };
   const navigationContext=projectWorkPath(project.id,{conversationId,taskId,imageId,draftId,sampleTestId,humanRequestId,referenceMessageId,processingOperationId,results});
   useEffect(()=>{sampleNavigation.current++;},[navigationContext]);
   const unsent = useRef("");
@@ -275,7 +283,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
             const image = images.find((item) => item.image_id === reference?.image_id);
             if (!reference || !image || image.content_hash !== reference.sha256) { setError("The referenced image was removed or changed. Its historical reference remains saved; current pixels cannot stand in for that evidence."); return; }
             openImage(image.image_id);
-          }}>Referenced image · {images.find((image) => image.image_id === message.input.image?.image_id)?.name ?? message.input.image.image_id}</button>}<small>Saved · {message.sequence}{goalMessage?.input.id===message.input.id ? " · Current annotation goal" : ""}</small>{!message.input.reference && <button disabled={busy || !ready} aria-pressed={goalMessage?.input.id===message.input.id} onClick={()=>void useMessageAsGoal(message)}>Use message {message.sequence} as annotation goal</button>}{message.input.reference && <><button onClick={()=>openMessageReference(message)}>Open referenced candidate</button><small>Only this sample candidate · {message.input.reference.candidate_id} · Draft revision {message.input.reference.draft_revision}. This is not a project-wide goal.</small></>}</li>)}
+          }}>Referenced image · {images.find((image) => image.image_id === message.input.image?.image_id)?.name ?? message.input.image.image_id}</button>}<small>Saved · {message.sequence}{goalMessage?.input.id===message.input.id ? " · Current annotation goal" : ""}</small>{!message.input.reference && <button disabled={busy || !ready} aria-pressed={goalMessage?.input.id===message.input.id} onClick={()=>void useMessageAsGoal(message)}>Use message {message.sequence} as annotation goal</button>}{message.input.reference && <><button onClick={()=>openMessageReference(message)}>Open referenced candidate</button><small>Only this sample candidate · {message.input.reference.candidate_id} · Draft revision {message.input.reference.draft_revision}. This is not a project-wide goal.</small><ConversationFeedbackCard key={`${project.id}:${message.input.id}`} project={project.id} message={message} requests={requests} requestsReady={requestsReady} onAssistance={assistanceChanged} captureCanvasNavigation={captureFeedbackNavigation} onOpen={value=>void openRequest(value)} /></>}</li>)}
         </ol>
         {conversation && draftId && sampleTestId && <section className="conversation-processing" aria-label="Process this dataset">
           {processingOperationId ? <JourneyConfirm key={`${draftId}:${sampleTestId}`} projectId={project.id} draftId={draftId} testId={sampleTestId} imageId={imageId} operationId={processingOperationId==="preview" ? undefined : processingOperationId} expectedConversation={conversation} viewingBatchId={results?.batchId} stayOnReceipt

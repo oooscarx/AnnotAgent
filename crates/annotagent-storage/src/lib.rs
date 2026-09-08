@@ -3,6 +3,10 @@
 mod batch;
 mod conversation_builder;
 mod conversation_calls;
+mod conversation_feedback;
+pub use conversation_feedback::{
+    ConversationFeedbackAuthorization, ConversationFeedbackAuthorizationRecord,
+};
 mod conversation_clarifications;
 pub use conversation_clarifications::{SchemaClarification, SchemaClarificationRef};
 mod conversation_project_budget;
@@ -629,6 +633,8 @@ impl SqliteStore {
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(42,'conversation_journey_schema_resolution',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute_batch(include_str!("../../../migrations/0043_conversation_journey_answer_continuations.sql"))?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(43,'conversation_journey_answer_continuations',?1)",[Utc::now().to_rfc3339()])?;
+            transaction.execute_batch(include_str!("../../../migrations/0044_conversation_feedback_authorizations.sql"))?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(44,'conversation_feedback_authorizations',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(41,'conversation_journey_dispatch',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(39,'conversation_human_deferrals',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(38,'conversation_task_selection',?1)",[Utc::now().to_rfc3339()])?;

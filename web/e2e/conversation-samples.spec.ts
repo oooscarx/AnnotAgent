@@ -15,10 +15,16 @@ const kind = transport === "bbox" ? "bbox" : "classification";
 const requiresReview = transport !== "classification";
 test(`conversation ${scenario} authorizes HTTP fixture samples and restores editable terminal canvas`,async({page,request})=>{
   test.setTimeout(180_000);
-  // Each scenario must bind its own TEST transport, not an earlier compatible registry model.
+  // Each scenario must bind its own TEST transport, not an earlier compatible
+  // Registry model. Other conversation files use different display-name prefixes
+  // but the same fixture endpoint; leaving them enabled changes safe_default's
+  // valid model choice (and can accidentally remove this scenario's review flag).
+  const fixtureProviders=new Set<string>((await (await request.get("/api/providers")).json()).providers
+    .filter((provider:{base_url:string})=>provider.base_url.replace(/\/$/,"")==="http://127.0.0.1:8796/openai/v1")
+    .map((provider:{id:string})=>provider.id));
   const existingProfiles = (await (await request.get("/api/model-profiles")).json()).models;
   for (const profile of existingProfiles) {
-    if (profile.display_name.startsWith("Conversation TEST ")) {
+    if (profile.enabled && fixtureProviders.has(profile.provider_id) && profile.remote_model_id.startsWith("e2e-conversation-")) {
       expect((await request.patch(`/api/model-profiles/${profile.id}`, {data:{enabled:false}})).ok()).toBe(true);
     }
   }

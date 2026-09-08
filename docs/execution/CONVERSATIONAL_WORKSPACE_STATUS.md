@@ -1,6 +1,6 @@
 # Conversational Annotation Workspace — execution record
 
-## Current checkpoint (after `cb0e3ad`, with scoped-feedback service groundwork; not a completion declaration)
+## Current checkpoint (after `18089c8`, with scoped feedback HTTP/chat integration; not a completion declaration)
 
 The default Project entry now uses the persisted conversation/image workspace. Explicit goal
 selection survives re-entry, sample candidate references are frozen, and clarification/correction
@@ -20,11 +20,13 @@ New initial-goal consent explicitly allows continuing after its linked human cla
 answer within the original scope. Older consent does not acquire that permission. Answers save
 before continuation admission; model/scope changes stop inference without discarding the answer.
 
-The Rust feedback service can now interpret a frozen candidate message under an explicit task
-grant and prepare an existing human correction request. This service is not yet exposed through
-HTTP/UI authorization and restoration, so default chat feedback is still incomplete.
+Saved candidate messages now have a chat feedback card. Explicit, immutable one-call consent
+is persisted before the existing text Provider dispatch; the card restores original scope and
+receipts after refresh, exposes Stop, and opens the existing correction canvas on request.
+Pending human work is opened directly instead of silently cancelled or bypassed to spend again.
+Interpretation proposes human work only; it never applies geometry or formal annotations.
 
-Still incomplete: user-facing automatic interpretation of scoped conversational feedback;
+Still incomplete: structured answers to feedback scope-clarification questions;
 the other structured visual/setup request kinds; complete scope-change/Schema patch and stop-text
 semantics; large-history performance and the remaining accessibility/context restoration audit.
 Schema setup and repair phase cards still require explicit intermediate actions. Live model quality, native
@@ -2989,3 +2991,137 @@ execution/recovery, a message-linked UI card and structured scope-answer handlin
 pending human work needs a clear direct route in that UI, not an unannounced spending exemption.
 No user Workspace access/restart/migration, old credentials, push or remote edits. Unrelated
 generated screenshots remain unstaged. Full goal remains active.
+
+### M3 candidate feedback — durable authorization, chat card and correction-canvas handoff
+
+Continued from `18089c8`; this is another bounded integration checkpoint, not full-goal acceptance.
+Added owned feedback preview, consent, receipt, execution and human-request routes to the existing
+Project/Conversation/Task API. A preview is read-only. Explicit confirmation saves the exact message,
+terminal candidate/Artifact, image hash, sample/Draft revision, image feedback sequence, model binding,
+scope digest, expiry and original destination summary before any Provider request is sent.
+
+Migration 44 adds an immutable feedback-authorization record, not a second executor or annotation
+store. Its insert and the existing initial/next-phase cumulative grant update share one transaction.
+Each saved message can have only one feedback call identity, including concurrent tabs. Changed
+retries, superseded grants, changed pixels/feedback, pending or deferred human work, cancelled calls,
+invalid owners, exhausted Project/task limits and colliding operation IDs fail closed. Historical
+reads/replayed acknowledgement restore original metadata without renewing expiry or rereading a
+changed Registry profile. The old call admission and accounting remain authoritative at dispatch.
+
+The HTTP action uses the existing bounded background-worker pool and fixed-ID feedback service.
+An admitted request continues when its browser response is aborted. An existing receipt is read
+before model/credential/live-data checks on execute retry; an unknown remote outcome cannot be sent
+again. Generic startup `in_doubt` receipts are paired with the separately saved feedback authorization,
+so the selected subject and cost uncertainty survive even when no model response was recovered.
+An authorization without a receipt means no call is recorded: explicit same-ID continuation is
+available, but reload never starts it. There is no new background auto-retry or restart executor.
+Execution retains expensive-action admission; Stop uses the existing narrow cancellation lane.
+
+The chat message now exposes one compact feedback card. It can review the actual one-text-call
+destination/unknown-price scope, save authorization, continue that same request, stop and recover
+saved results. The text model receives terminal metadata only, not pixels, and the card says so.
+While an execute acknowledgement is pending, GET polling distinguishes checking admission from a
+real reserved call. Late status responses cannot erase a terminal receipt or cancellation. Saving
+the message, mounting, reloading, selecting an image and reopening the card do not call a model.
+
+For a correction proposal, an explicit canvas action prepares/reuses the existing Human Request;
+it does not apply an answer, change geometry, create a repair Draft or accept formal annotations.
+The existing canvas answer/repair services are unchanged. A Pending or Deferred request is offered
+directly instead of silently cancelled or bypassed to fund another interpretation. Opening that
+request restores its real image and outcome. New model results do not navigate or steal canvas focus.
+An ambiguous scope response is displayed as a question without deletion or Schema changes; a typed
+scope-answer transaction and future-rule patch are still required in the next integration stage.
+
+Review and test-driven corrections in this stage:
+
+- A feedback authorization with no receipt was initially absent from the old cancellation owner
+  check. Added ownership validation so a different task cannot pre-cancel that saved call.
+- Original model/destination display is persisted; old permission is not described using today's
+  possibly changed model settings. Consent replay also preserves its original expiry.
+- Added a semantic authorization region and a real submitting/admission state; no false running
+  percentage or success state. Stop remains directly reachable while the POST is unresolved.
+- Fixed a Storage test's identical scope fixtures so the historical-grant regression actually
+  exercises different scopes. Fixed all-workspace Clippy findings, including a lexical lock scope
+  in prior feedback tests (rather than retaining a guard across an await).
+- Initial browser run: 7/9 passed, then fixed the missing authorization landmark and separated
+  coordinator completion, sample completion and human-request delivery in the test helper.
+- Initial combined legacy regression: 18/21 passed. SQLite evidence in the TEST workspace showed
+  old initial-journey TEST model profiles were chosen by later phase-by-phase fixtures. The test
+  setup now isolates enabled `e2e-conversation-*` profiles only at the exact local TEST Provider.
+  Production selection and the exact-model assertions were not weakened.
+- A subsequent combined run passed those model assertions but exposed a test-transport nonce
+  expiry: trace evidence showed one privileged confirmation followed by 31 seconds of explicit
+  pre-execution `mutation_rate_limited` responses, then `privileged_confirmation_required`.
+  The test request wrapper now renews that short-lived confirmation only after the proven
+  pre-execution rate rejection and retains its original 65-second retry deadline. Ten in-memory
+  fake-clock tests cover nonce expiry, the shared deadline and refusal to retry 403, Provider
+  failures, unrelated 429s or uncertain outcomes. Production security limits remain unchanged.
+
+Verification so far:
+
+- All-workspace `cargo fmt --all --check`, Clippy (all targets/features, warnings denied),
+  `cargo test --workspace --all-features` and `cargo build --workspace --all-features` passed after
+  corrections. Five pre-existing explicit Live tests remain ignored: paid Builder and legal-weight
+  SAM, PIDNet, RF-DETR and YOLOX process smoke tests. Their absence is not real-model evidence.
+- The three affected Rust service/storage packages passed their all-feature suites; focused
+  feedback Application tests passed 21 cases and Storage passed six groups. New checks cover
+  durable pre-dispatch recovery, interrupted-call evidence, scoped cancellation, transaction
+  rollback, concurrent tabs, original summaries and no automatic human answer.
+- New feedback E2E: 9/9 passed in `/tmp/annotagent-guided-e2e-48468` (1.6 min). It exercises real
+  Rust services with TEST HTTP transport, lost acknowledgement, same-ID recovery, browser abort,
+  explicit Stop, invalid/unknown output, scope/model changes, CSRF/owner checks and canvas handoff.
+- Capture/narrow-screen rerun: 1/1 passed in `/tmp/annotagent-guided-e2e-49163`. New assets:
+  `conversational-workspace/candidate-feedback-authorization.png`, `candidate-feedback-correction.png`,
+  and `candidate-feedback-390.png`. Inspected the actual screenshots. The authorization crop uses
+  a taller viewport to expose the original model/destination below the sticky header. Desktop
+  correction is a scrolled form view; mobile is a full-page capture. They are UI/scope evidence
+  using a clearly synthetic image, not model quality, native 200% zoom or novice-usability proof.
+- Combined legacy regression after both TEST-only fixes: **21/21 passed**, 4.4 minutes in
+  `/tmp/annotagent-guided-e2e-50134`. This covers phase-by-phase samples, initial goal journeys,
+  linked clarification and Schema background-disconnect recovery, without weakening the exact
+  model, budget, correction or cancellation assertions.
+- Web typecheck, all **141 unit tests (32 files)** and production build passed. The existing
+  main-bundle size warning remains; a successful build is not a performance acceptance claim.
+
+Final review identified and corrected additional edges:
+
+- The correction button captures the workspace navigation ticket before its POST. A late result
+  can save the real request but cannot pull the canvas back after a newer image/task selection.
+- A definitive authorization refusal releases an unaccepted local envelope only after a read
+  confirms there is no saved authorization. Network uncertainty, 408/5xx, failed status reads
+  and rejection after authorization acknowledgement retain the original identity.
+- Stop before authorization reaches the server uses the real, separately persisted cancellation
+  receipt. Refresh restores that receipt using the original call identity; it does not fabricate
+  an inference receipt, restart the request or renew permission.
+- Creation of a correction request now rechecks its exact source receipt and cancellation inside
+  the insertion transaction. If cancellation wins, no request is created. If creation commits
+  first, later cancellation does not delete an already saved human request. General correction
+  creation retains its existing behavior.
+
+After the frontend edge fixes, Web typecheck, **144/144 tests** and production build passed.
+The bundle-size warning remains. After the transaction guard, the complete Rust format, strict
+Clippy, all-feature workspace tests and build were rerun and passed. Storage now has 79 unit tests
+plus its 16 integration tests; the four new guarded-request groups cover rollback, changed source
+and cancellation ordering. The first final Clippy pass caught two missing semicolons in test
+match arms; those were corrected, with no lint suppressions. The same five Live tests remain
+explicitly ignored.
+
+Final feedback browser rerun: **14/14 passed**, 2.2 minutes in
+`/tmp/annotagent-guided-e2e-51736`. In addition to the original nine cases, it now verifies a
+late correction acknowledgement after image/task navigation, definitive authorization refusal
+versus unknown acknowledgement, and Stop before authorization reaches the server. The original
+identity, no-extra-call assertions and persisted request/cancellation records are checked through
+the actual Rust API. The three scoped screenshots were regenerated; the desktop correction image
+is still explicitly a scrolled form capture, not a claim that the full image and every control fit
+simultaneously. Final staged diff checks passed. No live Provider or original workspace was used.
+
+This integration checkpoint is ready for its own local commit. Structured scope answers, broader request kinds, global Schema
+patches, stop-text disambiguation, large-history performance and final accessibility/live-conditional
+acceptance remain incomplete. No real Workspace mutations/restart, old keys, push or remote edits.
+
+Next bounded slice: persist a controlled answer to `clarify_scope` against the original call and
+context. Distinguish current candidate, current-image class and future Project rule intent without
+rewriting the model receipt, treating scope as rejection, or authorizing bulk edits. Saving that
+answer must not spend budget or modify annotations/Schema. Only an explicit supported correction
+can prepare the existing human request; broader rule changes still need a separate versioned patch.
+Cancellation, concurrent answers and exact historical replay must share the same durable boundaries.
