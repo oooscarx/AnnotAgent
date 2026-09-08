@@ -1366,3 +1366,33 @@ Server **37/37**, relevant strict Clippy, Web **112/112 unit tests**, typecheck/
 format and diff checks passed. No Live/paid inference, real Workspace mutation, remote changes
 or push. Formal Review/export remain canonical pages (not yet embedded with an explicit workspace
 return link); full classification delivery, orchestration/default-entry and M4 audits remain.
+
+### M3 continuation — explicit workspace return and classification delivery (2026-09-08)
+
+Review and Export deep links now preserve a typed `workspace_return`. Only a canonical `/work`
+route belonging to the same Project is accepted; external/protocol-relative URLs, another Project,
+fragments and unrelated management routes are discarded. The Focus Header provides a visible
+Back to annotation workspace action after refresh. Review queue navigation and Continue to export
+retain the return context. Returning revalidates owned conversation/Batch data through the existing
+workspace loader, not local preferences. Original sample and formal image/candidate keys remain
+separate. Advanced canonical pages remain unique; no duplicated Review or Export implementation.
+
+Classification Review exposed another semantic gap: editing only `annotation.label` left
+`value.labels` unchanged. A shared input adapter now edits classification values and display label
+together, preserves multi-category typing, and leaves final validation to Core. Guided and advanced
+Review use the same adapter. Classification correction text no longer claims a geometry measurement.
+
+Final isolated browser run `/tmp/annotagent-guided-e2e-4869`: **3/3 passed**. Both bbox and uncertain
+classification now exercise decision failure, revision failure with retained edits, actual acceptance,
+detail refresh, actual Native export and reading the exported JSON to match corrected value, ID and
+human_accepted status. All scenarios return using the explicit header button after page reload.
+Initial classification test timed out on a label locator for the select; using its accessible combobox
+role and displayed Wrong label option resolved the test locator, without changing backend behavior.
+Inspected `formal-export-classification.png`. Web **114/114** units, typecheck, production build and
+format/diff checks passed; known large bundle warning remains. No Rust production changes this step.
+
+No Live model, human usability test, real Workspace mutation, push or remote change. Remaining work
+includes broader message intent/reference handling, conditional human requests beyond corrections,
+setup returns, continuous orchestration, default workspace rollout, actual control lifecycle tests,
+multi-tab/recovery/accessibility/responsive audits and full-workspace regressions. This closes the
+tested bbox/classification formal correction/export path, not the complete conversational objective.

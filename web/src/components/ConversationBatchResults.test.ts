@@ -1,7 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { parseWorkspaceRoute, projectWorkPath, routeFocusKey } from "../navigation";
+import { parseWorkspaceRoute, projectWorkPath, routeFocusKey, withConversationReturn, conversationReturn } from "../navigation";
 
 describe("conversation formal results context",()=>{
+  it("preserves an owned workspace return through canonical Review and Export",()=>{
+    const origin=projectWorkPath("p",{conversationId:"c",results:{batchId:"b",imageId:"i",annotationId:"a"}});
+    for(const destination of ["/projects/p/review/a", "/projects/p/export"]){
+      const url=new URL(withConversationReturn(destination,origin),"http://localhost");
+      expect(parseWorkspaceRoute(url.pathname,url.search)).toMatchObject({workspaceReturn:origin,canonicalPath:url.pathname+url.search});
+    }
+    for(const invalid of ["https://example.com", "//example.com/projects/p/work", "/projects/other/work", "/projects/p/export", "/projects/p/work#fragment"]){
+      expect(conversationReturn("p",invalid)).toBeUndefined();
+      expect(withConversationReturn("/projects/p/review/a",invalid)).toBe("/projects/p/review/a");
+    }
+    expect(parseWorkspaceRoute("/projects/p/export","?workspace_return=https://example.com")).toMatchObject({workspaceReturn:undefined,canonicalPath:"/projects/p/export"});
+  });
   it("keeps sample and formal result selection separate across refresh",()=>{
     const context={conversationId:"c",draftId:"d",sampleTestId:"test",imageId:"sample-image",taskId:"task",humanRequestId:"help",processingOperationId:"receipt",results:{batchId:"batch",imageId:"formal-image",status:"needs_review",annotationId:"candidate",canvasView:"original" as const}};
     const path=projectWorkPath("p",context);

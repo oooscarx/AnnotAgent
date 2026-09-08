@@ -1,13 +1,14 @@
 import { api } from "../api";
-import { parseWorkspaceRoute, projectBatchPath, type ConversationResultsContext } from "../navigation";
+import { parseWorkspaceRoute, projectBatchPath, withConversationReturn, type ConversationResultsContext } from "../navigation";
 import { queryKeys } from "../queryCache";
 import { useRouteQuery } from "../useRouteQuery";
 import type { ProjectSummary } from "../types";
 import { JourneyBatch } from "./JourneyBatch";
 
 /** Same terminal projection and editor as the canonical Batch page, with a workspace URL. */
-export function ConversationBatchResults({ project, context, onSelect, onNavigate, onNavigationGuardChange }: {
+export function ConversationBatchResults({ project, context, returnPath, onSelect, onNavigate, onNavigationGuardChange }: {
   project: ProjectSummary; context: ConversationResultsContext;
+  returnPath: string;
   onSelect: (context: ConversationResultsContext) => void;
   onNavigate: (path: string) => void;
   onNavigationGuardChange: (guard?: () => boolean) => void;
@@ -23,7 +24,7 @@ export function ConversationBatchResults({ project, context, onSelect, onNavigat
     const route = parseWorkspaceRoute(url.pathname, url.search);
     if (route.kind === "projectBatch" && route.projectId === project.id && route.batchId === context.batchId) {
       onSelect({ batchId: route.batchId, imageId: route.imageId, status: route.status, annotationId: route.annotationId, canvasView: route.canvasView });
-    } else onNavigate(path);
+    } else onNavigate(withConversationReturn(path, returnPath));
   };
   return <div className="conversation-formal-results">
     <p className="journey-risk">Formal dataset results · Pending candidates still require review. This is separate from Sample Test corrections.</p>

@@ -16,7 +16,7 @@ export type WorkspaceRoute =
   | { kind: "project"; canonicalPath: string; projectId: string }
   | { kind: "conversation"; canonicalPath: string; projectId: string; conversationId?: string; imageId?: string; draftId?: string; sampleTestId?: string; taskId?: string; humanRequestId?: string; processingOperationId?:string; results?: ConversationResultsContext }
   | { kind: "journey"; canonicalPath: string; projectId: string; scene: "images" | "goal" | "samples" | "model" | "confirm" | "revise"; draftId?: string; sampleTestId?: string; imageId?: string; agentSessionId?: string; sampleOperationId?: string; processingOperationId?: string; sampleView?: "authorize"; modelPurpose?: "vision"; returnScene?: "revise" }
-  | { kind: "export"; canonicalPath: string; projectId: string }
+  | { kind: "export"; canonicalPath: string; projectId: string; workspaceReturn?: string }
   | {
       kind: "build";
       canonicalPath: string;
@@ -58,7 +58,7 @@ export type WorkspaceRoute =
       canvasView?: "original";
     }
   | { kind: "projectBatch"; canonicalPath: string; projectId: string; batchId: string; imageId?: string; status?: string; view?: "history"; annotationId?: string; canvasView?: "original" }
-  | { kind: "projectReview"; canonicalPath: string; projectId: string; reviewItemId?: string; view?: "audit" }
+  | { kind: "projectReview"; canonicalPath: string; projectId: string; reviewItemId?: string; view?: "audit"; workspaceReturn?: string }
   | {
       kind: "review";
       canonicalPath: string;
@@ -149,6 +149,25 @@ export function projectTrashPath(projectId: string, objectKind?: string): string
 export function projectReviewPath(projectId: string, reviewItemId?: string, view?: "audit"): string {
   const base = `/projects/${encodeURIComponent(projectId)}/review`;
   return reviewItemId ? `${base}/${encodeURIComponent(reviewItemId)}${view === "audit" ? "?view=audit" : ""}` : base;
+}
+
+/** Only an owned, canonical conversation route may be used as this return context. */
+export function conversationReturn(projectId: string, value?: string | null): string | undefined {
+  if (!value || !/^\/projects\/[^/?#]+\/work(?:\?|$)/.test(value) || value.includes("#")) return undefined;
+  const [pathname, ...search] = value.split("?");
+  const route = parseWorkspaceRoute(pathname, search.length ? `?${search.join("?")}` : "");
+  return route.kind === "conversation" && route.projectId === projectId ? route.canonicalPath : undefined;
+}
+
+export function withConversationReturn(path: string, returnPath?: string): string {
+  const [pathname, ...search] = path.split("?");
+  // Deliberately accepts only the existing Review and Export destinations.
+  const match = pathname.match(/^\/projects\/([^/]+)\/(?:review(?:\/[^/]+)?|export)$/);
+  const projectId = match && decodePathSegment(match[1]);
+  const valid = projectId ? conversationReturn(projectId, returnPath) : undefined;
+  if (!valid) return path;
+  const params = new URLSearchParams(search.join("?")); params.set("workspace_return", valid);
+  return `${pathname}?${canonicalSearch(params)}`;
 }
 
 export function projectBuildPath(
@@ -450,7 +469,8 @@ export function parseWorkspaceRoute(
       projectId,
       reviewItemId,
       view: params.get("view") === "audit" ? "audit" : undefined,
-      canonicalPath: projectReviewPath(projectId, reviewItemId, params.get("view") === "audit" ? "audit" : undefined),
+      workspaceReturn: conversationReturn(projectId, params.get("workspace_return")),
+      canonicalPath: withConversationReturn(projectReviewPath(projectId, reviewItemId, params.get("view") === "audit" ? "audit" : undefined), conversationReturn(projectId, params.get("workspace_return"))),
     };
   }
 
@@ -519,7 +539,8 @@ export function parseWorkspaceRoute(
     return {
       kind: "export",
       projectId,
-      canonicalPath: `/projects/${encodeURIComponent(projectId)}/export`,
+      workspaceReturn: conversationReturn(projectId, params.get("workspace_return")),
+      canonicalPath: withConversationReturn(`/projects/${encodeURIComponent(projectId)}/export`, conversationReturn(projectId, params.get("workspace_return"))),
     };
   }
   const project = clean.match(/^\/projects\/([^/]+)$/);

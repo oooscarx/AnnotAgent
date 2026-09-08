@@ -341,7 +341,7 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   if(requiresReview) {
     await formalResults.getByRole("button",{name:"Review this image",exact:true}).click();
     await expect(page).toHaveURL(new RegExp(`/projects/${project}/review/`));
-    if(scenario==="bbox") {
+    if(requiresReview) {
       const reviewUrl=page.url();
       const reviewId=new URL(reviewUrl).pathname.split("/").pop()!;
       await page.route(`**/api/projects/${project}/reviews/${reviewId}/accept-and-next`,route=>route.fulfill({status:503,json:{error:"TEST decision save unavailable"}}),{times:1});
@@ -350,7 +350,12 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
       expect(page.url()).toBe(reviewUrl);
       expect((await (await request.get(`/api/projects/${project}/reviews/${reviewId}`)).json()).annotation.review_status).not.toBe("human_accepted");
       const beforeEdit=await (await request.get(`/api/projects/${project}/reviews/${reviewId}`)).json();
-      await page.getByRole("button",{name:"Move box with arrow keys",exact:true}).press("ArrowRight");
+      if(kind==="bbox") await page.getByRole("button",{name:"Move box with arrow keys",exact:true}).press("ArrowRight");
+      else {
+        await page.getByRole("button",{name:/^Edit E$/}).click();
+        await page.getByLabel("Categories (comma-separated)",{exact:true}).fill(beforeEdit.annotation.value.labels[0]==="室内" ? "室外" : "室内");
+        await page.getByRole("combobox",{name:"Correction reason",exact:true}).selectOption({label:"Wrong label"});
+      }
       await page.route(`**/api/annotations/${reviewId}`,route=>route.fulfill({status:503,json:{error:"TEST revision save unavailable"}}),{times:1});
       await page.getByRole("button",{name:"Save changes",exact:true}).click();
       await expect(page.getByRole("alert").filter({hasText:"TEST revision save unavailable"})).toBeVisible();
@@ -380,7 +385,7 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
       expect(exported.project.annotations[0].value).toEqual(accepted.annotation.value);
       expect(exported.project.annotations[0].review_status).toBe("human_accepted");
       await expect(page.getByRole("heading",{name:"Dataset exported successfully",exact:true})).toBeVisible();
-      await page.screenshot({path:"../docs/execution/conversational-workspace/formal-export.png",fullPage:true,animations:"disabled"});
+      await page.screenshot({path:`../docs/execution/conversational-workspace/formal-export-${kind}.png`,fullPage:true,animations:"disabled"});
       await page.goBack();
       await expect(page).toHaveURL(reviewUrl);
     }
@@ -388,7 +393,8 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
     await formalResults.getByRole("button",{name:"Export confirmed results",exact:true}).click();
     await expect(page).toHaveURL(new RegExp(`/projects/${project}/export`));
   }
-  await page.goBack();
+  await page.reload();
+  await page.getByRole("button",{name:"Back to annotation workspace",exact:true}).click();
   await expect(page).toHaveURL(formalUrl);
   await expect(formalResults).toBeVisible();
   await page.screenshot({path:`../docs/execution/conversational-workspace/processing-results-${scenario}.png`,fullPage:true,animations:"disabled"});

@@ -18,7 +18,8 @@ export function FocusHeader({ project, route, titleRef, loaded, connection, onNa
   const journey = route.kind === "journey" || (route.kind === "projectRun" && route.view !== "debug") || (route.kind === "projectBatch" && route.view !== "history") || route.kind === "export" || (route.kind === "projectReview" && !!route.reviewItemId) || (route.kind === "projects" && route.create);
   const parent = projectId ? `/projects/${encodeURIComponent(projectId)}` : "/projects";
   const revisionSetup = route.kind === "journey" && route.scene === "model" && route.returnScene === "revise";
-  const backPath = revisionSetup ? projectJourneyPath(route.projectId, "revise", { draftId: route.draftId, sampleTestId: route.sampleTestId, imageId: route.imageId }) : parent;
+  const workspaceReturn = (route.kind === "projectReview" || route.kind === "export") ? route.workspaceReturn : undefined;
+  const backPath = workspaceReturn ?? (revisionSetup ? projectJourneyPath(route.projectId, "revise", { draftId: route.draftId, sampleTestId: route.sampleTestId, imageId: route.imageId }) : parent);
   const title = route.kind === "journey" ? ({images: "Your images", goal: "Your annotation goal", samples: "Check your samples", model: route.modelPurpose === "vision" ? "Connect an image model" : "Connect a planning model", confirm: "Confirm processing", revise: "Adjust your sample plan"})[route.scene] : route.kind === "projects" ? "Your images" : route.kind === "build"
     ? ({ data: "Project images", labels: "Annotation goal", pipeline: "Annotation plan", test: "Inspect samples" })[route.step]
     : route.kind === "conversation" ? "Annotation workspace" : route.kind === "projectReview" ? "Review annotations" : route.kind === "export" ? "Export dataset" : "Processing and results";
@@ -29,7 +30,7 @@ export function FocusHeader({ project, route, titleRef, loaded, connection, onNa
     ["Project labels and settings", projectBuildPath(projectId, "labels")], ["Recycle bin", projectTrashPath(projectId)],
   ] : [["My projects", "/projects"]];
   return <header className="focus-header" aria-label={t("Task context")}>
-    <button onClick={() => onNavigate(backPath)}>{t(revisionSetup ? "Back to sample adjustment" : projectId ? "Back to project" : "Back to projects")}</button>
+    <button onClick={() => onNavigate(backPath)}>{t(workspaceReturn ? "Back to annotation workspace" : revisionSetup ? "Back to sample adjustment" : projectId ? "Back to project" : "Back to projects")}</button>
     <div className="focus-heading"><span>{project?.name ?? t(projectId ? "Loading Project…" : "New annotation project")}</span><h1 ref={titleRef} tabIndex={-1}>{t(title)}</h1></div>
     {!journey && <span className="focus-connection" role="status">{t(loaded ? "Workspace loaded" : "Loading workspace state…")} · SSE {t(connection)}</span>}
     {journey && (!loaded || connection !== "connected") && <span className="focus-connection" role="status">{t(!loaded ? "Loading saved task…" : "Live updates interrupted — showing the last saved state")}</span>}

@@ -1,4 +1,5 @@
 import { t, localeTag, useLocale } from "./i18n";
+import { reviewLabelText, withReviewLabel } from "./review-label";
 import { isTextEditingTarget, workspaceShortcutAllowed } from "./workspaceKeyboard";
 import { recoveryNodeIds, builderStopLabel, builderPlanSource } from "./pipelinePresentation";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
@@ -38,6 +39,7 @@ import {
   projectRunsPath,
   projectTrashPath,
   routeFocusKey,
+  withConversationReturn,
   type SettingsSection,
   type WorkspaceRoute,
 } from "./navigation";
@@ -827,7 +829,7 @@ export function App() {
             models={models}
             events={events}
             route={route}
-            onNavigate={navigate}
+            onNavigate={(path,replace)=>navigate(withConversationReturn(path,route.kind==="projectReview" ? route.workspaceReturn : undefined),replace)}
             onNavigationGuardChange={setNavigationGuard}
             onError={setError}
           />
@@ -9788,9 +9790,9 @@ function ReviewPage({
           </div>
         </div>}
         {guidedReview && editing && draft && <div className="journey-review-edit" aria-label={t("Annotation edit details")}>
-          <label>{t("Label")}<input value={draft.label ?? ""} disabled={decisionBusy} onChange={(event) => edit({ ...draft, label: event.target.value })} /></label>
+          <label>{t(draft.value.kind === "classification" ? "Categories (comma-separated)" : "Label")}<input value={reviewLabelText(draft)} disabled={decisionBusy} onChange={(event) => edit(withReviewLabel(draft, event.target.value))} /></label>
           <label>{t("Correction reason")}<select value={reason} disabled={decisionBusy} onChange={(event) => setReason(event.target.value)}>{GENERIC_REVIEW_REASONS.map((option) => <option key={option.value} value={option.value}>{t(option.label)}</option>)}</select></label>
-          {hasUnsavedAnnotationChanges && <p>{t("This correction will be saved as geometry-quality evidence for calibration and future Automation improvements.")}</p>}
+          {hasUnsavedAnnotationChanges && <p>{t(draft.value.kind === "classification" ? "This category correction will be saved in the annotation revision history. It is not a geometry-quality measurement." : "This correction will be saved as geometry-quality evidence for calibration and future Automation improvements.")}</p>}
         </div>}
         {selected && <div className="review-canvas-risk"><strong>{t(["human_accepted", "rejected"].includes(selected.annotation.review_status) ? "Decision saved" : "Why this needs review")}</strong><p>{["human_accepted", "rejected"].includes(selected.annotation.review_status) ? t(selected.annotation.review_status) : reviewReasonExplanation(selected)}</p><small>{t("Current decision applies to this object, not every object in the image.")}</small></div>}
         {selected ? <div
@@ -9907,7 +9909,7 @@ function ReviewPage({
             {reviewProject && <button onClick={() => navigateFromReview(`/projects/${encodeURIComponent(reviewProject.id)}/build/pipeline`)}>{t("Improve automation")}</button>}
             {editing && <section className="review-edit-details" aria-label={t("Annotation edit details")}>
               <div><span className="eyebrow">{t("Manual correction")}</span><strong>{t("Edit result")}</strong></div>
-              <label>{t("Label")}<input value={draft.label ?? ""} onChange={(event) => edit({ ...draft, label: event.target.value })} />
+                <label>{t(draft.value.kind === "classification" ? "Categories (comma-separated)" : "Label")}<input value={reviewLabelText(draft)} disabled={decisionBusy} onChange={(event) => edit(withReviewLabel(draft, event.target.value))} />
               </label>
               <label>{t("Correction reason")}<select aria-label={t("Correction reason")} value={reason} onChange={(event) => setReason(event.target.value)}>
                   {GENERIC_REVIEW_REASONS.map((option) => <option key={option.value} value={option.value}>{t(option.label)}</option>)}
