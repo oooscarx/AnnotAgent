@@ -1,8 +1,13 @@
 import { isolatedEvidencePath } from "./evidence";
 import { resolve } from "node:path";
-import { expect, test } from "./fixtures";
+import { expect as baseExpect, test } from "./fixtures";
+
+// The shared TEST server may use its existing 65-second pre-execution rate
+// window. Observing that wait does not authorize another Provider request.
+const expect=baseExpect.configure({timeout:75_000});
 
 test("conditional model connection saves, verifies with consent, and returns without inference", async ({ page, request }) => {
+  test.setTimeout(180_000);
   const charged: string[] = [];
   const createdProviders: string[] = [];
   const createdModelIds = new Set<string>();

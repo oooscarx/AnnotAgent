@@ -4466,3 +4466,26 @@ This is a test setup change, not a claim to have repaired planner preference or 
 Typecheck and diff check pass. Fresh isolated round two runs on handle 54047 with evidence under
 `/tmp/annotagent-repair-round2`, including future Schema, Schema, stop executors and the previously
 blocked guided-workspace/local-model/model/ready suites. Results are pending; no full-pass claim.
+
+### 2026-09-09 — Previously skipped management regressions execute
+
+Round two (handle 54047, isolated workspace `/tmp/annotagent-guided-e2e-1466`) terminated:
+**47 passed, 1 failed (3.7m)**. All future-Schema, Schema and three executor-stop tests passed.
+The full guided-workspace serial group now executes successfully, including versioned Draft
+editing, two-tab conflicts, Run/Review ownership, keyboard/compact layouts, export, refresh/SSE,
+and Run lifecycle management. Local model setup and ready-to-sample journeys also passed.
+The tests' 200-percent reflow boundary is not a claim of actual browser zoom or human testing.
+Inspected the 390px future-bbox form screenshot; field labels and actions are visible.
+
+The sole model-connection test expired at its 10-second assertion while the shared fixture's
+bounded pre-execution rate-limit handler was still running (`fetchWithinMutationLimit`). Its
+trace failed to finalize; retained error/screenshot are in
+`/tmp/annotagent-round2-traces-yExPXu/test-results`, not a complete network trace. The test now
+uses a 75-second observation window and 180-second total bound, retaining exact probe counts,
+model setup cancellation/refresh and no implicit inference assertions. Production retry, rate
+limits and consent have not changed. Single-test verification runs on handle 45386; pending.
+Web unit tests freshly pass **206/206 (42 files)**; typecheck passes.
+
+Candidate-free IdentifyTarget remains an implementation gap: both server terminal validation
+and the canvas require an existing outcome ID. Existing candidate corrections and separate
+Sandbox additions do not establish that request/continuation capability. No completion claim.
