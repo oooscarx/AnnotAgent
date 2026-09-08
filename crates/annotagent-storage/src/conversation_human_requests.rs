@@ -937,7 +937,7 @@ fn owned(
     }
     Ok(())
 }
-fn read(
+pub(crate) fn read(
     db: &Connection,
     project: &str,
     id: Uuid,

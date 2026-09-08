@@ -84,6 +84,7 @@ pub(super) async fn preview(
             allow_unknown_cost: false,
         };
         let consent = ConversationJourneyConsent {
+            repair_after_answer: None,
             repair: None,
             continue_after_clarification: true,
             schema_proposal: Some(proposal.clone()),
@@ -135,6 +136,7 @@ pub(super) async fn preview(
         AuthorizationBase::Preview,
     )?;
     let consent = ConversationJourneyConsent {
+        repair_after_answer: None,
         repair: serde_json::from_value(builder["repair"].clone()).map_err(ApiError::internal)?,
         continue_after_clarification: false,
         schema_proposal: None,
@@ -198,6 +200,13 @@ pub(super) async fn save(
             ));
         }
         return Ok(Json(saved));
+    }
+    // Pending-answer grants are storage groundwork until the resolver/dispatch
+    // protocol is connected; never interpret one as an ordinary Builder grant.
+    if consent.repair_after_answer.is_some() {
+        return Err(ApiError::bad_request(
+            "Pending-answer continuation is not available yet",
+        ));
     }
     if !consent.allow_unknown_cost
         || consent.builder_model_id.is_none()

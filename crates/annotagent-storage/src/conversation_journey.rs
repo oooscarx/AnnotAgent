@@ -37,6 +37,10 @@ pub struct ConversationBuilderRepair {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConversationJourneyConsent {
+    /// Permission for this one pending request only. It must resolve to an exact
+    /// acknowledged repair snapshot before any Builder/sample execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair_after_answer: Option<crate::ConversationHumanRequestInput>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repair: Option<ConversationBuilderRepair>,
     /// Present only when the authorized text call must first produce a Schema.
@@ -112,6 +116,22 @@ fn digest(value: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 fn validate(input: &ConversationJourneyConsent) -> Result<(), StorageError> {
+    if input.repair_after_answer.as_ref().is_some_and(|request| {
+        request.id.is_nil()
+            || request.resume_checkpoint_ref.is_nil()
+            || request.task_id != input.task_id
+            || input.repair.is_some()
+            || input.schema_proposal.is_some()
+            || input.continue_after_clarification
+            || !input.images.iter().any(|image| {
+                Uuid::parse_str(&request.image_id).ok() == Some(image.image_id)
+                    && request.content_hash == image.content_hash
+            })
+    }) {
+        return Err(invalid(
+            "Answer continuation requires one exact pending request in the authorized image scope",
+        ));
+    }
     if input.repair.as_ref().is_some_and(|repair| {
         repair.request_id.is_nil()
             || Uuid::parse_str(&repair.draft_id)
@@ -188,7 +208,8 @@ fn validate(input: &ConversationJourneyConsent) -> Result<(), StorageError> {
 /// The generated plan may choose a subset of the explicitly allowed model bindings,
 /// but cannot change their snapshots, the ordered image selection, or the Schema.
 fn fits(consent: &ConversationJourneyConsent, sample: &JourneySampleScope) -> bool {
-    sample.operation_id == consent.sample_operation_id
+    consent.repair_after_answer.is_none()
+        && sample.operation_id == consent.sample_operation_id
         && !sample.draft_id.is_nil()
         && sample.draft_revision > 0
         && consent.repair.as_ref().is_none_or(|repair| {
@@ -293,6 +314,9 @@ impl SqliteStore {
             if attempt.is_nil() || saved.revoked || saved.consent.expires_at <= Utc::now() {
                 return Err(invalid("Journey consent is revoked or expired"));
             }
+            if saved.effective_consent().repair_after_answer.is_some() {
+                return Err(invalid("Journey is waiting for its exact acknowledged human answer"));
+            }
             let changed = tx.execute("INSERT INTO conversation_journey_dispatch(consent_id,attempt_id,status,updated_at) VALUES(?1,?2,'running',?3) ON CONFLICT(consent_id) DO UPDATE SET attempt_id=excluded.attempt_id,status='running',error=NULL,updated_at=excluded.updated_at WHERE conversation_journey_dispatch.status!='running'",params![id.to_string(),attempt.to_string(),Utc::now().to_rfc3339()])?;
             tx.commit()?;
             Ok(changed == 1)
@@ -384,6 +408,13 @@ impl SqliteStore {
             }
             let now=Utc::now();
             if input.expires_at<=now || input.expires_at>now+chrono::Duration::minutes(31){return Err(invalid("Journey consent is expired or exceeds its validity window"));}
+            if let Some(expected)=&input.repair_after_answer {
+                let request=crate::conversation_human_requests::read(&tx,project,expected.id)?;
+                if expected.conversation_id != conversation || request.input != *expected
+                    || request.status != crate::ConversationHumanRequestStatus::Pending || request.deferred {
+                    return Err(invalid("Answer continuation requires its exact active pending human request"));
+                }
+            }
             if input.schema_proposal.is_none() {
             let revision=i64::try_from(input.schema_revision).map_err(|_|invalid("Journey Schema revision is out of range"))?;
             let definition:Option<String>=tx.query_row("SELECT r.definition_json FROM conversation_schema_drafts d JOIN conversation_schema_revisions r ON r.draft_id=d.id WHERE d.id=?1 AND d.task_id=?2 AND r.revision=?3",params![input.schema_id.to_string(),input.task_id.to_string(),revision],|row|row.get(0)).optional()?;
@@ -588,6 +619,7 @@ pub(crate) mod tests {
             .create_human_conversation_schema_draft(&project, task.id, Uuid::new_v4(), &definition)
             .unwrap();
         let consent = ConversationJourneyConsent {
+            repair_after_answer: None,
             repair: None,
             continue_after_clarification: false,
             schema_proposal: None,
@@ -635,6 +667,110 @@ pub(crate) mod tests {
             maximum_calls: 10,
         };
         (project, conversation, consent, sample)
+    }
+
+    #[test]
+    fn pending_answer_permission_is_exact_persistent_and_not_executable() {
+        for status in ["pending", "answered", "applied", "cancelled", "stale"] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("TEST-pending-permission.db");
+            let store = SqliteStore::open(&path).unwrap();
+            let (project, conversation, mut consent, sample) = setup(&store);
+            let legacy = serde_json::to_value(&consent).unwrap();
+            assert!(legacy.get("repair_after_answer").is_none());
+            let request = crate::ConversationHumanRequestInput {
+                id: Uuid::new_v4(),
+                task_id: consent.task_id,
+                conversation_id: conversation,
+                sample_test_id: "TEST-source".into(),
+                image_id: consent.images[0].image_id.to_string(),
+                content_hash: consent.images[0].content_hash.clone(),
+                outcome_id: Some("TEST-candidate".into()),
+                addition_id: None,
+                expected_feedback_sequence: 2,
+                reason_code: "poor_boundary".into(),
+                question: "TEST correct the boundary".into(),
+                resume_checkpoint_ref: Uuid::new_v4(),
+            };
+            // Isolate envelope validation from the separately tested Sandbox
+            // request-creation/answer transaction. No model or feedback writes.
+            store.with_connection(|db| {
+                db.execute("INSERT INTO conversation_human_requests(id,task_id,request_json,status,created_at) VALUES(?1,?2,?3,?4,?5)",params![request.id.to_string(),consent.task_id.to_string(),serde_json::to_string(&request)?,status,Utc::now().to_rfc3339()])?;
+                Ok(())
+            }).unwrap();
+            consent.repair_after_answer = Some(request.clone());
+            if status != "pending" {
+                assert!(
+                    store
+                        .save_conversation_journey(&project, conversation, &consent)
+                        .is_err()
+                );
+                continue;
+            }
+            for change in [
+                "sequence",
+                "checkpoint",
+                "candidate",
+                "image",
+                "conversation",
+            ] {
+                let mut wrong = consent.clone();
+                let pending = wrong.repair_after_answer.as_mut().unwrap();
+                match change {
+                    "sequence" => pending.expected_feedback_sequence += 1,
+                    "checkpoint" => pending.resume_checkpoint_ref = Uuid::new_v4(),
+                    "candidate" => pending.outcome_id = Some("TEST-other".into()),
+                    "image" => pending.content_hash = "e".repeat(64),
+                    _ => pending.conversation_id = Uuid::new_v4(),
+                }
+                assert!(
+                    store
+                        .save_conversation_journey(&project, conversation, &wrong)
+                        .is_err(),
+                    "accepted {change}"
+                );
+            }
+            let saved = store
+                .save_conversation_journey(&project, conversation, &consent)
+                .unwrap();
+            drop(store);
+            let store = SqliteStore::open(&path).unwrap();
+            assert_eq!(
+                store
+                    .save_conversation_journey(&project, conversation, &consent)
+                    .unwrap(),
+                saved
+            );
+            assert!(
+                store
+                    .claim_conversation_journey_dispatch(
+                        &project,
+                        conversation,
+                        consent.task_id,
+                        consent.id,
+                        Uuid::new_v4()
+                    )
+                    .is_err()
+            );
+            assert!(
+                store
+                    .seal_conversation_journey_sample(
+                        &project,
+                        conversation,
+                        consent.task_id,
+                        consent.id,
+                        &sample
+                    )
+                    .is_err()
+            );
+            let mut widened = consent.clone();
+            widened.repair_after_answer = None;
+            assert!(
+                store
+                    .save_conversation_journey(&project, conversation, &widened)
+                    .is_err()
+            );
+        }
     }
 
     #[test]

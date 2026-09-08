@@ -5115,3 +5115,32 @@ SQLite only; no model calls, user workspace changes, remote changes or push. No 
 changes in this increment. Pre-authorizing a pending human answer remains unimplemented;
 it must freeze the request/image/feedback revision and resolve only that acknowledged
 answer, not authorize arbitrary future corrections. The overall goal remains incomplete.
+
+### 2026-09-09 — Pending-answer authorization storage groundwork
+
+Previous increment is verified progress (2d01fed), not a wait/blocker. Added an optional
+`repair_after_answer` envelope holding the exact existing Human Request input: task,
+conversation, source sample/image/hash, candidate or addition, feedback sequence and
+resume checkpoint. Older JSON omits this field and gains no permission. It cannot be
+combined with a completed repair, initial Schema proposal or clarification continuation.
+Saving requires the exact owned, active Pending request; Answered/Applied/Cancelled/Stale
+requests are rejected for this *new* pre-answer permission. Identical persisted retries
+remain readable without granting execution. Sample sealing and dispatch claiming reject
+unresolved envelopes; the HTTP consent endpoint explicitly does not accept this new
+mode until resolution and event dispatch are connected. No new UI or executable path
+is advertised in this storage-only increment.
+
+`pending_answer_permission_is_exact_persistent_and_not_executable` checks all five
+request states, changed sequence/checkpoint/candidate/image/conversation, restart,
+idempotent save, permission removal and rejection of unresolved dispatch/sample. Its
+request row is deliberately seeded in a temporary TEST database to isolate authorization
+validation; this is not an end-to-end answer/outbox test. All 10 Storage journey tests
+pass (73509), server all-feature check and server/storage all-target/all-feature clippy
+pass (84695). No model calls, real workspace mutations, push or remote changes.
+
+Remaining immediate work: resolve an Applied answer into one immutable repair snapshot
+using its acknowledged Sandbox feedback and resume result, reuse the existing resolved
+consent/dispatch state, then connect server answer events and explicit UI preauthorization.
+Do not treat the new persisted envelope as completed automatic recovery. Full integration
+must test deferred/cancelled/expired permissions, changed snapshots and duplicate events
+without expanding models, data, budget or future corrections.
