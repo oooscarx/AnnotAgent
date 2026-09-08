@@ -809,12 +809,46 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
       await expect(exports.locator("article")).toHaveCount(1);
       await expect(exports).toContainText("TEST pagination 21");
       await expect(exports.getByRole("button",{name:"Older exports"})).toBeDisabled();
+      const earlierUrl=page.url();
+      const unchangedContext=new URL(earlierUrl);unchangedContext.searchParams.delete("export_before");
+      expect(unchangedContext.toString()).toBe(contextUrl);
+      expect(new URL(earlierUrl).searchParams.get("export_before")).toBe(fixtureRows[19].id);
+      await page.reload();
+      await expect(exports).toContainText("TEST pagination 21");
+      await exports.screenshot({path:evidencePath("export-earlier-page-restored-TEST.png"),animations:"disabled"});
+      expect(page.url()).toBe(earlierUrl);
+      await page.goBack();await expect(exports.locator("article")).toHaveCount(20);
       expect(page.url()).toBe(contextUrl);
-      await exports.getByRole("button",{name:"Newer exports"}).click();
+      await page.goForward();await expect(exports).toContainText("TEST pagination 21");
+      expect(page.url()).toBe(earlierUrl);
+      await exports.getByRole("button",{name:"Latest exports",exact:true}).click();
       await expect(exports.locator("article")).toHaveCount(20);
       await page.unroute(pattern);
       await exports.getByRole("button",{name:"Refresh export status"}).click();
       await expect(exports.locator("article")).toHaveCount(1);
+      await expect(exports.getByRole("link",{name:"Download annotation archive"})).toBeVisible();
+      const unavailable=new URL(contextUrl);unavailable.searchParams.set("export_before",randomUUID());
+      await page.goto(unavailable.toString());
+      await expect(exports.getByRole("alert")).toContainText("Export cursor is unavailable");
+      await expect(exports.locator("article")).toHaveCount(0);
+      // A background status refresh must not disable the read-only escape route.
+      // Hold that GET explicitly rather than racing the SSE snapshot timer.
+      let releaseRefresh!:()=>void;
+      const heldRefresh=new Promise<void>(resolve=>{releaseRefresh=resolve;});
+      let refreshStarted!:()=>void;
+      const refreshing=new Promise<void>(resolve=>{refreshStarted=resolve;});
+      await page.route(pattern,async route=>{
+        if(new URL(route.request().url()).searchParams.get("before")===unavailable.searchParams.get("export_before")){
+          refreshStarted();await heldRefresh;
+          await route.fulfill({status:400,json:{error:"TEST held unavailable export cursor"}});
+        } else await route.fallback();
+      });
+      await exports.getByRole("button",{name:"Refresh export status"}).click();
+      await refreshing;
+      await expect(exports.getByRole("button",{name:"Latest exports",exact:true})).toBeEnabled();
+      await exports.getByRole("button",{name:"Latest exports",exact:true}).click();
+      await expect(page).toHaveURL(contextUrl);
+      releaseRefresh();await page.unroute(pattern);
       await expect(exports.getByRole("link",{name:"Download annotation archive"})).toBeVisible();
     }
   }

@@ -3,9 +3,8 @@ import { useState, useEffect, useRef } from "react";
 import { useRouteQuery } from "../useRouteQuery";
 
 /** The requesting task is explicit; the actual export remains project-wide. */
-export function ConversationExports({project,conversation,task}:{project:string;conversation:string;task:string}) {
-  const [cursors,setCursors]=useState<string[]>([]);
-  const before=cursors.at(-1);
+export function ConversationExports({project,conversation,task,before,onPage}:{project:string;conversation:string;task:string;before?:string;onPage:(before?:string)=>void}) {
+  const [previous,setPrevious]=useState<Record<string,string|undefined>>({});
   const query=useRouteQuery(`conversation-exports:${project}:${conversation}:${task}:${before ?? "first"}`,signal=>api.conversationExports(project,conversation,task,signal,before,20));
   const refresh=useRef(query.retry);refresh.current=query.retry;
   useEffect(()=>{
@@ -24,11 +23,11 @@ export function ConversationExports({project,conversation,task}:{project:string;
     <h3>Export deliveries</h3>
     <p>Project-wide exports requested from this goal. These may include confirmed results from other tasks.</p>
     {(before || query.data?.length===20) && <nav className="button-row" aria-label="Export history pages">
-      <button disabled={!before || query.loading} onClick={()=>setCursors(value=>value.slice(0,-1))}>Newer exports</button>
-      <span aria-live="polite">Page {cursors.length+1}</span>
-      <button disabled={query.loading || query.data?.length!==20} onClick={()=>{const last=query.data?.at(-1);if(last)setCursors(value=>[...value,last.id]);}}>Older exports</button>
+      <button disabled={!before} onClick={()=>onPage(before ? previous[before] : undefined)}>{before && !(before in previous) ? "Latest exports" : "Newer exports"}</button>
+      <span aria-live="polite">{before ? "Earlier exports" : "Latest exports"}</span>
+      <button disabled={query.loading || query.data?.length!==20} onClick={()=>{const last=query.data?.at(-1);if(last){setPrevious(value=>({...value,[last.id]:before}));onPage(last.id);}}}>Older exports</button>
     </nav>}
-    {before && !query.loading && query.data?.length===0 && <p>No older exports. Use Newer exports to return.</p>}
+    {before && !query.loading && query.data?.length===0 && <p>No older exports. Return using the history navigation above.</p>}
     {query.error && <p role="alert">{query.error.message}</p>}
     <button onClick={()=>void query.retry().catch(()=>undefined)}>Refresh export status</button>
     {query.data?.map(receipt=><article key={receipt.id}>

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseWorkspaceRoute,
+  withConversationReturn,
   projectBuildPath,
   projectWorkPath,
   projectJourneyPath,
@@ -13,6 +14,17 @@ import {
 } from "./navigation";
 
 describe("guided workspace routing", () => {
+  it("restores the owned export-history cursor without changing task or image",()=>{
+    const exportBefore="01234567-89ab-4cde-8fab-0123456789ab";
+    const path=projectWorkPath("project",{conversationId:"conversation",taskId:"task",imageId:"image",exportBefore});
+    const url=new URL(path,"http://localhost");
+    expect(parseWorkspaceRoute(url.pathname,url.search)).toMatchObject({kind:"conversation",conversationId:"conversation",taskId:"task",imageId:"image",exportBefore,canonicalPath:path});
+    expect(parseWorkspaceRoute("/projects/project/work",`?export_before=${exportBefore}`)).toMatchObject({kind:"notFound"});
+    expect(parseWorkspaceRoute("/projects/project/work","?conversation=c&task=t&export_before=../../other")).toMatchObject({kind:"notFound"});
+    expect(parseWorkspaceRoute("/projects/project/work","?conversation=c&task=t&export_before=")).toMatchObject({kind:"notFound"});
+    const exportRoute=new URL(withConversationReturn("/projects/project/export",path),"http://localhost");
+    expect(parseWorkspaceRoute(exportRoute.pathname,exportRoute.search)).toMatchObject({kind:"export",workspaceReturn:path});
+  });
   it("preserves a task-bound sample return from Pipeline details without accepting external or foreign routes",()=>{
     const context={conversationId:"conversation",taskId:"task",draftId:"sample-draft",sampleTestId:"sample",imageId:"image"};
     const workspaceReturn=projectWorkPath("project",context);

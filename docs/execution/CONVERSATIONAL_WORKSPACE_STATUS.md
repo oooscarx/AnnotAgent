@@ -4192,3 +4192,34 @@ broader product/accessibility/performance acceptance; Live/human validation rema
 Full Application all-feature regression passes: 145 unit tests, one explicitly billable
 smoke ignored, plus the offline advisor integration test. Formatting and diff checks pass.
 No push, remote modification, real workspace mutation or prior screenshot overwrite occurred.
+
+### 2026-09-09 — Export history URL restoration and an actionable escape during refresh
+
+Export history now uses an explicit `export_before` cursor in the existing conversation
+canonical route, alongside the same task, image and processing context. Empty, malformed,
+duplicate or unscoped cursors are rejected by route parsing; the existing server still checks
+actual cursor ownership. Refresh and browser Back/Forward restore the selected history slice.
+Visited predecessors remain a local navigation convenience only: a deep link with no known
+predecessor says Latest exports, not a fabricated previous page number. Same-task image/result
+selection and the formal result return path preserve the cursor. No new business-state copy,
+model call or export POST is triggered by navigation.
+
+The initial routing test failed before implementation. A subsequent browser run exposed an
+additional race: the initial SSE snapshot could disable the Latest exports button between
+pointer events by refreshing history. Read-only return navigation no longer depends on query
+loading. The browser regression explicitly holds a refresh GET open and verifies that return
+still works; it then releases that old response without replacing the current page.
+
+Final isolated browser run passes both bbox and classification-review full paths (11.5s and
+12.1s, 28.8s harness), workspace `/tmp/annotagent-guided-e2e-94709`. Pagination's 21 rows are
+explicit browser TEST fixtures, not claimed real exports. Invalid cursor rejection uses the
+real Rust service, and the surrounding paths use actual saved export archives/downloads.
+Screenshot inspected: `/tmp/annotagent-export-view-evidence/export-earlier-page-restored-TEST.png`.
+The same evidence directory contains the two workflow screenshots without overwriting existing
+repository PNG changes. Web 203 unit tests and production build/typecheck pass; the existing
+large-bundle warning remains (1.07 MB uncompressed main JavaScript). Diff check passes.
+
+This increment does not change Rust code, the real workspace/service, credentials or remotes.
+No push. Overall M4 remains open for the broader accessibility/performance and final acceptance
+audit; Live model and human usability testing remain unexecuted. This navigation fix is not a
+claim of model-quality improvement or overall goal completion.
