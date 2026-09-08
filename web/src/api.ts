@@ -1147,10 +1147,11 @@ export const api = {
     }),
   exportReadiness: (projectId: string, signal?: AbortSignal) =>
     request<ExportReadiness>(`/api/projects/${projectId}/export-readiness`, { signal }),
-  export: (projectId: string, format: string) =>
+  conversationExports: (project:string,conversation:string,task:string,signal?:AbortSignal)=>request<{id:string;error?:string|null;result?:ProjectExportResult|null;format:string;created_at:string}[]>(`/api/projects/${encodeURIComponent(project)}/conversations/${conversation}/tasks/${task}/exports`,{signal}),
+  export: (projectId: string, format: string, conversation?:{id:string;conversation_id:string;task_id:string}) =>
     request<ProjectExportResult>(`/api/projects/${projectId}/export`, {
       method: "POST",
-      body: JSON.stringify({ format }),
+      body: JSON.stringify({ format, conversation }),
     }),
   importAnnotations: (
     projectId: string,

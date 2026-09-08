@@ -712,6 +712,9 @@ main { min-width: 0; padding-bottom: 48px; }
 .context-line span { padding: 5px 8px; border-radius: var(--aa-radius-sm); background: var(--aa-surface-muted); color: var(--aa-text-muted); font: 600 11px var(--aa-font-sans); }
 .button-row, .decision-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .button-row small { color: var(--aa-text-muted); line-height: 1.5; }
+.conversation-exports article { display: grid; gap: 10px; border-top: 1px solid var(--aa-border); padding-top: 12px; min-width: 0; }
+.conversation-exports h3, .conversation-exports h4, .conversation-exports p { margin: 0; }
+.conversation-exports small { overflow-wrap: anywhere; }
 .button-row > a.button { display: inline-flex; align-items: center; justify-content: center; min-height: 38px; padding: 8px 13px; border: 1px solid var(--aa-primary); border-radius: var(--aa-radius-md); background: var(--aa-primary); color: white; font-weight: 650; text-decoration: none; }
 .button-row > a.button:hover { background: var(--aa-primary-hover); }
 .button-row > a.button:focus-visible { outline: 2px solid var(--aa-primary); outline-offset: 3px; }

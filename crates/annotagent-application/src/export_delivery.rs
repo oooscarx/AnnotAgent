@@ -97,6 +97,56 @@ pub(crate) fn package(root: &Path, id: Uuid, report: &ExportReport) -> Result<Ex
 }
 
 impl LocalApplication {
+    pub fn conversation_export_history(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+    ) -> Result<Vec<annotagent_storage::ConversationExport>> {
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self
+            .store
+            .conversation_exports(&owner, conversation, task)?)
+    }
+    pub async fn export_from_conversation(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+        format: &str,
+    ) -> Result<ProjectExportResult> {
+        let owner = self.conversation_project_identity(project)?;
+        if !self
+            .store
+            .begin_conversation_export(&owner, conversation, task, id, format)?
+        {
+            if let Some(result) = self.store.completed_conversation_export(id)? {
+                return Ok(serde_json::from_value(result)?);
+            }
+            bail!(
+                "This export request is pending, interrupted or failed. Inspect its saved status; it was not executed again."
+            );
+        }
+        match self
+            .export_project_dataset_with_id(project, format, id)
+            .await
+        {
+            Ok(result) => {
+                self.store.finish_conversation_export(
+                    id,
+                    Some(&serde_json::to_value(&result)?),
+                    None,
+                )?;
+                Ok(result)
+            }
+            Err(error) => {
+                self.store
+                    .finish_conversation_export(id, None, Some(&error.to_string()))?;
+                Err(error)
+            }
+        }
+    }
     pub(crate) fn export_delivery_directory(
         &self,
         project: &str,
@@ -114,9 +164,12 @@ impl LocalApplication {
             "deliveries".to_owned(),
             id.to_string(),
         ] {
-            directory.push(component);
+            directory.push(&component);
             if directory.is_symlink() {
                 bail!("Export delivery directory must not be a symlink");
+            }
+            if create && component == id.to_string() && directory.exists() {
+                bail!("Export generation already exists; refusing to overwrite it");
             }
             if create && !directory.exists() {
                 std::fs::create_dir(&directory)?;

@@ -4008,3 +4008,38 @@ stale-error rejection assertions. Final rerun passed both complete scenarios (9.
 was inspected; no fake file-manager control was added. Production build retains the known
 bundle-size warning. Broader workspace tests were not rerun in this increment; the two changed
 Rust packages were fully tested instead.
+
+### 2026-09-09 — Task-linked export receipts and conversation delivery cards
+
+Added a minimal SQLite receipt linking the existing Project exporter to the requesting
+Project/Conversation/Task. It does not define a new exporter or Annotation store. Admission
+checks stable Project ownership and reserves the operation UUID before export. Repeated
+completed requests return the recorded result; changed format/owner and unavailable tasks
+are rejected. A caller-selected UUID cannot overwrite an existing export generation.
+Completion is persisted only after the real archive/report exists. Unconfirmed operations
+are labelled as such, never as running or complete. Their retries do not blindly re-export.
+
+The canonical export page obtains task context from its validated workspace return route.
+Its browser retry ID survives refresh; confirmed failure permits an explicit new request,
+whereas unknown outcomes retain the original identity. Returning to the conversation shows
+the saved downloadable archive and compatibility warnings. The card explicitly says the
+export is Project-wide and can contain other tasks' confirmed results: task linkage is a
+request origin, not a false claim of task-only export filtering. Reads cannot create exports.
+
+Evidence: Storage receipt tests cover ownership, duplicate identity, conflict, immutable
+completion and database reopen. All-feature Storage/Application/Server tests pass (146/144/45
+unit tests respectively; one billable Application test intentionally ignored, associated
+integration tests pass). Web 199 unit tests and typecheck pass. Both complete browser paths
+passed with task-linked export cards, duplicate POST returning the same archive, foreign task
+rejection, and refresh recovery (9.5s/9.6s; 38.6s harness). Production build succeeds with the
+known bundle-size warning. Isolated workspace `/tmp/annotagent-guided-e2e-89065`; screenshots
+`/tmp/annotagent-task-export-evidence/export-card-bbox.png` and `export-card-classification.png`.
+The classification card screenshot was visually inspected. A final targeted Rust check
+also covers rejection of a pre-existing generation UUID.
+
+Remaining: true background export dispatch/recovery across interruption, receipt history
+pagination (currently explicitly displays latest 100), broader long-history/performance and
+accessibility acceptance. Pending receipts deliberately do not claim a live worker. Tests
+use the explicit isolated TEST backend, not Live quality or human usability evidence. No
+real workspace or service 8787, remote, credentials or historical PNG edits were touched;
+no push. Overall goal remains active.

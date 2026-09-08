@@ -720,7 +720,17 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
       await page.getByRole("button",{name:"Continue to export",exact:true}).click();
       const exportResponse=page.waitForResponse(response=>response.url().includes(`/api/projects/${project}/export`) && response.request().method()==="POST");
       await page.getByRole("button",{name:/^Export .+ dataset$/}).click();
-      const delivered=await (await exportResponse).json();
+      const exportHttp=await exportResponse;
+      const exportInput=exportHttp.request().postDataJSON();
+      expect(exportInput.conversation?.task_id).toBeTruthy();
+      const delivered=await exportHttp.json();
+      const exportHistoryPath=`/api/projects/${project}/conversations/${exportInput.conversation.conversation_id}/tasks/${exportInput.conversation.task_id}/exports`;
+      const duplicateExport=await request.post(`/api/projects/${project}/export`,{data:exportInput});
+      expect(duplicateExport.ok(),await duplicateExport.text()).toBe(true);
+      expect((await duplicateExport.json()).delivery.id).toBe(delivered.delivery.id);
+      expect(await (await request.get(exportHistoryPath)).json()).toHaveLength(1);
+      const foreignExport=await request.post(`/api/projects/${project}/export`,{data:{...exportInput,conversation:{...exportInput.conversation,id:randomUUID(),task_id:randomUUID()}}});
+      expect(foreignExport.ok()).toBe(false);
       expect(delivered.report.exported_count,JSON.stringify(delivered)).toBe(1);
       expect(delivered.report.output_files.length).toBeGreaterThan(0);
       // Real export file in the isolated server workspace, not a mocked download/report.
@@ -755,6 +765,15 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   await page.getByRole("button",{name:"Back to annotation workspace",exact:true}).click();
   await expect(page).toHaveURL(formalUrl);
   await expect(formalResults).toBeVisible();
+  if(requiresReview) {
+    const exports=page.getByRole("region",{name:"Saved export deliveries",exact:true});
+    await expect(exports).toContainText("Export complete");
+    await expect(exports.getByRole("link",{name:"Download annotation archive"})).toBeVisible();
+    await page.reload();
+    await expect(exports).toContainText("Project-wide exports requested from this goal");
+    await expect(exports.getByRole("link",{name:"Download annotation archive"})).toBeVisible();
+    await exports.screenshot({path:evidencePath(`export-card-${kind}.png`),animations:"disabled"});
+  }
   await page.screenshot({path:evidencePath(`processing-results-${scenario}.png`),fullPage:true,animations:"disabled"});
   const foreignUrl=new URL(page.url());foreignUrl.searchParams.set("batch",crypto.randomUUID());
   await page.goto(foreignUrl.toString());

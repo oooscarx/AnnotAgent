@@ -789,6 +789,7 @@ export function App() {
         {loaded && route.kind === "export" && (
           <ProjectExportPage
             project={selectedProject}
+            workspaceReturn={route.workspaceReturn}
             onNavigate={navigate}
             onError={setError}
           />
@@ -2674,10 +2675,12 @@ function ProjectPage({
 
 function ProjectExportPage({
   project,
+  workspaceReturn,
   onNavigate,
   onError,
 }: {
   project?: ProjectSummary;
+  workspaceReturn?: string;
   onNavigate: (destination: string) => void;
   onError: (value: string) => void;
 }) {
@@ -2722,18 +2725,37 @@ function ProjectExportPage({
   ]);
   const executeExport = () => {
     if (!project || !format || !activeReadiness?.ready || exportPending.current) return;
+    const destination=workspaceReturn ? new URL(workspaceReturn,window.location.origin) : undefined;
+    const source=destination ? parseWorkspaceRoute(destination.pathname,destination.search) : undefined;
+    const context=source?.kind==="conversation" && source.projectId===project.id && source.conversationId && source.taskId ? {conversation_id:source.conversationId,task_id:source.taskId} : undefined;
+    const receiptKey=context ? `conversation-export:${project.id}:${context.conversation_id}:${context.task_id}:${format}` : undefined;
+    let operation:({id:string;conversation_id:string;task_id:string})|undefined;
+    try {
+      if(context && receiptKey){const id=sessionStorage.getItem(receiptKey) ?? crypto.randomUUID();sessionStorage.setItem(receiptKey,id);operation={...context,id};}
+    } catch {onError("Cannot preserve the export retry identity in this browser. No export was started.");return;}
     exportPending.current = true;
     setExporting(true);
     setCopyStatus("");
     void api
-      .export(project.id, format)
+      .export(project.id, format, operation)
       .then((value) => {
+        if(receiptKey)try{sessionStorage.removeItem(receiptKey);}catch{/* Keeping the completed identity is safe on retry. */}
         if (!exportMounted.current || exportOwner.current !== project.id) return;
         setResult(value);
         return loadReadiness();
       })
-      .catch((error: Error) => { if (exportMounted.current && exportOwner.current === project.id) onError(error.message); })
-      .finally(() => { exportPending.current = false; if (exportMounted.current) setExporting(false); });
+      .catch(async (error: Error) => {
+        let explanation=error.message;
+        if(context && operation && receiptKey)try{
+          const history=await api.conversationExports(project.id,context.conversation_id,context.task_id);
+          if(history.some(record=>record.id===operation.id && record.error && !record.result)){
+            sessionStorage.removeItem(receiptKey);
+            explanation+=" The failed export is saved. After correcting the issue, clicking Export starts a new request.";
+          }
+        }catch{/* Unknown outcomes retain their retry identity; no new work is admitted. */}
+        if (exportMounted.current && exportOwner.current === project.id) onError(explanation);
+      })
+      .finally(() => { if(context)workspaceQueries.invalidate(`conversation-exports:${project.id}:${context.conversation_id}:${context.task_id}`); exportPending.current = false; if (exportMounted.current) setExporting(false); });
   };
   const copyOutputPath = () => {
     if (!result) return;

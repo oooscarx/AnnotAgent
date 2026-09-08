@@ -7853,6 +7853,26 @@ async fn project_review_revisions(
 struct ExportBody {
     #[serde(default = "default_export_format")]
     format: String,
+    conversation: Option<ExportConversation>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExportConversation {
+    id: uuid::Uuid,
+    conversation_id: uuid::Uuid,
+    task_id: uuid::Uuid,
+}
+
+async fn conversation_export_history(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+) -> ApiResult<Json<Value>> {
+    state
+        .application
+        .conversation_export_history(&project, conversation, task)
+        .map(|value| Json(json!(value)))
+        .map_err(ApiError::bad_request)
 }
 
 fn default_export_format() -> String {
@@ -7875,11 +7895,24 @@ async fn export_dataset(
     AxumPath(project_id): AxumPath<String>,
     Json(request): Json<ExportBody>,
 ) -> ApiResult<Json<Value>> {
-    let result = state
-        .application
-        .export_project_dataset(&project_id, &request.format)
-        .await
-        .map_err(ApiError::bad_request)?;
+    let result = if let Some(source) = request.conversation {
+        state
+            .application
+            .export_from_conversation(
+                &project_id,
+                source.conversation_id,
+                source.task_id,
+                source.id,
+                &request.format,
+            )
+            .await
+    } else {
+        state
+            .application
+            .export_project_dataset(&project_id, &request.format)
+            .await
+    }
+    .map_err(ApiError::bad_request)?;
     Ok(Json(json!(result)))
 }
 

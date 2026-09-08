@@ -1,0 +1,157 @@
+//! Links the existing project exporter to its requesting task, not a second exporter.
+use crate::{SqliteStore, StorageError};
+use rusqlite::{OptionalExtension, params};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationExport {
+    pub id: Uuid,
+    pub format: String,
+    pub created_at: String,
+    pub result: Option<serde_json::Value>,
+    pub error: Option<String>,
+}
+
+impl SqliteStore {
+    pub fn completed_conversation_export(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<serde_json::Value>, StorageError> {
+        self.with_connection(|db| {
+            let result: Option<Option<String>> = db
+                .query_row(
+                    "SELECT result_json FROM conversation_exports WHERE id=?1",
+                    [id.to_string()],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            result
+                .flatten()
+                .map(|value| serde_json::from_str(&value).map_err(Into::into))
+                .transpose()
+        })
+    }
+    pub fn begin_conversation_export(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+        format: &str,
+    ) -> Result<bool, StorageError> {
+        self.with_connection(|db| {
+            let tx=db.unchecked_transaction()?;
+            let owned:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_tasks t JOIN project_conversations c ON c.id=t.conversation_id WHERE c.project_id=?1 AND c.id=?2 AND t.id=?3)",params![project,conversation.to_string(),task.to_string()],|row|row.get(0))?;
+            if !owned {return Err(StorageError::InvalidConversation("Export task does not belong to this Project and conversation".into()));}
+            let existing:Option<(String,String,String,String)>=tx.query_row("SELECT project_id,conversation_id,task_id,format FROM conversation_exports WHERE id=?1",[id.to_string()],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).optional()?;
+            if let Some(existing)=existing {
+                if existing!=(project.into(),conversation.to_string(),task.to_string(),format.into()) {return Err(StorageError::InvalidConversation("Export operation ID conflicts with its saved scope".into()));}
+                return Ok(false);
+            }
+            tx.execute("INSERT INTO conversation_exports(id,project_id,conversation_id,task_id,format,created_at) VALUES(?1,?2,?3,?4,?5,?6)",params![id.to_string(),project,conversation.to_string(),task.to_string(),format,chrono::Utc::now().to_rfc3339()])?;
+            tx.commit()?;
+            Ok(true)
+        })
+    }
+    pub fn finish_conversation_export(
+        &self,
+        id: Uuid,
+        result: Option<&serde_json::Value>,
+        error: Option<&str>,
+    ) -> Result<(), StorageError> {
+        self.with_connection(|db| {db.execute("UPDATE conversation_exports SET result_json=?2,error=?3 WHERE id=?1 AND result_json IS NULL AND error IS NULL",params![id.to_string(),result.map(serde_json::to_string).transpose()?,error])?;Ok(())})
+    }
+    pub fn conversation_exports(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+    ) -> Result<Vec<ConversationExport>, StorageError> {
+        self.with_connection(|db| {
+            let owned:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM conversation_tasks t JOIN project_conversations c ON c.id=t.conversation_id WHERE c.project_id=?1 AND c.id=?2 AND t.id=?3)",params![project,conversation.to_string(),task.to_string()],|row|row.get(0))?;
+            if !owned {return Err(StorageError::InvalidConversation("Export task is unavailable in this Project".into()));}
+            let mut query=db.prepare("SELECT id,format,created_at,result_json,error FROM conversation_exports WHERE project_id=?1 AND conversation_id=?2 AND task_id=?3 ORDER BY created_at DESC,id DESC LIMIT 100")?;
+            let rows=query.query_map(params![project,conversation.to_string(),task.to_string()],|row|Ok((row.get::<_,String>(0)?,row.get(1)?,row.get(2)?,row.get::<_,Option<String>>(3)?,row.get(4)?)))?;
+            rows.map(|row|{let(id,format,created_at,result,error)=row?;Ok(ConversationExport{id:Uuid::parse_str(&id).map_err(|_|StorageError::InvalidConversation("Invalid export ID".into()))?,format,created_at,result:result.map(|value|serde_json::from_str(&value)).transpose()?,error})}).collect()
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn conversation_export_receipts_are_owned_idempotent_and_durable() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("TEST-exports.db");
+        let store = SqliteStore::open(&path).unwrap();
+        let project = Uuid::new_v4().to_string();
+        let conversation = store.create_conversation(&project).unwrap();
+        let message = crate::ConversationMessageInput {
+            id: Uuid::new_v4(),
+            text: "TEST export".into(),
+            image: None,
+            reference: None,
+        };
+        store
+            .append_conversation_message(&project, conversation, &message)
+            .unwrap();
+        let task = Uuid::new_v4();
+        store
+            .begin_conversation_task(
+                &project,
+                conversation,
+                &crate::BeginConversationTask {
+                    id: task,
+                    source_message_id: message.id,
+                    schema_revision: "a".repeat(64),
+                },
+            )
+            .unwrap();
+        let id = Uuid::new_v4();
+        assert!(
+            store
+                .begin_conversation_export(&project, conversation, task, id, "native")
+                .unwrap()
+        );
+        assert!(
+            !store
+                .begin_conversation_export(&project, conversation, task, id, "native")
+                .unwrap()
+        );
+        assert!(
+            store
+                .begin_conversation_export(&project, conversation, task, id, "coco")
+                .is_err()
+        );
+        assert!(
+            store
+                .begin_conversation_export("foreign", conversation, task, Uuid::new_v4(), "native")
+                .is_err()
+        );
+        assert!(
+            store
+                .conversation_exports(&project, conversation, Uuid::new_v4())
+                .is_err()
+        );
+        let result = serde_json::json!({"TEST":"immutable result"});
+        store
+            .finish_conversation_export(id, Some(&result), None)
+            .unwrap();
+        store
+            .finish_conversation_export(id, None, Some("late failure"))
+            .unwrap();
+        drop(store);
+        let store = SqliteStore::open(&path).unwrap();
+        assert_eq!(
+            store.completed_conversation_export(id).unwrap(),
+            Some(result)
+        );
+        let history = store
+            .conversation_exports(&project, conversation, task)
+            .unwrap();
+        assert_eq!(history.len(), 1);
+        assert!(history[0].error.is_none());
+    }
+}

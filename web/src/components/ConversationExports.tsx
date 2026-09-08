@@ -1,0 +1,25 @@
+import { api } from "../api";
+import { useRouteQuery } from "../useRouteQuery";
+
+/** The requesting task is explicit; the actual export remains project-wide. */
+export function ConversationExports({project,conversation,task}:{project:string;conversation:string;task:string}) {
+  const query=useRouteQuery(`conversation-exports:${project}:${conversation}:${task}`,signal=>api.conversationExports(project,conversation,task,signal));
+  if(!query.error && !query.data?.length)return null;
+  return <section className="conversation-consent conversation-exports" aria-label="Saved export deliveries">
+    <h3>Export deliveries</h3>
+    <p>Project-wide exports requested from this goal. These may include confirmed results from other tasks.</p>
+    {query.data?.length===100 && <p>Showing the 100 most recent export requests for this task.</p>}
+    {query.error && <p role="alert">{query.error.message}</p>}
+    <button onClick={()=>void query.retry().catch(()=>undefined)}>Refresh export status</button>
+    {query.data?.map(receipt=><article key={receipt.id}>
+      <h4>{receipt.format} · {receipt.result ? "Export complete" : receipt.error ? "Export failed" : "Completion not confirmed"}</h4>
+      <small>Export {receipt.id} · {receipt.created_at}</small>
+      {receipt.error && <p role="alert">{receipt.error}</p>}
+      {!receipt.result && !receipt.error && <p>The request was saved, but completion is not recorded. Refresh only checks status; it does not start another export.</p>}
+      {receipt.result && <><p>{receipt.result.report.exported_count} annotations exported · {receipt.result.report.skipped_count} skipped</p>
+        {receipt.result.delivery && <div className="button-row"><a className="button primary" download href={`/api/projects/${encodeURIComponent(project)}/exports/${receipt.result.delivery.id}/download`}>Download annotation archive</a></div>}
+        <details><summary>Compatibility report</summary>{receipt.result.report.warnings.length ? <ul>{receipt.result.report.warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul> : <p>No export warnings were reported. This is not a model accuracy claim.</p>}</details>
+      </>}
+    </article>)}
+  </section>;
+}

@@ -10064,6 +10064,16 @@ impl LocalApplication {
         project_id: &str,
         requested_format: &str,
     ) -> Result<ProjectExportResult> {
+        self.export_project_dataset_with_id(project_id, requested_format, uuid::Uuid::new_v4())
+            .await
+    }
+
+    async fn export_project_dataset_with_id(
+        &self,
+        project_id: &str,
+        requested_format: &str,
+        delivery_id: uuid::Uuid,
+    ) -> Result<ProjectExportResult> {
         let data = self.project_export_data(project_id)?;
         let readiness = export_readiness_from_data(project_id, &data)?;
         if !readiness.ready {
@@ -10089,7 +10099,6 @@ impl LocalApplication {
                 compatibility.unsupported_task_kinds.join(", ")
             );
         }
-        let delivery_id = uuid::Uuid::new_v4();
         let output_path = self.export_delivery_directory(project_id, delivery_id, true)?;
         let source_fingerprint = sha256(&serde_json::to_vec(&data.snapshot)?);
         let mut report = dataset_exporter(&format)?
@@ -23480,6 +23489,13 @@ export:
         assert!(export.output_path.join("annotagent-native.json").is_file());
         assert!(export.output_path.join("export-report.json").is_file());
         let delivery = export.delivery.as_ref().expect("saved download");
+        assert!(
+            application
+                .export_project_dataset_with_id("label-classification", "native", delivery.id)
+                .await
+                .is_err(),
+            "even caller-selected IDs cannot overwrite an existing generation"
+        );
         let (file, _) = application
             .open_export_delivery("label-classification", delivery.id)
             .expect("download");
