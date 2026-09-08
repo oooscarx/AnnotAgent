@@ -34,6 +34,10 @@ pub struct ConversationTaskBudget {
     pub processing_reserved_calls: u64,
     pub total_authorized_calls: u64,
     pub total_reserved_calls: u64,
+    /// Conversation-owned planning and Batch allocations across this stable Project.
+    /// These are cumulative ledger totals, not an additional spending authorization.
+    pub project_authorized_calls: u64,
+    pub project_reserved_calls: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -125,10 +129,27 @@ impl SqliteStore {
             let planning_reserved_calls=count(planning_reserved_calls)?;
             let processing_authorized_calls=count(processing_authorized_calls)?;
             let processing_reserved_calls=count(processing_reserved_calls)?;
+            // Aggregate each task/Batch once. Joining grants directly to calls would multiply
+            // the allocation by the number of receipts and could hide cross-task overspend.
+            let (project_authorized_calls,project_reserved_calls):(i64,i64)=db.query_row(
+                "WITH owned_tasks AS (
+                    SELECT t.id FROM conversation_tasks t JOIN project_conversations c ON c.id=t.conversation_id WHERE c.project_id=?1
+                ), allocations AS (
+                    SELECT COALESCE(SUM(g.maximum_calls),0) AS authorized,
+                           (SELECT COUNT(*) FROM conversation_model_calls m JOIN owned_tasks t ON t.id=m.task_id) AS reserved
+                    FROM conversation_call_grants g JOIN owned_tasks t ON t.id=g.task_id
+                    UNION ALL
+                    SELECT COALESCE(SUM(a.maximum),0),COALESCE(SUM(a.reserved),0)
+                    FROM batch_model_call_allowances a JOIN processing_operations p ON p.id=a.batch_id
+                    JOIN owned_tasks t ON t.id=json_extract(p.state_json,'$.authorization.conversation.task_id')
+                ) SELECT SUM(authorized),SUM(reserved) FROM allocations",
+                [project],|row|Ok((row.get(0)?,row.get(1)?)))?;
             Ok(ConversationTaskBudget {
                 planning_authorized_calls,planning_reserved_calls,processing_authorized_calls,processing_reserved_calls,
                 total_authorized_calls:planning_authorized_calls.checked_add(processing_authorized_calls).ok_or_else(||invalid("task budget overflow"))?,
                 total_reserved_calls:planning_reserved_calls.checked_add(processing_reserved_calls).ok_or_else(||invalid("task usage overflow"))?,
+                project_authorized_calls:count(project_authorized_calls)?,
+                project_reserved_calls:count(project_reserved_calls)?,
             })
         })
     }
@@ -608,6 +629,8 @@ mod tests {
         assert_eq!(combined.processing_reserved_calls, 2);
         assert_eq!(combined.total_reserved_calls, 5);
         assert_eq!(combined.total_authorized_calls, 5);
+        assert_eq!(combined.project_authorized_calls, 5);
+        assert_eq!(combined.project_reserved_calls, 5);
         // The Batch exists even though the operation has not settled its `started` receipt.
         let reopened = SqliteStore::open(temp.path().join("TEST-phases.db")).unwrap();
         assert_eq!(
@@ -616,6 +639,85 @@ mod tests {
         );
         assert!(reopened.conversation_task_budget("foreign", task).is_err());
         assert!(reopened.reserve_batch_model_call(batch).is_err());
+        // A new conversation/goal has no task spend, but cannot erase Project history.
+        let second_conversation = reopened.create_conversation(project).unwrap();
+        let second_message = ConversationMessageInput {
+            id: Uuid::new_v4(),
+            text: "TEST new goal".into(),
+            image: None,
+            reference: None,
+        };
+        reopened
+            .append_conversation_message(project, second_conversation, &second_message)
+            .unwrap();
+        let second_task = Uuid::new_v4();
+        reopened
+            .begin_conversation_task(
+                project,
+                second_conversation,
+                &BeginConversationTask {
+                    id: second_task,
+                    source_message_id: second_message.id,
+                    schema_revision: "a".repeat(64),
+                },
+            )
+            .unwrap();
+        let fresh = reopened
+            .conversation_task_budget(project, second_task)
+            .unwrap();
+        assert_eq!(fresh.total_reserved_calls, 0);
+        assert_eq!(fresh.project_reserved_calls, 5);
+        let second_grant = ConversationCallGrant {
+            id: Uuid::new_v4(),
+            task_id: second_task,
+            scope_hash: "a".repeat(64),
+            maximum_calls: 2,
+            expires_at: Utc::now() + Duration::minutes(10),
+        };
+        reopened
+            .authorize_conversation_calls(project, &second_grant)
+            .unwrap();
+        reopened
+            .reserve_conversation_call(
+                project,
+                second_task,
+                Uuid::new_v4(),
+                &second_grant.scope_hash,
+                &"c".repeat(64),
+            )
+            .unwrap();
+        let cross_task = reopened.conversation_task_budget(project, task).unwrap();
+        assert_eq!(cross_task.total_reserved_calls, 5);
+        assert_eq!(cross_task.project_authorized_calls, 7);
+        assert_eq!(cross_task.project_reserved_calls, 6);
+        let other_project = Uuid::new_v4().to_string();
+        let other_conversation = reopened.create_conversation(&other_project).unwrap();
+        let other_message = ConversationMessageInput {
+            id: Uuid::new_v4(),
+            ..second_message
+        };
+        reopened
+            .append_conversation_message(&other_project, other_conversation, &other_message)
+            .unwrap();
+        let other_task = Uuid::new_v4();
+        reopened
+            .begin_conversation_task(
+                &other_project,
+                other_conversation,
+                &BeginConversationTask {
+                    id: other_task,
+                    source_message_id: other_message.id,
+                    schema_revision: "a".repeat(64),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            reopened
+                .conversation_task_budget(&other_project, other_task)
+                .unwrap()
+                .project_reserved_calls,
+            0
+        );
         assert!(matches!(
             store
                 .reserve_conversation_call(

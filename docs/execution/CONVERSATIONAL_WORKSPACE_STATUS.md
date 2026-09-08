@@ -1714,3 +1714,30 @@ bounded canvas now fits the complete source image without distorting it; desktop
 still places the current-corrections button below the screenshot crop, and the test operates that
 button successfully. These synthetic classifications and boxes remain explicitly TEST evidence,
 not real-world model quality evidence. The production-build large-chunk warning remains open.
+
+### M2/M4 continuation — Project conversation usage visibility (2026-09-08)
+
+The existing owned task-budget endpoint now also reports Project-wide conversation allocations
+and reserved calls. It derives ownership from stable Project identity and aggregates planning
+grants/call receipts separately from linked Batch allowances; it does not multiply grants by a
+receipt join, count authorization revisions repeatedly, or depend on a late `started` receipt.
+Failed and indeterminate reservations remain charged. New conversations and independent goals
+retain Project totals while their own task totals correctly begin at zero. Another Project's
+ledger is excluded. Processing confirmation displays the aggregate as call counts, explicitly
+not money, an estimate or a new authorization. Existing saved receipts without these optional
+Web fields do not invent a zero Project total.
+
+Important remaining boundary: this is persistent cumulative visibility, NOT a configurable
+Project-wide spending cap. Existing task/Batch transactional admission caps still apply; no
+arbitrary 128-call Project cap was introduced. Project-wide explicit ceiling configuration,
+atomic admission across tasks and early planning authorization presentation remain to be built.
+The original goal's no-budget-reset requirement is not declared complete by this step.
+
+Expanded storage regression covers planning failures, Batch spend, restart, new conversation,
+new task, additional authorization and foreign-Project isolation. All Storage tests passed
+(56 unit + 16 integration), and all-target/all-feature Storage clippy passed. Web typecheck and
+the full human-classification TEST browser delivery path passed in
+`/tmp/annotagent-guided-e2e-14099` (1/1), including displayed Project totals and unchanged task/
+Project counts after formal processing. This run rebuilt the real application against the
+isolated HTTP TEST transport. No Live inference/accuracy or human usability claim, no real data
+mutation, old credential use, push or remote modification.

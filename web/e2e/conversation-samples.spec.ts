@@ -322,6 +322,7 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   await expect(confirmCard).toContainText("prior usage is not reset");
   await expect(confirmCard).toContainText("Cost is unknown");
   await expect(confirmCard.getByRole("button",{name:"Confirm and start processing",exact:true})).toBeDisabled();
+  await expect(confirmCard).toContainText(`Project conversation history: ${approval.task_budget.project_reserved_calls} calls reserved`);
   await confirmCard.getByRole("checkbox",{name:"I authorize this image, model and call-budget scope",exact:true}).check();
   if(kind==="bbox"){
     await page.setViewportSize({width:390,height:844});
@@ -362,6 +363,8 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   expect(budgetAfter.planning_reserved_calls).toBe(budgetBefore.planning_reserved_calls);
   expect(budgetAfter.processing_authorized_calls).toBe(approval.maximum_model_calls);
   expect(budgetAfter.processing_reserved_calls).toBe(1);
+  expect(budgetAfter.project_reserved_calls).toBe(budgetAfter.total_reserved_calls);
+  expect(budgetAfter.project_authorized_calls).toBe(budgetAfter.total_authorized_calls);
   expect(budgetAfter.total_reserved_calls).toBe(budgetBefore.total_reserved_calls+1);
   expect(budgetAfter.total_authorized_calls).toBe(budgetBefore.total_authorized_calls+approval.maximum_model_calls);
   await page.reload();
