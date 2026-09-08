@@ -23,6 +23,23 @@ pub(super) struct SchemaEdit {
 pub(super) struct HumanSchemaInput {
     request_id: uuid::Uuid,
     decision: annotagent_application::ConversationSchemaDecision,
+    clarification: Option<annotagent_storage::SchemaClarificationRef>,
+}
+
+pub(super) async fn clarification(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task, call)): AxumPath<(
+        String,
+        uuid::Uuid,
+        uuid::Uuid,
+        uuid::Uuid,
+    )>,
+) -> ApiResult<Json<annotagent_storage::SchemaClarification>> {
+    state
+        .application
+        .schema_clarification(&project, conversation, task, call)
+        .map(Json)
+        .map_err(ApiError::bad_request)
 }
 
 pub(super) async fn human_drafts(
@@ -43,12 +60,13 @@ pub(super) async fn save_human_draft(
 ) -> ApiResult<Json<annotagent_storage::ConversationSchemaDraft>> {
     state
         .application
-        .save_human_conversation_schema_draft(
+        .save_human_schema_with_clarification(
             &project,
             conversation,
             task,
             input.request_id,
             &input.decision,
+            input.clarification.as_ref(),
         )
         .map(Json)
         .map_err(ApiError::bad_request)

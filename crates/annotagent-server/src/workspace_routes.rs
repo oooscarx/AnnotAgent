@@ -44,6 +44,7 @@ pub(super) fn routes() -> Router<ServerState> {
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/calls", get(super::conversation_schema::history))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/calls/{call_id}/cancel", post(super::conversation_schema::cancel))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/schema-preview", get(super::conversation_schema::preview))
+        .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/calls/{call_id}/clarification", get(super::conversation_schema::clarification))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/schema-authorizations/pending", get(super::conversation_schema::pending_authorization))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/schema-proposals", post(super::conversation_schema::propose))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/human-schema-drafts", get(super::conversation_schema::human_drafts).post(super::conversation_schema::save_human_draft))

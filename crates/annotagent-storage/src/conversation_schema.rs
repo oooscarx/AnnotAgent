@@ -56,6 +56,176 @@ mod tests {
     }
 
     #[test]
+    fn clarification_answer_is_atomic_owned_and_unblocks_without_resetting_usage() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("TEST-clarification.db");
+        let store = SqliteStore::open(&path).unwrap();
+        let project = Uuid::new_v4().to_string();
+        let task = task(&store, &project);
+        let grant = ConversationCallGrant {
+            id: Uuid::new_v4(),
+            task_id: task,
+            scope_hash: "a".repeat(64),
+            maximum_calls: 2,
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(5),
+        };
+        store
+            .authorize_conversation_calls(&project, &grant)
+            .unwrap();
+        let call = Uuid::new_v4();
+        let hash = "b".repeat(64);
+        store
+            .reserve_conversation_call(&project, task, call, &grant.scope_hash, &hash)
+            .unwrap();
+        assert!(
+            store
+                .conversation_schema_clarification(&project, task, call)
+                .is_err()
+        );
+        store.finish_conversation_call(&project, task, call, ConversationCallStatus::Completed,
+            serde_json::json!({"decision":{"Ok":{"decision":"clarify","question":"TEST which labels?"}}})).unwrap();
+        assert!(
+            store
+                .conversation_schema_clarification("foreign", task, call)
+                .is_err()
+        );
+        assert_eq!(
+            store
+                .conversation_schema_clarification(&project, task, call)
+                .unwrap()
+                .status,
+            "pending"
+        );
+        let next = Uuid::new_v4();
+        assert!(
+            store
+                .reserve_conversation_call(&project, task, next, &grant.scope_hash, &hash)
+                .unwrap_err()
+                .to_string()
+                .contains("clarification")
+        );
+        assert!(matches!(
+            store
+                .reserve_conversation_call(&project, task, call, &grant.scope_hash, &hash)
+                .unwrap(),
+            crate::ConversationCallAdmission::Existing(_)
+        ));
+        let request = Uuid::new_v4();
+        let reference = crate::SchemaClarificationRef {
+            call_id: call,
+            expected_schema_revision: "a".repeat(64),
+        };
+        let input = definition();
+        let stale = crate::SchemaClarificationRef {
+            expected_schema_revision: "c".repeat(64),
+            ..reference.clone()
+        };
+        assert!(
+            store
+                .create_human_schema_with_clarification(
+                    &project,
+                    task,
+                    request,
+                    &input,
+                    Some(&stale)
+                )
+                .is_err()
+        );
+        // Failure between Schema insertion and answer linkage must roll both back.
+        store.with_connection(|db| {
+            db.execute_batch("CREATE TRIGGER fail_answer BEFORE INSERT ON conversation_schema_clarification_answers BEGIN SELECT RAISE(ABORT,'TEST link failure'); END;")?;
+            Ok(())
+        }).unwrap();
+        assert!(
+            store
+                .create_human_schema_with_clarification(
+                    &project,
+                    task,
+                    request,
+                    &input,
+                    Some(&reference)
+                )
+                .is_err()
+        );
+        store
+            .with_connection(|db| {
+                let count: i64 = db.query_row(
+                    "SELECT count(*) FROM conversation_schema_drafts",
+                    [],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(count, 0);
+                db.execute_batch("DROP TRIGGER fail_answer;")?;
+                Ok(())
+            })
+            .unwrap();
+        let draft = store
+            .create_human_schema_with_clarification(
+                &project,
+                task,
+                request,
+                &input,
+                Some(&reference),
+            )
+            .unwrap();
+        assert!(
+            store
+                .create_human_schema_with_clarification(
+                    &project,
+                    task,
+                    Uuid::new_v4(),
+                    &input,
+                    Some(&reference)
+                )
+                .is_err()
+        );
+        assert!(
+            store
+                .create_human_conversation_schema_draft(&project, task, request, &input)
+                .is_err()
+        );
+        drop(store);
+        let store = SqliteStore::open(&path).unwrap();
+        assert_eq!(
+            store
+                .create_human_schema_with_clarification(
+                    &project,
+                    task,
+                    request,
+                    &input,
+                    Some(&reference)
+                )
+                .unwrap(),
+            draft
+        );
+        let answered = store
+            .conversation_schema_clarification(&project, task, call)
+            .unwrap();
+        assert_eq!(answered.status, "applied");
+        assert_eq!(answered.schema_draft_id, Some(draft.id));
+        assert_eq!(
+            store
+                .conversation_task_budget(&project, task)
+                .unwrap()
+                .planning_reserved_calls,
+            1
+        );
+        assert!(matches!(
+            store
+                .reserve_conversation_call(&project, task, next, &grant.scope_hash, &hash)
+                .unwrap(),
+            crate::ConversationCallAdmission::Admitted
+        ));
+        assert_eq!(
+            store
+                .conversation_task_budget(&project, task)
+                .unwrap()
+                .planning_reserved_calls,
+            2
+        );
+    }
+
+    #[test]
     fn human_schema_is_owned_idempotent_versioned_and_has_no_model_calls() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("TEST-human-schema.db");
@@ -369,9 +539,21 @@ impl SqliteStore {
         request: Uuid,
         definition: &ConversationSchemaDefinition,
     ) -> Result<ConversationSchemaDraft, StorageError> {
+        self.create_human_schema_with_clarification(project, task, request, definition, None)
+    }
+    pub fn create_human_schema_with_clarification(
+        &self,
+        project: &str,
+        task: Uuid,
+        request: Uuid,
+        definition: &ConversationSchemaDefinition,
+        clarification: Option<&crate::SchemaClarificationRef>,
+    ) -> Result<ConversationSchemaDraft, StorageError> {
         self.with_connection(|db| {
             let tx = db.unchecked_transaction()?;
             owned(&tx, project, task)?;
+            let question=clarification.map(|r|crate::conversation_clarifications::read(&tx,project,task,r.call_id)).transpose()?;
+            if let (Some(reference),Some(question))=(clarification,&question){if reference.expected_schema_revision!=question.expected_schema_revision{return Err(invalid("Clarification Schema revision changed"));}}
             let existing: Option<String> = tx.query_row("SELECT id FROM conversation_schema_drafts WHERE source_request_id=?1", [request.to_string()], |row| row.get(0)).optional()?;
             if let Some(existing) = existing {
                 let id = Uuid::parse_str(&existing).map_err(|_| invalid("invalid Schema ID"))?;
@@ -379,12 +561,16 @@ impl SqliteStore {
                 if initial.task_id != task || &initial.definition != definition {
                     return Err(invalid("Schema creation conflicts with saved human input"));
                 }
+                let linked:Option<String>=tx.query_row("SELECT call_id FROM conversation_schema_clarification_answers WHERE schema_draft_id=?1",[id.to_string()],|r|r.get(0)).optional()?;
+                if linked!=clarification.map(|r|r.call_id.to_string()){return Err(invalid("Schema answer retry changed its clarification reference"));}
                 return read(&tx, project, id, None);
             }
+            if question.as_ref().is_some_and(|q|q.schema_draft_id.is_some()){return Err(invalid("This clarification was already answered; edit its saved Schema Draft"));}
             let base: String = tx.query_row("SELECT schema_revision FROM conversation_tasks WHERE id=?1", [task.to_string()], |row| row.get(0))?;
             let id = Uuid::new_v4();
             tx.execute("INSERT INTO conversation_schema_drafts(id,task_id,source_request_id,base_schema_revision) VALUES(?1,?2,?3,?4)", params![id.to_string(),task.to_string(),request.to_string(),base])?;
             tx.execute("INSERT INTO conversation_schema_revisions(draft_id,revision,request_id,definition_json) VALUES(?1,1,?2,?3)", params![id.to_string(),request.to_string(),serde_json::to_string(definition)?])?;
+            if let Some(reference)=clarification {tx.execute("INSERT INTO conversation_schema_clarification_answers(call_id,request_id,schema_draft_id) VALUES(?1,?2,?3)",params![reference.call_id.to_string(),request.to_string(),id.to_string()])?;}
             tx.commit()?;
             read(db, project, id, None)
         })

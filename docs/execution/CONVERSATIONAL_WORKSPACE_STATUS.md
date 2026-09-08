@@ -1864,3 +1864,38 @@ independent `/tmp/annotagent-guided-e2e-17309` passed 1/1 after removing the opa
 from the default pending card; exact model details remain in the verified authorization preview.
 Inspected `schema-pending-authorization.png` and `schema-original-consent-recovered.png` for
 saved-versus-running wording and clear recovery controls. Typecheck and diff hygiene passed.
+
+### M2 continuation — answer a Schema clarification in the original task
+
+The existing Schema service could return `Clarify`, but the GUI displayed the question without
+an answer path. The workspace now offers an explicit structured answer for output type, labels
+and boundary rules. It reuses the human-authored versioned Schema Draft, then the existing
+Builder authorization panel. Saving the answer itself makes no model request, changes no
+Project YAML, publishes nothing and writes no formal annotation.
+
+The immutable completed Schema call is the request source, with owned conversation/task/message
+and original Schema revision. Migration 37 stores only the answer-to-Draft linkage. Answer and
+Schema creation share one transaction; conflicting repeat answers and stale references fail
+closed. Exact retries survive response loss and database reopen. An unanswered clarification
+blocks new task model-call admission; replaying an existing receipt remains read-only. Answering
+does not reset the previously reserved call count or grant further inference permissions.
+
+Validation: all 59 Storage unit and 16 integration tests passed, including injected answer-link
+failure rollback, foreign ownership, stale revision, same-ID restart retry, pending-call gate and
+post-answer usage preservation. Server and HTTP fixture all-target/all-feature clippy passed.
+Web typecheck and 119 unit tests passed (`npm --prefix web test`; `test:unit` does not exist).
+The isolated HTTP TEST browser scenario passed 1/1 in `/tmp/annotagent-guided-e2e-17753`:
+real Schema transport returns a scripted clarification, Chinese labels/rules are saved, the
+successful response is deliberately lost, explicit same-request retry restores one Draft,
+refresh retains it and opening Builder authorization leaves the budget unchanged at one call.
+Production build ran through this browser harness; the existing large-chunk warning remains.
+Inspected `conversational-workspace/clarification-answer-restored.png` for the saved revision,
+labels and explicit next-phase consent. The card still has dense budget explanatory text;
+this is functional recovery evidence, not final compact-layout or human-usability acceptance.
+
+Scope limit: this implements the annotation-semantics clarification only, not all HumanRequest
+types or free-text interpretation. The browser scenario stops at Builder authorization rather
+than making a second model request; other shared human-Schema delivery tests remain separate
+evidence. Deferral/cancellation UI for this request type and continuous coordination remain open.
+No Live/paid model or real user Workspace was used, no old key, no push or remote change.
+Full-workspace regression and real-human usability have not been repeated for this increment.

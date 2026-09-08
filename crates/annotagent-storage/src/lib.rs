@@ -3,6 +3,8 @@
 mod batch;
 mod conversation_builder;
 mod conversation_calls;
+mod conversation_clarifications;
+pub use conversation_clarifications::{SchemaClarification, SchemaClarificationRef};
 mod conversation_project_budget;
 pub use conversation_builder::ConversationBuilderOperation;
 pub use conversation_calls::ConversationCallCancellation;
@@ -610,6 +612,8 @@ impl SqliteStore {
             let transaction = connection.unchecked_transaction()?;
             transaction.execute_batch(include_str!("../../../migrations/0035_conversation_project_budget.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0036_conversation_schema_authorizations.sql"))?;
+            transaction.execute_batch(include_str!("../../../migrations/0037_conversation_schema_clarifications.sql"))?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(37,'conversation_schema_clarifications',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(36,'conversation_schema_authorizations',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(35,'conversation_project_budget',?1)",[Utc::now().to_rfc3339()])?;
             transaction.commit()?;

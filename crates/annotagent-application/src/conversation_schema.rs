@@ -185,6 +185,38 @@ impl crate::LocalApplication {
         request: Uuid,
         decision: &ConversationSchemaDecision,
     ) -> Result<annotagent_storage::ConversationSchemaDraft> {
+        self.save_human_schema_with_clarification(
+            project,
+            conversation,
+            task,
+            request,
+            decision,
+            None,
+        )
+    }
+    pub fn schema_clarification(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        call: Uuid,
+    ) -> Result<annotagent_storage::SchemaClarification> {
+        self.optional_conversation_builder_budget(project, conversation, task)?;
+        Ok(self.store.conversation_schema_clarification(
+            &self.conversation_project_identity(project)?,
+            task,
+            call,
+        )?)
+    }
+    pub fn save_human_schema_with_clarification(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        request: Uuid,
+        decision: &ConversationSchemaDecision,
+        clarification: Option<&annotagent_storage::SchemaClarificationRef>,
+    ) -> Result<annotagent_storage::ConversationSchemaDraft> {
         let record = self
             .conversation_tasks(project, conversation)?
             .into_iter()
@@ -201,7 +233,7 @@ impl crate::LocalApplication {
             .store
             .conversation_message(&owner, conversation, record.input.source_message_id)?
             .ok_or_else(|| anyhow::anyhow!("Saved task goal not found"))?;
-        Ok(self.store.create_human_conversation_schema_draft(
+        Ok(self.store.create_human_schema_with_clarification(
             &owner,
             task,
             request,
@@ -210,6 +242,7 @@ impl crate::LocalApplication {
                 task: config,
                 boundary_rules: boundary_rules.clone(),
             },
+            clarification,
         )?)
     }
 
