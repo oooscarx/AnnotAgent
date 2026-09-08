@@ -1,5 +1,21 @@
 # Conversational Annotation Workspace — execution record
 
+## Current checkpoint (after `c13f92d`; not a completion declaration)
+
+The default Project entry now uses the persisted conversation/image workspace. Explicit goal
+selection survives re-entry, sample candidate references are frozen, and clarification/correction
+requests can be saved, cancelled or (for corrections) deferred/reopened without resetting budgets.
+The isolated bbox/classification tests exercise real Rust services through TEST HTTP model
+transports, including correction, revision, formal confirmation, review and export.
+
+Still incomplete: the bounded coordinator that advances through Schema/Builder/sample stages
+under one matching authorization; automatic interpretation of scoped conversational feedback;
+the other structured visual/setup request kinds; complete scope-change/Schema patch and stop-text
+semantics; large-history performance and the remaining accessibility/context restoration audit.
+Current phase cards still require explicit intermediate actions. Live model quality, native
+200-percent browser zoom and real-human novice usability are not proven. Full regression results
+and their failures/fixes are recorded chronologically at the end of this file.
+
 ## Direction and baseline (M0, 2026-09-08)
 
 Latest request: `b9212e8e-88ee-40a7-af04-261d2adcf421/pasted-text.txt`.
@@ -2251,3 +2267,46 @@ the saved corrected box are shown. The browser verifies normalized width 0.15 af
 not an assumed SVG pixel scale. The synthetic TEST image and cup result are protocol fixtures,
 not representative detection evidence. Diff hygiene passed; unrelated screenshot changes remain
 unstaged. No fresh full Rust workspace suite or native browser zoom validation is claimed here.
+
+### M4 regression checkpoint — full workspace after durable task/request restoration
+
+At `c13f92d`, ran the complete Rust chain: `cargo fmt --all --check`,
+`cargo clippy --workspace --all-targets --all-features -- -D warnings`,
+`cargo test --workspace --all-features`, and `cargo build --workspace --all-features`.
+The chain completed with exit 0. Live-conditional/ignored tests remain excluded: legal externally
+supplied YOLOX/PIDNet/RF-DETR/SAM model-process weights and any explicitly ignored paid-provider
+smoke are not verified by this result. No total test count is inferred from truncated output.
+
+Full Chromium run `/tmp/annotagent-guided-e2e-25398` exercised 78 scenarios. It exposed shared
+TEST-server mutation pacing failures in the classification repair sample, human-classification
+Builder and Schema cancellation waits. Retained Playwright network traces show repeated POST 429s
+to the corresponding sample-operations, builder-operations and cancel endpoints. The fixture was
+still within its existing 65-second bounded pre-execution retry window while UI expectations
+expired after 10 seconds. This was not evidence of an admitted model loop or a missing receipt.
+
+Only the two long conversation sample/Schema test files now use 75-second UI expectation windows
+and a 180-second overall test limit. Assertions and production behavior remain unchanged: the
+fixture still retries only proven pre-execution rate-limit rejections, never provider errors or
+unknown execution outcomes; production rate limits, Agent steps and call budgets are not raised.
+Cancellation still shares the production mutation limiter; prompt cancellation under saturation
+is a product limitation, not solved by increasing a TEST timeout. Final full-browser outcome and
+rerun evidence follow below. Unrelated regenerated screenshots are not staged.
+First run finished 75/78 (5.3 minutes). The second full run
+`/tmp/annotagent-guided-e2e-26029` finished 77/78 (5.2 minutes): all five sample scenarios passed,
+but Schema response-loss injection used raw `route.fetch`, bypassing the bounded 429 handling.
+It asserted success on a pre-execution rejection. Updated Schema save/Builder and sample response
+loss interceptors to use the same bounded helper, and changed held Builder delivery to route
+fallback so the fixture can handle the real rejection. This preserves the intended test: only a
+confirmed successful server write has its browser response deliberately discarded. A third full
+run is required before claiming 78/78; the prior two runs do not prove that result. No production
+code changes were made for these test harness corrections.
+Final full Chromium run `/tmp/annotagent-guided-e2e-26472` passed **78/78 in 5.3 minutes**,
+including all five conversation sample scenarios, Schema cancellation/recovery, management
+delete/restore, Review/Export, settings/Provider/plugin protocols, ownership, keyboard, responsive
+reflow and security tests. This supersedes the earlier failed runs for the current harness; it
+does not erase them or claim they passed. Web typecheck, 123 unit tests and production build also
+passed; the existing large JavaScript chunk warning remains. The browser's 200-percent test is
+the documented CSS reflow boundary, not a verified native browser zoom operation. Five ignored
+Rust tests (paid Builder provider smoke and four externally supplied model-process weights) remain
+unexecuted. All evidence is isolated TEST transport/fixtures, not Live inference quality or real
+human novice usability. The overall goal remains active with the gaps listed at the top.

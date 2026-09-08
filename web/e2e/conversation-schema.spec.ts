@@ -1,8 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { expect, test, fetchWithinMutationLimit } from "./fixtures";
+import { expect as baseExpect, test, fetchWithinMutationLimit } from "./fixtures";
+
+// Match the fixture's bounded pacing of the shared server's 60-second mutation
+// window; do not mistake an in-flight pre-execution 429 retry for a lost receipt.
+const expect=baseExpect.configure({timeout:75_000});
 
 test("authorized conversation Schema crosses actual HTTP Provider transport once and restores receipts", async ({ page, request }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   const provider = await (await request.post("/api/providers", { data: { display_name:"Conversation TEST fixture", adapter:"open_ai_compatible",base_url:"http://127.0.0.1:8796/openai/v1" } })).json();
   expect((await request.post(`/api/providers/${provider.id}/credential`,{data:{source:"workspace_file",secret:"TEST-conversation-protocol-only"}})).ok()).toBeTruthy();
   const model = await (await request.post("/api/model-profiles",{data:{provider_id:provider.id,display_name:"Conversation TEST text model",remote_model_id:"e2e-conversation-schema",input_modalities:["text"],task_capabilities:["text_generation"],protocol_features:{tool_calls:true,structured_output:true}}})).json();
@@ -144,7 +148,7 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
   await page.getByRole("button",{name:"Edit labels and boundary rules",exact:true}).click();
   await page.getByLabel("Labels · one per line",{exact:true}).fill("TEST recovered edit");
   await page.route("**/conversation-schema-drafts/*",async(route)=>{
-    const saved = await route.fetch(); expect(saved.ok()).toBeTruthy(); await route.abort("failed");
+    const saved = await fetchWithinMutationLimit(route); expect(saved.ok(),await saved.text()).toBeTruthy(); await route.abort("failed");
   },{times:1});
   await page.getByRole("button",{name:"Save Schema changes",exact:true}).click();
   await expect(page.getByText("Save outcome unknown; retry the same edit",{exact:true})).toBeVisible();
@@ -156,7 +160,7 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
   await page.getByRole("checkbox",{name:"Allow this bounded Builder request; actual cost is unknown",exact:true}).check();
   await page.route("**/builder-operations",async(route)=>{
     if(route.request().method()!=="POST"){await route.continue();return;}
-    const response=await route.fetch();expect(response.ok()).toBeTruthy();await route.abort("failed");
+    const response=await fetchWithinMutationLimit(route);expect(response.ok(),await response.text()).toBeTruthy();await route.abort("failed");
   },{times:1});
   await page.getByRole("button",{name:"Build Pipeline Draft",exact:true}).click();
   await expect(page.getByText("Builder outcome saved",{exact:true})).toBeVisible();
@@ -180,7 +184,7 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
   await page.getByRole("checkbox",{name:"Allow this bounded Builder request; actual cost is unknown",exact:true}).check();
   let releaseBuilder!:()=>void;
   const holdBuilder=new Promise<void>((resolve)=>{releaseBuilder=resolve;});
-  await page.route("**/builder-operations",async(route)=>{if(route.request().method()==="POST")await holdBuilder;await route.continue();});
+  await page.route("**/builder-operations",async(route)=>{if(route.request().method()==="POST")await holdBuilder;await route.fallback();});
   const builderSubmitted=page.waitForRequest((req)=>req.method()==="POST" && req.url().endsWith("/builder-operations"));
   await page.getByRole("button",{name:"Build Pipeline Draft",exact:true}).click();
   const builderPending=await builderSubmitted;

@@ -1,7 +1,12 @@
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { expect, test, fetchWithinMutationLimit } from "./fixtures";
+import { expect as baseExpect, test, fetchWithinMutationLimit } from "./fixtures";
+
+// This complete workflow crosses the shared TEST server's real 60-second mutation
+// window. The fixture retries only proven pre-execution 429s for up to 65 seconds;
+// UI observations must not fail while that bounded transport pacing is still active.
+const expect=baseExpect.configure({timeout:75_000});
 
 for(const scenario of ["classification","bbox","classification-review","human-classification","human-bbox"] as const){
 const humanSchema = scenario.startsWith("human-");
@@ -9,7 +14,7 @@ const transport = humanSchema ? scenario.slice(6) : scenario;
 const kind = transport === "bbox" ? "bbox" : "classification";
 const requiresReview = transport !== "classification";
 test(`conversation ${scenario} authorizes HTTP fixture samples and restores editable terminal canvas`,async({page,request})=>{
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   // Each scenario must bind its own TEST transport, not an earlier compatible registry model.
   const existingProfiles = (await (await request.get("/api/model-profiles")).json()).models;
   for (const profile of existingProfiles) {
@@ -106,7 +111,7 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   await page.route(`**/api/projects/${project}/sample-operations`,async route=>{
     if(route.request().method()!=="POST")return route.continue();
     envelope=route.request().postDataJSON();
-    await route.fetch();await route.abort("failed");
+    const response=await fetchWithinMutationLimit(route);expect(response.ok(),await response.text()).toBe(true);await route.abort("failed");
   },{times:1});
   await start.click();
   await expect(page.getByRole("button",{name:"View sample results in canvas",exact:true})).toBeVisible();
