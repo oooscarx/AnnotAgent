@@ -12,6 +12,8 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
   const root = `/api/projects/${project}/conversations`;
   const conversation = (await (await request.post(root)).json()).conversation_id;
   const revision = (await (await request.get(`/api/projects/${project}/goal`)).json()).revision;
+  const limitPath=`/api/projects/${project}/conversation-call-limit`;
+  expect((await request.post(limitPath,{data:{id:randomUUID(),expected_revision:0,maximum_calls:0}})).ok()).toBe(true);
   for (const [goal,kind] of [["Find cups, not bottles","bounding_box"],["按室内和室外给图片分类","classification"]]) {
     const message = randomUUID();
     expect((await request.post(`${root}/${conversation}/messages`,{data:{id:message,text:goal,image:null}})).ok()).toBeTruthy();
@@ -25,6 +27,11 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
     const consent = {call_id:randomUUID(),model_id:model.id,scope_hash:preview.scope_hash,expires_at:preview.expires_at,allow_unknown_cost:true};
     expect((await request.post(`${taskRoot}/schema-proposals`,{data:{...consent,allow_unknown_cost:false}})).status()).toBe(400);
     expect((await request.post(`${taskRoot}/schema-proposals`,{data:{...consent,scope_hash:"stale"}})).status()).toBe(400);
+    const beforeLimit=await (await request.get(limitPath)).json();
+    const rejected=await request.post(`${taskRoot}/schema-proposals`,{data:consent});
+    expect(rejected.ok()).toBe(false);expect(await rejected.text()).toContain("Project conversation call limit exhausted");
+    expect((await (await request.get(limitPath)).json()).reserved_calls).toBe(beforeLimit.reserved_calls);
+    expect((await request.post(limitPath,{data:{id:randomUUID(),expected_revision:beforeLimit.revision,maximum_calls:beforeLimit.reserved_calls+1}})).ok()).toBe(true);
     const response = await request.post(`${taskRoot}/schema-proposals`,{data:consent});
     expect(response.ok()).toBeTruthy(); const receipt = await response.json();
     expect(receipt.status).toBe("completed");

@@ -2,6 +2,28 @@
 use super::*;
 use annotagent_storage::{ConversationMessage, ConversationMessageInput};
 
+pub(super) async fn call_limit(
+    State(state): State<ServerState>,
+    AxumPath(project): AxumPath<String>,
+) -> ApiResult<Json<annotagent_storage::ProjectCallLimit>> {
+    state
+        .application
+        .project_conversation_call_limit(&project)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+pub(super) async fn set_call_limit(
+    State(state): State<ServerState>,
+    AxumPath(project): AxumPath<String>,
+    Json(input): Json<annotagent_storage::ProjectCallLimitInput>,
+) -> ApiResult<Json<annotagent_storage::ProjectCallLimit>> {
+    state
+        .application
+        .set_project_conversation_call_limit(&project, &input)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub(super) struct MessagePage {

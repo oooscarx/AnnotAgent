@@ -27,6 +27,15 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   expect((await request.post("/api/projects",{data:{id:project,yaml:"version: 1\nproject:\n  name: TEST conversation samples\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n"}})).ok()).toBeTruthy();
   expect((await request.put(`/api/projects/${project}/model-bindings`,{data:{bindings:[{capability:"image_classification",role:"classification",match_kind:"capability",model_profile_id:model.id,locked:false}]}})).ok()).toBeTruthy();
   await page.goto(`/projects/${project}/work`);
+  if(scenario==="human-classification"){
+    await page.getByText("Project call limit",{exact:true}).click();
+    const ceiling=page.getByRole("region",{name:"Project call limit",exact:true});
+    await ceiling.getByLabel("Cumulative maximum calls",{exact:true}).fill("64");
+    await ceiling.getByRole("checkbox").check();
+    await ceiling.getByRole("button",{name:"Save Project limit",exact:true}).click();
+    await expect(ceiling).toContainText("64 cumulative maximum · Revision 1");
+    await page.getByText("Project call limit",{exact:true}).click();
+  }
   await page.getByLabel("Add images",{exact:true}).setInputFiles(resolve("../examples/robocup/images/synthetic-robocup.png"));
   await expect(page.getByText("Images saved on this server. No model has been called.",{exact:true})).toBeVisible();
   await page.getByLabel("Your message",{exact:true}).fill(kind==="classification" ? "按室内和室外给图片分类" : "Find cups, not bottles. Draw a tight box around each cup.");
@@ -365,6 +374,10 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   expect(budgetAfter.processing_reserved_calls).toBe(1);
   expect(budgetAfter.project_reserved_calls).toBe(budgetAfter.total_reserved_calls);
   expect(budgetAfter.project_authorized_calls).toBe(budgetAfter.total_authorized_calls);
+  if(scenario==="human-classification"){
+    const ceiling=await (await request.get(`/api/projects/${project}/conversation-call-limit`)).json();
+    expect(ceiling.maximum_calls).toBe(64);expect(ceiling.reserved_calls).toBe(budgetAfter.project_reserved_calls);
+  }
   expect(budgetAfter.total_reserved_calls).toBe(budgetBefore.total_reserved_calls+1);
   expect(budgetAfter.total_authorized_calls).toBe(budgetBefore.total_authorized_calls+approval.maximum_model_calls);
   await page.reload();

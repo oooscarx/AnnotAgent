@@ -24,9 +24,16 @@ impl SqliteStore {
         batch_id: annotagent_core::BatchId,
     ) -> Result<(), StorageError> {
         self.with_connection(|connection| {
-            if connection.execute("UPDATE batch_model_call_allowances SET reserved=reserved+1 WHERE batch_id=?1 AND reserved<maximum", [batch_id.to_string()])? != 1 {
+            let tx=connection.unchecked_transaction()?;
+            let task:Option<String>=tx.query_row("SELECT json_extract(state_json,'$.authorization.conversation.task_id') FROM processing_operations WHERE id=?1",[batch_id.to_string()],|r|r.get(0)).optional()?.flatten();
+            if let Some(task)=task {
+                let project:String=tx.query_row("SELECT c.project_id FROM conversation_tasks t JOIN project_conversations c ON c.id=t.conversation_id WHERE t.id=?1",[task],|r|r.get(0))?;
+                crate::conversation_project_budget::admit(&tx,&project)?;
+            }
+            if tx.execute("UPDATE batch_model_call_allowances SET reserved=reserved+1 WHERE batch_id=?1 AND reserved<maximum", [batch_id.to_string()])? != 1 {
                 return Err(StorageError::InvalidEnum("Processing model-call allowance exhausted or unavailable; no request was sent".into()));
             }
+            tx.commit()?;
             Ok(())
         })
     }

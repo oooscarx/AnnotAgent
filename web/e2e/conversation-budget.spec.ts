@@ -1,0 +1,40 @@
+import {randomUUID} from "node:crypto";
+import {expect,test,fetchWithinMutationLimit} from "./fixtures";
+
+test("Project conversation ceiling persists, retries exactly and rejects stale changes",async({page,request})=>{
+  const project=`conversation-budget-${Date.now()}`;
+  expect((await request.post("/api/projects",{data:{id:project,yaml:"version: 1\nproject:\n  name: TEST Project call ceiling\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n"}})).ok()).toBe(true);
+  const path=`/api/projects/${project}/conversation-call-limit`;
+  await page.goto(`/projects/${project}/work`);
+  await page.getByText("Project call limit",{exact:true}).click();
+  const card=page.getByRole("region",{name:"Project call limit",exact:true});
+  await expect(card).toContainText("No Project conversation ceiling configured");
+  await card.getByLabel("Cumulative maximum calls",{exact:true}).fill("0");
+  await expect(card.getByRole("button",{name:"Save Project limit",exact:true})).toBeDisabled();
+  await card.getByRole("checkbox").check();
+  let first:any;
+  await page.route(`**${path}`,async route=>{
+    if(route.request().method()!=="POST")return route.fallback();
+    first=route.request().postDataJSON();const response=await fetchWithinMutationLimit(route);expect(response.ok(),await response.text()).toBe(true);await route.abort("failed");
+  },{times:1});
+  await card.getByRole("button",{name:"Save Project limit",exact:true}).click();
+  await expect(card.getByRole("button",{name:"Retry saving Project limit",exact:true})).toBeVisible();
+  await card.getByRole("button",{name:"Retry saving Project limit",exact:true}).click();
+  await expect(card).toContainText("0 cumulative maximum · Revision 1");
+  await page.reload();await page.getByText("Project call limit",{exact:true}).click();
+  await expect(card).toContainText("0 cumulative maximum · Revision 1");
+  expect(await (await request.get(path)).json()).toEqual({revision:1,maximum_calls:0,reserved_calls:0});
+  const next={id:randomUUID(),expected_revision:1,maximum_calls:3};
+  expect((await request.post(path,{data:next})).ok()).toBe(true);
+  await card.getByLabel("Cumulative maximum calls",{exact:true}).fill("2");await card.getByRole("checkbox").check();
+  await card.getByRole("button",{name:"Save Project limit",exact:true}).click();
+  await expect(card.getByRole("alert")).toContainText("Project budget changed");
+  expect((await (await request.post(path,{data:first})).json()).maximum_calls).toBe(3);
+  page.once("dialog",dialog=>dialog.accept());await card.getByRole("button",{name:"Reload saved limit",exact:true}).click();
+  await expect(card).toContainText("3 cumulative maximum · Revision 2");
+  await page.setViewportSize({width:390,height:844});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await card.screenshot({path:"../docs/execution/conversational-workspace/project-call-limit-390.png",animations:"disabled"});
+  expect((await request.post(`/api/projects/not-a-project/conversation-call-limit`,{data:{id:randomUUID(),expected_revision:0,maximum_calls:100}})).ok()).toBe(false);
+  expect((await request.post(path,{data:{id:randomUUID(),expected_revision:2,maximum_calls:10,grant_model_permission:true}})).ok()).toBe(false);
+});

@@ -15,6 +15,24 @@ pub struct ConversationProcessingContext {
 }
 
 impl LocalApplication {
+    pub fn project_conversation_call_limit(
+        &self,
+        project: &str,
+    ) -> Result<annotagent_storage::ProjectCallLimit> {
+        Ok(self
+            .store
+            .project_conversation_call_limit(&self.conversation_project_identity(project)?)?)
+    }
+    pub fn set_project_conversation_call_limit(
+        &self,
+        project: &str,
+        input: &annotagent_storage::ProjectCallLimitInput,
+    ) -> Result<annotagent_storage::ProjectCallLimit> {
+        Ok(self.store.set_project_conversation_call_limit(
+            &self.conversation_project_identity(project)?,
+            input,
+        )?)
+    }
     pub fn conversation_task_budget(
         &self,
         project: &str,

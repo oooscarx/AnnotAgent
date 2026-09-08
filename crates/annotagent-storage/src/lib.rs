@@ -3,8 +3,10 @@
 mod batch;
 mod conversation_builder;
 mod conversation_calls;
+mod conversation_project_budget;
 pub use conversation_builder::ConversationBuilderOperation;
 pub use conversation_calls::ConversationCallCancellation;
+pub use conversation_project_budget::{ProjectCallLimit, ProjectCallLimitInput};
 mod conversation_human_requests;
 mod conversation_schema;
 mod conversation_tasks;
@@ -604,6 +606,10 @@ impl SqliteStore {
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (24, ?1, ?2)", params!["project_conversations", Utc::now().to_rfc3339()])?;
             transaction.commit()?;
             crate::conversation_schema::migrate_sources(connection)?;
+            let transaction = connection.unchecked_transaction()?;
+            transaction.execute_batch(include_str!("../../../migrations/0035_conversation_project_budget.sql"))?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(35,'conversation_project_budget',?1)",[Utc::now().to_rfc3339()])?;
+            transaction.commit()?;
             Ok(())
         })
     }

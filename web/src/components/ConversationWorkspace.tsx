@@ -10,6 +10,7 @@ import { JourneyConfirm } from "./JourneyConfirm";
 import { ConversationBatchStatus } from "./ConversationBatchStatus";
 import { ConversationBatchResults } from "./ConversationBatchResults";
 import { conversationSampleRelation } from "../conversation-context";
+import { ConversationProjectBudget } from "./ConversationProjectBudget";
 import type { HumanRequest } from "../conversation-human-api";
 
 /** The journal and image importer share the existing Project; neither starts inference. */
@@ -75,6 +76,8 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   useEffect(()=>{sampleNavigation.current++;},[imageId,draftId,sampleTestId]);
   const unsent = useRef("");
   const schemaDirty = useRef(false);
+  const budgetDirty=useRef(false);
+  const budgetDirtyChange=useCallback((dirty:boolean)=>{budgetDirty.current=dirty;},[]);
   const sampleDirty = useRef(false);
   const formalGuard = useRef<(() => boolean) | undefined>(undefined);
   const formalGuardChange = useCallback((guard?:()=>boolean)=>{formalGuard.current=guard;},[]);
@@ -97,8 +100,8 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   const referenceImage = frozen.current ? images.find((image) => image.image_id === frozen.current?.image?.image_id) : results ? images.find(image=>image.image_id===results.imageId) : selected;
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
-    const guard = () => (!formalGuard.current || formalGuard.current()) && (selectingImage.current || (!pending.current && (!(unsent.current || schemaDirty.current || sampleDirty.current) || window.confirm("Leave with unsaved message, Schema or sample edits? Saved workspace data remains on the server."))));
-    const unload = (event: BeforeUnloadEvent) => { if (pending.current || unsent.current || schemaDirty.current || sampleDirty.current) event.preventDefault(); };
+    const guard = () => (!formalGuard.current || formalGuard.current()) && (selectingImage.current || (!pending.current && (!(unsent.current || schemaDirty.current || sampleDirty.current || budgetDirty.current) || window.confirm("Leave with unsaved message, Schema, budget or sample edits? Saved workspace data remains on the server."))));
+    const unload = (event: BeforeUnloadEvent) => { if (pending.current || unsent.current || schemaDirty.current || sampleDirty.current || budgetDirty.current) event.preventDefault(); };
     onNavigationGuardChange(guard);
     window.addEventListener("beforeunload", unload);
     return () => { onNavigationGuardChange(undefined); window.removeEventListener("beforeunload", unload); };
@@ -204,6 +207,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
         <h2>What would you like to annotate?</h2>
         <p className="muted">Describe your goal before or after uploading images.</p>
         <p className="conversation-development-note">Samples and corrections are evaluations, not formal annotations. Dataset processing needs your explicit image and budget confirmation. Advanced review and export remain in the saved processing results.</p>
+        <ConversationProjectBudget key={project.id} project={project.id} onDirtyChange={budgetDirtyChange}/>
         <ol className="conversation-messages" aria-label="Saved messages">
           {messages.map((message) => <li key={message.input.id}><p>{message.input.text}</p>{message.input.image && <button onClick={() => {
             const reference = message.input.image;

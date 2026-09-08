@@ -1741,3 +1741,44 @@ the full human-classification TEST browser delivery path passed in
 Project counts after formal processing. This run rebuilt the real application against the
 isolated HTTP TEST transport. No Live inference/accuracy or human usability claim, no real data
 mutation, old credential use, push or remote modification.
+
+### M2/M4 continuation — explicit shared Project conversation ceiling (2026-09-08)
+
+Migration 35 adds immutable, optimistic-revision-checked Project ceiling changes. A stable Project
+identity, not the active task or a client-supplied owner, selects the ledger. Same-ID retries
+validate the original input and return current state without undoing a newer ceiling. A stale
+new request fails; a ceiling below already-reserved usage fails. A zero ceiling before any spend
+is valid. Reads, reloads and opening a conversation never configure or raise a ceiling.
+
+Both conversation call admission and linked Dataset Batch model-call admission now check the
+shared cumulative ceiling inside their existing reservation transactions. No new executor is
+introduced. The test races independent SQLite connections (planning versus Batch), proves only
+one call fits a one-call Project allowance, then verifies restart, a second task's rejection,
+explicit expansion and exhaustion again. Existing phase-specific authorization is still required;
+setting a Project limit alone cannot dispatch a model request. Failures and unknown reservations
+are not refunded. Previously admitted receipt retries keep their original non-executing behavior.
+
+The workspace has an on-demand Project call limit panel with exact cumulative input and explicit
+confirmation. Lost-response retries freeze the same command; reload discards unsaved input only
+after confirmation and reads the latest revision. Unsaved budget edits participate in the parent
+dirty guard. The displayed usage is labelled a saved snapshot, not live progress. Inspected
+`project-call-limit-390.png`: form, consent and save/reload actions wrap within the narrow panel.
+
+Scope/remaining limitation: this ceiling is optional for compatibility with already-authorized
+work. An unconfigured Project retains existing task/Batch limits; no hidden default cap or budget
+expansion was added. It covers conversation-owned planners, samples and linked processing, not
+unrelated legacy workflows, Provider probes or currency spend. That boundary is explicit in UI.
+The future continuous coordinator still needs to include this ceiling in its compact initial
+authorization/context and budget-exhaustion recovery flow; full conversational experience is not
+declared finished by adding this panel.
+
+Validation: 57 Storage unit and 16 integration tests passed; all-target/all-feature Server clippy,
+Rust formatting, Web typecheck and 117 Web units passed. Isolated HTTP TEST browser run
+`/tmp/annotagent-guided-e2e-14640` passed 2/2: save/reload/lost response/stale revision/foreign
+Project/extra authorization-field rejection, plus actual Schema transport admission blocked at
+zero, explicitly expanded and then exhausted again by a new task. Final run
+`/tmp/annotagent-guided-e2e-14878` passed 2/2: the budget UI and full human-classification journey
+through Builder, sample repair, formal processing, Review/export and candidate references with
+an explicit 64-call shared ceiling. The Project count matches planning plus actual Batch use.
+No real Workspace mutations, paid/Live Provider calls, old keys, push or remote changes. No
+Live accuracy or real-human usability validation; production-build chunk-size warning remains.

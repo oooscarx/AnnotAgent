@@ -30,6 +30,7 @@ use super::{
 pub(super) fn routes() -> Router<ServerState> {
     Router::new()
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/budget", get(super::processing_operations::conversation_budget))
+        .route("/api/projects/{project_id}/conversation-call-limit", get(super::conversations::call_limit).post(super::conversations::set_call_limit))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/processing-operations", get(super::processing_operations::conversation_history))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/human-requests", get(super::conversation_human_requests::list).post(super::conversation_human_requests::create))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/human-requests/{request_id}/answer", post(super::conversation_human_requests::answer))
