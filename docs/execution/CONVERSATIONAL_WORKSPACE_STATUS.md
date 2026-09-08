@@ -4364,3 +4364,21 @@ from the fixture to hide the product edge case. Failure traces currently remain 
 `web/test-results/conversation-future-schema-{c281f,966bc}-on-one-plan-for-the-new-one-chromium/trace.zip`.
 The current 166-test run remains active on handle 79494; no product rebuild or second suite was
 started against its server. Full terminal totals and subsequent regressions are still pending.
+
+### 2026-09-09 — Oversized registry fix staged for browser verification
+
+Journey model selection now deduplicates bindings and preserves explicit choices. When the
+available registry exceeds 32 bindings and no choice exists, it selects none and opens the
+model selection area with an actionable message; it does not send a rejected preview request
+or arbitrarily truncate to 32. Users can select up to the unchanged server bound. Starting a
+new preview clears any previous preview so an error cannot leave a stale confirmation card.
+This adds a necessary choice only for an oversized registry, not another normal-path setup page.
+
+Three new selection unit tests pass (Web 206 total), typecheck and diff check pass. The existing
+two failing future-Schema UI tests now explicitly inject 34 browser-only registry choices,
+assert no preview before selection, select their one real registered TEST binding, and assert
+both HTTP success and exact allowed_models. They no longer dereference an unchecked response.
+These updated browser tests are NOT yet run: the earlier baseline suite remains live on handle
+79494 and has reached test 57 with the two previously diagnosed failures. No new Web build or
+server restart was made while it is running. Follow-up must verify this source change against
+a freshly built isolated server after baseline termination; no browser-pass claim yet.

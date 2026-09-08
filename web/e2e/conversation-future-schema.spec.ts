@@ -217,9 +217,25 @@ test(`future ${bbox?"bbox":"classification"} Schema UI restores the explicit for
   await expect(builder.getByText("Sample results saved",{exact:true})).toHaveCount(0);
   await expect(builder.getByRole("button",{name:"View sample results in canvas",exact:true})).toHaveCount(0);
   await expect(builder.getByRole("button",{name:"Review build and sample authorization",exact:true})).toBeVisible();
+  // A deliberately large browser-only registry must require an explicit selection,
+  // not send every binding (or silently truncate). The chosen binding is real.
+  const registry=await read(request,"/api/model-profiles");
+  const realModel=registry.models.find((model:any)=>model.id===state.model.id);
+  expect(realModel).toBeTruthy();
+  await page.route("**/api/model-profiles",route=>route.fulfill({json:{...registry,models:[realModel,...Array.from({length:33},(_,i)=>({...realModel,id:`TEST-extra-${i}`,display_name:`TEST extra choice ${i}`}))]}}));
+  let previews=0;
+  page.on("request",req=>{if(req.method()==="GET"&&req.url().includes(`${state.taskRoot}/journey-preview?`))previews++;});
+  await builder.getByRole("button",{name:"Review build and sample authorization",exact:true}).click();
+  await expect(builder.getByText(/No arbitrary subset is selected automatically/)).toBeVisible();
+  await expect(builder.locator(".journey-model-choices input:checked")).toHaveCount(0);
+  expect(previews).toBe(0);
+  await builder.locator(".journey-model-choices input").first().check();
   const previewRequest=page.waitForResponse(response=>response.request().method()==="GET"&&response.url().includes(`${state.taskRoot}/journey-preview?`));
   await builder.getByRole("button",{name:"Review build and sample authorization",exact:true}).click();
-  const preview=await (await previewRequest).json();
+  const response=await previewRequest;expect(response.ok(),await response.text()).toBe(true);
+  const preview=await response.json();
+  expect(JSON.parse(new URL(response.url()).searchParams.get("allowed_models")!)).toEqual([`model-profile:${state.model.id}`]);
+  await page.unroute("**/api/model-profiles");
   expect(preview.consent.schema_id).toBe(saved.schema.id);expect(preview.consent.schema_revision).toBe(1);
   await expect(builder.getByRole("button",{name:"Build plan and test samples",exact:true})).toBeDisabled();
   expect(mutations).toHaveLength(count);expect(await preserved(request,state,value.base_schema)).toEqual(before);

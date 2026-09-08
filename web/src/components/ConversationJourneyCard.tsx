@@ -5,6 +5,7 @@ import {projectBudgetAvailability} from "../projectBudget";
 import {conversationSettingsPath,projectBuildPath} from "../navigation";
 import type {OpenConversationSample} from "./ConversationSampleCard";
 import { consentMatchesSchema, journeyMatchesSchema } from "../conversation-schema-history";
+import { journeyModelSelection, MAX_JOURNEY_MODELS } from "../journey-model-selection";
 
 type Choice={id:string;name:string};
 const active=(value?:JourneyStatus)=>value?.dispatch?.status==="running" || ["queued","running","cancelling"].includes(value?.sample?.status ?? "");
@@ -64,13 +65,14 @@ function JourneyCard({project,conversation,task,schema,disabled,onSample,onAssis
     finally{pending.current=false;if(alive.current)setBusy(false);}
   }
   async function prepare(){
-    if(pending.current||disabled||active(saved)||frozen.current)return;pending.current=true;setBusy(true);setError("");setConfirmed(false);
+    if(pending.current||disabled||active(saved)||frozen.current)return;pending.current=true;setBusy(true);setError("");setConfirmed(false);setPreview(undefined);
     try{
       const [profiles,native,providers]=await Promise.all([api.modelProfiles(),api.modelInstances(),api.providers()]);
       const options:Choice[]=[...profiles.models.filter(model=>model.enabled&&model.status==="available"&&model.input_modalities.includes("image")&&providers.providers.some(provider=>provider.id===model.provider_id&&provider.adapter!=="mock")).map(model=>({id:`model-profile:${model.id}`,name:model.display_name})),...native.model_profiles.filter(model=>model.selectable).map(model=>({id:model.selection_id,name:model.display_name}))];
-      const ids=selected?.filter(id=>options.some(option=>option.id===id)) ?? options.map(option=>option.id);
+      const ids=journeyModelSelection(options.map(option=>option.id),selected);
       if(alive.current){setChoices(options);setSelected(ids);}
-      if(!ids.length)throw new Error("Select an available image model, or connect one in model settings. No inference has started.");
+      if(!ids.length)throw new Error(options.length ? `Choose 1–${MAX_JOURNEY_MODELS} image models below, then review the authorization. No inference has started.` : "Select an available image model, or connect one in model settings. No inference has started.");
+      if(ids.length>MAX_JOURNEY_MODELS)throw new Error(`Choose at most ${MAX_JOURNEY_MODELS} image models. No inference has started.`);
       const source:Record<string,string>=schema?{schema_id:schema.id,schema_revision:String(schema.revision)}:{schema_call_id:crypto.randomUUID()};
       const value=await api.journeyPreview(project,conversation,task,{consent_id:crypto.randomUUID(),builder_operation_id:crypto.randomUUID(),sample_operation_id:crypto.randomUUID(),...source,allowed_models:JSON.stringify(ids)});
       if(alive.current)setPreview(value);
@@ -105,7 +107,7 @@ function JourneyCard({project,conversation,task,schema,disabled,onSample,onAssis
     <h3>{schema?"Try an annotation plan":"Turn your goal into sample results"}</h3><p>{schema?"Build a plan from your saved labels, then test up to three images.":"Propose labels from your goal, build a plan and test up to three images. If the goal needs clarification, ask before image processing."} Results stay in the sample sandbox.</p>
     {!ready&&<p role="status">Restoring saved work…</p>}
     {!running&&!preview&&!frozen.current&&(!saved||stale)&&<button className="primary" disabled={!ready||busy||disabled} onClick={()=>void prepare()}>Review build and sample authorization</button>}
-    {choices.length>0&&!running&&<details><summary>Allowed image models · {selected?.length ?? 0} selected</summary><p>Only these exact installed bindings may receive the sample images. Changing this list requires a new preview.</p><div className="journey-model-choices">{choices.map(choice=><label key={choice.id}><input type="checkbox" checked={selected?.includes(choice.id) ?? false} disabled={busy||Boolean(frozen.current)} onChange={event=>{setSelected(current=>event.target.checked?[...(current??[]),choice.id]:(current??[]).filter(id=>id!==choice.id));setPreview(undefined);setConfirmed(false);}}/>{choice.name}</label>)}</div></details>}
+    {choices.length>0&&!running&&<details open={choices.length>MAX_JOURNEY_MODELS ? true : undefined}><summary>Allowed image models · {selected?.length ?? 0} selected</summary><p>Choose 1–{MAX_JOURNEY_MODELS} models. Only these exact installed bindings may receive the sample images. Changing this list requires a new preview.</p>{choices.length>MAX_JOURNEY_MODELS&&<p>Your registry has {choices.length} available models. No arbitrary subset is selected automatically.</p>}<div className="journey-model-choices">{choices.map(choice=><label key={choice.id}><input type="checkbox" checked={selected?.includes(choice.id) ?? false} disabled={busy||Boolean(frozen.current)||(!selected?.includes(choice.id)&&(selected?.length ?? 0)>=MAX_JOURNEY_MODELS)} onChange={event=>{setSelected(current=>event.target.checked?[...(current??[]),choice.id]:(current??[]).filter(id=>id!==choice.id));setPreview(undefined);setConfirmed(false);}}/>{choice.name}</label>)}</div></details>}
     {preview&&<div className="conversation-consent" aria-label="Build and sample authorization">
       <p><strong>Planner: {preview.builder.model_name}</strong> · {preview.builder.destination}</p>
       <p>Saved goal and labels go to the planner. {preview.consent.images.length} sample images may go to:</p>
