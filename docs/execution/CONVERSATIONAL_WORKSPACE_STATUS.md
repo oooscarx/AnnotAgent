@@ -2035,3 +2035,36 @@ setup/return scenarios (3/3, 11 seconds). Web typecheck and 119 units also passe
 code or test assertion was weakened to bypass the missing-model state. This is 76/77 plus a
 passing focused correction, not a claimed fresh 77/77 full run. The known production chunk-size
 warning remains. No Live model or human-usability test; no real Workspace, remote or push changes.
+
+### M1/M2 continuation — first goal proceeds directly to authorization preparation
+
+The empty conversation's primary action is now “Save goal and prepare labels”. It persists the
+message with its frozen image reference, creates or restores the same message-owned task via
+the existing admission API, selects its canonical workspace URL and reads the existing Schema
+model authorization preview. This removes the separate first-message goal selection/preparation
+clicks without dispatching inference. “Save message” remains a secondary journal-only operation.
+Later notes and candidate-scoped messages retain their previous behavior; they are not silently
+promoted into independent goals or project-wide corrections.
+
+The explicit preparation intent is retained through same-message retries. If message persistence
+succeeds but task preparation has an uncertain result, the UI distinguishes those outcomes and
+keeps the frozen message; retry first restores any existing task rather than resetting its budget.
+Page mount/reload does not replay that mutation or authorize inference. The preview is requested
+only after a saved task exists and still requires explicit model/data/unknown-price consent.
+Missing-model failures retain the saved goal and existing setup/manual-label alternatives.
+
+The new browser path deliberately loses a successful task-admission response. Its first run
+caught a real component race: the Schema panel had loaded before the task existed and did not
+reread it after the explicit preparation completed. Fixed that read dependency using the explicit
+preparation request, keeping the old request abort and read-only mount behavior. The corrected
+joint run `/tmp/annotagent-guided-e2e-21176` passed 4/4 (11.9 seconds): first-goal preparation
+through clarified samples, clarification cancellation, independent goals/setup-return and frozen
+journal response-loss recovery. It verifies one persisted message/task and zero model calls at
+the first authorization boundary. No Rust engine, publication or formal annotation logic changed.
+Final typecheck/units and screenshot replay follow below. This improves the first transition;
+it does not complete the remaining continuous coordinator or all structured HumanRequest types.
+No Live model, real Workspace, old key, push or remote change; no human usability test.
+Final `/tmp/annotagent-guided-e2e-21308` passed 2/2 (9.2 seconds), Web typecheck and 119 units
+passed. Inspected `conversational-workspace/first-goal-authorization.png`: real TEST model name,
+destination, one-call limit, text-only scope and unknown-price consent precede the disabled
+Generate action. Production build passed with the known large-chunk warning. Diff hygiene passed.

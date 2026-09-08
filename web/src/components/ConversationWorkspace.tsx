@@ -33,6 +33,8 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
+  const [prepareMessage,setPrepareMessage]=useState<string>();
+  const preparingGoal=useRef(false);
   const [mobileView, setMobileView] = useState("conversation");
   const [width, setWidth] = useState(32);
   const [requests,setRequests]=useState<HumanRequest[]>([]);
@@ -125,18 +127,35 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
     })().catch((error: Error) => { if (!controller.signal.aborted) setError(error.message); });
     return () => controller.abort();
   }, [project.id, conversationId]);
-  async function send() {
+  async function send(prepareGoal=false) {
     if (pending.current || !ready || !text.trim()) return;
+    if(!frozen.current)preparingGoal.current=prepareGoal&&!pinnedSelection?.input.reference;
     frozen.current ??= { id: crypto.randomUUID(), text, image: referenceImage ? { image_id: referenceImage.image_id, sha256: referenceImage.content_hash } : null, ...pinnedSelection?.input };
     const input = frozen.current;
     pending.current = true; setBusy(true); setError(""); setStatus("Saving message…");
+    let messageSaved=false;
     try {
       const id = conversation ?? (await api.createConversation(project.id)).conversation_id;
       const saved = await api.sendConversationMessage(project.id, id, input);
+      messageSaved=true;
       if (!alive.current) return;
       setConversation(id); setMessages((items) => [...items.filter((item) => item.input.id !== saved.input.id), saved].sort((a, b) => a.sequence - b.sequence));
+      let selectedTask:ConversationTask|undefined;
+      if(preparingGoal.current){
+        const existing=await api.conversationTasks(project.id,id);
+        const goal=await api.projectGoal(project.id);
+        selectedTask=existing.find(task=>task.input.source_message_id===saved.input.id) ?? await api.beginConversationTask(project.id,id,{id:crypto.randomUUID(),source_message_id:saved.input.id,schema_revision:goal.revision});
+        if(!alive.current)return;
+        setTasks([...existing.filter(task=>task.input.id!==selectedTask!.input.id),selectedTask]);
+      }
       frozen.current = undefined; unsent.current = ""; setText(""); setPinnedSelection(undefined); setStatus("Message saved. No model has been called.");
-    } catch (error) { if (alive.current) { setError((error as Error).message); setStatus("Not confirmed saved. Retry sends the same message and frozen image reference."); } }
+      if(selectedTask){
+        pending.current=false;
+        onNavigate(projectWorkPath(project.id,{conversationId:id,taskId:selectedTask.input.id,imageId:input.image?.image_id}));
+        setPrepareMessage(saved.input.id);
+        setStatus("Goal saved. Preparing model authorization; no model has been called.");
+      }
+    } catch (error) { if (alive.current) { setError((error as Error).message); setStatus(messageSaved ? "Message saved; goal preparation is not confirmed. Retry uses the same message and restores any saved task." : "Not confirmed saved. Retry sends the same message and frozen image reference."); } }
     finally { pending.current = false; if (alive.current) setBusy(false); }
   }
   async function useMessageAsGoal(message: ConversationMessage) {
@@ -231,14 +250,14 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
           {operation.batch_id && <button onClick={()=>processingNavigate(projectBatchPath(project.id,operation.batch_id!))}>Open processing results</button>}
         </article>)}</section>}
         {conversation && <section aria-label="Human requests"><h3>Requests for your help</h3><button onClick={()=>{if(sampleDirty.current){setError("Save or undo this correction before refreshing requests.");return;}setRequestRefresh(value=>value+1);}}>Refresh requests</button>{requests.map(value=><article key={value.input.id} className="conversation-consent"><p>{value.input.question}</p><p>{value.resume_draft_id ? "Correction saved · revision Draft available" : value.status==="answered" ? "Correction saved · awaiting task continuation" : value.status}</p>{value.resume_error && <p role="alert">Correction saved, but Draft preparation failed: {value.resume_error}</p>}<button onClick={()=>void openRequest(value)}>Open requested result</button>{value.status==="answered" && <button onClick={()=>void retryContinuation(value)}>Retry Draft preparation</button>}{value.resume_draft_id && <button onClick={()=>onNavigate(projectBuildPath(project.id,"pipeline",{draftId:value.resume_draft_id!}))}>Inspect revision Draft</button>}{value.status==="pending" && <button onClick={()=>void cancelRequest(value)}>Cancel request</button>}</article>)}</section>}
-        {conversation && goalMessage && <ConversationSchemaCard key={`${conversation}:${goalMessage.input.id}`} project={project.id} conversation={conversation} message={goalMessage.input.id} onDirtyChange={schemaDirtyChange} onAssistance={assistanceChanged} onSample={(draft,test,image)=>void openSample(draft,test,image)} onSetup={selectedTask=>onNavigate(conversationSettingsPath(project.id,"providers",projectWorkPath(project.id,{conversationId:conversation,taskId:selectedTask ?? taskId,imageId,draftId,sampleTestId,humanRequestId,referenceMessageId,processingOperationId,results})))} />}
+        {conversation && goalMessage && <ConversationSchemaCard prepareRequested={prepareMessage===goalMessage.input.id} key={`${conversation}:${goalMessage.input.id}`} project={project.id} conversation={conversation} message={goalMessage.input.id} onDirtyChange={schemaDirtyChange} onAssistance={assistanceChanged} onSample={(draft,test,image)=>void openSample(draft,test,image)} onSetup={selectedTask=>onNavigate(conversationSettingsPath(project.id,"providers",projectWorkPath(project.id,{conversationId:conversation,taskId:selectedTask ?? taskId,imageId,draftId,sampleTestId,humanRequestId,referenceMessageId,processingOperationId,results})))} />}
         {conversation && taskId && !goalMessage && <p role="status">{requestsReady ? "The selected annotation task is not available in this conversation. Select a saved message; no other task was substituted." : "Loading the selected annotation task…"}</p>}
         {activeRequest?.status==="applied" && activeRequest.resume_draft_id && <ConversationRepairCard key={activeRequest.input.id} project={project.id} request={activeRequest} editing={repairEditing} onAssistance={assistanceChanged} onSample={(draft,test,image)=>void openSample(draft,test,image)} />}
-        {(!processingOperationId || pinnedSelection) && <form onSubmit={(event) => { event.preventDefault(); void send(); }} className="conversation-composer">
+        {(!processingOperationId || pinnedSelection) && <form onSubmit={(event) => { event.preventDefault(); void send(!goalMessage&&!pinnedSelection); }} className="conversation-composer">
           <label htmlFor="conversation-message">Your message</label>
           <textarea ref={messageInput} id="conversation-message" value={text} disabled={busy || Boolean(frozen.current)} rows={3} placeholder="Find cups, but not bottles" onChange={(event) => { unsent.current = event.target.value; setText(event.target.value); }} />
           {pinnedSelection ? <div className="conversation-candidate-reference" aria-label="Message candidate reference"><strong>Only this saved candidate</strong><span>{pinnedSelection.name} · {pinnedSelection.input.reference?.candidate_id} · Draft revision {pinnedSelection.input.reference?.draft_revision}</span><small>Changing the displayed image does not change this reference. Saving the message does not edit the annotation.</small><button type="button" disabled={busy||Boolean(frozen.current)} onClick={()=>setPinnedSelection(undefined)}>Remove candidate reference</button></div> : <small>{referenceImage ? `Image reference: ${referenceImage.name}` : "No image reference · Project-level message"}</small>}
-          <button className="primary" disabled={!ready || busy || !text.trim()} type="submit">{busy ? "Saving…" : frozen.current ? "Retry saving message" : "Save message"}</button>
+          {!goalMessage&&!pinnedSelection&&!frozen.current ? <><button className="primary" disabled={!ready||busy||!text.trim()} type="submit">Save goal and prepare labels</button><button disabled={!ready||busy||!text.trim()} type="button" onClick={()=>void send(false)}>Save message</button><small>Preparing labels opens the model and data authorization. It does not call a model or publish a workflow.</small></> : <button className="primary" disabled={!ready || busy || !text.trim()} type="submit">{busy ? "Saving…" : frozen.current ? "Retry saving message" : "Save message"}</button>}
         </form>}
       </section>
       <div className="conversation-divider" role="separator" aria-label="Resize conversation panel" aria-orientation="vertical" tabIndex={0} aria-valuemin={25} aria-valuemax={50} aria-valuenow={width}

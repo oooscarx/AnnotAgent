@@ -8,7 +8,7 @@ import { ConversationHumanSchema } from "./ConversationHumanSchema";
 import type { OpenConversationSample } from "./ConversationSampleCard";
 
 /** Restores server objects; mounting never creates a task or invokes a model. */
-export function ConversationSchemaCard({ project, conversation, message, onDirtyChange, onSample, onAssistance, onSetup }: { project: string; conversation: string; message: string; onDirtyChange: (dirty: boolean) => void; onAssistance?:()=>void; onSample: OpenConversationSample; onSetup?:(task?:string)=>void }) {
+export function ConversationSchemaCard({ project, conversation, message, onDirtyChange, onSample, onAssistance, onSetup,prepareRequested }: { prepareRequested?:boolean; project: string; conversation: string; message: string; onDirtyChange: (dirty: boolean) => void; onAssistance?:()=>void; onSample: OpenConversationSample; onSetup?:(task?:string)=>void }) {
   const [task, setTask] = useState<ConversationTask>();
   const [manual,setManual]=useState(false);
   const [humanSchema,setHumanSchema]=useState<string>();
@@ -24,6 +24,14 @@ export function ConversationSchemaCard({ project, conversation, message, onDirty
   const frozen=useRef<ConversationSchemaAuthorization|undefined>(undefined);
   const pending = useRef(false);
   const active = useRef(true);
+  const preparationHandled=useRef(false);
+  useEffect(()=>{
+    // Only the explicit composer action requests this read-only preview. Mount and
+    // reload never create tasks or authorize inference. Task identity was saved first.
+    if(prepareRequested&&ready&&task&&!preparationHandled.current&&!receipt&&!manual&&!cancelled){
+      preparationHandled.current=true;void prepare();
+    }
+  },[prepareRequested,ready,task?.input.id,receipt,manual,cancelled]);
   useEffect(() => {
     active.current = true; const controller = new AbortController();
     void api.conversationTasks(project, conversation, controller.signal).then(async (tasks) => {
@@ -39,7 +47,7 @@ export function ConversationSchemaCard({ project, conversation, message, onDirty
       setHumanSchema(human[0]?.id); setManual(human.length>0);
     }).catch((error: Error) => { if (!controller.signal.aborted) setError(error.message); });
     return () => { active.current = false; controller.abort(); };
-  }, [project, conversation, message]);
+  }, [project, conversation, message,prepareRequested]);
   useEffect(() => {
     if (!task || !callId || (savedConsent&&!busy) || (cancelled && !receipt) || (receipt && receipt.status !== "reserved")) return;
     const controller = new AbortController();

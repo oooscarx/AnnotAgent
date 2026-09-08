@@ -25,8 +25,28 @@ test(`Schema clarification ${mode}: same-task persistence and explicit continuat
   await page.getByLabel("Add images",{exact:true}).setInputFiles(resolve("../examples/robocup/images/synthetic-robocup.png"));
   await expect(page.getByText("Images saved on this server. No model has been called.",{exact:true})).toBeVisible();
   await page.getByLabel("Your message",{exact:true}).fill("TEST: annotate these images; help clarify the output");
-  await page.getByRole("button",{name:"Save message",exact:true}).click();
-  await page.getByRole("button",{name:"Prepare label proposal",exact:true}).click();
+  if(mode==="answer"){
+    let interrupted=false;
+    await page.route("**/conversations/*/tasks",async route=>{
+      if(route.request().method()!=="POST"||interrupted)return route.continue();
+      interrupted=true;
+      const response=await fetchWithinMutationLimit(route);expect(response.ok(),await response.text()).toBe(true);
+      await route.abort("failed");
+    });
+    await page.getByRole("button",{name:"Save goal and prepare labels",exact:true}).click();
+    await expect(page.getByText("Message saved; goal preparation is not confirmed. Retry uses the same message and restores any saved task.",{exact:true})).toBeVisible();
+    await page.getByRole("button",{name:"Retry saving message",exact:true}).click();
+    await expect(page).toHaveURL(/task=/);
+    await expect(page.getByLabel("Schema model authorization",{exact:true})).toBeVisible();
+    const owner=(await (await request.get(`/api/projects/${project}/conversations`)).json()).conversation_id;
+    const task=(await (await request.get(`/api/projects/${project}/conversations/${owner}/tasks`)).json())[0];
+    expect((await (await request.get(`/api/projects/${project}/conversations/${owner}/tasks/${task.input.id}/budget`)).json()).total_reserved_calls).toBe(0);
+    expect(await (await request.get(`/api/projects/${project}/conversations/${owner}/messages`)).json()).toHaveLength(1);
+    await page.getByLabel("Schema model authorization",{exact:true}).screenshot({path:"../docs/execution/conversational-workspace/first-goal-authorization.png",animations:"disabled"});
+  }else{
+    await page.getByRole("button",{name:"Save message",exact:true}).click();
+    await page.getByRole("button",{name:"Prepare label proposal",exact:true}).click();
+  }
   await page.getByRole("checkbox",{name:/Allow this text request/}).check();
   await page.getByRole("button",{name:"Generate label proposal",exact:true}).click();
   await expect(page.getByText("Clarification needed",{exact:true})).toBeVisible();
