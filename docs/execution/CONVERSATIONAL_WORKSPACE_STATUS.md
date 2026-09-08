@@ -5144,3 +5144,30 @@ consent/dispatch state, then connect server answer events and explicit UI preaut
 Do not treat the new persisted envelope as completed automatic recovery. Full integration
 must test deferred/cancelled/expired permissions, changed snapshots and duplicate events
 without expanding models, data, budget or future corrections.
+
+### 2026-09-09 — Acknowledged answer resolves one immutable repair
+
+Implemented Storage `resolve_conversation_journey_repair` and its Application wrapper.
+The wrapper rechecks current data/Registry scope; Storage keeps the original grant and
+uses the existing immutable resolution slot. Only the repair snapshot and derived Builder
+scope hash may resolve; model/image/Schema/call/expiry/operation scopes cannot change.
+The saved request must exactly match the authorized input, be Applied and carry the
+expected next Sandbox feedback sequence. Resume result, acknowledged outbox, actual
+feedback JSON and copied-plan feedback must agree. The current Draft revision/hash must
+match the proposed snapshot. A later feedback sequence prevents initial resolution.
+Repeating the same resolution restores it; a different resolved envelope is rejected.
+Resolution itself creates no model call, dispatch or new budget; the existing explicit
+dispatch claim can proceed only once the pending envelope has resolved.
+
+Extended the temporary-database regression before implementing the resolver. An initial
+test compile error (`u64` SQLite binding) was fixed; the semantic red test then reached
+the missing-resolution error (52303). Tests now cover changed scopes/revisions/hashes,
+revocation, missing outbox acknowledgment, unapplied answer and missing copied evidence,
+plus reopen, immutable retries and the dispatch gate. They deliberately seed receipt
+rows and are storage protocol tests, not browser or live inference evidence. All 10
+Storage journey tests and the existing Application journey regression pass (19406).
+
+HTTP/UI preauthorization and answer-event dispatch remain disconnected intentionally
+until their preview, authorization and retry path are tested together. No automatic
+resume UI claim, no live calls, no real workspace mutation and no push. Next work is
+that server integration, followed by a browser answer-to-repair-to-sample regression.

@@ -29,6 +29,25 @@ pub struct ConversationJourneyDataScope {
 }
 
 impl LocalApplication {
+    /// Resolve one pre-authorized human answer without invoking a model. Both
+    /// the original and resulting data/Registry scopes must still be valid.
+    pub fn resolve_answer_journey_repair(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        resolved: &ConversationJourneyConsent,
+    ) -> Result<ConversationJourneyRecord> {
+        let original = self
+            .conversation_journey_consent(project, conversation, resolved.task_id, resolved.id)?
+            .ok_or_else(|| anyhow!("Journey consent not found"))?;
+        self.validate_conversation_journey_data(project, conversation, &original.consent)?;
+        self.validate_conversation_journey_data(project, conversation, resolved)?;
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self
+            .store
+            .resolve_conversation_journey_repair(&owner, conversation, resolved)?)
+    }
+
     pub fn queue_conversation_journey_answer(
         &self,
         project: &str,

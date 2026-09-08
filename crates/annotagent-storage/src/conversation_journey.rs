@@ -428,6 +428,67 @@ impl SqliteStore {
             Ok(ConversationJourneyRecord {consent:input.clone(),revoked:false,sample:None,resolved_consent:None})
         })
     }
+    pub fn resolve_conversation_journey_repair(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        resolved: &ConversationJourneyConsent,
+    ) -> Result<ConversationJourneyRecord, StorageError> {
+        validate(resolved)?;
+        self.with_connection(|db| {
+            let tx = db.unchecked_transaction()?;
+            owned(&tx, project, conversation, resolved.task_id)?;
+            let mut saved = read(&tx, resolved.task_id, resolved.id)?
+                .ok_or_else(|| invalid("Journey consent not found"))?;
+            if saved.revoked || saved.consent.expires_at <= Utc::now() {
+                return Err(invalid("Journey consent is revoked or expired"));
+            }
+            if let Some(previous) = &saved.resolved_consent {
+                if previous != resolved {
+                    return Err(invalid("Journey answer resolution is immutable"));
+                }
+                return Ok(saved);
+            }
+            let pending = saved.consent.repair_after_answer.as_ref()
+                .ok_or_else(|| invalid("Journey has no authorized pending answer"))?;
+            let repair = resolved.repair.as_ref()
+                .ok_or_else(|| invalid("Answer resolution requires an exact repair snapshot"))?;
+            let mut expected = saved.consent.clone();
+            expected.repair_after_answer = None;
+            expected.repair.clone_from(&resolved.repair);
+            expected.builder_scope_hash.clone_from(&resolved.builder_scope_hash);
+            if expected != *resolved || repair.request_id != pending.id
+                || repair.draft_id != pending.resume_checkpoint_ref.to_string() {
+                return Err(invalid("Answer resolution expanded the original journey scope"));
+            }
+            let request = crate::conversation_human_requests::read(&tx, project, pending.id)?;
+            if request.input != *pending || request.status != crate::ConversationHumanRequestStatus::Applied
+                || request.resume_draft_id.as_ref() != Some(&repair.draft_id) {
+                return Err(invalid("Journey requires its exact applied human answer and resume result"));
+            }
+            let answer = request.answer.as_ref().ok_or_else(|| invalid("Human answer is unavailable"))?;
+            if answer.sample_test_id != pending.sample_test_id || answer.image_id != pending.image_id
+                || Some(answer.sequence) != pending.expected_feedback_sequence.checked_add(1)
+                || answer.outcome_id != pending.outcome_id || answer.addition_id != pending.addition_id {
+                return Err(invalid("Human answer no longer matches the authorized subject revision"));
+            }
+            // The receipt, acknowledged outbox and copied plan must all point to
+            // the same persisted Sandbox revision. A status string alone is not evidence.
+            let valid: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM conversation_resume_outbox o JOIN sample_feedback_revisions f ON f.revision_id=o.feedback_revision_id JOIN sample_plan_revisions p ON p.draft_id=o.checkpoint_ref JOIN workflow_drafts d ON d.id=p.draft_id AND d.project_id=p.project_id WHERE o.request_id=?1 AND o.task_id=?2 AND o.checkpoint_ref=?3 AND o.applied_at IS NOT NULL AND f.revision_id=?4 AND f.sample_test_id=?5 AND f.image_id=?6 AND f.sequence=(SELECT MAX(sequence) FROM sample_feedback_revisions WHERE sample_test_id=f.sample_test_id AND image_id=f.image_id) AND json(f.feedback_json)=json(?7) AND p.sample_test_id=f.sample_test_id AND json_array_length(p.feedback_json)=1 AND json(json_extract(p.feedback_json,'$[0]'))=json(?7) AND json_extract(d.draft_json,'$.revision')=?8 AND json_extract(d.draft_json,'$.content_hash')=?9)",
+                params![pending.id.to_string(),pending.task_id.to_string(),repair.draft_id,answer.revision_id,pending.sample_test_id,pending.image_id,serde_json::to_string(answer)?,i64::try_from(repair.revision).map_err(|_| invalid("Repair revision is out of range"))?,repair.content_hash],
+                |row| row.get(0),
+            )?;
+            if !valid { return Err(invalid("Repair snapshot lacks exact acknowledged Sandbox evidence")); }
+            // Reuse the existing immutable resolution slot; no second execution
+            // ledger, additional call budget or answer copy is created here.
+            tx.execute("INSERT INTO conversation_journey_schema_resolution(consent_id,resolved_json) VALUES(?1,?2)",params![resolved.id.to_string(),serde_json::to_string(resolved)?])?;
+            tx.commit()?;
+            saved.resolved_consent = Some(resolved.clone());
+            Ok(saved)
+        })
+    }
+
     pub fn resolve_conversation_journey_schema(
         &self,
         project: &str,
@@ -676,13 +737,14 @@ pub(crate) mod tests {
             let path = dir.path().join("TEST-pending-permission.db");
             let store = SqliteStore::open(&path).unwrap();
             let (project, conversation, mut consent, sample) = setup(&store);
+            let mut answer = crate::sample_feedback::tests::fixture(&store);
             let legacy = serde_json::to_value(&consent).unwrap();
             assert!(legacy.get("repair_after_answer").is_none());
             let request = crate::ConversationHumanRequestInput {
                 id: Uuid::new_v4(),
                 task_id: consent.task_id,
                 conversation_id: conversation,
-                sample_test_id: "TEST-source".into(),
+                sample_test_id: answer.sample_test_id.clone(),
                 image_id: consent.images[0].image_id.to_string(),
                 content_hash: consent.images[0].content_hash.clone(),
                 outcome_id: Some("TEST-candidate".into()),
@@ -769,6 +831,132 @@ pub(crate) mod tests {
                 store
                     .save_conversation_journey(&project, conversation, &widened)
                     .is_err()
+            );
+            let mut resolved = consent.clone();
+            resolved.repair_after_answer = None;
+            resolved.repair = Some(ConversationBuilderRepair {
+                request_id: request.id,
+                draft_id: request.resume_checkpoint_ref.to_string(),
+                revision: 1,
+                content_hash: "c".repeat(64),
+            });
+            resolved.builder_scope_hash = "9".repeat(64);
+            assert!(
+                store
+                    .resolve_conversation_journey_repair(&project, conversation, &resolved)
+                    .is_err()
+            );
+            answer.image_id.clone_from(&request.image_id);
+            answer.sequence = request.expected_feedback_sequence + 1;
+            answer.outcome_id.clone_from(&request.outcome_id);
+            store.with_connection(|db| {
+                let json = serde_json::to_string(&answer)?;
+                db.execute("INSERT INTO sample_feedback_revisions(revision_id,sample_test_id,image_id,sequence,feedback_json) VALUES(?1,?2,?3,?4,?5)",params![answer.revision_id,answer.sample_test_id,answer.image_id,i64::try_from(answer.sequence).unwrap(),json])?;
+                db.execute("UPDATE conversation_human_requests SET status='applied',answer_json=?2 WHERE id=?1",params![request.id.to_string(),json])?;
+                db.execute("INSERT INTO conversation_resume_outbox(request_id,task_id,checkpoint_ref,feedback_revision_id,applied_at) VALUES(?1,?2,?3,?4,?5)",params![request.id.to_string(),request.task_id.to_string(),request.resume_checkpoint_ref.to_string(),answer.revision_id,Utc::now().to_rfc3339()])?;
+                db.execute("INSERT INTO conversation_resume_results(request_id,draft_id) VALUES(?1,?2)",params![request.id.to_string(),request.resume_checkpoint_ref.to_string()])?;
+                db.execute("INSERT INTO sample_plan_revisions(draft_id,project_id,sample_test_id,feedback_json,created_at) VALUES(?1,?2,?3,?4,?5)",params![request.resume_checkpoint_ref.to_string(),project,answer.sample_test_id,serde_json::to_string(&vec![&answer])?,Utc::now().to_rfc3339()])?;
+                db.execute("INSERT INTO workflow_drafts(id,project_id,status,draft_json,created_at,updated_at) VALUES(?1,?2,'editing',?3,?4,?4)",params![request.resume_checkpoint_ref.to_string(),project,serde_json::json!({"revision":1,"content_hash":"c".repeat(64)}).to_string(),Utc::now().to_rfc3339()])?;
+                Ok(())
+            }).unwrap();
+            for change in [
+                "calls", "model", "image", "schema", "revision", "hash", "request",
+            ] {
+                let mut wrong = resolved.clone();
+                match change {
+                    "calls" => wrong.maximum_builder_calls += 1,
+                    "model" => wrong.allowed_models[0].binding_digest = "1".repeat(64),
+                    "image" => wrong.images[0].content_hash = "2".repeat(64),
+                    "schema" => wrong.schema_revision += 1,
+                    "revision" => wrong.repair.as_mut().unwrap().revision += 1,
+                    "hash" => wrong.repair.as_mut().unwrap().content_hash = "3".repeat(64),
+                    _ => wrong.repair.as_mut().unwrap().request_id = Uuid::new_v4(),
+                }
+                assert!(
+                    store
+                        .resolve_conversation_journey_repair(&project, conversation, &wrong)
+                        .is_err(),
+                    "resolution accepted {change}"
+                );
+            }
+            for (invalidate, restore) in [
+                (
+                    "UPDATE conversation_journey_consents SET revoked=1",
+                    "UPDATE conversation_journey_consents SET revoked=0",
+                ),
+                (
+                    "UPDATE conversation_resume_outbox SET applied_at=NULL",
+                    "UPDATE conversation_resume_outbox SET applied_at='TEST-applied'",
+                ),
+                (
+                    "UPDATE conversation_human_requests SET status='answered'",
+                    "UPDATE conversation_human_requests SET status='applied'",
+                ),
+                ("UPDATE sample_plan_revisions SET feedback_json='[]'", ""),
+            ] {
+                store
+                    .with_connection(|db| {
+                        db.execute(invalidate, [])?;
+                        Ok(())
+                    })
+                    .unwrap();
+                assert!(
+                    store
+                        .resolve_conversation_journey_repair(&project, conversation, &resolved)
+                        .is_err()
+                );
+                assert!(
+                    store
+                        .conversation_journey(&project, conversation, consent.task_id, consent.id)
+                        .unwrap()
+                        .unwrap()
+                        .resolved_consent
+                        .is_none()
+                );
+                store
+                    .with_connection(|db| {
+                        if restore.is_empty() {
+                            db.execute(
+                                "UPDATE sample_plan_revisions SET feedback_json=?1",
+                                [serde_json::to_string(&vec![&answer])?],
+                            )?;
+                        } else {
+                            db.execute(restore, [])?;
+                        }
+                        Ok(())
+                    })
+                    .unwrap();
+            }
+            let resolution = store
+                .resolve_conversation_journey_repair(&project, conversation, &resolved)
+                .unwrap();
+            assert_eq!(resolution.consent, consent);
+            assert_eq!(resolution.effective_consent(), &resolved);
+            drop(store);
+            let store = SqliteStore::open(&path).unwrap();
+            assert_eq!(
+                store
+                    .resolve_conversation_journey_repair(&project, conversation, &resolved)
+                    .unwrap(),
+                resolution
+            );
+            let mut changed = resolved.clone();
+            changed.builder_scope_hash = "4".repeat(64);
+            assert!(
+                store
+                    .resolve_conversation_journey_repair(&project, conversation, &changed)
+                    .is_err()
+            );
+            assert!(
+                store
+                    .claim_conversation_journey_dispatch(
+                        &project,
+                        conversation,
+                        consent.task_id,
+                        consent.id,
+                        Uuid::new_v4()
+                    )
+                    .unwrap()
             );
         }
     }
