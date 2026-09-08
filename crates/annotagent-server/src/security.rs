@@ -34,6 +34,14 @@ mod control_tests {
         request.body(Body::empty()).unwrap()
     }
     #[test]
+    fn correction_answer_continuation_uses_expensive_admission() {
+        let id = Uuid::new_v4();
+        let path =
+            format!("/api/projects/test/conversations/{id}/tasks/{id}/human-requests/{id}/answer");
+        assert!(is_expensive_action(&path));
+        assert!(!is_execution_control(&Method::POST, &path));
+    }
+    #[test]
     fn clarification_answer_resume_keeps_expensive_admission_and_not_control_bypass() {
         let id = Uuid::new_v4();
         let path = format!("/api/projects/test/conversations/{id}/tasks/{id}/human-schema-drafts");
@@ -560,6 +568,7 @@ fn is_mutation(method: &Method) -> bool {
 
 fn is_expensive_action(path: &str) -> bool {
     (path.contains("/journey-consents/") && path.ends_with("/execution"))
+        || (path.contains("/human-requests/") && path.ends_with("/answer"))
         || (path.contains("/feedback/") && path.ends_with("/execute"))
         || path.ends_with("/active-probe")
         || path.ends_with("/schema-proposals")

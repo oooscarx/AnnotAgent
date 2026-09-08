@@ -5,6 +5,7 @@ export type SampleOperation = {
   error?: string | null;
 };
 export type JourneyConsent = {
+  repair_after_answer?:import("./conversation-human-api").HumanRequest["input"];
   repair?: {request_id:string;draft_id:string;revision:number;content_hash:string};
   continue_after_clarification?:boolean;
   schema_proposal?:import("./types").ConversationSchemaAuthorization;

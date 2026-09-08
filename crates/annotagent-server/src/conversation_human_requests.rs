@@ -60,24 +60,58 @@ pub(super) async fn create(
 #[serde(deny_unknown_fields)]
 pub(super) struct HumanAnswer {
     answer: SampleFeedbackRevision,
+    journey_consent_id: Option<Uuid>,
 }
 
 pub(super) async fn answer(
     State(state): State<ServerState>,
     AxumPath((project, conversation, task, id)): AxumPath<(String, Uuid, Uuid, Uuid)>,
     Json(input): Json<HumanAnswer>,
-) -> ApiResult<Json<ConversationHumanRequest>> {
+) -> ApiResult<Json<Value>> {
     // Existing same-origin mutation middleware protects these routes. Answers update
     // Sandbox feedback only; an outbox acknowledgment is not exposed to browsers.
+    if let Some(consent_id) = input.journey_consent_id {
+        let consent = state
+            .application
+            .conversation_journey_consent(&project, conversation, task, consent_id)
+            .map_err(ApiError::bad_request)?
+            .ok_or_else(|| ApiError::bad_request("Journey consent not found"))?;
+        if consent
+            .consent
+            .repair_after_answer
+            .as_ref()
+            .map(|pending| pending.id)
+            != Some(id)
+        {
+            return Err(ApiError::bad_request(
+                "This answer is not linked to the authorized pending request",
+            ));
+        }
+    }
     state
         .application
         .answer_conversation_human_request(&project, conversation, task, id, &input.answer)
         .map_err(ApiError::bad_request)?;
-    state
+    let saved = state
         .application
         .continue_conversation_correction(&project, conversation, task, id)
-        .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::bad_request)?;
+    let mut result = serde_json::to_value(saved).map_err(ApiError::internal)?;
+    if let Some(consent_id) = input.journey_consent_id {
+        // Saving the answer succeeded. A continuation failure must not be
+        // reported as if the human edit were lost or require rewriting it.
+        result["journey_resume"] = match conversation_journey::execute(
+            State(state),
+            AxumPath((project, conversation, task, consent_id)),
+            Json(conversation_journey::ExecuteJourney {}),
+        )
+        .await
+        {
+            Ok(value) => json!({"consent_id":consent_id,"status":value.0}),
+            Err(error) => json!({"consent_id":consent_id,"error":error.body["error"]}),
+        };
+    }
+    Ok(Json(result))
 }
 
 pub(super) async fn resume(

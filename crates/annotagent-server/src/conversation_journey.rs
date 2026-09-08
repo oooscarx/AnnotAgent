@@ -18,6 +18,7 @@ pub(super) struct JourneySelection {
     schema_call_id: Option<uuid::Uuid>,
     planner_model_id: Option<ModelProfileId>,
     repair_request_id: Option<uuid::Uuid>,
+    pending_request_id: Option<uuid::Uuid>,
     /// JSON array of exact Model Profile / Plugin selection IDs, not model hashes.
     allowed_models: String,
 }
@@ -53,6 +54,7 @@ pub(super) async fn preview(
         .map_err(ApiError::bad_request)?;
     if let Some(call_id) = selection.schema_call_id {
         if selection.repair_request_id.is_some()
+            || selection.pending_request_id.is_some()
             || !selection.schema_id.is_nil()
             || selection.schema_revision != 0
             || state
@@ -119,6 +121,33 @@ pub(super) async fn preview(
             json!({"consent":consent,"builder":builder,"data":data,"project_call_limit":project_limit,"estimated_cost":null,"operation":"One text-only Schema proposal, then one bounded Builder and sample test using only the listed images/models. Clarification or invalid Schema stops before image inference. No publish or annotation acceptance."}),
         ));
     }
+    if selection.pending_request_id.is_some() && selection.repair_request_id.is_some() {
+        return Err(ApiError::bad_request(
+            "Choose one pending answer or completed correction",
+        ));
+    }
+    let pending = selection
+        .pending_request_id
+        .map(|id| {
+            let request = state
+                .application
+                .conversation_human_requests(&project, conversation, task)
+                .map_err(ApiError::bad_request)?
+                .into_iter()
+                .find(|item| item.input.id == id)
+                .ok_or_else(|| {
+                    ApiError::bad_request("Pending human request not found in this task")
+                })?;
+            if request.status != annotagent_storage::ConversationHumanRequestStatus::Pending
+                || request.deferred
+            {
+                return Err(ApiError::bad_request(
+                    "Preauthorization requires an active pending request",
+                ));
+            }
+            Ok(request.input)
+        })
+        .transpose()?;
     let builder_selection = BuilderSelection {
         operation_id: selection.builder_operation_id,
         schema_id: selection.schema_id,
@@ -136,7 +165,7 @@ pub(super) async fn preview(
         AuthorizationBase::Preview,
     )?;
     let consent = ConversationJourneyConsent {
-        repair_after_answer: None,
+        repair_after_answer: pending,
         repair: serde_json::from_value(builder["repair"].clone()).map_err(ApiError::internal)?,
         continue_after_clarification: false,
         schema_proposal: None,
@@ -200,13 +229,6 @@ pub(super) async fn save(
             ));
         }
         return Ok(Json(saved));
-    }
-    // Pending-answer grants are storage groundwork until the resolver/dispatch
-    // protocol is connected; never interpret one as an ordinary Builder grant.
-    if consent.repair_after_answer.is_some() {
-        return Err(ApiError::bad_request(
-            "Pending-answer continuation is not available yet",
-        ));
     }
     if !consent.allow_unknown_cost
         || consent.builder_model_id.is_none()
@@ -370,10 +392,63 @@ pub(super) async fn execute(
     if !current["sample"].is_null() || current["dispatch"]["status"] == "running" {
         return Ok(Json(current));
     }
-    state
+    let saved = state
         .application
         .require_active_conversation_journey(&project, conversation, task, id)
         .map_err(ApiError::bad_request)?;
+    if let Some(pending) = saved.effective_consent().repair_after_answer.as_ref() {
+        let request = state
+            .application
+            .conversation_human_requests(&project, conversation, task)
+            .map_err(ApiError::bad_request)?
+            .into_iter()
+            .find(|item| item.input.id == pending.id)
+            .ok_or_else(|| ApiError::bad_request("Authorized human request is unavailable"))?;
+        if request.status == annotagent_storage::ConversationHumanRequestStatus::Pending
+            && !request.deferred
+        {
+            return Ok(Json(current));
+        }
+        let selection = BuilderSelection {
+            operation_id: saved.consent.builder_operation_id,
+            schema_id: saved.consent.schema_id,
+            schema_revision: saved.consent.schema_revision,
+            model_id: saved.consent.builder_model_id,
+            repair_request_id: Some(pending.id),
+            image_class_review_id: None,
+        };
+        let (_, preview) = conversation_builder::scope(
+            &state,
+            &project,
+            conversation,
+            task,
+            &selection,
+            saved
+                .consent
+                .previous_grant_id
+                .map_or(AuthorizationBase::Initial, AuthorizationBase::Existing),
+        )?;
+        if preview["maximum_builder_calls"].as_u64()
+            != Some(u64::from(saved.consent.maximum_builder_calls))
+            || preview["previous_grant_id"] != json!(saved.consent.previous_grant_id)
+        {
+            return Err(ApiError::bad_request(
+                "Answer continuation call authorization changed",
+            ));
+        }
+        let mut resolved = saved.consent.clone();
+        resolved.repair_after_answer = None;
+        resolved.repair =
+            serde_json::from_value(preview["repair"].clone()).map_err(ApiError::internal)?;
+        resolved.builder_scope_hash = preview["scope_hash"]
+            .as_str()
+            .ok_or_else(|| ApiError::internal("Resolved Builder scope missing"))?
+            .into();
+        state
+            .application
+            .resolve_answer_journey_repair(&project, conversation, &resolved)
+            .map_err(ApiError::bad_request)?;
+    }
     let attempt = uuid::Uuid::new_v4();
     let permit = state.journey_workers.clone().try_acquire_owned().map_err(|_| ApiError {
         status: StatusCode::TOO_MANY_REQUESTS,

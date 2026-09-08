@@ -14,6 +14,11 @@ describe("exact Schema history ownership", () => {
     expect(consentMatchesRepair(consent,{...repair,id:"other"})).toBe(false);
     expect(consentMatchesRepair(consent,{...repair,draft:"other"})).toBe(false);
     expect(consentMatchesRepair({})).toBe(true);
+    const pending = {repair_after_answer:{id:repair.id,resume_checkpoint_ref:repair.draft}} as Pick<JourneyConsent,"repair_after_answer">;
+    expect(consentMatchesRepair(pending)).toBe(false);
+    expect(consentMatchesRepair(pending,repair)).toBe(true);
+    expect(consentMatchesRepair(pending,{...repair,id:"other"})).toBe(false);
+    expect(consentMatchesRepair(pending,{...repair,draft:"other"})).toBe(false);
   });
   it("does not reuse another Schema's revision one build", () => {
     const item = { schema_id: "TEST-old-schema", schema_revision: 1, operation: { evidence: { schema_id: "TEST-old-schema", schema_revision: 1 } } } as ConversationBuilderItem;

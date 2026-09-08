@@ -5171,3 +5171,37 @@ HTTP/UI preauthorization and answer-event dispatch remain disconnected intention
 until their preview, authorization and retry path are tested together. No automatic
 resume UI claim, no live calls, no real workspace mutation and no push. Next work is
 that server integration, followed by a browser answer-to-repair-to-sample regression.
+
+### 2026-09-09 — HTTP preauthorization and answer-triggered joint execution
+
+Journey preview now accepts one `pending_request_id`, mutually exclusive with a completed
+repair or initial Schema call. It returns the owned active request's full frozen input.
+Consent saving uses the existing Builder/data preview and Storage exact-request checks.
+Execution while the request remains Pending returns the saved status without a worker
+claim or model call. After an applied answer, it derives the real repair Builder scope,
+checks unchanged call/previous-grant bounds, resolves the immutable consent and uses the
+existing journey worker. Cancelled/deferred/stale/unapplied inputs cannot resolve.
+
+Human answer accepts an optional exact `journey_consent_id`; it checks the request link
+before saving. After the existing Sandbox/continuation transaction, it invokes the
+existing executor. Errors are returned separately as `journey_resume.error`, not as a
+false lost-answer error. Answer endpoints now use expensive-action admission rather
+than a control-lane bypass (regression failed at 81936 before the security fix).
+Normal/other repair cards do not adopt pending-answer history; the matching applied
+request's card can recover it via the frozen checkpoint identity.
+
+Browser 4359 passed the new path; final 83395 passes all **3 joint-repair tests (27.9s)**
+in `/tmp/annotagent-guided-e2e-22302`. The new test obtains consent over HTTP, changes a
+real canvas bbox, and injects the optional consent ID into the ordinary browser answer
+request. It verifies waiting makes no calls, answer application automatically reaches
+sample success on the same repair Draft, duplicate answer has no added calls and refresh
+has no added calls. This tests the real server contract, not a shipped preauthorization
+button. Existing post-correction UI scenarios remain green. Server 48 tests + clippy pass
+(73355); typecheck and 228 Web unit tests pass (58474); production build passes with the
+existing chunk warning. No live Provider, real workspace, remote or push changes.
+
+Remaining: expose this bounded preauthorization in the pending request UI, visibly
+restore its status/errors, and close the server-restart gap between answer acknowledgment
+and execution admission using durable continuation intent. The current optional body
+link plus saved consent permits explicit safe retry but is not yet a demonstrated
+restart-driven automatic delivery protocol. The whole objective remains active.

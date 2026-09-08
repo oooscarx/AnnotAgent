@@ -3,6 +3,53 @@ import { test, expect } from "./fixtures";
 import { sample } from "./conversation-feedback-helpers";
 import { isolatedEvidencePath } from "./evidence";
 
+test("preauthorized pending correction waits without inference and the saved answer resumes one joint repair", async ({ page, request }) => {
+  test.setTimeout(180_000);
+  const state = await sample(request, page, "pending-joint-repair", true);
+  const help = state.savedRequests[0];
+  const original = await (await request.get(`/api/workflow-drafts/${state.record.draft_id}/sample-test?test_id=${state.record.id}`)).json();
+  const query = new URLSearchParams({ consent_id: randomUUID(), builder_operation_id: randomUUID(), sample_operation_id: randomUUID(), schema_id: original.annotation_schema.schema_draft_id, schema_revision: String(original.annotation_schema.revision), planner_model_id: state.model.id, pending_request_id: help.input.id, allowed_models: JSON.stringify([`model-profile:${state.model.id}`]) });
+  const preview = await request.get(`${state.taskRoot}/journey-preview?${query}`);
+  expect(preview.ok(), await preview.text()).toBe(true);
+  const consent = { ...(await preview.json()).consent, allow_unknown_cost: true };
+  expect(consent.repair_after_answer).toEqual(help.input);
+  const saved = await request.post(`${state.taskRoot}/journey-consents`, { data: consent });
+  expect(saved.ok(), await saved.text()).toBe(true);
+  const execution = `${state.taskRoot}/journey-consents/${consent.id}/execution`;
+  const calls = await (await request.get(`${state.taskRoot}/calls`)).json();
+  const waiting = await request.post(execution, { data: {} });
+  expect(waiting.ok(), await waiting.text()).toBe(true);
+  expect((await waiting.json()).dispatch).toBeNull();
+  expect(await (await request.get(`${state.taskRoot}/calls`)).json()).toEqual(calls);
+  // Exercise the existing real canvas answer with the new server contract.
+  // The visible preauthorization control is a separate UI integration slice.
+  let answerBody: any;
+  await page.route(`**${state.taskRoot}/human-requests/${help.input.id}/answer`, async route => {
+    answerBody = { ...route.request().postDataJSON(), journey_consent_id: consent.id };
+    await route.continue({ postData: JSON.stringify(answerBody) });
+  });
+  await page.goto(`${state.url}&request=${help.input.id}`);
+  await page.getByLabel("Correct label", { exact: true }).fill("cup");
+  await page.getByRole("spinbutton", { name: "width", exact: true }).fill("0.12");
+  const answerResponse = page.waitForResponse(response => response.url().endsWith(`/human-requests/${help.input.id}/answer`) && response.request().method() === "POST");
+  await page.getByRole("button", { name: "Submit correction", exact: true }).click();
+  const answered = await answerResponse;
+  expect(answered.ok(), await answered.text()).toBe(true);
+  const receipt = await answered.json();
+  expect(receipt.status).toBe("applied");
+  expect(receipt.journey_resume.error).toBeUndefined();
+  await expect.poll(async () => (await (await request.get(execution)).json()).sample?.status, { timeout: 75_000 }).toBe("succeeded");
+  const finished = await (await request.get(execution)).json();
+  expect(finished.record.resolved_consent.repair.draft_id).toBe(receipt.resume_draft_id);
+  expect(finished.sample.draft_id).toBe(receipt.resume_draft_id);
+  const finalCalls = await (await request.get(`${state.taskRoot}/calls`)).json();
+  const duplicate = await request.post(`${state.taskRoot}/human-requests/${help.input.id}/answer`, { data: answerBody });
+  expect(duplicate.ok(), await duplicate.text()).toBe(true);
+  expect(await (await request.get(`${state.taskRoot}/calls`)).json()).toEqual(finalCalls);
+  await page.reload();
+  expect(await (await request.get(`${state.taskRoot}/calls`)).json()).toEqual(finalCalls);
+});
+
 test("one explicit repair consent preserves its exact correction and continues through Builder and sample", async ({ page, request }) => {
   test.setTimeout(180_000);
   const state = await sample(request, page, "joint-repair", true);
