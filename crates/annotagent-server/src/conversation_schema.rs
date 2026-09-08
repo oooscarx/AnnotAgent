@@ -18,6 +18,42 @@ pub(super) struct SchemaEdit {
     decision: annotagent_application::ConversationSchemaDecision,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct HumanSchemaInput {
+    request_id: uuid::Uuid,
+    decision: annotagent_application::ConversationSchemaDecision,
+}
+
+pub(super) async fn human_drafts(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+) -> ApiResult<Json<Vec<annotagent_storage::ConversationSchemaDraft>>> {
+    state
+        .application
+        .human_conversation_schema_drafts(&project, conversation, task)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
+pub(super) async fn save_human_draft(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+    Json(input): Json<HumanSchemaInput>,
+) -> ApiResult<Json<annotagent_storage::ConversationSchemaDraft>> {
+    state
+        .application
+        .save_human_conversation_schema_draft(
+            &project,
+            conversation,
+            task,
+            input.request_id,
+            &input.decision,
+        )
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
 pub(super) async fn save_draft(
     State(state): State<ServerState>,
     AxumPath((project, conversation, task, call)): AxumPath<(

@@ -159,6 +159,23 @@ impl crate::LocalApplication {
         )?)
     }
 
+    pub fn human_conversation_schema_drafts(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+    ) -> Result<Vec<annotagent_storage::ConversationSchemaDraft>> {
+        if !self
+            .conversation_tasks(project, conversation)?
+            .iter()
+            .any(|record| record.input.id == task)
+        {
+            bail!("task does not belong to this conversation");
+        }
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self.store.human_conversation_schema_drafts(&owner, task)?)
+    }
+
     /// Explicit structured human input. No Provider, grant or generated-response evidence.
     pub fn save_human_conversation_schema_draft(
         &self,

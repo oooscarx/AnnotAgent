@@ -346,6 +346,19 @@ fn read(
     })
 }
 impl SqliteStore {
+    pub fn human_conversation_schema_drafts(
+        &self,
+        project: &str,
+        task: Uuid,
+    ) -> Result<Vec<ConversationSchemaDraft>, StorageError> {
+        self.with_connection(|db| {
+            owned(db, project, task)?;
+            let mut statement = db.prepare("SELECT id FROM conversation_schema_drafts WHERE task_id=?1 AND source_request_id IS NOT NULL ORDER BY rowid DESC")?;
+            let ids = statement.query_map([task.to_string()], |row| row.get::<_, String>(0))?;
+            ids.map(|id| read(db, project, Uuid::parse_str(&id?).map_err(|_| invalid("invalid Schema ID"))?, None)).collect()
+        })
+    }
+
     /// Application validates the human definition with the same Core rules as model proposals.
     /// This operation does not create a grant, model call, Workflow or formal annotation.
     pub fn create_human_conversation_schema_draft(

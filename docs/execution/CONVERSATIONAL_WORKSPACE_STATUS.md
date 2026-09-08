@@ -1522,3 +1522,44 @@ typecheck passed. No real Workspace was opened or migrated; all test databases w
 No browser screenshot is claimed for this backend-only step. No push or remote change.
 The complete Application all-feature rerun also passed: 100 unit tests plus one integration
 test; one paid Provider smoke test remained intentionally ignored. Rust formatting passed.
+
+### M2 continuation — visible no-LLM label definition and recovery (2026-09-08)
+
+Connected the human Schema foundation to an owned GET/POST task endpoint and the conversation
+goal card. Define labels myself creates/reuses the saved message's task, without consulting a
+Provider. Users choose object boxes or whole-image categories, enter labels and optional boundary
+rules, and save with a frozen idempotency key. Unknown outcomes retain the input and retry the
+same request. Validation rejections permit correction. On reload, the task's saved human draft
+is read and the existing Schema editor/Builder card is reused. Human provenance is visible;
+there is no fabricated model receipt. Original Project Schema and formal annotations are not
+changed. Builder/model authorization remains separate; this does not implement a no-LLM pipeline
+planner or the still-pending continuous task coordinator. Unsaved fields participate in the
+existing navigation guard. GET/mount/restoration performs no model or write action.
+
+Browser evidence initially exposed the existing desktop sticky composer covering the restored
+Schema card. Removed the overlay positioning and prevented flex children from being compressed;
+the conversation now scrolls in normal document order. Added viewport and elementFromPoint checks
+that the saved draft's edit button is genuinely unobscured. The composer remains reachable by
+scrolling; a more compact continuous-conversation layout remains part of the overall UX work.
+
+Isolated E2E `/tmp/annotagent-guided-e2e-9139`: both new paths passed. Each simulates a successful
+server save followed by lost response, retries to exactly one draft, refreshes, edits to revision
+2, refreshes again, and verifies zero grants/calls, preserved Chinese labels/output type, rejected
+foreign conversation lookup and rejected extra authorization fields. Combined regression
+`/tmp/annotagent-guided-e2e-9359`: 4/4 passed including existing independent goals/setup and live-HTTP
+TEST Schema proposal (not a real Provider). After the composer fix, `/tmp/annotagent-guided-e2e-9477`
+passed 3/3 with the new unobscured-control assertions. Web 115 unit tests, typecheck/build, Rust
+formatting, Server all-target/all-feature clippy, five Application Schema tests and two Storage
+Schema tests passed. Initial TS check caught a missing explicit optional ref type; corrected.
+
+Inspected real isolated-browser `human-schema-bounding_box-390.png` and
+`human-schema-classification.png`; desktop screenshots scroll to the saved draft, mobile captures
+the input form at 390×844. These empty TEST projects prove goal-before-upload behavior, not model
+quality, image import or complete no-LLM-to-results delivery. No real user data, old credentials,
+paid models, push or remote changes. Real-human usability remains unexecuted.
+Additional post-layout regression `/tmp/annotagent-guided-e2e-9581`: 5/5 passed, including both
+human entry paths and all three existing classification/bbox/classification-review sample,
+processing, Review and export journeys. Those latter scenarios still use explicitly authorized
+TEST transports; they do not prove a human-authored Schema has completed the Builder/sample chain.
+Final type/output-summary and zero-authorized-budget checks: typecheck and both browser paths
+passed in `/tmp/annotagent-guided-e2e-9694`. Final desktop/classification-mobile screenshots inspected.

@@ -2,6 +2,7 @@
 .conversation-split { display: grid; grid-template-columns: minmax(0,var(--conversation-width)) 12px minmax(0,1fr); min-height: 65vh; }
 .conversation-panel, .conversation-image-panel { min-width: 0; padding: clamp(12px,2vw,24px); }
 .conversation-panel { display: flex; flex-direction: column; gap: 12px; }
+.conversation-panel > * { flex-shrink: 0; }
 .conversation-panel h2, .conversation-panel p, .conversation-image-tools h2 { margin: 0; }
 .conversation-development-note { font-size: .85rem; border-inline-start: 3px solid var(--aa-primary); padding: 8px 12px; }
 .conversation-messages { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 16px; }
@@ -50,7 +51,7 @@
 @media (min-width: 761px) {
   .conversation-split { height: calc(100dvh - 130px); min-height: 440px; }
   .conversation-panel, .conversation-image-panel { overflow-y: auto; }
-  .conversation-composer { position: sticky; bottom: -24px; background: var(--aa-surface); padding-block: 12px; }
+  .conversation-composer { background: var(--aa-surface); padding-block: 12px; }
 }
 .conversation-consent label { display: flex; align-items: start; gap: 10px; }
 .conversation-consent input[type=checkbox] { flex-shrink: 0; margin-top: 3px; }

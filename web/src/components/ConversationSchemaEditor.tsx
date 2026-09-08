@@ -5,8 +5,8 @@ import { ConversationBuilderCard } from "./ConversationBuilderCard";
 import type { OpenConversationSample } from "./ConversationSampleCard";
 
 /** A semantic draft is not the Project schema, a published workflow or a Run. */
-export function ConversationSchemaEditor({ project, conversation, task, call, onDirtyChange, onSample, onAssistance }: {
-  project: string; conversation: string; task: string; call: string; onDirtyChange: (dirty: boolean) => void; onAssistance?:()=>void; onSample: OpenConversationSample;
+export function ConversationSchemaEditor({ project, conversation, task, call, schemaId, onDirtyChange, onSample, onAssistance }: {
+  project: string; conversation: string; task: string; call?: string; schemaId?: string; onDirtyChange: (dirty: boolean) => void; onAssistance?:()=>void; onSample: OpenConversationSample;
 }) {
   const [draft, setDraft] = useState<ConversationSchemaDraft>();
   const fieldId = useId();
@@ -24,11 +24,13 @@ export function ConversationSchemaEditor({ project, conversation, task, call, on
   useEffect(() => { onDirtyChange(dirty); return () => onDirtyChange(false); }, [dirty, onDirtyChange]);
   useEffect(() => {
     alive.current = true; const controller = new AbortController();
-    void api.conversationSchemaDraftForCall(project, conversation, task, call, controller.signal).then((saved) => {
+    const load = schemaId ? api.conversationSchemaDraft(project, schemaId, controller.signal) : call ? api.conversationSchemaDraftForCall(project, conversation, task, call, controller.signal) : Promise.reject(new Error("Schema source is missing"));
+    void load.then((saved) => {
+      if (saved && saved.task_id !== task) throw new Error("Schema Draft belongs to another task");
       if (!controller.signal.aborted) { setDraft(saved ?? undefined); setReady(true); }
     }).catch((error: Error) => { if (!controller.signal.aborted) setError(error.message); });
     return () => { alive.current = false; controller.abort(); };
-  }, [project, conversation, task, call]);
+  }, [project, conversation, task, call, schemaId]);
   async function save() {
     if (pending.current) return;
     pending.current = true; setBusy(true); setError("");
@@ -42,7 +44,7 @@ export function ConversationSchemaEditor({ project, conversation, task, call, on
       };
       const saved = draft
         ? await api.editConversationSchemaDraft(project, draft.id, frozen.current!)
-        : await api.saveConversationSchemaDraft(project, conversation, task, call);
+        : call ? await api.saveConversationSchemaDraft(project, conversation, task, call) : (()=>{throw new Error("Schema source is missing");})();
       if (alive.current) { setDraft(saved); setEditing(false); setUncertain(false); frozen.current = undefined; }
     } catch (error) {
       if (alive.current) {
@@ -57,12 +59,14 @@ export function ConversationSchemaEditor({ project, conversation, task, call, on
     if (pending.current) return;
     pending.current = true; setBusy(true);
     try {
-      const saved = await api.conversationSchemaDraftForCall(project,conversation,task,call);
+      const saved = schemaId ? await api.conversationSchemaDraft(project,schemaId) : call ? await api.conversationSchemaDraftForCall(project,conversation,task,call) : undefined;
+      if (saved && saved.task_id !== task) throw new Error("Schema Draft belongs to another task");
       if (alive.current && saved) { setDraft(saved); setError(""); }
     } catch (error) { if (alive.current) setError((error as Error).message); }
     finally { pending.current = false; if (alive.current) setBusy(false); }
   }
   return <section className="conversation-schema-editor" aria-label="Saved label draft">
+    {draft && <p>{draft.definition.task.kind === "bounding_box" ? "Object boxes" : "Whole-image categories"} · Label draft only</p>}
     <p role="status">{busy ? "Saving Schema Draft…" : uncertain ? "Save outcome unknown; retry the same edit" : dirty ? `Unsaved edits · Based on revision ${draft?.revision}` : draft ? `Schema Draft saved · Revision ${draft.revision}` : "This proposal has not yet become an editable draft"}</p>
     {draft && !editing && <><ul>{draft.definition.task.labels.map((label) => <li key={label}>{label}</li>)}</ul><button onClick={() => { setLabels(draft.definition.task.labels.join("\n")); setRules(draft.definition.boundary_rules.join("\n")); setEditing(true); }}>Edit labels and boundary rules</button></>}
     {editing && <><label htmlFor={`${fieldId}-labels`}>Labels · one per line</label><textarea id={`${fieldId}-labels`} rows={3} value={labels} disabled={busy || uncertain} onChange={(event) => setLabels(event.target.value)} /><label htmlFor={`${fieldId}-rules`}>Boundary rules · one per line</label><textarea id={`${fieldId}-rules`} rows={3} value={rules} disabled={busy || uncertain} onChange={(event) => setRules(event.target.value)} /><small>Edits belong to this Schema Draft only. They do not change published workflows or accept annotations.</small></>}
