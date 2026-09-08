@@ -9476,6 +9476,31 @@ impl LocalApplication {
             .conversation_messages(&owner, conversation_id, after, limit)?)
     }
 
+    pub fn project_conversation_message_history(
+        &self,
+        project_id: &str,
+        conversation_id: uuid::Uuid,
+        before: Option<i64>,
+        limit: u32,
+    ) -> Result<Vec<annotagent_storage::ConversationMessage>> {
+        let owner = self.conversation_project_identity(project_id)?;
+        Ok(self
+            .store
+            .conversation_message_history(&owner, conversation_id, before, limit)?)
+    }
+
+    pub fn project_conversation_message(
+        &self,
+        project_id: &str,
+        conversation_id: uuid::Uuid,
+        message_id: uuid::Uuid,
+    ) -> Result<annotagent_storage::ConversationMessage> {
+        let owner = self.conversation_project_identity(project_id)?;
+        self.store
+            .conversation_message(&owner, conversation_id, message_id)?
+            .context("The requested message was not found in this conversation")
+    }
+
     pub fn project_goal(&self, project_id: &str) -> Result<serde_json::Value> {
         let yaml = std::fs::read(self.project_path(project_id)?)?;
         let project = ProjectSchema::from_yaml(std::str::from_utf8(&yaml)?)

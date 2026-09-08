@@ -69,6 +69,30 @@ pub(crate) fn require_owner(
 }
 
 impl SqliteStore {
+    pub fn conversation_message_history(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        before: Option<i64>,
+        limit: u32,
+    ) -> Result<Vec<ConversationMessage>, StorageError> {
+        if before.is_some_and(|value| value <= 0) {
+            return Err(invalid("history cursor must be positive"));
+        }
+        let through = before.map_or(i64::MAX, |value| value - 1);
+        self.with_connection(|db| {
+            require_owner(db, project, conversation)?;
+            let mut query = db.prepare("SELECT sequence,input_json FROM conversation_messages WHERE conversation_id=?1 AND sequence<=?2 ORDER BY sequence DESC LIMIT ?3")?;
+            let rows = query.query_map(params![conversation.to_string(), through, limit.clamp(1, 100)], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?;
+            let mut messages = rows.map(|row| {
+                let (sequence, input) = row?;
+                Ok(ConversationMessage { conversation_id: conversation, sequence, input: serde_json::from_str(&input)? })
+            }).collect::<Result<Vec<_>, StorageError>>()?;
+            messages.reverse();
+            Ok(messages)
+        })
+    }
+
     pub fn conversation_message(
         &self,
         project: &str,
@@ -181,6 +205,76 @@ impl SqliteStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reverse_history_is_bounded_stable_and_owned_after_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TEST-history.db");
+        let store = SqliteStore::open(&path).unwrap();
+        let project = Uuid::new_v4().to_string();
+        let conversation = store.create_conversation(&project).unwrap();
+        for index in 1..=120 {
+            store
+                .append_conversation_message(
+                    &project,
+                    conversation,
+                    &ConversationMessageInput {
+                        id: Uuid::new_v4(),
+                        text: format!("TEST {index}"),
+                        image: None,
+                        reference: None,
+                    },
+                )
+                .unwrap();
+        }
+        let latest = store
+            .conversation_message_history(&project, conversation, None, u32::MAX)
+            .unwrap();
+        assert_eq!(latest.len(), 100);
+        assert_eq!(latest[0].sequence, 21);
+        assert_eq!(latest[99].sequence, 120);
+        let prior = store
+            .conversation_message_history(&project, conversation, Some(41), 20)
+            .unwrap();
+        assert_eq!(prior[0].sequence, 21);
+        assert_eq!(prior[19].sequence, 40);
+        store
+            .append_conversation_message(
+                &project,
+                conversation,
+                &ConversationMessageInput {
+                    id: Uuid::new_v4(),
+                    text: "TEST new message".into(),
+                    image: None,
+                    reference: None,
+                },
+            )
+            .unwrap();
+        drop(store);
+        let store = SqliteStore::open(&path).unwrap();
+        assert_eq!(
+            store
+                .conversation_message_history(&project, conversation, Some(41), 20)
+                .unwrap(),
+            prior
+        );
+        assert!(
+            store
+                .conversation_message_history("foreign", conversation, None, 20)
+                .is_err()
+        );
+        assert!(
+            store
+                .conversation_message_history(&project, conversation, Some(0), 20)
+                .is_err()
+        );
+        assert!(
+            store
+                .conversation_message_history(&project, conversation, Some(1), 20)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
     #[test]
     fn candidate_reference_survives_restart_and_cannot_become_a_project_goal() {
         let dir = tempfile::tempdir().unwrap();

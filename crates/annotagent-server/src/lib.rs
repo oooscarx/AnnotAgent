@@ -10681,6 +10681,154 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn conversation_history_pages_preserve_exact_message_ownership() {
+        let temporary = tempfile::tempdir().unwrap();
+        let application = Arc::new(LocalApplication::new(temporary.path()).unwrap());
+        application
+            .create_project(
+                "TEST-history",
+                include_str!(
+                    "../../../examples/label-pipelines/whole-image-classification/project.yaml"
+                ),
+            )
+            .unwrap();
+        application
+            .create_project(
+                "TEST-foreign-history",
+                include_str!(
+                    "../../../examples/label-pipelines/whole-image-classification/project.yaml"
+                ),
+            )
+            .unwrap();
+        let conversation = application
+            .create_project_conversation("TEST-history")
+            .unwrap();
+        let mut ids = Vec::new();
+        for index in 1..=9 {
+            let input = annotagent_storage::ConversationMessageInput {
+                id: uuid::Uuid::new_v4(),
+                text: format!("TEST note {index}"),
+                image: None,
+                reference: None,
+            };
+            application
+                .append_project_conversation_message("TEST-history", conversation, &input)
+                .unwrap();
+            ids.push(input.id);
+        }
+        let service = router(
+            test_state(application, Arc::new(InMemorySecretStore::default())).await,
+            None,
+        );
+        let root = format!("/api/projects/TEST-history/conversations/{conversation}/messages");
+        let latest = request(
+            &service,
+            axum::http::Method::GET,
+            &format!("{root}?latest=true&limit=3"),
+            None,
+        )
+        .await;
+        assert_eq!(latest.status(), StatusCode::OK);
+        let latest = response_json(latest).await;
+        assert_eq!(
+            latest
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|item| item["sequence"].as_i64().unwrap())
+                .collect::<Vec<_>>(),
+            vec![7, 8, 9]
+        );
+        let older = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("{root}?before=7&limit=3"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            older
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|item| item["sequence"].as_i64().unwrap())
+                .collect::<Vec<_>>(),
+            vec![4, 5, 6]
+        );
+        let exact = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("{root}/{}", ids[0]),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(exact["sequence"], 1);
+        assert_eq!(exact["input"]["id"], ids[0].to_string());
+        assert_eq!(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("{root}/{}", uuid::Uuid::new_v4()),
+                None
+            )
+            .await
+            .status(),
+            StatusCode::NOT_FOUND
+        );
+        for query in [
+            "latest=true&after=1",
+            "latest=true&before=7",
+            "before=0",
+            "before=-1",
+        ] {
+            assert_eq!(
+                request(
+                    &service,
+                    axum::http::Method::GET,
+                    &format!("{root}?{query}"),
+                    None
+                )
+                .await
+                .status(),
+                StatusCode::BAD_REQUEST
+            );
+        }
+        assert!(
+            !request(
+                &service,
+                axum::http::Method::GET,
+                &format!(
+                    "{}/{}",
+                    root.replace("TEST-history", "TEST-foreign-history"),
+                    ids[0]
+                ),
+                None
+            )
+            .await
+            .status()
+            .is_success()
+        );
+        let forward = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("{root}?after=3&limit=2"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(forward[0]["sequence"], 4);
+        assert_eq!(forward[1]["sequence"], 5);
+    }
+
+    #[tokio::test]
     async fn processing_retry_recovers_created_batch_without_scope_reauthorization_or_execution() {
         let temporary = tempfile::tempdir().unwrap();
         let application = Arc::new(LocalApplication::new(temporary.path()).unwrap());

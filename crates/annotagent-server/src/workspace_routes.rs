@@ -88,6 +88,10 @@ pub(super) fn routes() -> Router<ServerState> {
             get(super::conversations::messages).post(super::conversations::append),
         )
         .route(
+            "/api/projects/{project_id}/conversations/{conversation_id}/messages/{message_id}",
+            get(super::conversations::message),
+        )
+        .route(
             "/api/projects/{project_id}/conversations/{conversation_id}/tasks",
             get(super::conversations::tasks).post(super::conversations::begin_task),
         )

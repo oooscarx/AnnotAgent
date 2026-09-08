@@ -4812,3 +4812,27 @@ native browser zoom, assistive-technology or a human usability study. Handle 470
 and their screenshots were saved under `/tmp/annotagent-composer-viewports/conversational-workspace`.
 No tool process remains running from these targeted checks. Broader history pagination and the
 final combined regression remain outstanding.
+
+### 2026-09-09 — Bounded reverse journal reads (backend increment)
+
+The server now supports `messages?latest=true&limit=N`, an exclusive `before=sequence`
+cursor, and exact `messages/:messageId` reads using the existing project-owned journal.
+Pages are capped at 100 and returned in chronological order. The original forward
+`after` API is preserved. Conflicting directions and non-positive reverse cursors are
+rejected. These GETs do not create tasks, execute models or write annotations.
+
+The new server regression first failed against the old API (400 instead of 200).
+After implementation, the storage test verifies the 100-item cap, stable backward
+pages after an append and database reopen, and ownership rejection. The server test
+verifies tail/backward/forward reads, missing exact IDs, invalid cursor combinations,
+and rejection of an existing different Project's attempt to read the message.
+Both targeted tests pass. Expanded verification completed successfully: all four storage
+conversation tests, all 47 server unit tests, formatting, and server all-target/all-feature
+Clippy with warnings denied. No external model inference was used.
+
+This is deliberately not claimed as a visible pagination improvement yet: the current
+React bootstrap still drains forward pages. Frontend integration must preserve the
+selected task's source message, frozen candidate references and stop-task context even
+when those messages are outside the visible history page. No pagination button or
+performance claim has been added ahead of that integration. Real workspace data,
+historical screenshot modifications and remotes remain untouched.

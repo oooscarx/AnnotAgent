@@ -29,6 +29,9 @@ pub(super) async fn set_call_limit(
 pub(super) struct MessagePage {
     #[serde(default)]
     after: i64,
+    before: Option<i64>,
+    #[serde(default)]
+    latest: bool,
     limit: Option<u32>,
 }
 
@@ -59,6 +62,21 @@ pub(super) async fn messages(
     AxumPath((project, conversation)): AxumPath<(String, uuid::Uuid)>,
     Query(page): Query<MessagePage>,
 ) -> ApiResult<Json<Vec<ConversationMessage>>> {
+    if page.latest || page.before.is_some() {
+        if page.after != 0 || (page.latest && page.before.is_some()) {
+            return Err(ApiError::bad_request("Select one message paging direction"));
+        }
+        return state
+            .application
+            .project_conversation_message_history(
+                &project,
+                conversation,
+                page.before,
+                page.limit.unwrap_or(100),
+            )
+            .map(Json)
+            .map_err(ApiError::bad_request);
+    }
     state
         .application
         .project_conversation_messages(
@@ -69,6 +87,17 @@ pub(super) async fn messages(
         )
         .map(Json)
         .map_err(ApiError::bad_request)
+}
+
+pub(super) async fn message(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, message)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+) -> ApiResult<Json<ConversationMessage>> {
+    state
+        .application
+        .project_conversation_message(&project, conversation, message)
+        .map(Json)
+        .map_err(ApiError::not_found)
 }
 
 pub(super) async fn append(
