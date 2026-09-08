@@ -4696,3 +4696,22 @@ save observations allow the existing 65-second pacing window; the test has a fin
 ceiling. No production retry policy or security limit changed. Test discovery passes; fresh
 execution is pending after round 4 finishes, alongside the preview browser test. The round is
 still live on handle 87265 (test 58 completed); do not restart it or label the suite green.
+
+### 2026-09-09 — Reuse dataset queries on conversation context changes
+
+Inspection found the workspace bootstrap re-fetches image metadata for every task/Draft/request
+context change. It now uses the existing project-keyed RouteQueryCache with a 30-second freshness
+window, not a second cache or dataset. The existing outer AbortController still guards application
+of results from old contexts. Upload invalidates the key before any file (including partial failure)
+and forces a fresh load on completion. Browser reload creates fresh memory state; server ownership,
+content hashes and authorization checks remain authoritative.
+
+The pending preview browser test also counts index requests across a saved message/conversation
+URL change. Typecheck and 218 Web unit tests pass; this is not yet proof of the new browser request
+count assertion. Full Rust verification after preview implementation (handle 76344) exited 0:
+fmt, strict all-target/all-feature clippy, workspace all-feature tests and build. Existing ignored
+real-model/paid tests are still not Live evidence. The current browser round predates this cache
+change and is live through test 78, with the recorded test-50 failure. Do not rebuild web/dist
+mid-run: the server uses ServeDir over that actual directory, so rebuilding would change its
+test subject. After completion archive traces, then run new preview/cache + repaired human Schema
+tests on the fresh source. Metadata remains an all-image index, not server-side pagination.

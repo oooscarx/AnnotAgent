@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { api, type ProcessingReceipt } from "../api";
+import { queryKeys, workspaceQueries } from "../queryCache";
 import { projectWorkPath, projectBuildPath, projectBatchPath, parseWorkspaceRoute, conversationSettingsPath, type ConversationResultsContext } from "../navigation";
 import type { ConversationMessage, ConversationMessageInput, ConversationTask, ImageItem, ProjectSummary } from "../types";
 import "./conversation-workspace.css";
@@ -183,7 +184,10 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
     const controller = new AbortController();
     setReady(false); setError("");
     void (async () => {
-      const [current, dataset] = await Promise.all([api.conversation(project.id, controller.signal), api.images(project.id, controller.signal)]);
+      const [current, dataset] = await Promise.all([
+        api.conversation(project.id, controller.signal),
+        workspaceQueries.load(queryKeys.projectImages(project.id), signal => api.images(project.id, signal), { staleTime: 30_000 }),
+      ]);
       if (conversationId && conversationId !== current.conversation_id) throw new Error("This conversation does not belong to this Project or is no longer available.");
       const saved: ConversationMessage[] = [];
       if (current.conversation_id) {
@@ -309,13 +313,16 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   async function upload(files: File[]) {
     if (pending.current || !files.length) return;
     pending.current = true; setBusy(true); setError("");
+    workspaceQueries.invalidate(queryKeys.projectImages(project.id));
     try {
       for (const [index, file] of files.entries()) {
         setStatus(`Uploading ${index + 1}/${files.length} to this AnnotAgent server…`);
         const result = await api.uploadImage(project.id, file);
         if (result.corrupt.length) throw new Error(result.corrupt.map((item) => `${item.name}: ${item.message}`).join("; "));
       }
-      const dataset = await api.images(project.id);
+      const imageKey = queryKeys.projectImages(project.id);
+      workspaceQueries.invalidate(imageKey);
+      const dataset = await workspaceQueries.load(imageKey, signal => api.images(project.id, signal), { force: true });
       if (alive.current) { setImages(dataset.images); setStatus("Images saved on this server. This upload did not start inference."); }
     } catch (error) { if (alive.current) { setError((error as Error).message); setStatus("Completed uploads are retained. Reselect files to retry; identical content is deduplicated."); } }
     finally { pending.current = false; if (alive.current) setBusy(false); }

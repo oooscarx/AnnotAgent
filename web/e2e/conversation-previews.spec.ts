@@ -6,6 +6,10 @@ test("browse previews are bounded while the selected canvas keeps original pixel
   const project = `test-preview-${Date.now()}`;
   const yaml = "version: 1\nproject:\n  name: TEST preview transport\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n";
   expect((await request.post("/api/projects", { data: { id: project, yaml } })).ok()).toBeTruthy();
+  let indexRequests = 0;
+  page.on("request", request => {
+    if (new URL(request.url()).pathname === `/api/projects/${project}/images`) indexRequests++;
+  });
   await page.goto(`/projects/${project}/work`);
   await expect(page.getByText("Saved workspace loaded", { exact: true })).toBeVisible();
   await page.getByLabel("Add images", { exact: true }).setInputFiles(resolve("../examples/robocup/images/synthetic-robocup.png"));
@@ -22,6 +26,13 @@ test("browse previews are bounded while the selected canvas keeps original pixel
     return [image.naturalWidth, image.naturalHeight];
   });
   expect(Math.max(...dimensions)).toBeLessThanOrEqual(256);
+  const afterUpload = indexRequests;
+  await page.getByLabel("Your message", { exact: true }).fill("TEST saved note without inference");
+  await page.getByRole("button", { name: "Save message", exact: true }).click();
+  await expect(page.getByRole("list", { name: "Saved messages" })).toContainText("TEST saved note without inference");
+  await expect(page).toHaveURL(/conversation=/);
+  await expect(page.getByLabel("Add images", { exact: true })).toBeEnabled();
+  expect(indexRequests).toBe(afterUpload);
   await page.getByRole("navigation", { name: "Select image", exact: true }).getByRole("button").click();
   const canvas = page.locator(".conversation-image img");
   await expect(canvas).toHaveAttribute("src", image.url);
