@@ -7,6 +7,27 @@ use annotagent_storage::{
 use anyhow::{Context, Result, bail};
 use uuid::Uuid;
 
+fn first_review_subject(
+    result: &annotagent_core::WorkflowDryRunSampleResult,
+) -> Option<&annotagent_core::FinalCandidateProjection> {
+    result
+        .projection
+        .review_candidates
+        .iter()
+        .map(|item| &item.candidate)
+        .chain(result.projection.final_candidates.iter())
+        .find(|item| {
+            item.outcome.status == annotagent_core::SampleTestOutcomeStatus::NeedsReview
+                && matches!(
+                    item.outcome.value,
+                    Some(
+                        annotagent_core::VisionArtifactValue::BoundingBox { .. }
+                            | annotagent_core::VisionArtifactValue::Classification { .. }
+                    )
+                )
+        })
+}
+
 fn validate_subject(
     project: &str,
     test: &WorkflowSampleTest,
@@ -53,6 +74,71 @@ fn validate_subject(
 }
 
 impl LocalApplication {
+    /// Prepare bounded human work from saved terminal evidence. This command is local only;
+    /// it neither predicts new objects nor treats a review flag as proof of inaccuracy.
+    pub fn prepare_conversation_sample_requests(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        sample_id: &str,
+    ) -> Result<Vec<ConversationHumanRequest>> {
+        let existing = self.conversation_human_requests(project, conversation, task)?;
+        let operation = self
+            .store
+            .sample_operation(sample_id)?
+            .context("Sample operation not found")?;
+        if operation.project_id != project
+            || operation.request["conversation"]["conversation_id"] != conversation.to_string()
+            || operation.request["conversation"]["task_id"] != task.to_string()
+        {
+            bail!("Sample operation belongs to another conversation task");
+        }
+        let sample = self
+            .store
+            .get_workflow_sample_test_by_id(sample_id)?
+            .context("Sample report is not saved yet")?;
+        if sample.project_id != project
+            || !sample.report.sandbox
+            || sample.draft_id != operation.draft_id
+            || sample.inputs.len() != sample.report.samples.len()
+        {
+            bail!("Human assistance requires consistent owned Sandbox evidence");
+        }
+        let mut requests = Vec::new();
+        // One request per image avoids conflicting optimistic feedback sequences on that image.
+        // Further questions require a separately evaluated continuation, not an unbounded queue.
+        for (image, result) in sample.inputs.iter().zip(&sample.report.samples).take(10) {
+            if let Some(saved) = existing.iter().find(|request| {
+                request.input.sample_test_id == sample_id
+                    && request.input.image_id == image.image_id
+            }) {
+                requests.push(saved.clone());
+                continue;
+            }
+            let Some(candidate) = first_review_subject(result) else {
+                continue;
+            };
+            let key = format!(
+                "conversation-sample-human-v1:{conversation}:{task}:{sample_id}:{}",
+                image.image_id
+            );
+            let id = Uuid::new_v5(&Uuid::NAMESPACE_URL, key.as_bytes());
+            let prior = self.store.sample_feedback(sample_id, &image.image_id)?;
+            let input = ConversationHumanRequestInput {
+                id, task_id:task, conversation_id:conversation, sample_test_id:sample_id.to_owned(),
+                image_id:image.image_id.clone(), content_hash:image.content_hash.clone(),
+                outcome_id:candidate.outcome.id.clone(),
+                expected_feedback_sequence:prior.last().map_or(0, |revision| revision.sequence),
+                reason_code:"terminal_result_requires_review".into(),
+                question:"This saved sample result requires human review. Check the selected object or class and correct it if needed; this does not accept dataset annotations.".into(),
+                resume_checkpoint_ref:Uuid::new_v5(&id,b"prepared-repair-draft"),
+            };
+            requests.push(self.create_conversation_human_request(project, &input)?);
+        }
+        Ok(requests)
+    }
+
     pub(crate) fn recover_conversation_corrections(&self) -> Result<()> {
         for (project, owner, input) in self.store.undelivered_conversation_corrections()? {
             if let Err(error) = self.resume_conversation_correction(
@@ -273,6 +359,34 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn assistance_uses_only_editable_terminal_review_results() {
+        let (test, _) = fixture();
+        let mut result = test.report.samples[0].clone();
+        assert_eq!(first_review_subject(&result).unwrap().outcome.id, "final");
+        result.projection.final_candidates[0].outcome.status =
+            annotagent_core::SampleTestOutcomeStatus::ReadyToAccept;
+        assert!(first_review_subject(&result).is_none());
+        result.projection.final_candidates[0].outcome.status =
+            annotagent_core::SampleTestOutcomeStatus::NeedsReview;
+        result.projection.final_candidates[0].outcome.value = None;
+        assert!(first_review_subject(&result).is_none());
+        result.projection.final_candidates[0].outcome.value =
+            Some(annotagent_core::VisionArtifactValue::Classification {
+                labels: vec!["indoor".into()],
+            });
+        assert!(first_review_subject(&result).is_some());
+        result
+            .outcomes
+            .push(result.projection.final_candidates[0].outcome.clone());
+        result.projection.final_candidates.clear();
+        result.projection.no_target = true;
+        assert!(
+            first_review_subject(&result).is_none(),
+            "raw intermediate outcomes are not human correction targets"
+        );
+    }
+
+    #[test]
     fn correction_subject_requires_owned_unchanged_terminal_sandbox_evidence() {
         let (mut test, mut input) = fixture();
         assert!(validate_subject("TEST", &test, &input, "pixels").is_ok());
@@ -339,6 +453,26 @@ pub(crate) mod tests {
         input.task_id = task.id;
         input.image_id = image.image_id.to_string();
         input.content_hash = image.content_hash;
+        let prepared = app
+            .prepare_conversation_sample_requests(project, conversation, task.id, &sample.id)
+            .unwrap();
+        assert_eq!(prepared.len(), 1);
+        assert_eq!(prepared[0].input.outcome_id, input.outcome_id);
+        input = prepared[0].input.clone();
+        assert_eq!(
+            app.prepare_conversation_sample_requests(project, conversation, task.id, &sample.id)
+                .unwrap(),
+            prepared
+        );
+        assert!(
+            app.prepare_conversation_sample_requests(
+                project,
+                conversation,
+                Uuid::new_v4(),
+                &sample.id
+            )
+            .is_err()
+        );
         app.create_conversation_human_request(project, &input)
             .unwrap();
         let answer = SampleFeedbackRevision {

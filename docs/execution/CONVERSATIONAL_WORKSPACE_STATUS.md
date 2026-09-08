@@ -1052,3 +1052,29 @@ Inspected screenshots: `conversational-workspace/comparison-origin-bbox.png` and
 and synthetic pixels, not Live quality or real-user usability evidence. No real
 workspace change, push or remote modification. Automatic request generation, broader
 conversation intent, formal processing/Review/export, and remaining M4 work continue.
+
+### Evidence-driven human-request preparation command (M3 increment)
+
+Added an Application command that derives human requests from an owned conversation
+Sample Operation and saved Sandbox report. It selects only terminal `needs_review`
+bbox/classification values, never raw intermediate outcomes, missing geometry or
+ready-to-accept results. No-target and unsupported geometry remain explicit gaps;
+this command does not invent a final object or a fake editable request.
+
+Preparation is bounded to one request per image (up to ten images). This avoids
+multiple pending answers competing for the same image's optimistic feedback sequence.
+Request and resume checkpoint identities are deterministic, existing requests are
+restored rather than recreated, and current pixel hashes/ownership are checked by
+the existing creation service. The request explains that human review is needed,
+not that the model has been proved inaccurate; no inference or formal acceptance
+occurs. Its expected sequence comes from the saved feedback history.
+
+The existing real temporary-workspace correction/resume test now begins with this
+command, asserts duplicate preparation and foreign-task rejection, then exercises the
+same answer/outbox/restart flow. A new selection regression covers bbox, classification,
+ready results, absent values and no-target/intermediate-only reports. Application
+**99 passed / 1 billable ignored**, strict Application Clippy and diff checks passed.
+No UI/server completion hook is enabled yet: durable completion delivery/restart
+recovery must be connected next, without backfilling historical user samples on GET.
+No screenshot or automatic browser-request claim for this backend prerequisite.
+No Live model, real workspace mutation, push or remote change.
