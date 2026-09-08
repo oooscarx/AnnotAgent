@@ -4512,3 +4512,11 @@ human feedback is still applied separately; no accepted annotation or model/geom
 The regression was first observed failing, then passes with coarse+final+review mixed input,
 duplicate candidate, legacy absence and empty terminal cases. Typecheck and **207 unit tests**
 pass. Browser comparison verification requires a fresh isolated build after handle 21905 ends.
+
+Prepared `sample-terminal-comparison.spec.ts` as a browser regression for that change. It creates
+an actual isolated TEST sample, then explicitly perturbs browser read responses with an extra
+coarse aggregate and a test-only comparison link. It checks current/before canvas counts, empty
+terminal results, and zero writes during navigation/reload. This transport perturbation is not
+a real revised-plan lineage or accuracy demonstration. Typecheck passes; browser execution is
+pending so it is not counted as passed. Full handle 21905 remains live (last observed test 31),
+and its pre-change server has not been rebuilt or interrupted.
