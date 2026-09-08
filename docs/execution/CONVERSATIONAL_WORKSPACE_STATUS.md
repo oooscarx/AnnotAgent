@@ -2180,3 +2180,28 @@ and screenshot positioning. Inspected `conversational-workspace/request-task-his
 pending other-goal request appears before cancelled history, with separate, wrapping open/cancel
 actions and unchanged TEST image pixels. Keyboard focus remains visible on the disclosure. Web
 typecheck and 122 units passed again. This is not a native-zoom or full browser-suite result.
+
+### M4 continuation — delayed request navigation cannot restore an obsolete task
+
+Added a failing real-browser case before changing navigation: click an existing help request,
+hold its read-only Sample Operation response, then switch the same document to another goal while
+keeping the same image. Baseline `/tmp/annotagent-guided-e2e-24119` failed: the old response added
+its request/Draft/Test to the user's newer task-only URL. The existing navigation generation only
+changed for image/Draft/Test and therefore missed task-only changes and result modes.
+
+Navigation invalidation now uses the existing canonical workspace route builder over the complete
+Project/conversation/task/image/request/Draft/Test/message/processing/result context. Explicit goal
+selection and result switches also invalidate pending sample navigation immediately. Both sample
+and human-request lookup failures check the same generation before presenting an error. This does
+not cancel a running model or mutate a server task; these are read-only navigation lookups, whose
+obsolete results/errors are ignored. No new route or alternate task state was introduced.
+
+Corrected classification and bbox browser flows `/tmp/annotagent-guided-e2e-24245` passed 2/2 in
+22.7 seconds. Final bbox run `/tmp/annotagent-guided-e2e-24319` passed 1/1 in 14.6 seconds with both
+a delayed success and delayed 503 lookup, verifying task-only navigation remains unchanged and
+no stale error appears before completing the existing correction/continuation/formal delivery
+scenario. Web typecheck, 122 unit tests, production build and diff hygiene passed (existing large
+chunk warning remains). No Rust business behavior changed; this is not a new all-workspace or
+all-browser-suite claim. Test-only workspace/HTTP fixture, no Live quality or human usability
+validation, no real Workspace mutation, no push/remote change. Full coordinator and other recorded
+acceptance gaps remain open.

@@ -246,6 +246,26 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
     await expect(help.getByText(human.question,{exact:true})).toBeVisible();
     await help.evaluate(element=>element.scrollIntoView({block:"start"}));
     await page.screenshot({path:"../docs/execution/conversational-workspace/request-task-history.png",fullPage:true});
+    const operationPath=`/api/projects/${project}/sample-operations/${human.sample_test_id}`;
+    const operationSnapshot=await (await request.get(operationPath)).json();
+    const independentTask=new URL(page.url()).searchParams.get("task")!;
+    for(const lateError of [false,true]){
+    let release!:()=>void;
+    const gate=new Promise<void>(resolve=>{release=resolve;});
+    let intercepted=false;
+    await page.route(`**${operationPath}`,async route=>{intercepted=true;await gate;await route.fulfill(lateError ? {status:503,json:{error:"TEST stale request lookup failed"}} : {json:operationSnapshot});},{times:1});
+    await help.locator("article").filter({hasText:human.question}).getByRole("button",{name:"Open requested result",exact:true}).click();
+    await expect.poll(()=>intercepted).toBe(true);
+    const taskOnly=new URL(page.url());taskOnly.searchParams.set("task",lateError ? independentTask : human.task_id);
+    await page.evaluate(url=>{history.pushState({},"",url);window.dispatchEvent(new PopStateEvent("popstate"));},taskOnly.toString());
+    await expect(page.getByRole("button",{name:lateError ? /Use message 2 as annotation goal/ : /Use message 1 as annotation goal/})).toHaveAttribute("aria-pressed","true");
+    const response=page.waitForResponse(value=>value.url().endsWith(operationPath));release();await response;
+    await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+    expect(page.url()).toBe(taskOnly.toString());
+    await expect(page.getByRole("alert").filter({hasText:"TEST stale request lookup failed"})).toHaveCount(0);
+    }
+    const restoredHistory=help.locator("details");
+    if(!await restoredHistory.evaluate(element=>(element as HTMLDetailsElement).open))await restoredHistory.locator("summary").click();
   }
   await page.locator("article").filter({hasText:human.question}).getByRole("button",{name:"Open requested result",exact:true}).click();
   await expect(page.getByRole("button",{name:"Submit correction",exact:true})).toBeVisible();

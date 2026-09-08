@@ -80,13 +80,14 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
     try{const operation=await api.sampleOperation(project.id,value.input.sample_test_id);
       if(!alive.current || ticket!==sampleNavigation.current)return;
       onNavigate(projectWorkPath(project.id,{conversationId:value.input.conversation_id,taskId:value.input.task_id,humanRequestId:value.input.id,draftId:operation.draft_id,sampleTestId:value.input.sample_test_id,imageId:value.input.image_id}));setMobileView("images");
-    }catch(error){if(alive.current)setError((error as Error).message);}
+    }catch(error){if(alive.current && ticket===sampleNavigation.current)setError((error as Error).message);}
   }
   const root = useRef<HTMLDivElement>(null);
   const pending = useRef(false);
   const selectingImage = useRef(false);
   const sampleNavigation = useRef(0);
-  useEffect(()=>{sampleNavigation.current++;},[imageId,draftId,sampleTestId]);
+  const navigationContext=projectWorkPath(project.id,{conversationId,taskId,imageId,draftId,sampleTestId,humanRequestId,referenceMessageId,processingOperationId,results});
+  useEffect(()=>{sampleNavigation.current++;},[navigationContext]);
   const unsent = useRef("");
   const schemaDirty = useRef(false);
   const budgetDirty=useRef(false);
@@ -186,6 +187,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   async function useMessageAsGoal(message: ConversationMessage) {
     if (!conversation || pending.current) return;
     if (schemaDirty.current || sampleDirty.current || unsent.current) { setError("Save or undo current edits before switching annotation goals."); return; }
+    sampleNavigation.current++;
     pending.current=true;setBusy(true);setError("");
     try {
       const existing=await api.conversationTasks(project.id,conversation);
@@ -223,6 +225,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
     finally { selectingImage.current = false; }
   };
   const showResults = (next?:ConversationResultsContext) => {
+    sampleNavigation.current++;
     onNavigate(projectWorkPath(project.id,{conversationId:conversation,imageId,draftId,sampleTestId,taskId,humanRequestId,processingOperationId,results:next}));
     setMobileView("images");
   };
@@ -240,7 +243,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
       const keepOrigin=activeRequest && conversationSampleRelation(activeRequest,draft,test,image)!=="unrelated";
       onNavigate(projectWorkPath(project.id,{conversationId:conversation,draftId:draft,sampleTestId:test,imageId:image ?? sample_test.inputs[0]?.image_id,taskId:keepOrigin ? activeRequest.input.task_id : taskId,humanRequestId:keepOrigin ? activeRequest.input.id : undefined}));
       setMobileView("images");
-    }catch(error){if(alive.current)setError((error as Error).message);}
+    }catch(error){if(alive.current && request===sampleNavigation.current)setError((error as Error).message);}
   }
   return <section className="conversation-workspace" aria-label="Annotation workspace">
     <nav className="conversation-mobile-tabs" aria-label="Workspace panels">
