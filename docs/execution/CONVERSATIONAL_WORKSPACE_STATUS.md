@@ -4776,3 +4776,17 @@ isolated workspace. Current-source targeted run is handle 21777, evidence
 `/tmp/annotagent-paging-repairs`: preview, complete guided serial group, journey-ready and Expert
 integration. Results are pending. Web typecheck and 222 unit tests passed before these additional
 browser assertions. No full-suite success or Live/human-quality claim.
+
+The 41-test run 21777 finished **38 passed, 1 failed, 2 skipped (2.7m)**. Preview/cache, the
+entire guided management group, and journey-ready passed, including forced dashboard-owner
+omission. Expert setup had loaded the correct Project and pixels but its implicit selector label
+did not satisfy the exact accessible-name lookup. The select now has an explicit translated
+Project aria-label. Fresh Expert-only run 58308 passed **3/3 (6.2s)**, workspace
+`/tmp/annotagent-guided-e2e-10015`; previous trace is
+`/tmp/annotagent-expert-picker-trace-tUv5DR/trace.zip`. Typecheck passes. These are TEST Worker
+transport/discovery/Artifact tests, not Live SAM weight or accuracy evidence.
+
+Visual inspection of `/tmp/annotagent-paging-repairs/conversational-workspace/bounded-browse-preview.png`
+also shows the desktop composer below the initial viewport as historical cards grow. A viewport
+assertion was added to the preview test; baseline verification is running on handle 79098
+before restructuring the scroll areas.
