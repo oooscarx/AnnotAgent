@@ -163,12 +163,14 @@ export function conversationReturn(projectId: string, value?: string | null): st
   return route.kind === "conversation" && route.projectId === projectId ? route.canonicalPath : undefined;
 }
 
-function imageClassReviewReturn(projectId: string, value?: string | null): string | undefined {
+function pipelineWorkspaceReturn(projectId: string, value?: string | null): string | undefined {
   const canonical = conversationReturn(projectId, value);
   if (!canonical) return undefined;
   const [pathname, search] = canonical.split("?");
   const route = parseWorkspaceRoute(pathname, search ? `?${search}` : "");
-  return route.kind === "conversation" && route.classReviewId && route.conversationId && route.taskId && route.draftId && route.sampleTestId && route.imageId ? canonical : undefined;
+  if(route.kind!=="conversation" || !route.conversationId || !route.taskId)return undefined;
+  if(route.classReviewId && (!route.draftId || !route.sampleTestId || !route.imageId))return undefined;
+  return canonical;
 }
 
 export function withConversationReturn(path: string, returnPath?: string): string {
@@ -207,7 +209,7 @@ export function projectBuildPath(
   if (step === "test" && context.sampleTestId)
     params.set("test", context.sampleTestId);
   if (step === "test" && context.imageId) params.set("image", context.imageId);
-  const workspaceReturn = step === "pipeline" ? imageClassReviewReturn(projectId, context.workspaceReturn) : undefined;
+  const workspaceReturn = step === "pipeline" ? pipelineWorkspaceReturn(projectId, context.workspaceReturn) : undefined;
   if (workspaceReturn) params.set("workspace_return", workspaceReturn);
   const suffix = params.size ? `?${canonicalSearch(params)}` : "";
   return `/projects/${encodeURIComponent(projectId)}/build/${step}${suffix}`;
@@ -529,7 +531,7 @@ export function parseWorkspaceRoute(
     const improvementSessionId = step === "pipeline" ? params.get("improvement") ?? undefined : undefined;
     const sampleTestId = step === "test" ? params.get("test") ?? undefined : undefined;
     const imageId = step === "test" ? params.get("image") ?? undefined : undefined;
-    const workspaceReturn = step === "pipeline" ? imageClassReviewReturn(projectId, params.get("workspace_return")) : undefined;
+    const workspaceReturn = step === "pipeline" ? pipelineWorkspaceReturn(projectId, params.get("workspace_return")) : undefined;
     const canonicalPath = projectBuildPath(projectId, step, {
       draftId,
       workflowId,

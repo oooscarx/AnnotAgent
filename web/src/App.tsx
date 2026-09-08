@@ -728,7 +728,7 @@ export function App() {
             onError={setError}
           />
         )}
-        {loaded && route.kind === "build" && route.step === "pipeline" && route.workspaceReturn && <section className="conversation-consent conversation-setup-return" aria-label={t("Return to image-class review")}><p>{t("This revision Draft is separate from the saved sample. Returning does not run a model or apply the Draft.")}</p><button onClick={() => navigate(route.workspaceReturn!)}>{t("Return to image-class review")}</button></section>}
+        {loaded && route.kind === "build" && route.step === "pipeline" && route.workspaceReturn && <section className="conversation-consent conversation-setup-return" aria-label={t(route.workspaceReturn.includes("class_review=") ? "Return to image-class review" : "Back to annotation workspace")}><p>{t("This revision Draft is separate from the saved sample. Returning does not run a model or apply the Draft.")}</p><button onClick={() => navigate(route.workspaceReturn!)}>{t(route.workspaceReturn.includes("class_review=") ? "Return to image-class review" : "Back to annotation workspace")}</button></section>}
         {loaded && route.kind === "build" && route.step === "pipeline" && (
           <WorkflowsPage
             projects={projects}

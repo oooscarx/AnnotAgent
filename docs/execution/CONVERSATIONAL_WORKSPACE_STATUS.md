@@ -3839,3 +3839,50 @@ browser recovery, source changes during authorization, and broader single-reques
 long-history performance and accessibility coverage. No real-user usability study was run.
 Rust source is unchanged from `b41a339`; its preceding Rust regression is not reported as a new
 run here. No push; main branch and the user's historical screenshot modifications are retained.
+
+### Pipeline detail return and browser retry-storage failures
+
+The chat continuation checkpoint was committed as `8e0b67a`. The Pipeline inspector now accepts
+a validated same-project conversation return with conversation/task IDs, preserving the selected
+sample, image and other canonical query context. Existing class-review returns still require their
+complete class/sample/image context. External URLs, foreign Projects, fragments and incomplete
+task contexts are rejected; unrelated management destination allowlists are unchanged. The
+Builder detail link supplies the current canonical workspace location. The inspector retains
+the appropriate visible return action across refresh without authorizing model work.
+
+The first expanded browser run `/tmp/annotagent-guided-e2e-83714` passed three cases but exposed
+a genuine classification UI race: the detail link was visible, then detached and hidden when
+the pending-human-request read changed `editing`, causing the completed Builder section to
+collapse. The test timed out rather than reaching the inspector. Failure screenshot/context/
+trace were copied to `/tmp/annotagent-builder-return-race-dEB9s3` before rerunning. The fix removes
+editing readiness from the historical Builder completion decision and keeps its detail link
+outside the collapsible evidence section. Tests do not add sleeps or force-click hidden links.
+
+Unreadable local retry envelopes now prevent new Builder authorization until the user explicitly
+discards that exact local record. The warning states that server operations/costs may remain;
+discard neither cancels them nor authorizes a call. If another value replaced the local record,
+discard refuses it. Clearing a recovered valid pending request never silently removes a corrupt
+record. Browser-storage write failure remains a pre-dispatch failure, with a visible explanation
+and explicit retry after storage is restored.
+
+The expanded browser matrix covers bounding boxes and classification under normal transport,
+lost acknowledgements, rejected session-storage writes and corrupted pending records. Every
+path then inspects the saved Pipeline, refreshes its detail URL, and returns to exactly the prior
+conversation/sample/image without increasing call count. Final results are recorded below.
+
+Final `/tmp/annotagent-guided-e2e-84080` run passed **8/8 cases** in 1.3 minutes. Each corrupt-
+record case proves the authorization button is disabled before explicit local discard, while
+each storage-write rejection proves no Builder receipt and no extra call were admitted. All
+cases complete the separate authorized Builder/sample flow and Pipeline detail refresh/return.
+There was no force-click or blind re-dispatch. The same two owned continuation screenshots
+were refreshed; the classification capture was visually inspected after the passing run.
+Web typecheck and all **198 unit tests in 41 files** pass; production build passes in the E2E
+harness with the existing bundle-size warning. Both isolated listeners stopped after completion.
+Rust source was unchanged, so no new Rust regression is claimed here. No Live or real-human
+usability test, native Chinese IME or native 200% zoom test was performed.
+
+Remaining objective work includes the broader original single-request continuation regression,
+authorization/source changes in flight, long-history behavior/performance and the full
+accessibility/requirement audit. This commit does not claim completion of the overall goal.
+Only this slice's source, tests, log and two owned screenshot updates are included. Historical
+unrelated PNG changes remain excluded; no push or remote/workspace/service8787 changes.

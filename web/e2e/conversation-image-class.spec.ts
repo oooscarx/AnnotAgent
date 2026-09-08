@@ -88,8 +88,9 @@ async function imageClassSample(request: APIRequestContext, page: Page, bbox: bo
 type State = Awaited<ReturnType<typeof imageClassSample>>;
 
 for (const bbox of [true,false]) {
-for (const lostAck of [false,true]) {
-test(`image class repair continues in chat with separate Builder and sample consent: ${bbox ? "bbox" : "classification"}${lostAck ? " after unknown acknowledgement" : ""}`, async ({page,request})=>{
+for (const transport of ["normal","lost_ack","storage_blocked","storage_corrupt"]) {
+const lostAck=transport==="lost_ack";
+test(`image class repair continues in chat with separate Builder and sample consent: ${bbox ? "bbox" : "classification"} ${transport}`, async ({page,request})=>{
   test.setTimeout(240_000);
   const state=await imageClassSample(request,page,bbox), group=await openGroup(request,state);
   await post(request,`${group.endpoint}/answer`,{command_id:randomUUID(),expected_scope_digest:group.review.scope_digest,actions:group.review.scope.members.map((member:any)=>({action:"keep",outcome_id:member.outcome.id,source_artifact_id:member.source_artifact_id}))});
@@ -102,6 +103,22 @@ test(`image class repair continues in chat with separate Builder and sample cons
   await page.reload();
   await expect(card.getByRole("button",{name:"Review Builder authorization",exact:true})).toBeVisible();
   expect(await read(request,`${state.taskRoot}/calls`)).toEqual(callsBefore);
+  if(transport==="storage_corrupt"){
+    const original=await read(request,`/api/workflow-drafts/${state.record.draft_id}/sample-test?test_id=${state.record.id}`);
+    const schema=original.annotation_schema;
+    const key=`annotagent.builder-pending:${state.project}:${state.conversation}:${state.task}:${schema.schema_draft_id}:${schema.revision}:image_class_review:${group.review.id}`;
+    await page.evaluate(key=>sessionStorage.setItem(key,"{TEST damaged envelope"),key);
+    await page.reload();
+    await expect(card.getByRole("button",{name:"Review Builder authorization",exact:true})).toBeDisabled();
+    await card.getByRole("button",{name:"Discard unreadable local Builder retry record",exact:true}).click();
+    expect(await read(request,`${state.taskRoot}/calls`)).toEqual(callsBefore);
+    await expect(card.getByRole("button",{name:"Review Builder authorization",exact:true})).toBeEnabled();
+  }
+  if(transport==="storage_blocked")await page.evaluate(()=>{
+    const original=Storage.prototype.setItem;
+    Storage.prototype.setItem=function(key,value){if(key.startsWith("annotagent.builder-pending:"))throw new DOMException("TEST browser storage unavailable","QuotaExceededError");return original.call(this,key,value);};
+    (window as unknown as {restoreTestBuilderStorage:()=>void}).restoreTestBuilderStorage=()=>{Storage.prototype.setItem=original;};
+  });
   await card.getByRole("button",{name:"Review Builder authorization",exact:true}).click();
   await card.getByRole("checkbox",{name:"Allow this bounded Builder request; actual cost is unknown"}).check();
   let blockedReads=false, builderPosts=0;
@@ -116,6 +133,13 @@ test(`image class repair continues in chat with separate Builder and sample cons
     else await route.continue();
   });
   await card.getByRole("button",{name:"Build Pipeline Draft",exact:true}).click();
+  if(transport==="storage_blocked"){
+    await expect(card.getByRole("alert")).toContainText("No model call was started");
+    expect(await read(request,`${state.taskRoot}/calls`)).toEqual(callsBefore);
+    expect((await read(request,`${state.taskRoot}/builder-operations?image_class_review_id=${group.review.id}`)).items).toHaveLength(0);
+    await page.evaluate(()=>(window as unknown as {restoreTestBuilderStorage:()=>void}).restoreTestBuilderStorage());
+    await card.getByRole("button",{name:"Build Pipeline Draft",exact:true}).click();
+  }
   if(lostAck){
     await expect(card.getByRole("button",{name:"Retry the same Builder request",exact:true})).toBeVisible();
     expect(await page.evaluate(()=>Object.keys(sessionStorage).some(key=>key.startsWith("annotagent.builder-pending:")))).toBe(true);
@@ -143,7 +167,17 @@ test(`image class repair continues in chat with separate Builder and sample cons
   await page.reload();await expect(page).toHaveURL(url);
   await expect(card.getByRole("button",{name:"View sample results in canvas",exact:true})).toBeVisible();
   expect(await read(request,`${state.taskRoot}/calls`)).toEqual(settledCalls);
-  if(!lostAck){await card.getByRole("button",{name:"View sample results in canvas",exact:true}).scrollIntoViewIfNeeded();await page.screenshot({path:resolve(`../docs/execution/conversational-workspace/image-class-builder-${bbox ? "continuation" : "classification"}.png`),fullPage:true});}
+  const detailsLink=card.getByRole("link",{name:"Open saved Pipeline details",exact:true});
+  await expect(detailsLink).toBeVisible();
+  await detailsLink.click();
+  await expect(page.getByRole("button",{name:"Back to annotation workspace",exact:true})).toBeVisible();
+  await expect(page).toHaveURL(/workspace_return=/);
+  await page.reload();
+  await page.getByRole("button",{name:"Back to annotation workspace",exact:true}).click();
+  await expect(page).toHaveURL(url);
+  await expect(card.getByRole("button",{name:"View sample results in canvas",exact:true})).toBeVisible();
+  expect(await read(request,`${state.taskRoot}/calls`)).toEqual(settledCalls);
+  if(transport==="normal"){await card.getByRole("button",{name:"View sample results in canvas",exact:true}).scrollIntoViewIfNeeded();await page.screenshot({path:resolve(`../docs/execution/conversational-workspace/image-class-builder-${bbox ? "continuation" : "classification"}.png`),fullPage:true});}
   else {await page.setViewportSize({width:390,height:844});await card.getByRole("button",{name:"View sample results in canvas",exact:true}).scrollIntoViewIfNeeded();await expect(card.getByRole("button",{name:"View sample results in canvas",exact:true})).toBeVisible();await expect(page).toHaveURL(url);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);}
 });
 }

@@ -13,6 +13,18 @@ import {
 } from "./navigation";
 
 describe("guided workspace routing", () => {
+  it("preserves a task-bound sample return from Pipeline details without accepting external or foreign routes",()=>{
+    const context={conversationId:"conversation",taskId:"task",draftId:"sample-draft",sampleTestId:"sample",imageId:"image"};
+    const workspaceReturn=projectWorkPath("project",context);
+    const path=projectBuildPath("project","pipeline",{draftId:"repair",agentSessionId:"builder",workspaceReturn});
+    const url=new URL(path,"http://localhost");
+    expect(parseWorkspaceRoute(url.pathname,url.search)).toMatchObject({kind:"build",draftId:"repair",agentSessionId:"builder",workspaceReturn,canonicalPath:path});
+    const restored=new URL(workspaceReturn,"http://localhost");
+    expect(parseWorkspaceRoute(restored.pathname,restored.search)).toMatchObject({kind:"conversation",...context});
+    for(const bad of ["https://outside.invalid", "//outside.invalid/projects/project/work",projectWorkPath("foreign",context),projectWorkPath("project",{conversationId:"conversation"}),workspaceReturn+"#fragment",projectWorkPath("project",{conversationId:"conversation",taskId:"task",classReviewId:"class"})]) {
+      expect(projectBuildPath("project","pipeline",{draftId:"repair",workspaceReturn:bad})).not.toContain("workspace_return");
+    }
+  });
   it("retains a bounded same-project class-review return only on the Pipeline inspector",()=>{
     const workspaceReturn=projectWorkPath("project",{conversationId:"conversation",taskId:"task",classReviewId:"class",draftId:"source",sampleTestId:"test",imageId:"image"});
     const path=projectBuildPath("project","pipeline",{draftId:"revision",workspaceReturn});
