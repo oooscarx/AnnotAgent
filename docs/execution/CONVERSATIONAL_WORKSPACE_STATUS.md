@@ -1422,3 +1422,39 @@ in `/tmp/annotagent-guided-e2e-5198`. Web **114/114** units, typecheck/build and
 Inspected `independent-goals.png`; added visible Current annotation goal text after noticing that
 aria-pressed alone did not clearly distinguish selection. No Live tests, real data changes or push.
 Full automatic conversation orchestration, setup, richer references, default entry and M4 remain.
+
+### M4 regression checkpoint and production Advisor honesty (2026-09-08)
+
+Re-read all 789 lines of the governing Conversational Workspace request and ran the complete
+repository commands. The current vertical slices do not yet satisfy the whole product objective:
+automatic continuous coordination, broader frozen references, non-correction Human Requests,
+conversation-owned setup return, default entry and additional performance/accessibility work are
+still required. Existing full-suite coverage of older routes is not proof of those new capabilities.
+
+One code audit correction: the offline Advisor used by the ordinary TUI/demo entry deliberately
+disconnected a valid Commit and reconnected it to demonstrate repair. Fault injection and its
+fabricated step records are now confined to the Application crate's test build. Normal builds
+validate the actual proposal without manufacturing a failure. Validation observations report the
+actual Draft revision. A new integration test compiles Application as an ordinary dependency,
+executes the isolated offline fixture path, and verifies no disconnect/connect steps, valid
+validation observations and retained human publication approval. Existing unit tests can still
+deliberately inject the invalid graph to test repair. Production GUI already gated its scripted
+Advisor route to server tests; no real Provider policy or quality guard was weakened.
+
+Full Rust commands after the change: `cargo fmt --all --check`, strict all-workspace/all-targets/
+all-features Clippy, all-features build, and all-workspace/all-features tests passed. Aggregated
+test output: **551 passed, 0 failed, 5 ignored**. The ignored cases are the explicitly billable
+Provider smoke plus legal real-weight PIDNet, RF-DETR, SAM and YOLOX tests; these are NOT Live
+model evidence. Web typecheck and **114/114 unit tests** passed. Production build passed with
+the existing >500 kB chunk warning.
+
+First full browser run in `/tmp/annotagent-guided-e2e-6020`: 58 passed, one outdated classification
+Review test failed, and its serial group's 11 later tests did not run. It still expected a generic
+Label field and a geometry-quality claim for classification. Updated those two assertions to
+the real Categories control and truthful category-revision text; IME, failed-save preservation,
+keyboard decision and refresh assertions remain intact. Final complete rerun in
+`/tmp/annotagent-guided-e2e-7057`: **70/70 passed (3.8 minutes)**, including management lifecycle,
+scoped navigation, setup, exports, SSE recovery, keyboard/IME, responsive reflow and protocol truth.
+The reflow-boundary checks are not a substitute for real browser 200% zoom or human usability.
+No push, remote change, real Workspace mutation or old credential use. Real-human usability and
+Live quality remain unexecuted; all model transports used here are explicitly TEST fixtures.

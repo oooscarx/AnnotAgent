@@ -11269,8 +11269,8 @@ impl LocalApplication {
     }
 
     /// Runs the offline, deterministic Workflow Advisor through the same observable tool sequence
-    /// used by a model-backed policy. It intentionally validates an invalid proposal first so the
-    /// session proves revision rather than wrapping one static suggestion.
+    /// used by a model-backed policy. Fault injection is confined to this crate's test build;
+    /// normal CLI/TUI execution never breaks a valid proposal to manufacture repair activity.
     pub async fn run_workflow_advisor_agent(
         &self,
         project_id: &str,
@@ -11473,19 +11473,21 @@ impl LocalApplication {
             .first()
             .ok_or_else(|| anyhow!("Pipeline Builder template has no connection into Commit"))?;
         let mut removed = Vec::new();
-        for edge in &incoming_edges {
+        for edge in incoming_edges.iter().filter(|_| cfg!(test)) {
             removed.extend(PipelineDraftTools.disconnect(
                 &mut invalid,
                 &edge.from_node,
                 &edge.to_node,
             )?);
         }
-        if !record(
-            &mut session,
-            "disconnect_pipeline_nodes",
-            json!({"from_node": incoming.from_node, "to_node": incoming.to_node}),
-            json!({"draft_id": invalid.id, "removed_connections": removed.len()}),
-        ) {
+        if cfg!(test)
+            && !record(
+                &mut session,
+                "disconnect_pipeline_nodes",
+                json!({"from_node": incoming.from_node, "to_node": incoming.to_node}),
+                json!({"draft_id": invalid.id, "removed_connections": removed.len()}),
+            )
+        {
             return Ok(abort(session));
         }
         let (nodes, models) = self.workflow_catalog(settings)?;
@@ -11519,38 +11521,42 @@ impl LocalApplication {
             }
         };
         let invalid_report = validate(&invalid);
-        if !record(
-            &mut session,
-            "validate_pipeline",
-            json!({"draft_id": invalid.id}),
-            json!({"valid": invalid_report.valid, "issues": invalid_report.issues}),
-        ) {
+        if cfg!(test)
+            && !record(
+                &mut session,
+                "validate_pipeline",
+                json!({"draft_id": invalid.id}),
+                json!({"valid": invalid_report.valid, "issues": invalid_report.issues}),
+            )
+        {
             return Ok(abort(session));
         }
-        if invalid_report.valid {
+        if cfg!(test) && invalid_report.valid {
             session.fail("the intentionally invalid Advisor Draft unexpectedly validated");
             return Ok(abort(session));
         }
 
         let mut revised = suggestion;
-        for edge in &incoming_edges {
+        for edge in incoming_edges.iter().filter(|_| cfg!(test)) {
             PipelineDraftTools.connect(&mut invalid, edge.clone())?;
         }
         invalid.status = WorkflowDraftStatus::Suggested;
         revised.draft = invalid;
-        if !record(
-            &mut session,
-            "connect_pipeline_nodes",
-            json!({"from_node": incoming.from_node, "to_node": incoming.to_node}),
-            json!({"draft_id": revised.draft.id, "restored_connection": true}),
-        ) {
+        if cfg!(test)
+            && !record(
+                &mut session,
+                "connect_pipeline_nodes",
+                json!({"from_node": incoming.from_node, "to_node": incoming.to_node}),
+                json!({"draft_id": revised.draft.id, "restored_connection": true}),
+            )
+        {
             return Ok(abort(session));
         }
         let mut validation = validate(&revised.draft);
         if !record(
             &mut session,
             "validate_pipeline",
-            json!({"draft_id": revised.draft.id, "revision": 2}),
+            json!({"draft_id": revised.draft.id, "revision": revised.draft.revision}),
             json!({"valid": validation.valid, "issues": validation.issues}),
         ) {
             return Ok(abort(session));

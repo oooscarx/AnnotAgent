@@ -1647,11 +1647,11 @@ test("Review behaves as a keyboard-operable decision inbox", async ({ page }) =>
   await expect(page.getByLabel("Annotation edit details")).toBeVisible();
   await expect(page.locator(".review-execution-details")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Show details" })).toHaveCount(0);
-  const label = page.getByLabel("Label", { exact: true });
+  const label = page.getByLabel("Categories (comma-separated)", { exact: true });
   await label.fill("中文输入 a r e");
   expect(decisions).toEqual([]);
   await label.fill("day corrected");
-  await expect(page.getByText("This correction will be saved as geometry-quality evidence for calibration and future Automation improvements.")).toBeVisible();
+  await expect(page.getByText("This category correction will be saved in the annotation revision history. It is not a geometry-quality measurement.")).toBeVisible();
   await page.route(`**/api/annotations/${reviewId}`, (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "TEST fixture: save unavailable" }) }), { times: 1 });
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("save unavailable");
