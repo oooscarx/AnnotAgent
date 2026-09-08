@@ -4489,3 +4489,10 @@ Web unit tests freshly pass **206/206 (42 files)**; typecheck passes.
 Candidate-free IdentifyTarget remains an implementation gap: both server terminal validation
 and the canvas require an existing outcome ID. Existing candidate corrections and separate
 Sandbox additions do not establish that request/continuation capability. No completion claim.
+
+Single model-return verification terminated successfully: **1 passed (9.7s)**, isolated
+`/tmp/annotagent-guided-e2e-2127`, evidence `/tmp/annotagent-model-return-verification`.
+All baseline failures now have passing targeted verification, but that is not a combined-suite
+pass. A fresh full `npm run test:e2e` has been started with evidence isolated under
+`/tmp/annotagent-full-browser-round2`; await its terminal result before claiming full regression.
+Local changes in this repair sequence: `9ef54e0`, `be0fe85`, `ba496a3`. No push, no remote change.
