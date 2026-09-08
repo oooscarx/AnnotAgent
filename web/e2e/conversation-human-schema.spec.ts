@@ -1,8 +1,9 @@
 import { isolatedEvidencePath } from "./evidence";
-import {expect,test} from "./fixtures";
+import {expect,fetchWithinMutationLimit,test} from "./fixtures";
 
 for(const kind of ["bounding_box","classification"]){
   test(`human ${kind} labels save and restore without a planner or inference`,async({page,request})=>{
+    test.setTimeout(180_000);
     const project=`human-schema-${kind}-${Date.now()}`;
     const created=await request.post("/api/projects",{data:{id:project,yaml:"version: 1\nproject:\n  name: TEST human labels without LLM\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n"}});
     expect(created.ok(),await created.text()).toBe(true);
@@ -23,14 +24,19 @@ for(const kind of ["bounding_box","classification"]){
     await page.setViewportSize({width:1280,height:800});
     let intercepted=false;
     await page.route("**/human-schema-drafts",async route=>{
-      if(route.request().method()==="POST"&&!intercepted){intercepted=true;await route.fetch();await route.abort("failed");}else await route.continue();
+      if(route.request().method()==="POST"&&!intercepted){
+        intercepted=true;
+        const saved=await fetchWithinMutationLimit(route);
+        expect(saved.ok(),await saved.text()).toBe(true);
+        await route.abort("failed");
+      }else await route.fallback();
     });
     await form.getByRole("button",{name:"Save label draft without a model",exact:true}).click();
-    await expect(form.getByRole("button",{name:"Retry same label save",exact:true})).toBeVisible();
+    await expect(form.getByRole("button",{name:"Retry same label save",exact:true})).toBeVisible({timeout:75_000});
     await expect(form.getByLabel("Labels · one per line",{exact:true})).toHaveValue(labels);
     await form.getByRole("button",{name:"Retry same label save",exact:true}).click();
     const editor=page.getByRole("region",{name:"Saved label draft",exact:true});
-    await expect(editor).toContainText("Revision 1");
+    await expect(editor).toContainText("Revision 1",{timeout:75_000});
     await expect(page.getByText("Human-defined labels · No model call was used to create this Schema Draft.",{exact:true})).toBeVisible();
     await page.reload();
     await expect(editor).toContainText("Revision 1");

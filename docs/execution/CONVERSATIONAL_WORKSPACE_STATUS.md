@@ -4680,3 +4680,19 @@ source, and read-only reload. Playwright discovery passes, but execution is pend
 existing combined run finishes; discovery is not browser evidence. The prior goal turn changed
 implementation and tests; this increment strengthens the acceptance test rather than claiming
 a new model-quality result. Combined run 87265 is still live (most recently tests 44–47 passed).
+
+### 2026-09-09 — Combined-run human Schema retry failure
+
+Round 4 test 50 failed after the saved-label lost-ACK simulation. The captured transport shows
+the initial save returned 200, followed by a retry with `mutation_rate_limited` 429; the page
+retained the frozen inputs and offered retry. The custom test route used `continue()` on the
+retry, bypassing the standard fixture's bounded pre-admission pacing. Archive:
+`/tmp/annotagent-human-schema-failure-nyMoqu/trace.zip`; relevant body resource
+`ca363da5321ce89e7b9ce0860b9ea8084a9db042.json` explicitly names that guard.
+
+The test now uses the existing bounded helper for its intercepted save, requires successful
+persistence before simulating lost ACK, and falls back to the fixture on retries. Its two
+save observations allow the existing 65-second pacing window; the test has a finite 180-second
+ceiling. No production retry policy or security limit changed. Test discovery passes; fresh
+execution is pending after round 4 finishes, alongside the preview browser test. The round is
+still live on handle 87265 (test 58 completed); do not restart it or label the suite green.
