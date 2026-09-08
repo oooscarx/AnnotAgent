@@ -1,7 +1,11 @@
 import { isolatedEvidencePath } from "./evidence";
 import {randomUUID} from "node:crypto";
 import {resolve} from "node:path";
-import {test,expect,fetchWithinMutationLimit} from "./fixtures";
+import {test,expect as baseExpect,fetchWithinMutationLimit} from "./fixtures";
+
+// The shared TEST server may reject uploads before execution for its 60-second
+// mutation window. Observe the fixture's bounded 65-second wait, not only 10 seconds.
+const expect=baseExpect.configure({timeout:75_000});
 
 for(const kind of ["ui-classification","ui-clarify","classification","bbox","clarify","invalid-schema","clarify-resume","clarify-legacy","clarify-model-change"]){
 test(`initial goal journey ${kind} preserves one consent through actual Schema and child services`,async({page,request})=>{
@@ -37,6 +41,12 @@ test(`initial goal journey ${kind} preserves one consent through actual Schema a
     await page.getByRole("button",{name:"Prepare annotation request",exact:true}).click();
     task=(await (await admitted).json()).input.id;taskRoot=`${root}/tasks/${task}`;
     const panel=page.getByRole("region",{name:"Build and test annotation plan",exact:true});
+    await expect(panel.locator(".journey-model-choices input").first()).toBeAttached();
+    if(await panel.locator(".journey-model-choices input").count()>32){
+      await expect(panel.locator(".journey-model-choices input:checked")).toHaveCount(0);
+      await panel.getByRole("checkbox",{name:model.display_name,exact:true}).check();
+      await panel.getByRole("button",{name:"Review build and sample authorization",exact:true}).click();
+    }
     const authorization=panel.getByLabel("Build and sample authorization",{exact:true});
     await expect(authorization).toContainText("9 planning calls (including one label proposal)");
     await authorization.getByRole("checkbox",{name:/Allow this plan and sample test/}).check();

@@ -4382,3 +4382,23 @@ These updated browser tests are NOT yet run: the earlier baseline suite remains 
 79494 and has reached test 57 with the two previously diagnosed failures. No new Web build or
 server restart was made while it is running. Follow-up must verify this source change against
 a freshly built isolated server after baseline termination; no browser-pass claim yet.
+
+### 2026-09-09 — Additional baseline failures separated by evidence
+
+The baseline run now reached test 77, with five failures so far (not terminal totals).
+Test 68 (initial UI clarification) is the already diagnosed >32-model preview rejection.
+Test 67 (initial UI classification) failed while image-upload returned repeated HTTP 429
+`mutation_rate_limited` responses: its 10-second assertion expired during the fixture's existing
+bounded 65-second pre-execution wait. The initial-journey test now observes for up to 75 seconds,
+matching the established other conversation tests; production limits/retry behavior are unchanged.
+When the registry is oversized, that test also explicitly chooses its own real TEST binding,
+instead of assuming automatic all-model selection. Updated tests typecheck; browser rerun pending.
+
+Test 58 (classification storage_blocked repair) timed out waiting for the Builder authorization
+checkbox. Its trace has no Builder preview request, only history reads, despite a completed
+Playwright pointer click. The captured frame at that click shows the conversation scrolled
+back near its top rather than the repair card. This suggests a layout/interaction race but does
+not yet prove the trigger. Keep the trace and reproduce separately; neither increasing its
+240-second timeout nor weakening the consent assertion fixes a lost click. Later corresponding
+storage_corrupt and draft_changed cases passed. No cause or fix is claimed for test 58 yet.
+Same baseline handle 79494 remains live; no restart, rebuild, paid call or real data change.
