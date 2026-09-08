@@ -37,3 +37,26 @@ test("new image project and inventory entry use the same conversation workspace"
   expect(writes).toEqual([]);
   await page.screenshot({path:isolatedEvidencePath(resolve(process.env.ANNOTAGENT_E2E_EVIDENCE_DIR ?? "../docs/execution/conversational-workspace","default-project-entry.png")),fullPage:true,animations:"disabled"});
 });
+
+test("project deep links resolve their owner outside the dashboard page",async({page,request})=>{
+  const id=`TEST-unlisted-${Date.now()}`;
+  expect((await request.post("/api/projects",{data:{id,yaml:"version: 1\nproject:\n  name: TEST paginated owner\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n"}})).ok()).toBe(true);
+  // Simulate a bounded index excluding this real Project, not a fake owner summary.
+  await page.route("**/api/projects",async route=>{
+    const response=await route.fetch();const data=await response.json();
+    await route.fulfill({response,json:{...data,projects:data.projects.filter((project:any)=>project.id!==id)}});
+  });
+  let release!:()=>void;
+  const held=new Promise<void>(resolve=>{release=resolve;});
+  await page.route(`**/api/projects/${id}/summary`,async route=>{await held;await route.continue();},{times:1});
+  await page.goto(`/projects/${id}/task/goal`);
+  await expect(page.getByText("Loading workspace state…",{exact:true})).toBeVisible();
+  await expect(page.getByRole("heading",{name:"This page does not exist",exact:true})).toHaveCount(0);
+  release();
+  await expect(page.getByRole("region",{name:"Annotation goal",exact:true})).toBeVisible();
+  await expect(page.getByText("TEST paginated owner",{exact:true})).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("region",{name:"Annotation goal",exact:true})).toBeVisible();
+  await page.goto(`/projects/${id}/work`);
+  await expect(page.getByRole("region",{name:"Annotation workspace",exact:true})).toBeVisible();
+});

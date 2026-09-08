@@ -4420,3 +4420,25 @@ model-count/limit-window causes without inspecting their distinct traces. Tests 
 complete bbox/classification/human flows and background Schema disconnect recovery successfully;
 tests 89–103 include Batch stop, stop selection, independent task safety, keyboard/pagination and
 the two new screenshot-path checks. Same full-suite handle 79494 remains active.
+
+### 2026-09-09 — Baseline complete; exact Project resolution repair
+
+The full baseline terminated with exit 1: **120 passed, 12 failed, 34 did not run (29.8m)**.
+The 34 depend on the failed serial guided-workspace creation and are not passes. Full retained
+failure traces were copied to `/tmp/annotagent-baseline-mXrJND/test-results` before another run.
+Handle 79494 is terminal and must no longer be treated as a live wait.
+
+The retained goal route's 404 exposed a real index/ownership bug: App used only the bounded
+dashboard Project list (server default 100) to resolve an explicit Project URL. App now fetches
+the exact missing Project summary through the existing query cache, checks its returned ID,
+keeps a loading state until resolution, and shows non-404 read failures with a read-only retry.
+Late results from another route cannot supply its owner. It does not expand the dashboard limit
+or infer another Project from a display name. Web 206 unit tests/typecheck pass.
+
+Fresh isolated verification is now running on handle 7057, workspace
+`/tmp/annotagent-guided-e2e-837`, evidence `/tmp/annotagent-fix-verification`, nine selected tests.
+The new deep-link test passes: a real Project omitted from a browser-mocked dashboard list loads
+through a held/released real summary endpoint, refreshes, and opens its conversation workspace.
+The remaining selected model-scope, initial-goal, pre-admission stop and prior failure tests are
+still running. No full repair-pass claim yet. Real workspace, original screenshots and remotes
+remain untouched; no push or Live model call.

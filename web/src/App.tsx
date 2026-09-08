@@ -277,7 +277,7 @@ export function App() {
   const [models, setModels] = useState<ModelBinding[]>([]);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [error, setErrorState] = useState<{ message: string; scope: string }>();
-  const [loaded, setLoaded] = useState(false);
+  const [dashboardLoaded, setLoaded] = useState(false);
   const [connection, setConnection] = useState<"connecting" | "connected" | "reconnecting">("connecting");
   const [routeRetryVersion, setRouteRetryVersion] = useState(0);
   const hasConnectedRef = useRef(false);
@@ -496,7 +496,22 @@ export function App() {
     : undefined;
   const routeRunProject = projectForRun(projects, routeRun);
   const projectId = routeProjectId || routeRunProject?.id || "";
-  const selectedProject = projects.find((project) => project.id === projectId);
+  const listedProject = projects.find((project) => project.id === projectId);
+  const [routeProject, setRouteProject] = useState<{id:string;project?:ProjectSummary;error?:Error}>();
+  const routeProjectIdRef=useRef(routeProjectId);routeProjectIdRef.current=routeProjectId;
+  useEffect(() => {
+    if (!routeProjectId || listedProject) return;
+    let current = true;
+    void workspaceQueries.load(queryKeys.projectSummary(routeProjectId), signal => api.projectSummary(routeProjectId, signal))
+      .then(value => { if(value.project.id!==routeProjectId)throw new Error("Project summary does not match the requested Project.");if(current)setRouteProject({id:routeProjectId,project:value.project}); })
+      .catch((error:Error) => { if(current&&!isAbortError(error))setRouteProject({id:routeProjectId,error}); });
+    return () => { current = false; };
+  }, [routeProjectId, Boolean(listedProject)]);
+  const resolvedRouteProject = routeProject?.id===routeProjectId ? routeProject : undefined;
+  const selectedProject = listedProject ?? resolvedRouteProject?.project;
+  const projectLookupError = !selectedProject ? resolvedRouteProject?.error : undefined;
+  const projectNotFound = projectLookupError instanceof ApiRequestError && projectLookupError.status===404;
+  const loaded = dashboardLoaded && (!routeProjectId || Boolean(selectedProject) || projectNotFound);
   const isProjectWorkspace = Boolean(routeProjectId);
   const setProjectContext = (id: string) => {
     if (id) window.localStorage.setItem("annotagent.preferredProjectId", id);
@@ -669,7 +684,12 @@ export function App() {
             </span>
           </div>
         )}
-        {!loaded && <div className="loading-banner" role="status">{t("Loading workspace state…")}</div>}
+        {!loaded && !projectLookupError && <div className="loading-banner" role="status">{t("Loading workspace state…")}</div>}
+        {projectLookupError && !projectNotFound && <div className="error-banner" role="alert"><span>{projectLookupError.message}</span><button onClick={()=>{
+          const id=routeProjectId;setRouteProject({id});
+          void workspaceQueries.load(queryKeys.projectSummary(id),signal=>api.projectSummary(id,signal),{force:true})
+            .then(value=>{if(value.project.id!==id)throw new Error("Project summary does not match the requested Project.");if(routeProjectIdRef.current===id)setRouteProject({id,project:value.project});}).catch((error:Error)=>{if(routeProjectIdRef.current===id)setRouteProject({id,error});});
+        }}>{t("Retry this view")}</button></div>}
         {loaded && route.kind === "projects" && (
           <ProjectsPage
             projects={projects}
