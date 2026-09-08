@@ -13,6 +13,8 @@
 .conversation-composer textarea { width: 100%; min-width: 0; resize: vertical; }
 .conversation-composer small { overflow-wrap: anywhere; }
 .conversation-composer button { justify-self: end; }
+.conversation-candidate-reference { display: grid; gap: 8px; min-width: 0; padding: 12px; border-inline-start: 3px solid var(--aa-primary); background: var(--aa-surface-muted); overflow-wrap: anywhere; }
+.conversation-candidate-reference button { justify-self: start; }
 .conversation-divider { cursor: col-resize; touch-action: none; background: linear-gradient(to right,transparent 5px,var(--aa-border) 5px,var(--aa-border) 6px,transparent 6px); }
 .conversation-divider:focus-visible { outline: 2px solid var(--aa-primary); outline-offset: -2px; }
 .conversation-image-tools { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 16px; }

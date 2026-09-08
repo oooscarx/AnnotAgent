@@ -25,6 +25,9 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   const [tasks, setTasks] = useState<ConversationTask[]>([]);
   const [images, setImages] = useState<ImageItem[]>([]);
   const [text, setText] = useState("");
+  const [pinnedSelection,setPinnedSelection]=useState<{input:Pick<ConversationMessageInput,"image"|"reference">;name:string}>();
+  const messageInput=useRef<HTMLTextAreaElement>(null);
+  useEffect(()=>setPinnedSelection(undefined),[project.id,conversationId,taskId]);
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -81,6 +84,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   const alive = useRef(true);
   const selected = images.find((image) => image.image_id === imageId) ?? (!imageId ? images[0] : undefined);
   const goalMessage = taskId ? messages.find(message=>message.input.id===tasks.find(task=>task.input.id===taskId)?.input.source_message_id) : messages[0];
+  const referenceTask=tasks.find(task=>taskId ? task.input.id===taskId : task.input.source_message_id===goalMessage?.input.id)?.input;
   const referenceImage = frozen.current ? images.find((image) => image.image_id === frozen.current?.image?.image_id) : results ? images.find(image=>image.image_id===results.imageId) : selected;
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
@@ -111,7 +115,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   }, [project.id, conversationId]);
   async function send() {
     if (pending.current || !ready || !text.trim()) return;
-    frozen.current ??= { id: crypto.randomUUID(), text, image: referenceImage ? { image_id: referenceImage.image_id, sha256: referenceImage.content_hash } : null };
+    frozen.current ??= { id: crypto.randomUUID(), text, image: referenceImage ? { image_id: referenceImage.image_id, sha256: referenceImage.content_hash } : null, ...pinnedSelection?.input };
     const input = frozen.current;
     pending.current = true; setBusy(true); setError(""); setStatus("Saving message…");
     try {
@@ -119,7 +123,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
       const saved = await api.sendConversationMessage(project.id, id, input);
       if (!alive.current) return;
       setConversation(id); setMessages((items) => [...items.filter((item) => item.input.id !== saved.input.id), saved].sort((a, b) => a.sequence - b.sequence));
-      frozen.current = undefined; unsent.current = ""; setText(""); setStatus("Message saved. No model has been called.");
+      frozen.current = undefined; unsent.current = ""; setText(""); setPinnedSelection(undefined); setStatus("Message saved. No model has been called.");
     } catch (error) { if (alive.current) { setError((error as Error).message); setStatus("Not confirmed saved. Retry sends the same message and frozen image reference."); } }
     finally { pending.current = false; if (alive.current) setBusy(false); }
   }
@@ -217,10 +221,10 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
         {conversation && goalMessage && <ConversationSchemaCard key={`${conversation}:${goalMessage.input.id}`} project={project.id} conversation={conversation} message={goalMessage.input.id} onDirtyChange={schemaDirtyChange} onAssistance={assistanceChanged} onSample={(draft,test,image)=>void openSample(draft,test,image)} onSetup={selectedTask=>onNavigate(conversationSettingsPath(project.id,"providers",projectWorkPath(project.id,{conversationId:conversation,taskId:selectedTask ?? taskId,imageId,draftId,sampleTestId,humanRequestId,processingOperationId,results})))} />}
         {conversation && taskId && !goalMessage && <p role="status">{requestsReady ? "The selected annotation task is not available in this conversation. Select a saved message; no other task was substituted." : "Loading the selected annotation task…"}</p>}
         {activeRequest?.status==="applied" && activeRequest.resume_draft_id && <ConversationRepairCard key={activeRequest.input.id} project={project.id} request={activeRequest} editing={repairEditing} onAssistance={assistanceChanged} onSample={(draft,test,image)=>void openSample(draft,test,image)} />}
-        {!processingOperationId && <form onSubmit={(event) => { event.preventDefault(); void send(); }} className="conversation-composer">
+        {(!processingOperationId || pinnedSelection) && <form onSubmit={(event) => { event.preventDefault(); void send(); }} className="conversation-composer">
           <label htmlFor="conversation-message">Your message</label>
-          <textarea id="conversation-message" value={text} disabled={busy || Boolean(frozen.current)} rows={3} placeholder="Find cups, but not bottles" onChange={(event) => { unsent.current = event.target.value; setText(event.target.value); }} />
-          <small>{referenceImage ? `Image reference: ${referenceImage.name}` : "No image reference · Project-level message"}</small>
+          <textarea ref={messageInput} id="conversation-message" value={text} disabled={busy || Boolean(frozen.current)} rows={3} placeholder="Find cups, but not bottles" onChange={(event) => { unsent.current = event.target.value; setText(event.target.value); }} />
+          {pinnedSelection ? <div className="conversation-candidate-reference" aria-label="Message candidate reference"><strong>Only this saved candidate</strong><span>{pinnedSelection.name} · {pinnedSelection.input.reference?.candidate_id} · Draft revision {pinnedSelection.input.reference?.draft_revision}</span><small>Changing the displayed image does not change this reference. Saving the message does not edit the annotation.</small><button type="button" disabled={busy||Boolean(frozen.current)} onClick={()=>setPinnedSelection(undefined)}>Remove candidate reference</button></div> : <small>{referenceImage ? `Image reference: ${referenceImage.name}` : "No image reference · Project-level message"}</small>}
           <button className="primary" disabled={!ready || busy || !text.trim()} type="submit">{busy ? "Saving…" : frozen.current ? "Retry saving message" : "Save message"}</button>
         </form>}
       </section>
@@ -232,7 +236,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
         {results ? <><div className="conversation-image-tools"><h2>Dataset results</h2><button onClick={()=>showResults()}>Return to sample canvas</button></div>{!requestsReady ? <p role="status">Loading saved processing tasks…</p> : processing.some(operation=>operation.batch_id===results.batchId) ? <ConversationBatchResults key={results.batchId} project={project} context={results} returnPath={projectWorkPath(project.id,{conversationId:conversation,imageId,draftId,sampleTestId,taskId,humanRequestId,processingOperationId,results})} onSelect={showResults} onNavigate={onNavigate} onNavigationGuardChange={formalGuardChange} /> : <p role="alert">This Batch is not linked to this conversation. No other result was substituted.</p>}</> : <>
         {activeRequest && (requestRelation==="baseline" || requestRelation==="comparison") && <aside className="conversation-consent" aria-label="Sample origin"><p>{requestRelation==="comparison" ? "Sample from the revised plan. The original correction remains separate; improvement has not been established." : "Another image from the original sample. The requested correction belongs to a different image."}</p><button onClick={()=>void openRequest(activeRequest)}>Return to original correction</button></aside>}
         <div className="conversation-image-tools"><h2>{images.length ? `${images.length} images` : "Your images"}</h2><label className="conversation-upload">Add images<input type="file" accept="image/png,image/jpeg" multiple disabled={busy || !ready} onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; void upload(files); }} /></label></div>
-        {humanRequestId && (!activeRequest || requestRelation==="unrelated") ? <p role="status">{requestsReady ? "Human request not found in this task. No other result was substituted." : "Loading saved human request…"}</p> : draftId && sampleTestId ? <ConversationSampleCanvas project={project.id} draft={draftId} test={sampleTestId} image={selected} humanRequest={requestRelation==="subject" ? activeRequest : undefined} onAnswered={updateRequest} onDirtyChange={sampleDirtyChange} onOpen={(draft,test,image)=>void openSample(draft,test,image)} /> : imageId && !selected && ready ? <p role="alert">This image is not available in this Project. Select an existing image below.</p> : selected ? <figure className="conversation-image"><img src={selected.url} alt={selected.name} /><figcaption>{selected.name} · Original image · No annotation overlay</figcaption></figure> : <div className="conversation-image-empty"><h3>Start with your own images</h3><p>PNG or JPEG · up to 25 MB per image. Files are uploaded to this AnnotAgent server, not sent to a model.</p></div>}
+        {humanRequestId && (!activeRequest || requestRelation==="unrelated") ? <p role="status">{requestsReady ? "Human request not found in this task. No other result was substituted." : "Loading saved human request…"}</p> : draftId && sampleTestId ? <ConversationSampleCanvas referenceTask={referenceTask} onReference={(input,name)=>{if(pending.current||frozen.current)return;setPinnedSelection({input,name});setMobileView("conversation");window.requestAnimationFrame(()=>messageInput.current?.focus());}} project={project.id} draft={draftId} test={sampleTestId} image={selected} humanRequest={requestRelation==="subject" ? activeRequest : undefined} onAnswered={updateRequest} onDirtyChange={sampleDirtyChange} onOpen={(draft,test,image)=>void openSample(draft,test,image)} /> : imageId && !selected && ready ? <p role="alert">This image is not available in this Project. Select an existing image below.</p> : selected ? <figure className="conversation-image"><img src={selected.url} alt={selected.name} /><figcaption>{selected.name} · Original image · No annotation overlay</figcaption></figure> : <div className="conversation-image-empty"><h3>Start with your own images</h3><p>PNG or JPEG · up to 25 MB per image. Files are uploaded to this AnnotAgent server, not sent to a model.</p></div>}
         <nav className="conversation-thumbnails" aria-label="Select image">{images.map((image) => <button key={image.image_id} aria-label={image.name} aria-current={image.image_id === selected?.image_id ? "true" : undefined} onClick={() => openImage(image.image_id)}><img loading="lazy" src={image.url} alt="" /><span>{image.name}</span></button>)}</nav>
         </>}
       </section>

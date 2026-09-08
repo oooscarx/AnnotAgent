@@ -1638,3 +1638,43 @@ Workspace mutation, old key, push or remote changes. This is a selection-boundar
 not a claim that the complete conversational pointing interaction is delivered.
 Final browser rerun `/tmp/annotagent-guided-e2e-11452`: 2/2 passed, including reload visibility of
 the candidate-only scope note and absence of a project-wide goal action for that message.
+
+### M2 continuation — canvas selection to frozen message input (2026-09-08)
+
+The existing sample editor now exposes Reference saved candidate in message for one selected
+terminal outcome. It is unavailable for unsaved edits, image-only/before views or human-added
+objects without an original prediction. The label explicitly refers to the original saved
+prediction, not later feedback geometry. ConversationSampleCanvas resolves the terminal projection
+and supplies exact Test/Draft revision, candidate/Artifact identity and image/hash to the same
+journal input. The composer shows a pinned candidate-only reference, permits removal before
+submission and retains the reference when the visible image changes. Focus moves to the message
+field (including the mobile conversation panel); submitting uses the existing frozen message ID.
+Uncertain-response retries lock the same text/reference, and successful save clears the composer
+selection. Project/conversation/task changes clear an unsent selection. No model is automatically
+called and no annotation is changed by this action.
+
+The first browser pass found the processing confirmation context hid the composer. Referencing
+a candidate now opens it in place while preserving processing state. A later run accidentally
+used an already-loaded older identical-image fixture and correctly encountered import dedupe;
+verified the isolated database, stopped only that known test process, and reran with a distinct
+bundled icon as the second local image (never sent to inference). Another assertion incorrectly
+expected the first sample ID after the existing repair journey; it now checks the actual selected
+Test in the URL. Both UI journeys passed in `/tmp/annotagent-guided-e2e-12358`: choose candidate,
+focus input, switch to a different image, keep original reference, lose a successful POST response,
+retry, reload one saved message and verify unchanged call budget. This proves the binding, not
+semantic accuracy. Initial TS callback narrowing issue was corrected by capturing the validated
+projection. Typecheck and 115 Web unit tests passed.
+
+Screenshot inspection also revealed an unrelated-looking but real status error: the human Schema
+card interpreted subsequent Builder/sample receipts as a failed Schema proposal. Human mode now
+renders its own actual draft and no model-proposal failure/cancellation controls. Existing Builder
+and sample history remain intact. The still-long left history is recorded as unfinished UX work,
+not accepted as the final compact conversational experience. Corrected-feedback/formal annotation
+references, model-context propagation and continuous bounded coordination remain pending.
+Final combined regression `/tmp/annotagent-guided-e2e-12512`: six scenarios passed, covering all
+five existing/extended sample-to-delivery journeys plus the Schema HTTP consent/receipt path.
+Inspected the 390px candidate-message screenshot and both `candidate-reference-chip-*.png` crops:
+scope, image, candidate and revision wrap without horizontal overflow; removal remains visible.
+The full mobile history remains long and is not claimed as finished compact UX. Existing TEST
+fixture predictions are not accuracy evidence. No Rust changes in this step, no push, no remote
+change and no real Workspace/paid Provider/old credential use. Real-human usability unexecuted.

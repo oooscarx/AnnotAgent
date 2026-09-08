@@ -486,5 +486,45 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
     expect(controlRequests).toEqual(["pause","pause","resume","cancel"]);
     expect(page.url()).toBe(savedWorkspaceUrl);
   }
+  if(humanSchema){
+    await page.goto(savedWorkspaceUrl);
+    await expect(page.getByLabel("Saved sample results",{exact:true})).toBeVisible();
+    await expect(page.getByText("No valid Schema proposal was produced. Saved evidence is retained; no automatic retry.",{exact:true})).toHaveCount(0);
+    const originalImage=new URL(page.url()).searchParams.get("image");
+    const originalTest=new URL(page.url()).searchParams.get("test");
+    await page.getByRole("button",{name:"Annotation list · 1",exact:true}).click();
+    await page.getByLabel("Annotations on canvas",{exact:true}).getByRole("button").first().click();
+    await page.getByRole("button",{name:"Reference saved candidate in message",exact:true}).click();
+    const reference=page.getByLabel("Message candidate reference",{exact:true});
+    await expect(reference).toContainText("Only this saved candidate");
+    await expect(page.getByLabel("Your message",{exact:true})).toBeFocused();
+    await page.getByLabel("Your message",{exact:true}).fill("TEST UI 只讨论刚才选中的原始候选");
+    const beforeMessage=await (await request.get(`${taskRoot}/budget`)).json();
+    await page.getByLabel("Add images",{exact:true}).setInputFiles({name:"TEST-second-image.png",mimeType:"image/png",buffer:readFileSync(resolve("public/brand/core/pwa-192.png"))});
+    await page.getByRole("navigation",{name:"Select image",exact:true}).getByRole("button",{name:"TEST-second-image.png",exact:true}).click();
+    expect(new URL(page.url()).searchParams.get("image")).not.toBe(originalImage);
+    await expect(reference).toContainText("synthetic-robocup.png");
+    await page.setViewportSize({width:390,height:844});
+    await expect(reference).toBeVisible();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+    await page.screenshot({path:`../docs/execution/conversational-workspace/candidate-message-${kind}-390.png`,fullPage:true,animations:"disabled"});
+    await reference.screenshot({path:`../docs/execution/conversational-workspace/candidate-reference-chip-${kind}.png`,animations:"disabled"});
+    await page.setViewportSize({width:1280,height:800});
+    let lost=false;let sent:any;
+    await page.route("**/conversations/*/messages",async route=>{
+      if(route.request().method()==="POST"&&!lost){lost=true;sent=route.request().postDataJSON();await route.fetch();await route.abort("failed");}else await route.continue();
+    });
+    await page.getByRole("button",{name:"Save message",exact:true}).click();
+    await expect(page.getByRole("button",{name:"Retry saving message",exact:true})).toBeVisible();
+    await expect(reference.getByRole("button",{name:"Remove candidate reference",exact:true})).toBeDisabled();
+    await page.getByRole("button",{name:"Retry saving message",exact:true}).click();
+    await expect(page.getByRole("list",{name:"Saved messages",exact:true})).toContainText("TEST UI 只讨论刚才选中的原始候选");
+    expect(sent.image.image_id).toBe(originalImage);expect(sent.reference.sample_test_id).toBe(originalTest);
+    expect(sent.reference.scope).toBe("sample_candidate");
+    await page.reload();
+    const messages=await (await request.get(`/api/projects/${project}/conversations/${envelope.conversation.conversation_id}/messages`)).json();
+    expect(messages.filter((message:any)=>message.input.id===sent.id).map((message:any)=>message.input)).toEqual([sent]);
+    expect(await (await request.get(`${taskRoot}/budget`)).json()).toEqual(beforeMessage);
+  }
 });
 }

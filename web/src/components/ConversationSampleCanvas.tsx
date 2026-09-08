@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { ImageItem, WorkflowSampleTestRecord } from "../types";
+import type { ImageItem, WorkflowSampleTestRecord, ConversationMessageInput } from "../types";
 import { SampleFeedbackEditor } from "./SampleFeedbackEditor";
 import type { OpenConversationSample } from "./ConversationSampleCard";
 import type { HumanRequest } from "../conversation-human-api";
 
-export function ConversationSampleCanvas({project, draft, test, image, onDirtyChange, onOpen, humanRequest, onAnswered}: {
+export function ConversationSampleCanvas({project, draft, test, image, onDirtyChange, onOpen, humanRequest, onAnswered, referenceTask, onReference}: {
+  referenceTask?:{id:string;schema_revision:string};
+  onReference?:(input:Pick<ConversationMessageInput,"image"|"reference">,name:string)=>void;
   project: string; draft: string; test: string; image?: ImageItem;
   onDirtyChange: (dirty:boolean)=>void; onOpen:OpenConversationSample;
   humanRequest?:HumanRequest; onAnswered?:(value:HumanRequest)=>void;
@@ -32,13 +34,19 @@ export function ConversationSampleCanvas({project, draft, test, image, onDirtyCh
   if(humanRequest && (humanRequest.input.sample_test_id!==test || humanRequest.input.image_id!==image.image_id || humanRequest.input.content_hash!==image.content_hash))return <p role="alert">The human request does not match this image and Sample Test.</p>;
   if(!sample)return <section aria-label="Sample test failure"><h2>Sample execution did not produce a result</h2><ul>{record.report.validation.issues.map((issue,index)=><li key={index}>{issue.message}</li>)}</ul><figure className="conversation-image"><img src={image.url} alt={image.name}/><figcaption>Original image · No result was substituted</figcaption></figure></section>;
   if(!sample.projection)return <section><p role="alert">This older test has no terminal-result projection. Intermediate boxes are not final results.</p><figure className="conversation-image"><img src={image.url} alt={image.name}/></figure></section>;
-  const outcomes=[...sample.projection.final_candidates.map(candidate=>candidate.outcome),...sample.projection.review_candidates.map(item=>item.candidate.outcome)];
+  const projection=sample.projection;
+  const outcomes=[...projection.final_candidates.map(candidate=>candidate.outcome),...projection.review_candidates.map(item=>item.candidate.outcome)];
   if(humanRequest && !outcomes.some(outcome=>outcome.id===humanRequest.input.outcome_id))return <p role="alert">The requested candidate is not in this sample's terminal results. No replacement was selected.</p>;
   const terminal={...sample,outcomes:outcomes.filter((item,index,items)=>items.findIndex(other=>other.id===item.id)===index)};
   return <section className="conversation-sample-canvas" aria-label="Saved sample results">
     <header><h2>{image.name}</h2><p>Sample {index+1}/{record.inputs.length} · Evaluation only · Not a published dataset annotation</p></header>
     {humanRequest && <p role="status">{humanRequest.resume_draft_id ? "Correction saved and revision Draft prepared without model calls. Later repairs and tests have separate operation records." : humanRequest.status==="pending" ? humanRequest.input.question : humanRequest.status==="answered" ? "Correction saved. Task continuation is pending; no new model call was started." : `Human request: ${humanRequest.status}`}</p>}
     <SampleFeedbackEditor key={`${test}:${image.image_id}:${humanRequest?.input.id ?? ""}:${humanRequest?.status ?? ""}`} projectId={project} draftId={draft} testId={test} sample={terminal} image={image} goalOverride={schema} onDirtyChange={onDirtyChange} onKeepOriginal={onOpen}
+      onReferenceOutcome={referenceTask && onReference ? id=>{
+        const candidates=[...projection.final_candidates,...projection.review_candidates.map(item=>item.candidate)].filter(item=>item.outcome.id===id);
+        if(candidates.length!==1){setError("The selection does not identify one saved terminal candidate.");return;}
+        onReference({image:{image_id:image.image_id,sha256:source.content_hash},reference:{scope:"sample_candidate",task_id:referenceTask.id,project_schema_revision:referenceTask.schema_revision,draft_id:record.draft_id,draft_revision:record.draft_revision,sample_test_id:record.id,candidate_id:id,source_artifact_id:candidates[0].source_artifact_id}},image.name);
+      }:undefined}
       initialOutcomeId={humanRequest?.input.outcome_id}
       humanSubmission={humanRequest?.status==="pending" ? {outcomeId:humanRequest.input.outcome_id,save:async revision=>{const saved=await api.answerHumanRequest(project,humanRequest,revision);if(!saved.answer)throw new Error("Server did not return a saved correction");onAnswered?.(saved);return saved.answer;}} : undefined}
       navigation={<nav className="button-row" aria-label="Tested images"><button disabled={index===0} onClick={()=>onOpen(draft,test,record.inputs[index-1].image_id)}>Previous image</button><span>{index+1}/{record.inputs.length}</span><button disabled={index===record.inputs.length-1} onClick={()=>onOpen(draft,test,record.inputs[index+1].image_id)}>Next image</button></nav>} />

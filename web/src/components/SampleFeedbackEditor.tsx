@@ -11,7 +11,8 @@ const reasons: [SampleFeedbackRevision["reason"], string][] = [
   ["cannot_judge", "Cannot judge yet"],
 ];
 
-export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onConfirmed, navigation, onAdopt, projectId, draftId, onImprove, onKeepOriginal, goalOverride, humanSubmission, initialOutcomeId }: {
+export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onConfirmed, navigation, onAdopt, projectId, draftId, onImprove, onKeepOriginal, goalOverride, humanSubmission, initialOutcomeId, onReferenceOutcome }: {
+  onReferenceOutcome?:(id:string)=>void;
   sample: WorkflowDryRunReport["samples"][number]; image: ImageItem; testId: string;
   onDirtyChange: (dirty: boolean) => void;
   onConfirmed?: () => void;
@@ -166,6 +167,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
         if(!humanSubmission || id===humanSubmission.outcomeId)setSelected(id);
       }} onEditStart={() => setHistory((items) => [...items, annotations])} onChange={edit} />
     </section>
+    {onReferenceOutcome && <div className="conversation-candidate-reference"><button disabled={!loaded||busy||dirty||showOriginal||showBefore||!selected||!sample.outcomes.some(outcome=>outcome.id===selected)} onClick={()=>{if(selected)onReferenceOutcome(selected);}}>Reference saved candidate in message</button><small>References the original saved prediction, not later corrections or unsaved edits.</small></div>}
     {!humanSubmission && goal && ["classification", "bounding_box", "polygon", "semantic_mask", "instance_mask"].includes(goal.kind ?? "") && <button className="sample-add-missing" disabled={!loaded || busy || dirty || showBefore} onClick={addMissing}>{t("Add missing target")}</button>}
     {typeof selectedAnnotation?.provenance.addition_id === "string" && <p className="sample-risk-notice">{t("Human sample example, not a model prediction. Adjust its label and boundary before saving. It never becomes a formal annotation automatically.")}</p>}
     {selectedAnnotation && !showOriginal && !showBefore && <label className="sample-feedback-label">{t("Correct label")}<input aria-label={t("Correct label")} value={selectedAnnotation.label} disabled={!loaded || busy} maxLength={256} onChange={(event) => {
