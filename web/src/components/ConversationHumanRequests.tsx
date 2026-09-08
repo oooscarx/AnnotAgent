@@ -2,8 +2,8 @@ import {useState} from "react";
 import type {HumanRequest} from "../conversation-human-api";
 
 /** A view of existing durable requests, not a second request queue or task state. */
-export function ConversationHumanRequests({requests,taskId,activeId,ready,onRefresh,onOpen,onCancel,onRetry,onDefer,onInspect}:{
-  requests:HumanRequest[];taskId?:string;activeId?:string;ready:boolean;
+export function ConversationHumanRequests({requests,taskId,activeId,ready,loadError,onRefresh,onOpen,onCancel,onRetry,onDefer,onInspect}:{
+  requests:HumanRequest[];taskId?:string;activeId?:string;ready:boolean;loadError?:string;
   onRefresh:()=>void;onOpen:(request:HumanRequest)=>void;
   onCancel:(request:HumanRequest)=>Promise<void>;onRetry:(request:HumanRequest)=>Promise<void>;
   onDefer?:(request:HumanRequest)=>Promise<void>;
@@ -37,11 +37,11 @@ export function ConversationHumanRequests({requests,taskId,activeId,ready,onRefr
     {pending===value.input.id&&<p role="status">Saving request state…</p>}
   </article>;}
   return <section aria-label="Human requests" className="conversation-human-requests">
-    {!ready ? <p role="status">Loading saved requests…</p> : <>
+    {!ready ? loadError ? <p role="alert">Could not load saved requests: {loadError}. Refresh requests retries the read; it does not start inference.</p> : <p role="status">Loading saved requests…</p> : <>
       {current.length>0&&<><h3>Requests for your help</h3><p className="muted">For the current annotation goal. Opening a request does not call a model.</p>{current.map(card)}</>}
       {history.length>0&&<details><summary>Request history and other goals ({history.length}){otherPending>0 ? ` · ${otherPending} awaiting help in other goals` : ""}</summary>{history.map(card)}</details>}
       {current.length===0&&<p className="muted">{deferredCount ? `${deferredCount} deferred requests remain unfinished. Reopen them from request history when ready.` : taskId ? "No outstanding visual requests for this goal." : "Select an annotation goal to see its requests."}</p>}
     </>}
-    <button disabled={!ready||Boolean(pending)} onClick={onRefresh}>Refresh requests</button>
+    <button disabled={(!ready&&!loadError)||Boolean(pending)} onClick={onRefresh}>Refresh requests</button>
   </section>;
 }

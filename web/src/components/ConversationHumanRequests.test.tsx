@@ -5,6 +5,12 @@ import type {HumanRequest} from "../conversation-human-api";
 
 const request=(id:string,task:string,status:HumanRequest["status"]):HumanRequest=>({input:{id,task_id:task,conversation_id:"conversation",sample_test_id:"sample",image_id:"image",content_hash:"hash",outcome_id:"outcome",expected_feedback_sequence:0,reason_code:"boundary",question:id,resume_checkpoint_ref:"checkpoint"},status});
 const render=(task?:string,active?:string,ready=true)=>renderToStaticMarkup(<ConversationHumanRequests requests={[request("current-pending","current","pending"),request("other-pending","other","pending"),request("closed","current","cancelled"),request("applied","current","applied"),request("retry","current","answered")]} taskId={task} activeId={active} ready={ready} onRefresh={()=>{}} onOpen={()=>{}} onCancel={async()=>{}} onRetry={async()=>{}} onInspect={()=>{}}/>);
+it("allows an explicit retry after a context read failure without claiming an empty queue",()=>{
+  const html=renderToStaticMarkup(<ConversationHumanRequests requests={[]} taskId="current" ready={false} loadError="TEST read failed" onRefresh={()=>{}} onOpen={()=>{}} onCancel={async()=>{}} onRetry={async()=>{}} onInspect={()=>{}}/>);
+  expect(html).toContain("TEST read failed");
+  expect(html).not.toContain("No outstanding visual requests");
+  expect(html).not.toContain("disabled=");
+});
 it("keeps other task requests and closed history out of the active help region",()=>{
   const html=render("current");const history=html.indexOf("<details");
   expect(html.slice(0,history)).toContain("current-pending");

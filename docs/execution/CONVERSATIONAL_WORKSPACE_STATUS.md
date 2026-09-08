@@ -4731,3 +4731,12 @@ not a completed long-history pagination or total-transfer reduction claim. Full 
 and historical context pagination still need attention. Browser round 87265 predates this change,
 remains live through test 121, and has the already recorded test-50 failure; fresh preview/cache
 and human Schema verification remains next after its completion.
+
+Follow-up failure-state fix: a failed context read left `requestsReady=false` and the Refresh
+requests button disabled indefinitely. The component now distinguishes loading from failed reads,
+shows the actual read error, and enables explicit read-only retry. It never presents a failed read
+as an empty queue. An SSR regression failed on the old loading/disabled output and now passes;
+typecheck and **222 tests / 46 files** pass (handle 31860). No model retry was added.
+
+Round 4 is still live, but test 122 (Automation Recipe) timed out and skipped its later serial
+management cases. Inspect its saved trace before attributing the failure or changing timeouts.

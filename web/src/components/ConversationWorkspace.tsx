@@ -80,19 +80,20 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   const [requests,setRequests]=useState<HumanRequest[]>([]);
   const [processing,setProcessing]=useState<ProcessingReceipt[]>([]);
   const [requestsReady,setRequestsReady]=useState(false);
+  const [requestsLoadError,setRequestsLoadError]=useState<string>();
   const [requestRefresh,setRequestRefresh]=useState(0);
   const assistanceChanged=useCallback(()=>setRequestRefresh(value=>value+1),[]);
   const [repairEditing,setRepairEditing]=useState(false);
   const activeRequest=requests.find(value=>value.input.id===humanRequestId && value.input.task_id===taskId);
   const requestRelation=activeRequest ? conversationSampleRelation(activeRequest,draftId,sampleTestId,imageId) : undefined;
   useEffect(()=>{
-    const controller=new AbortController();setRequestsReady(false);
+    const controller=new AbortController();setRequestsReady(false);setRequestsLoadError(undefined);
     if(!conversation)return()=>controller.abort();
     void api.conversationTasks(project.id,conversation,controller.signal).then(tasks=>boundedReads(tasks,4,async task=>({
       task,
       requests:await api.conversationHumanRequests(project.id,conversation,task.input.id,controller.signal),
       processing:await api.conversationProcessing(project.id,conversation,task.input.id,controller.signal),
-    }),controller.signal)).then(values=>{if(!controller.signal.aborted){setTasks(values.map(value=>value.task));setRequests(values.flatMap(value=>value.requests));setProcessing(values.flatMap(value=>value.processing));setRequestsReady(true);}}).catch((error:Error)=>{if(!controller.signal.aborted)setError(error.message);});
+    }),controller.signal)).then(values=>{if(!controller.signal.aborted){setTasks(values.map(value=>value.task));setRequests(values.flatMap(value=>value.requests));setProcessing(values.flatMap(value=>value.processing));setRequestsReady(true);}}).catch((error:Error)=>{if(!controller.signal.aborted)setRequestsLoadError(error.message);});
     return()=>controller.abort();
   },[project.id,conversation,taskId,sampleTestId,processingOperationId,requestRefresh]);
   const updateRequest=(value:HumanRequest)=>setRequests(items=>items.map(item=>item.input.id===value.input.id ? value : item));
@@ -390,7 +391,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
           {operation.batch_id && operation.id !== processingOperationId && operation.batch_id!==results?.batchId && <ConversationBatchStatus projectId={project.id} batchId={operation.batch_id} />}
           {operation.batch_id && <button onClick={()=>processingNavigate(projectBatchPath(project.id,operation.batch_id!))}>Open processing results</button>}
         </article>)}</section>}
-        {conversation && <ConversationHumanRequests requests={requests} taskId={referenceTask?.id} activeId={humanRequestId} ready={requestsReady} onRefresh={()=>{if(sampleDirty.current){setError("Save or undo this correction before refreshing requests.");return;}setRequestRefresh(value=>value+1);}} onOpen={value=>void openRequest(value)} onCancel={cancelRequest} onRetry={retryContinuation} onDefer={deferRequest} onInspect={value=>onNavigate(projectBuildPath(project.id,"pipeline",{draftId:value.resume_draft_id!}))}/>}
+        {conversation && <ConversationHumanRequests requests={requests} taskId={referenceTask?.id} activeId={humanRequestId} ready={requestsReady} loadError={requestsLoadError} onRefresh={()=>{if(sampleDirty.current){setError("Save or undo this correction before refreshing requests.");return;}setRequestRefresh(value=>value+1);}} onOpen={value=>void openRequest(value)} onCancel={cancelRequest} onRetry={retryContinuation} onDefer={deferRequest} onInspect={value=>onNavigate(projectBuildPath(project.id,"pipeline",{draftId:value.resume_draft_id!}))}/>}
         {conversation && goalMessage && <ConversationSchemaCard prepareRequested={prepareMessage===goalMessage.input.id} key={`${conversation}:${goalMessage.input.id}`} project={project.id} conversation={conversation} message={goalMessage.input.id} onDirtyChange={schemaDirtyChange} onAssistance={assistanceChanged} onSample={(draft,test,image)=>void openSample(draft,test,image)} onSetup={selectedTask=>onNavigate(conversationSettingsPath(project.id,"providers",projectWorkPath(project.id,{conversationId:conversation,taskId:selectedTask ?? taskId,imageId,draftId,sampleTestId,humanRequestId,referenceMessageId,processingOperationId,results})))} />}
         {conversation && taskId && !goalMessage && <p role="status">{requestsReady ? "The selected annotation task is not available in this conversation. Select a saved message; no other task was substituted." : "Loading the selected annotation task…"}</p>}
         {activeRequest?.status==="applied" && activeRequest.resume_draft_id && <ConversationRepairCard key={activeRequest.input.id} project={project.id} request={activeRequest} editing={repairEditing} onAssistance={assistanceChanged} onSample={(draft,test,image)=>void openSample(draft,test,image)} />}
