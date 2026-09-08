@@ -314,6 +314,11 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   expect(budgetAfter.total_authorized_calls).toBe(budgetBefore.total_authorized_calls+approval.maximum_model_calls);
   await page.reload();
   const processingCard=page.getByRole("region",{name:"Saved processing tasks",exact:true});
+  const liveStatus=page.getByRole("region",{name:"Current processing status",exact:true});
+  await expect(liveStatus.getByText(`Current status: ${requiresReview ? "awaiting review" : "completed"}`,{exact:true})).toBeVisible();
+  await expect(liveStatus.getByRole("button",{name:"Resume",exact:true})).toHaveCount(0);
+  await expect(liveStatus.getByRole("button",{name:"Cancel processing",exact:true})).toHaveCount(0);
+  if(scenario==="bbox") await liveStatus.screenshot({path:"../docs/execution/conversational-workspace/processing-current-status.png",animations:"disabled"});
   await expect(processingCard.getByRole("button",{name:"Open processing results",exact:true})).toBeVisible();
   expect(new URL(page.url()).searchParams.get("test")).toBe(selection.sample_test_id);
   await processingCard.evaluate(element=>element.scrollIntoView({block:"start"}));
@@ -327,5 +332,37 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   await expect(page).toHaveURL(savedWorkspaceUrl);
   await expect(page.getByRole("region",{name:"Saved processing tasks",exact:true})).toBeVisible();
   expect(await (await request.get(`${taskRoot}/processing-operations`)).json()).toHaveLength(1);
+  if(scenario==="classification") {
+    // Browser-only transport fault/state harness. The real TEST Batch above is complete;
+    // no mutations are sent to it and this is not executor-control evidence.
+    const batchResponse=await (await request.get(`/api/batches/${started.batch_id}`)).json();
+    let presentedStatus="running";
+    let failPause=true;
+    const controlRequests:string[]=[];
+    await page.route(`**/api/batches/${started.batch_id}`,route=>route.fulfill({json:{...batchResponse,batch:{...batchResponse.batch,status:presentedStatus}}}));
+    await page.route(`**/api/batches/${started.batch_id}/*`,async route=>{
+      const action=route.request().url().split("/").pop()!;
+      controlRequests.push(action);
+      if(action==="pause" && failPause){failPause=false;await route.fulfill({status:503,json:{error:"TEST pause unavailable"}});return;}
+      presentedStatus=action==="pause" ? "paused" : action==="resume" ? "running" : "cancelled";
+      await route.fulfill({json:{status:presentedStatus}});
+    });
+    await page.reload();
+    await expect(liveStatus.getByRole("button",{name:"Pause",exact:true})).toBeVisible();
+    expect(controlRequests).toEqual([]);
+    await liveStatus.getByRole("button",{name:"Pause",exact:true}).click();
+    await expect(liveStatus.getByRole("alert")).toContainText("TEST pause unavailable");
+    await expect(liveStatus.getByText("Current status: running",{exact:true})).toBeVisible();
+    await liveStatus.getByRole("button",{name:"Pause",exact:true}).click();
+    await expect(liveStatus.getByRole("button",{name:"Resume",exact:true})).toBeVisible();
+    await liveStatus.getByRole("button",{name:"Resume",exact:true}).click();
+    await expect(liveStatus.getByRole("button",{name:"Pause",exact:true})).toBeVisible();
+    await liveStatus.getByRole("button",{name:"Cancel processing",exact:true}).click();
+    await expect(liveStatus.getByText("Current status: cancelled",{exact:true})).toBeVisible();
+    await page.reload();
+    await expect(liveStatus.getByText("Current status: cancelled",{exact:true})).toBeVisible();
+    expect(controlRequests).toEqual(["pause","pause","resume","cancel"]);
+    expect(page.url()).toBe(savedWorkspaceUrl);
+  }
 });
 }

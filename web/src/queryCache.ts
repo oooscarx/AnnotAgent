@@ -167,6 +167,7 @@ export const queryKeys = {
   projectRuns: (projectId: string) => `project/${projectId}/runs`,
   projectImages: (projectId: string) => `project/${projectId}/images`,
   run: (runId: string) => `run/${runId}`,
+  batch: (batchId: string) => `batch/${batchId}`,
   runResults: (runId: string) => `run/${runId}/results`,
   runDebug: (runId: string) => `run/${runId}/debug`,
   runAnnotations: (runId: string) => `run/${runId}/annotations`,

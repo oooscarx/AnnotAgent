@@ -1269,3 +1269,36 @@ Inspected `processing-confirm-bbox.png` and `processing-confirm-390.png` in
 Next: bring live Batch status/control and formal Review/export back into the conversation,
 finish broader intent/reference/setup handling, and complete default-entry and M4 audits.
 This closes the explicit start action, not the entire Conversational Workspace objective.
+
+### M3 continuation — current Batch status in the conversation (2026-09-08)
+
+Conversation processing receipts now display the owned Batch's current persisted status,
+separate completed/review/failed/cancelled counts and direct supported controls. The current
+confirmation shows this immediately after start, while older tasks show it in saved history;
+the same Batch is not mounted twice. Reads use the existing query cache and non-overlapping
+polling for pending/running/paused/awaiting-review tasks. Unmount stops observation, not the
+Batch. Ownership mismatch does not render another Project's progress or controls. Read errors
+remain visible with explicit reload; no GET, mount or refresh invokes an execution action.
+
+Extracted `BatchControls` from the existing results page for both presentations. Actions use
+the original coordinator endpoint and a synchronous click lock, reload authoritative status
+after success, and preserve visible errors after failure. Supported actions are unchanged:
+running = pause/cancel; paused/pending = resume/cancel. Review and terminal states do not expose
+misleading restart controls. Review users still follow the canonical results link; embedding
+formal Review/export in the conversation remains unfinished. Leaving the task and cancelling
+are explicitly distinguished, including the limit that sent remote requests cannot be undone.
+
+Validation: Web typecheck, **110/110 unit tests**, production build, Rust formatting and diff
+checks passed. Combined isolated browser run in `/tmp/annotagent-guided-e2e-2720` passed
+**4/4** (three conversation scenarios plus the existing standalone ready journey). Actual TEST
+HTTP model workflows verify completed vs awaiting-review states and retained image/test URL.
+An additional explicitly intercepted browser harness verifies pause failure, pause, resume,
+cancel and refresh without unsolicited control POSTs; it does **not** claim real executor
+pause/resume coverage and sends no control mutations to the completed fixture Batch.
+
+Screenshot review caught adjacent unspaced status paragraphs; added readable spacing and
+rendered state names without underscores. Final screenshot: `processing-current-status.png`.
+Final styled conversation rerun passed **3/3** in `/tmp/annotagent-guided-e2e-2865`.
+No Live inference, real Workspace changes, push or remote changes. Full-workspace Rust
+regressions, real control lifecycle browser evidence, default entry, broader conversation
+intent/reference handling, formal Review/export embedding and M4 usability audits remain.

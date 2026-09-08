@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ConversationBatchStatus } from "./ConversationBatchStatus";
 import { api, type ConfirmProcessingRequest, type ProcessingAuthorization, type ProcessingReceipt } from "../api";
 import { t } from "../i18n";
 import { projectBatchPath, projectJourneyPath } from "../navigation";
@@ -95,6 +96,7 @@ export function JourneyConfirm({ projectId, draftId, testId, imageId, operationI
     </div>}
     {busy && <p role="status">{t("Saving the confirmed plan and starting processing…")}</p>}
     {(error || receipt?.error) && <p role="alert">{error || receipt?.error}</p>}
+    {stayOnReceipt && receipt?.batch_id && <ConversationBatchStatus projectId={projectId} batchId={receipt.batch_id} />}
     <footer className="journey-actions"><button onClick={() => navigate.current(routing.current.backPath ?? projectJourneyPath(projectId, "samples", context))}>{t("Back to samples")}</button>
       {operationId && <button disabled={busy} onClick={() => setReload((value) => value + 1)}>{t("Reload task status")}</button>}
       {receipt?.phase === "started" && receipt.batch_id ? <button className="primary" onClick={()=>navigate.current(projectBatchPath(projectId,receipt.batch_id!))}>{t("Open processing results")}</button> : <button className="primary" disabled={busy || (!operationId && (!preview || !confirmed))} onClick={submit}>{t(operationId ? receipt?.phase === "published_start_failed" ? "Retry starting processing" : "Retry this confirmed action" : "Confirm and start processing")}</button>}

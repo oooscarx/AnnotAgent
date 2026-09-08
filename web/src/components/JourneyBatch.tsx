@@ -8,6 +8,7 @@ import type { DatasetBatchSummary, ProjectSummary } from "../types";
 import { canAddRunAnnotation, RunAnnotationEditor } from "./RunAnnotationEditor";
 import { AnnotationCanvas } from "./AnnotationCanvas";
 import { hasUnverifiedBoundary } from "../annotationQuality";
+import { BatchControls } from "./BatchControls";
 
 /** A results presentation of the existing Batch and terminal projection, not an executor. */
 export function JourneyBatch({ project, onNavigationGuardChange, batch, route, onNavigate, onReload }: {
@@ -17,13 +18,10 @@ export function JourneyBatch({ project, onNavigationGuardChange, batch, route, o
 }) {
   const selectedId = route.annotationId;
   const original = route.canvasView === "original";
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [addingImage, setAddingImage] = useState<string>();
   const active = ["pending", "running", "paused"].includes(batch.status);
   const reloadRef = useRef(onReload); reloadRef.current = onReload;
-  const alive = useRef(false);
-  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
     if (!active) return;
     let stopped = false;
@@ -58,24 +56,13 @@ export function JourneyBatch({ project, onNavigationGuardChange, batch, route, o
   const image = imageQuery.data?.images.find((item) => item.image_id === selected?.image_id && item.project_id === batch.project_id);
   const select = (imageId?: string, nextStatus = status) => onNavigate(projectBatchPath(batch.project_id, batch.id, { imageId, status: nextStatus }));
   const canvasContext = (annotationId = selectedId, showOriginal = original) => onNavigate(projectBatchPath(batch.project_id, batch.id, { imageId: selected?.image_id, status, annotationId, canvasView: showOriginal ? "original" : undefined }), true);
-  const control = async (action: "pause" | "resume" | "cancel") => {
-    if (busy) return;
-    setBusy(true); setError("");
-    try { await api.controlBatch(batch.id, action); if (alive.current) await reloadRef.current(); }
-    catch (failure) { if (alive.current) setError((failure as Error).message); }
-    finally { if (alive.current) setBusy(false); }
-  };
   const reviewId = selected?.review_ids[0];
   const adding = Boolean(selected && addingImage === selected.image_id);
   return <section className="journey-scene journey-results" aria-label={t("Processing results")}>
     <div className="journey-intro"><h2>{t(active ? "Processing your images" : "Your processing results")}</h2>
       <p role="status">{t(batch.status)} · {t("{done} of {total} images settled", { done: batch.images.filter((item) => !["pending", "leased", "running"].includes(item.status)).length, total: batch.progress.total_images })}</p>
       {active && <p>{t("Returning to the project keeps this task running. Stopping cannot undo remote requests already sent.")}</p>}
-      {active && <div className="button-row" aria-label={t("Processing controls")}>
-        {batch.status === "running" && <button disabled={busy} onClick={() => void control("pause")}>{t("Pause")}</button>}
-        {["paused", "pending"].includes(batch.status) && <button disabled={busy} onClick={() => void control("resume")}>{t("Resume")}</button>}
-        <button disabled={busy} className="danger-button" onClick={() => void control("cancel")}>{t("Cancel processing")}</button>
-      </div>}
+      <BatchControls key={batch.id} batchId={batch.id} status={batch.status} onReload={() => reloadRef.current()} />
     </div>
     {(error || imageQuery.error || results.error || annotations.error) && <div role="alert"><p>{error || imageQuery.error?.message || results.error?.message || annotations.error?.message}</p><button onClick={() => { void onReload(); void imageQuery.retry().catch(() => undefined); void results.retry().catch(() => undefined); void annotations.retry().catch(() => undefined); }}>{t("Reload results")}</button></div>}
     <div className="journey-image-controls">

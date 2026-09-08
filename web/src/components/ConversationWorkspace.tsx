@@ -7,6 +7,7 @@ import { ConversationSchemaCard } from "./ConversationSchemaCard";
 import { ConversationSampleCanvas } from "./ConversationSampleCanvas";
 import { ConversationRepairCard } from "./ConversationRepairCard";
 import { JourneyConfirm } from "./JourneyConfirm";
+import { ConversationBatchStatus } from "./ConversationBatchStatus";
 import { conversationSampleRelation } from "../conversation-context";
 import type { HumanRequest } from "../conversation-human-api";
 
@@ -175,6 +176,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
           <p>{operation.phase==="started" ? "Processing was started. Open its saved results for current progress." : operation.phase==="published_start_failed" ? "Plan published; processing did not start." : `Saved operation: ${operation.phase}`}</p>
           <p>{operation.authorization.image_count} images · Schema revision {operation.authorization.conversation?.schema.revision} · Plan revision {operation.authorization.revision}</p>
           {operation.error && <p role="alert">{operation.error}</p>}
+          {operation.batch_id && operation.id !== processingOperationId && <ConversationBatchStatus projectId={project.id} batchId={operation.batch_id} />}
           {operation.batch_id && <button onClick={()=>onNavigate(projectBatchPath(project.id,operation.batch_id!))}>Open processing results</button>}
         </article>)}</section>}
         {conversation && <section aria-label="Human requests"><h3>Requests for your help</h3><button onClick={()=>{if(sampleDirty.current){setError("Save or undo this correction before refreshing requests.");return;}setRequestRefresh(value=>value+1);}}>Refresh requests</button>{requests.map(value=><article key={value.input.id} className="conversation-consent"><p>{value.input.question}</p><p>{value.resume_draft_id ? "Correction saved · revision Draft available" : value.status==="answered" ? "Correction saved · awaiting task continuation" : value.status}</p>{value.resume_error && <p role="alert">Correction saved, but Draft preparation failed: {value.resume_error}</p>}<button onClick={()=>void openRequest(value)}>Open requested result</button>{value.status==="answered" && <button onClick={()=>void retryContinuation(value)}>Retry Draft preparation</button>}{value.resume_draft_id && <button onClick={()=>onNavigate(projectBuildPath(project.id,"pipeline",{draftId:value.resume_draft_id!}))}>Inspect revision Draft</button>}{value.status==="pending" && <button onClick={()=>void cancelRequest(value)}>Cancel request</button>}</article>)}</section>}
