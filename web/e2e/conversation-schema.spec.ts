@@ -72,10 +72,13 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
     expect((await (await request.get(`${taskRoot}/calls/${consent.call_id}`)).json())).toEqual(receipt);
     expect((await request.post(`${taskRoot}/schema-proposals`,{data:{...consent,call_id:randomUUID()}})).status()).toBe(400);
     const saveRoot = `${taskRoot}/calls/${consent.call_id}/schema-draft`;
-    expect(await (await request.get(saveRoot)).json()).toBeNull();
+    const automaticDraft=await (await request.get(saveRoot)).json();
+    expect(automaticDraft.revision).toBe(1);
+    expect(automaticDraft.source_call_id).toBe(consent.call_id);
     const savedResponse = await request.post(saveRoot);
     expect(savedResponse.ok()).toBeTruthy();
     const schemaDraft = await savedResponse.json();
+    expect(schemaDraft).toEqual(automaticDraft);
     expect(schemaDraft.revision).toBe(1);
     expect(schemaDraft.definition.task.labels).toEqual(receipt.evidence.decision.Ok.labels);
     const draftRoot = `/api/projects/${project}/conversation-schema-drafts/${schemaDraft.id}`;
@@ -132,7 +135,8 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
   await page.reload();
   await expect(page.getByText("Schema proposal saved",{exact:true})).toBeVisible();
   await expect(page.getByText("Object boxes",{exact:true})).toBeVisible();
-  await page.getByRole("button",{name:"Save as editable Schema Draft",exact:true}).click();
+  await expect(page.getByText("Schema Draft saved · Revision 1",{exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"Save as editable Schema Draft",exact:true})).toHaveCount(0);
   await expect(page.getByText("Schema Draft saved · Revision 1",{exact:true})).toBeVisible();
   await page.getByRole("button",{name:"Edit labels and boundary rules",exact:true}).click();
   await page.getByLabel("Labels · one per line",{exact:true}).fill("TEST edited cup");

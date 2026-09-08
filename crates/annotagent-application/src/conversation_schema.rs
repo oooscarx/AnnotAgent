@@ -403,7 +403,9 @@ impl crate::LocalApplication {
             &execution.scope_hash,
             &request_hash,
         )? {
-            ConversationCallAdmission::Existing(receipt) => return Ok(receipt),
+            ConversationCallAdmission::Existing(receipt) => {
+                return self.materialize_completed_schema(project_id, execution, receipt);
+            }
             ConversationCallAdmission::Admitted => {}
         }
         let _guard = CallCancellationGuard {
@@ -456,13 +458,37 @@ impl crate::LocalApplication {
                 json!({"error":"Schema request did not return a complete response. Remote completion and cost are unknown; no automatic retry was scheduled."}),
             ),
         };
-        Ok(self.store.finish_conversation_call(
+        let receipt = self.store.finish_conversation_call(
             &owner,
             execution.task_id,
             execution.call_id,
             status,
             evidence,
-        )?)
+        )?;
+        self.materialize_completed_schema(project_id, execution, receipt)
+    }
+
+    /// Called only from the explicit execution command (including its idempotent
+    /// retry), never from GET/history restoration. A receipt remains recoverable
+    /// if local Draft materialization fails after the provider result was saved.
+    fn materialize_completed_schema(
+        &self,
+        project: &str,
+        execution: &ConversationSchemaExecution,
+        receipt: annotagent_storage::ConversationCallReceipt,
+    ) -> Result<annotagent_storage::ConversationCallReceipt> {
+        if receipt.status == annotagent_storage::ConversationCallStatus::Completed
+            && receipt
+                .evidence
+                .as_ref()
+                .and_then(|value| value.pointer("/decision/Ok/decision"))
+                .and_then(serde_json::Value::as_str)
+                == Some("draft")
+        {
+            self.save_conversation_schema_draft(project,execution.conversation_id,execution.task_id,execution.call_id)
+                .map_err(|error|anyhow::anyhow!("Schema model result is saved, but its editable Draft could not be saved: {error}. Retrying the saved request does not call the model again."))?;
+        }
+        Ok(receipt)
     }
 }
 
@@ -973,7 +999,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn authorized_schema_call_is_persisted_and_duplicate_execution_only_reads_receipt() {
+    async fn authorized_schema_call_saves_draft_and_duplicate_execution_preserves_receipt() {
         use annotagent_storage::{
             BeginConversationTask, ConversationCallGrant, ConversationCallStatus,
             ConversationMessageInput,
@@ -1049,6 +1075,12 @@ mod tests {
             .unwrap();
         assert_eq!(receipt.status, ConversationCallStatus::Completed);
         assert_eq!(provider.requests.lock().unwrap().len(), 1);
+        assert!(
+            app.conversation_schema_for_call("schema-test", conversation, task, execution.call_id)
+                .unwrap()
+                .is_some(),
+            "An authorized clear goal should already have an editable Schema Draft"
+        );
         assert_eq!(
             app.execute_conversation_schema(
                 "schema-test",
@@ -1330,6 +1362,13 @@ mod tests {
                 .unwrap()
                 .annotation_schema
                 .is_empty()
+        );
+        assert_eq!(
+            reopened
+                .conversation_schema_draft("schema-test", schema_draft.id, None)
+                .unwrap(),
+            saved_edit,
+            "Replaying the original proposal must not reset human-edited labels"
         );
         let different_call = ConversationSchemaExecution {
             call_id: Uuid::new_v4(),

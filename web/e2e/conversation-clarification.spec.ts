@@ -23,7 +23,7 @@ test(`Schema clarification ${mode}: same-task persistence and explicit continuat
   expect((await request.put(`/api/projects/${project}/model-bindings`,{data:{bindings:[{capability:"image_classification",role:"classification",match_kind:"capability",model_profile_id:model.id,locked:false}]}})).ok()).toBe(true);
   await page.goto(`/projects/${project}/work`);
   await page.getByLabel("Add images",{exact:true}).setInputFiles(resolve("../examples/robocup/images/synthetic-robocup.png"));
-  await expect(page.getByText("Images saved on this server. No model has been called.",{exact:true})).toBeVisible();
+    await expect(page.getByText("Images saved on this server. This upload did not start inference.",{exact:true})).toBeVisible();
   await page.getByLabel("Your message",{exact:true}).fill("TEST: annotate these images; help clarify the output");
   if(mode==="answer"){
     let interrupted=false;

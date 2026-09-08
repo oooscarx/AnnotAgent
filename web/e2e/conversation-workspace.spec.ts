@@ -19,7 +19,7 @@ test("conversation journal restores, freezes image references and retries withou
   await expect(page.getByRole("list", { name: "Saved messages" })).toContainText("TEST find cups, not bottles");
   const conversation = (await (await request.get(root)).json()).conversation_id;
   await page.getByLabel("Add images", { exact: true }).setInputFiles(resolve("../examples/robocup/images/synthetic-robocup.png"));
-  await expect(page.getByText("Images saved on this server. No model has been called.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Images saved on this server. This upload did not start inference.", { exact: true })).toBeVisible();
   const images = (await (await request.get(`/api/projects/${project}/images`)).json()).images;
   await page.getByLabel("Your message", { exact: true }).fill("TEST inspect this image");
   await page.route(`**${root}/${conversation}/messages`, async (route) => {

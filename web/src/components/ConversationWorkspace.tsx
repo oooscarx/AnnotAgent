@@ -187,7 +187,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
         if(!alive.current)return;
         setTasks([...existing.filter(task=>task.input.id!==selectedTask!.input.id),selectedTask]);
       }
-      frozen.current = undefined; unsent.current = ""; setText(""); setPinnedSelection(undefined); setStatus("Message saved. No model has been called.");
+      frozen.current = undefined; unsent.current = ""; setText(""); setPinnedSelection(undefined); setStatus("Message saved. Saving this message did not start inference.");
       if(selectedTask){
         pending.current=false;
         onNavigate(projectWorkPath(project.id,{conversationId:id,taskId:selectedTask.input.id,imageId:input.image?.image_id}));
@@ -212,7 +212,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
       // Selection is a journal operation, not permission to call models or modify another task.
       pending.current=false;
       onNavigate(projectWorkPath(project.id,{conversationId:conversation,taskId:task.input.id,imageId}));
-      setStatus("Saved annotation goal selected. No model has been called.");
+      setStatus("Saved annotation goal selected. This selection did not start inference.");
     } catch(error){if(alive.current)setError((error as Error).message);}
     finally {pending.current=false;if(alive.current)setBusy(false);}
   }
@@ -226,7 +226,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
         if (result.corrupt.length) throw new Error(result.corrupt.map((item) => `${item.name}: ${item.message}`).join("; "));
       }
       const dataset = await api.images(project.id);
-      if (alive.current) { setImages(dataset.images); setStatus("Images saved on this server. No model has been called."); }
+      if (alive.current) { setImages(dataset.images); setStatus("Images saved on this server. This upload did not start inference."); }
     } catch (error) { if (alive.current) { setError((error as Error).message); setStatus("Completed uploads are retained. Reselect files to retry; identical content is deduplicated."); } }
     finally { pending.current = false; if (alive.current) setBusy(false); }
   }

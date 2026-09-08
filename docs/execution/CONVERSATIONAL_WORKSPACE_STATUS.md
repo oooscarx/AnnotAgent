@@ -2342,3 +2342,53 @@ This supersedes the ordinary-write-starvation limitation noted in the preceding 
 while finite control-lane saturation and cooperative provider cancellation remain explicit.
 No Live model quality/human usability validation, real Workspace changes, old keys, push or remote
 changes. The prior 78/78 full-browser result predates this change; no new full-suite claim here.
+
+### M2 continuation — a clear authorized Schema proposal becomes an editable Draft automatically
+
+Baseline application assertion proved the extra product handoff: after a successful authorized
+Schema model response, `conversation_schema_for_call` still returned None. The browser required
+“Save as editable Schema Draft” before any further work. The first test edit used an incorrect
+method name and did not compile; after correcting it to the existing API the behavioral assertion
+failed as intended. Clear goal execution now materializes its valid saved proposal through the
+existing Application/Storage Schema service before returning. No new engine or store, no Project
+YAML update, no publication, no implicit Builder/image call or new grant.
+
+Only an actually completed draft decision qualifies; materialization reparses and validates the
+persisted tool response and checks task/source ownership as before. Clarifications, invalid tool
+outputs and unknown/cancelled provider attempts are not fake editable Drafts. Exact POST replay
+can recover local materialization from its existing receipt without another model call and uses
+the existing idempotent source-call identity. It does not reset subsequent human edits. GET,
+history, mount and refresh remain read-only. Receipt and Draft are still separate transactions:
+if local materialization fails/crashes after saving the receipt, the saved proposal remains
+recoverable through the existing explicit local-save action; no automatic provider retry or
+crash-atomic two-record guarantee is claimed.
+
+The GUI now goes directly to saved editable labels and the existing Builder authorization entry.
+Model consent explains this limited local-save consequence, and Draft loading is distinguished
+from an unsaved proposal. The legacy recovery action remains when a saved response genuinely
+lacks its Draft. This removes one unnecessary local confirmation, not the still-open full
+bounded Schema→Builder→sample coordinator. Later models/data scope still need matching consent.
+
+Five Schema application tests and server-target all-feature/all-target Clippy passed; the
+existing test checks initial auto-materialization, one provider request, restart, editing,
+immutable snapshots and duplicate receipt preservation, with an added post-replay assertion that
+edited labels remain unchanged. Web typecheck, 123 unit tests and production build passed with
+the known chunk-size warning. Focused eight-scenario browser run and final screenshot evidence
+follow below. TEST fixtures only, no real Workspace mutation, old keys, Live quality, human
+usability, push or remote changes.
+The combined `/tmp/annotagent-guided-e2e-27524` run passed 7/8: clarification answer/cancel and
+all five sample scenarios passed; the remaining Schema API test still asserted the old pre-save
+Draft was null. Replaced that obsolete assertion with persisted revision/source-call checks and
+exact equality for the legacy save endpoint replay. Corrected Schema + bbox run
+`/tmp/annotagent-guided-e2e-27795` passed 2/2 in 28.5 seconds. No broader passing count is inferred.
+Inspected `conversational-workspace/automatic-label-draft.png`: editable saved labels are directly
+available with no extra local-save button. The screenshot exposed a stale global-sounding status
+“No model has been called” after a later child inference. Message/upload/selection statuses now
+describe only their own non-inference action rather than the entire task's call history. The
+duplicate original-proposal/detail presentation remains a separate compaction gap.
+
+Final bbox + journal browser run `/tmp/annotagent-guided-e2e-27934` passed 2/2 in 15.9
+seconds. Re-inspected the regenerated automatic-label-draft screenshot: the bottom status now
+correctly describes message saving only; saved revision 1 and label editing are immediately
+available. Final Web typecheck and 123 unit tests passed, as did server Clippy and format checks.
+These are isolated TEST results, not Live inference quality or human usability evidence.

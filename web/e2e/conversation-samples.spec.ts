@@ -42,7 +42,7 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
     await page.getByText("Project call limit",{exact:true}).click();
   }
   await page.getByLabel("Add images",{exact:true}).setInputFiles(resolve("../examples/robocup/images/synthetic-robocup.png"));
-  await expect(page.getByText("Images saved on this server. No model has been called.",{exact:true})).toBeVisible();
+  await expect(page.getByText("Images saved on this server. This upload did not start inference.",{exact:true})).toBeVisible();
   await page.getByLabel("Your message",{exact:true}).fill(kind==="classification" ? "按室内和室外给图片分类" : "Find cups, not bottles. Draw a tight box around each cup.");
   await page.getByRole("button",{name:"Save message",exact:true}).click();
   if(humanSchema){
@@ -56,7 +56,9 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   await page.getByRole("button",{name:"Prepare label proposal",exact:true}).click();
   await page.getByRole("checkbox",{name:/Allow this text request/}).check();
   await page.getByRole("button",{name:"Generate label proposal",exact:true}).click();
-  await page.getByRole("button",{name:"Save as editable Schema Draft",exact:true}).click();
+  await expect(page.getByText("Schema Draft saved · Revision 1",{exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"Save as editable Schema Draft",exact:true})).toHaveCount(0);
+  if(scenario==="bbox")await page.screenshot({path:"../docs/execution/conversational-workspace/automatic-label-draft.png",fullPage:true,animations:"disabled"});
   }
   const builderPreviewPromise=page.waitForResponse(response=>response.url().includes("/builder-preview"));
   const changeCeiling=async(maximum:number)=>{
