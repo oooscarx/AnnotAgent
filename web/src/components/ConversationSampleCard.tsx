@@ -58,7 +58,7 @@ export function ConversationSampleCard({project, conversation, task, draft, disa
     finally{pending.current=false;if(alive.current)setBusy(false);}
   }
   async function launch(){
-    if(pending.current || disabled || (!frozen.current && (!preview || !confirmed || projectBudgetAvailability(preview.project_call_limit).blocked)))return;
+    if(pending.current || disabled || !ready || (!frozen.current && (!preview || !confirmed || projectBudgetAvailability(preview.project_call_limit).blocked)))return;
     pending.current=true;setBusy(true);setError("");
     if(!frozen.current && preview){const budget=preview.conversation_budget;
       frozen.current={request_id:preview.request_id,draft_id:draft,expected_revision:preview.revision,image_indices:Array.from({length:preview.image_count},(_,i)=>i),authorization_fingerprint:preview.authorization_fingerprint,conversation:{conversation_id:conversation,task_id:task,previous_grant_id:budget.previous_grant_id,scope_hash:budget.scope_hash,expires_at:budget.expires_at,allow_unknown_cost:true,human_review:true}};
@@ -84,13 +84,13 @@ export function ConversationSampleCard({project, conversation, task, draft, disa
       <p>{preview.conversation_budget.used_calls} calls already used · Cumulative limit {preview.conversation_budget.maximum_calls} · Cost unknown</p>
       {(!preview.supported || !preview.image_count) && <p role="status">{!preview.image_count ? "Upload images before testing." : "This Draft needs compatible model bindings before bounded testing."}</p>}
       <label><input type="checkbox" checked={confirmed} disabled={busy || uncertain} onChange={event=>setConfirmed(event.target.checked)}/>Allow these sample images to be sent to the listed models; actual cost is unknown</label>
-      <div className="button-row"><button disabled={busy || uncertain} onClick={()=>setPreview(undefined)}>Back</button><button className="primary" disabled={busy || disabled || !confirmed || !preview.supported || !preview.image_count || projectBudgetAvailability(preview.project_call_limit).blocked} onClick={()=>void launch()}>Test these samples</button></div>
+      <div className="button-row"><button disabled={busy || uncertain} onClick={()=>setPreview(undefined)}>Back</button><button className="primary" disabled={busy || uncertain || !ready || disabled || !confirmed || !preview.supported || !preview.image_count || projectBudgetAvailability(preview.project_call_limit).blocked} onClick={()=>void launch()}>Test these samples</button></div>
     </div>}
     {active(operation) && <><p role="status">Sample task: {operation!.status}</p><button disabled={operation!.status==="cancelling"} onClick={()=>void stop()}>Stop sample test</button><p>Leaving does not stop the task. An in-flight remote request may still be billed.</p></>}
     {operation?.status==="succeeded" && operation.assistance?.status==="waiting" && <p role="status">Preparing saved requests for human judgment… No additional inference is running.</p>}
     {operation?.assistance?.status==="failed" && <p role="alert">Sample report saved, but human-request preparation failed: {operation.assistance.error}. You can still inspect and correct the saved sample.</p>}
     {operation && !active(operation) && <div className="conversation-builder-result"><strong>{operation.status==="succeeded" ? "Sample report saved" : `Sample task: ${operation.status}`}</strong>{operation.error && <p role="alert">{operation.error}</p>}{operation.status==="succeeded" && <><small>Open the report to inspect results, quality risks and any failed nodes.</small><button onClick={()=>onOpen(draft,operation.id)}>View sample results in canvas</button></>}</div>}
-    {uncertain && <button disabled={busy || disabled} onClick={()=>void launch()}>Retry the same sample request</button>}
+    {uncertain && <aside className="conversation-consent" aria-label="Sample request outcome unknown"><p role="status">The sample request outcome is unknown here. The server may already be processing it. No automatic retry is running.</p><p>Refreshing checks the saved task. Explicit retry uses the original request ID, images, plan revision and authorization; it does not create a new test or renew permission.</p><button disabled={busy || disabled || !ready} onClick={()=>void launch()}>Retry the same sample request</button></aside>}
     {error && <p role="alert">{error} Saved tasks remain on the server. Reloading never starts a test.</p>}
   </section>;
 }

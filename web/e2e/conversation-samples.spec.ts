@@ -114,12 +114,41 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   }
   await expect(start).toBeEnabled();
   let envelope:any;
+  // Lose both the acknowledged POST and its immediate receipt lookup. This is
+  // genuinely unknown to the browser, not proof that execution failed.
+  let loseReceipt = scenario === "bbox";
+  await page.route(`**/api/projects/${project}/sample-operations/*`,async route=>{
+    if(loseReceipt && route.request().method()==="GET")return route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"TEST receipt temporarily unavailable"})});
+    return route.fallback();
+  });
   await page.route(`**/api/projects/${project}/sample-operations`,async route=>{
     if(route.request().method()!=="POST")return route.continue();
     envelope=route.request().postDataJSON();
     const response=await fetchWithinMutationLimit(route);expect(response.ok(),await response.text()).toBe(true);await route.abort("failed");
   },{times:1});
   await start.click();
+  if(scenario==="bbox"){
+    await expect(page.getByRole("button",{name:"Retry the same sample request",exact:true})).toBeVisible();
+    await expect(start).toBeDisabled({timeout:10_000});
+    await page.getByRole("region",{name:"Test annotation samples",exact:true}).screenshot({path:"../docs/execution/conversational-workspace/sample-outcome-unknown.png",animations:"disabled"});
+    await expect.poll(async()=> (await (await request.get(`/api/projects/${project}/sample-operations/${envelope.request_id}`)).json()).status).toBe("succeeded");
+    const pendingKey=`annotagent.conversation-sample:${project}:${envelope.conversation.conversation_id}:${envelope.conversation.task_id}:${envelope.draft_id}`;
+    expect(await page.evaluate(key=>JSON.parse(sessionStorage.getItem(key)!),pendingKey)).toEqual(envelope);
+    loseReceipt=false;
+    let releaseHistory!:()=>void;
+    const historyHeld=new Promise<void>(resolve=>{releaseHistory=resolve;});
+    await page.route(`**/conversations/${envelope.conversation.conversation_id}/tasks/${envelope.conversation.task_id}/sample-operations`,async route=>{await historyHeld;await route.fallback();},{times:1});
+    let recoveryWrites=0;
+    const observeRecovery=(req:{method:()=>string;url:()=>string})=>{if(!["GET","HEAD","OPTIONS"].includes(req.method())&&req.url().includes("/api/"))recoveryWrites++;};
+    page.on("request",observeRecovery);
+    await page.reload();
+    await expect(page.getByRole("button",{name:"Retry the same sample request",exact:true})).toBeDisabled();
+    releaseHistory();
+    await expect(page.getByRole("button",{name:"View sample results in canvas",exact:true})).toBeVisible();
+    await expect(page.getByRole("button",{name:"Retry the same sample request",exact:true})).toHaveCount(0);
+    expect(await page.evaluate(key=>sessionStorage.getItem(key),pendingKey)).toBeNull();
+    expect(recoveryWrites).toBe(0);page.off("request",observeRecovery);
+  }
   await expect(page.getByRole("button",{name:"View sample results in canvas",exact:true})).toBeVisible();
   expect(envelope.conversation.allow_unknown_cost).toBe(true);
   const taskRoot=`/api/projects/${project}/conversations/${envelope.conversation.conversation_id}/tasks/${envelope.conversation.task_id}`;

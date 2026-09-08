@@ -2455,3 +2455,31 @@ Builder grant would not constitute the requested bounded coordinator. The next i
 authorization must explicitly cover permitted image recipients/selection and cumulative calls,
 then validate the actually generated Draft against that envelope before sample admission.
 The existing distinct consent boundaries remain intact until that mechanism is implemented.
+
+### M2 recovery continuation — unknown sample outcomes are not a new test authorization
+
+Extended the real HTTP TEST bbox flow to lose both the successful sample POST response and
+the browser's immediate receipt GET (503). The server independently completes its original
+operation. Before refresh, assert the pending session envelope equals the submitted request;
+after refresh, recover its saved report, clear the local pending envelope and assert zero API
+writes. Initial recovery-only `/tmp/annotagent-guided-e2e-29370` passed 1/1 in 14.0 seconds.
+Adding an assertion that the ordinary “Test these samples” action is disabled exposed an actual
+UI failure at `/tmp/annotagent-guided-e2e-29439`: that button remained enabled next to the exact
+retry action. Its handler already reused the frozen envelope, so this does not demonstrate a
+duplicate charged call, but the action semantics were misleading.
+
+Disable ordinary start during unknown outcome, and display a scoped recovery explanation:
+the server may already be running, no automatic retry, refresh reads saved state, explicit
+retry retains request ID/images/revision/authorization rather than renewing permission.
+Explicit retry also waits for initial history loading to finish. This reuses existing server
+receipts and idempotency; no new executor or grant. Pending pre-acknowledgement browser state
+still uses sessionStorage, not a cross-device server pending-envelope guarantee.
+
+Fixed classification + bbox `/tmp/annotagent-guided-e2e-29607` passed 2/2 in 22.1 seconds.
+Final bbox `/tmp/annotagent-guided-e2e-29712` passed 1/1 in 14.1 seconds, adding a held
+history GET after reload and verifying retry remains disabled until that read settles.
+Captured and inspected `conversational-workspace/sample-outcome-unknown.png` for the honest
+unknown-state explanation and disabled ordinary start. Web typecheck, 123 unit tests and
+production build passed, with the known chunk warning. Diff check passed. No Rust behavior
+changed; no new full-Rust regression claim. No Live model quality/human usability validation,
+real Workspace mutations, old keys, push or remote changes. Main coordinator scope remains open.
