@@ -4585,3 +4585,11 @@ Fresh new-code verification runs on handle 75462 with isolated evidence
 `/tmp/annotagent-reference-verification`: both reference target UI paths, the terminal comparison
 transport regression, goals, and the prior multi-label canvas failure. This run includes the
 new Rust contract and Web build; unlike the full baseline it can validate the new implementation.
+
+Handle 75462 terminated successfully: **5 passed (23.8s)**, isolated workspace
+`/tmp/annotagent-guided-e2e-4983`. Both real request/answer/reload/checkpoint reference paths and
+the explicitly perturbed terminal-comparison transport passed. Goals passed after its fixture
+repair. The multi-label class canvas failure did not reproduce; no product race fix is claimed.
+Saved screenshots are under `/tmp/annotagent-reference-verification/conversational-workspace`.
+Still required: automatic evidence-driven reference requests, guided full-group verification,
+journey-ready investigation, and a final combined regression. No Live/accuracy/human-test claim.
