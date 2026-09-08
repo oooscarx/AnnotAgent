@@ -3926,3 +3926,46 @@ workspace/all-target/all-feature strict Clippy, formatting check and build pass.
 The two new browser authorization-change cases passed, not the whole browser suite. No new
 screenshot/Live/native-IME/200%-zoom/human-test evidence is claimed. Only owned source/tests and
 this log are committed; historical PNG modifications remain excluded and the goal stays active.
+
+### Single-candidate source-filtered history and original golden-path regression
+
+Previous lifecycle/authorization checkpoint: `819284a`. Single-candidate Builder cards now
+query history by their owned human-request ID, not only the last 32 operations across the task.
+The Server rejects mixed operation/class/human source filters. Application validates the exact
+request's Project, conversation and task using a point lookup rather than enumerating all human
+requests. Preview uses that same point ownership check.
+
+Storage filters admitted human provenance before LIMIT 32. Source-less legacy operations may
+match only the owned request's prepared Draft and a repair-mode Agent session. Conflicting
+modern source metadata cannot be overridden by that fallback. Tests insert 33 later operations
+and prove both modern and legacy repair records remain discoverable while an image-class
+record with the same working Draft is excluded. Application tests also cover the real completed
+repair record, unknown requests, foreign conversations and mutually exclusive selectors.
+
+To rerun the original long browser scenarios without overwriting pre-existing screenshot work,
+their screenshot path now accepts the optional `ANNOTAGENT_E2E_EVIDENCE_DIR`. Default paths
+are unchanged; no assertion, transport or execution is stubbed. This run uses
+`/tmp/annotagent-single-repair-evidence-QZJqlj` and the existing disposable harness workspace
+`/tmp/annotagent-guided-e2e-86453`. Bbox and classification-review are selected from the existing
+`conversation-samples.spec.ts`, including human answer, preserved repair, samples and formal
+processing/Review/export rather than a new reduced demonstration. Final results follow below.
+
+Both original browser scenarios passed (bbox 9.6s, classification-review 10.1s; total harness
+42.3s). Their real files and 27 screenshots are retained in the isolated evidence directory;
+`repair-bbox.png` and `formal-export-classification.png` were visually inspected. These are TEST
+synthetic images/scripted predictions and actual Rust execution, not Live-quality evidence.
+
+The export inspection identifies an outstanding **delivery** gap: the UI capture exposes the
+server output path and report, and the existing test verifies output JSON by directly reading
+the server file. That is evidence of actual export generation, not proof of browser download
+or an export-asset completion card. No export download endpoint was found in the targeted
+Server/API search. This must be investigated and completed next before claiming the required
+goal → correction → export *delivery* path, despite the current golden tests being green.
+
+Full workspace/all-feature Rust tests pass (143 Application/1 ignored, 145 Storage, 45 Server,
+other workspace/integration/doc suites; five environment-dependent tests ignored overall).
+Strict all-target/all-feature Clippy, fmt check and workspace build pass. Web typecheck and
+199 unit tests pass; production Web build succeeds in the browser harness with the existing
+bundle-size warning. No real workspace/service8787/credential/remote was modified and no push
+was performed. Screenshot changes predating this work remain untouched. Goal remains active;
+browser delivery, broader long-history/performance and accessibility acceptance remain open.

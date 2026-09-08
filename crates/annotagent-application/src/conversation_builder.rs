@@ -74,11 +74,13 @@ impl LocalApplication {
         task: Uuid,
         request_id: Uuid,
     ) -> Result<ConversationBuilderRepair> {
-        let request = self
-            .conversation_human_requests(project, conversation, task)?
-            .into_iter()
-            .find(|request| request.input.id == request_id)
-            .ok_or_else(|| anyhow!("Human request belongs to another task or is unavailable"))?;
+        let request = self.store.conversation_human_request(
+            &self.conversation_project_identity(project)?,
+            request_id,
+        )?;
+        if request.input.conversation_id != conversation || request.input.task_id != task {
+            bail!("Human request belongs to another task or is unavailable");
+        }
         if request.status != annotagent_storage::ConversationHumanRequestStatus::Applied {
             bail!("Submit the correction and finish local Draft preparation before repair");
         }
@@ -186,7 +188,7 @@ impl LocalApplication {
         conversation: Uuid,
         task: Uuid,
     ) -> Result<serde_json::Value> {
-        self.conversation_builder_history_scoped(project, conversation, task, None, None)
+        self.conversation_builder_history_scoped(project, conversation, task, None, None, None)
     }
     pub fn conversation_builder_history_scoped(
         &self,
@@ -195,8 +197,14 @@ impl LocalApplication {
         task: Uuid,
         operation: Option<Uuid>,
         image_class_review: Option<Uuid>,
+        human_request: Option<Uuid>,
     ) -> Result<serde_json::Value> {
-        if operation.is_some() && image_class_review.is_some() {
+        if [operation, image_class_review, human_request]
+            .iter()
+            .flatten()
+            .count()
+            > 1
+        {
             bail!("Choose an exact operation or a repair source, not both");
         }
         if !self
@@ -219,6 +227,17 @@ impl LocalApplication {
                 })?;
             self.store
                 .conversation_image_class_builder_history(&owner, task, review)?
+        } else if let Some(request_id) = human_request {
+            let request = self.store.conversation_human_request(&owner, request_id)?;
+            if request.input.conversation_id != conversation || request.input.task_id != task {
+                bail!("Human request belongs to another task or is unavailable");
+            }
+            self.store.conversation_human_builder_history(
+                &owner,
+                task,
+                request_id,
+                request.resume_draft_id.as_deref(),
+            )?
         } else {
             self.store.conversation_builder_history(&owner, task)?
         };

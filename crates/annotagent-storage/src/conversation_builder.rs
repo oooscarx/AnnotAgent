@@ -248,6 +248,20 @@ impl SqliteStore {
             ids.into_iter().map(|id| read(db,Uuid::parse_str(&id).map_err(|_|StorageError::InvalidConversation("Invalid operation ID".into()))?)?.ok_or_else(||StorageError::InvalidConversation("Operation missing".into()))).collect()
         })
     }
+    pub fn conversation_human_builder_history(
+        &self,
+        project: &str,
+        task: Uuid,
+        request: Uuid,
+        legacy_draft: Option<&str>,
+    ) -> Result<Vec<ConversationBuilderOperation>, StorageError> {
+        self.with_connection(|db| {
+            owned(db,project,task)?;
+            let mut statement=db.prepare("SELECT b.id FROM conversation_builder_operations b LEFT JOIN agent_sessions s ON s.id=b.id WHERE b.task_id=?1 AND ((json_extract(b.evidence_json,'$.repair_source.kind')='human_request' AND json_extract(b.evidence_json,'$.repair_source.reference.request_id')=?2) OR (json_extract(b.evidence_json,'$.repair_source') IS NULL AND ?3 IS NOT NULL AND json_extract(s.session_json,'$.working_draft.draft_id')=?3 AND json_extract(s.session_json,'$.working_draft.build_mode.kind')='repair_draft')) ORDER BY b.rowid DESC LIMIT 32")?;
+            let ids=statement.query_map(params![task.to_string(),request.to_string(),legacy_draft],|row|row.get::<_,String>(0))?.collect::<Result<Vec<_>,_>>()?;
+            ids.into_iter().map(|id|read(db,Uuid::parse_str(&id).map_err(|_|StorageError::InvalidConversation("Invalid operation ID".into()))?)?.ok_or_else(||StorageError::InvalidConversation("Operation missing".into()))).collect()
+        })
+    }
     pub fn settle_conversation_builder(
         &self,
         project: &str,
@@ -512,6 +526,97 @@ mod tests {
         assert!(
             store
                 .conversation_builder_operation(&other_project, other_task, first)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn human_repair_history_filters_before_limit_and_preserves_only_legacy_fallback() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let (project, task, schema) = schema(&store);
+        let request = Uuid::new_v4();
+        let modern = Uuid::new_v4();
+        let legacy = Uuid::new_v4();
+        let conflicting = Uuid::new_v4();
+        let hash = "a".repeat(64);
+        for (id, source) in [
+            (
+                modern,
+                json!({"kind":"human_request","reference":{"request_id":request}}),
+            ),
+            (legacy, json!(null)),
+            (
+                conflicting,
+                json!({"kind":"image_class_review","reference":{"review_id":request}}),
+            ),
+        ] {
+            store
+                .reserve_conversation_builder_with_source(
+                    &project,
+                    task,
+                    id,
+                    &hash,
+                    (schema.id, 1),
+                    &source,
+                )
+                .unwrap();
+            store
+                .settle_conversation_builder(&project, task, id, true, &json!({}))
+                .unwrap();
+            if id != modern {
+                store.with_connection(|db| {
+                db.execute("INSERT INTO agent_sessions(id,project_id,kind,status,session_json,created_at,updated_at) VALUES(?1,?2,'pipeline_builder','completed',?3,?4,?4)",params![id.to_string(),project,json!({"working_draft":{"draft_id":"TEST-legacy-repair","build_mode":{"kind":"repair_draft"}}}).to_string(),chrono::Utc::now().to_rfc3339()])?;Ok(())
+            }).unwrap();
+            }
+        }
+        for _ in 0..33 {
+            let id = Uuid::new_v4();
+            store
+                .reserve_conversation_builder_with_source(
+                    &project,
+                    task,
+                    id,
+                    &hash,
+                    (schema.id, 1),
+                    &json!(null),
+                )
+                .unwrap();
+            store
+                .settle_conversation_builder(&project, task, id, true, &json!({}))
+                .unwrap();
+        }
+        assert!(
+            !store
+                .conversation_builder_history(&project, task)
+                .unwrap()
+                .iter()
+                .any(|item| item.id == modern || item.id == legacy)
+        );
+        let found = store
+            .conversation_human_builder_history(&project, task, request, Some("TEST-legacy-repair"))
+            .unwrap();
+        assert_eq!(
+            found.iter().map(|item| item.id).collect::<Vec<_>>(),
+            vec![legacy, modern]
+        );
+        assert_eq!(
+            store
+                .conversation_human_builder_history(&project, task, request, None)
+                .unwrap()
+                .iter()
+                .map(|item| item.id)
+                .collect::<Vec<_>>(),
+            vec![modern]
+        );
+        assert!(
+            store
+                .conversation_human_builder_history(&project, task, Uuid::new_v4(), None)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            store
+                .conversation_human_builder_history("TEST-foreign", task, request, None)
                 .is_err()
         );
     }

@@ -20,7 +20,7 @@ export function ConversationBuilderCard(props: BuilderCardProps) {
 }
 function BuilderCard({ project, conversation, task, schema, editing, onSample, repairRequest, imageClassRepair, onAssistance }: BuilderCardProps) {
   const repair=Boolean(repairRequest || imageClassRepair);
-  const historyScope=imageClassRepair ? {image_class_review_id:imageClassRepair.id} : undefined;
+  const historyScope=imageClassRepair ? {image_class_review_id:imageClassRepair.id} : repairRequest ? {repair_request_id:repairRequest.id} : undefined;
   const matches=(entry:ConversationBuilderItem)=>entry.operation.task_id===task && (imageClassRepair ? builderMatchesClassRepair(entry,schema,imageClassRepair) : repairRequest ? builderMatchesHumanRepair(entry,schema,repairRequest) : builderMatchesSchema(entry,schema) && !entry.operation.evidence?.repair_source && entry.session?.working_draft?.build_mode.kind!=="repair_draft");
   const [advanced,setAdvanced]=useState(false);
   const [journeyActive,setJourneyActive]=useState(false);

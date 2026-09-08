@@ -7,6 +7,8 @@ import { expect as baseExpect, test, fetchWithinMutationLimit } from "./fixtures
 // window. The fixture retries only proven pre-execution 429s for up to 65 seconds;
 // UI observations must not fail while that bounded transport pacing is still active.
 const expect=baseExpect.configure({timeout:75_000});
+// Optional isolated evidence destination; never changes assertions or execution.
+const evidencePath=(name:string)=>resolve(process.env.ANNOTAGENT_E2E_EVIDENCE_DIR ?? "../docs/execution/conversational-workspace",name);
 
 for(const scenario of ["joint-ui","joint-ui-recover","joint-classification","joint-stop","classification","bbox","classification-review","human-classification","human-bbox"] as const){
 const humanSchema = scenario.startsWith("human-");
@@ -68,7 +70,7 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   await page.getByRole("button",{name:"Generate label proposal",exact:true}).click();
   await expect(page.getByText("Schema Draft saved · Revision 1",{exact:true})).toBeVisible();
   await expect(page.getByRole("button",{name:"Save as editable Schema Draft",exact:true})).toHaveCount(0);
-  if(scenario==="bbox")await page.screenshot({path:"../docs/execution/conversational-workspace/automatic-label-draft.png",fullPage:true,animations:"disabled"});
+  if(scenario==="bbox")await page.screenshot({path:evidencePath("automatic-label-draft.png"),fullPage:true,animations:"disabled"});
   }
   if(scenario.startsWith("joint-ui")){
     const panel=page.getByRole("region",{name:"Build and test annotation plan",exact:true});
@@ -78,7 +80,7 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
     const start=consent.getByRole("button",{name:"Build plan and test samples",exact:true});
     await expect(start).toBeDisabled();
     await consent.getByRole("checkbox",{name:/Allow this plan and sample test/}).check();
-    await consent.screenshot({path:"../docs/execution/conversational-workspace/joint-consent.png",animations:"disabled"});
+    await consent.screenshot({path:evidencePath("joint-consent.png"),animations:"disabled"});
     if(scenario==="joint-ui-recover"){
       let savedPath="";
       await page.route(`**/api/projects/${project}/conversations/*/tasks/*/journey-consents`,async route=>{
@@ -105,13 +107,13 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
     expect(writes).toEqual([]);
     await panel.getByRole("button",{name:"View sample results in canvas",exact:true}).click();
     await expect(page.getByLabel("Saved sample results",{exact:true})).toBeVisible();
-    await page.screenshot({path:"../docs/execution/conversational-workspace/joint-result.png",fullPage:true,animations:"disabled"});
+    await page.screenshot({path:evidencePath("joint-result.png"),fullPage:true,animations:"disabled"});
     const url=page.url();await page.reload();await expect(page).toHaveURL(url);
     await expect(page.getByLabel("Saved sample results",{exact:true})).toBeVisible();expect(writes).toEqual([]);
     await page.setViewportSize({width:390,height:844});
     await page.getByRole("button",{name:"Images (1)",exact:true}).click();
     await expect(page.getByLabel("Saved sample results",{exact:true})).toBeVisible();
-    await page.screenshot({path:"../docs/execution/conversational-workspace/joint-result-390.png",fullPage:true,animations:"disabled"});
+    await page.screenshot({path:evidencePath("joint-result-390.png"),fullPage:true,animations:"disabled"});
     return;
   }
   const builderPreviewPromise=page.waitForResponse(response=>response.url().includes("/builder-preview"));
@@ -236,7 +238,7 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   const start=page.getByRole("button",{name:"Test these samples",exact:true});
   if(scenario==="human-classification"){
     await expect(authorization).toContainText("Project call limit exhausted");await expect(start).toBeDisabled();
-    await authorization.getByLabel("Project budget before inference",{exact:true}).screenshot({path:"../docs/execution/conversational-workspace/sample-project-budget-exhausted.png",animations:"disabled"});
+    await authorization.getByLabel("Project budget before inference",{exact:true}).screenshot({path:evidencePath("sample-project-budget-exhausted.png"),animations:"disabled"});
     await changeCeiling(64);
     await authorization.getByRole("button",{name:"Refresh authorization and Project budget",exact:true}).click();
     await expect(authorization).toContainText(/Project has \d+ calls remaining/);
@@ -260,7 +262,7 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   if(scenario==="bbox"){
     await expect(page.getByRole("button",{name:"Retry the same sample request",exact:true})).toBeVisible();
     await expect(start).toBeDisabled({timeout:10_000});
-    await page.getByLabel("Sample request outcome unknown",{exact:true}).screenshot({path:"../docs/execution/conversational-workspace/sample-outcome-unknown.png",animations:"disabled"});
+    await page.getByLabel("Sample request outcome unknown",{exact:true}).screenshot({path:evidencePath("sample-outcome-unknown.png"),animations:"disabled"});
     await expect.poll(async()=> (await (await request.get(`/api/projects/${project}/sample-operations/${envelope.request_id}`)).json()).status).toBe("succeeded");
     const pendingKey=`annotagent.conversation-sample:${project}:${envelope.conversation.conversation_id}:${envelope.conversation.task_id}:${envelope.draft_id}`;
     expect(await page.evaluate(key=>JSON.parse(sessionStorage.getItem(key)!),pendingKey)).toEqual(envelope);
@@ -379,11 +381,11 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   expect(starts.filter(url=>!url.endsWith("/feedback"))).toEqual([]);
   expect(await (await request.get(`${taskRoot}/calls`)).json()).toEqual(calls);
   await page.locator(".conversation-image-panel").evaluate(element=>element.scrollTop=0);
-  await page.screenshot({path:`../docs/execution/conversational-workspace/sample-${scenario}.png`,fullPage:true});
+  await page.screenshot({path:evidencePath(`sample-${scenario}.png`),fullPage:true});
   await page.setViewportSize({width:390,height:844});
   await page.getByRole("button",{name:/Images \(/}).click();
   await expect(page.getByLabel("Saved sample results",{exact:true})).toBeVisible();
-  await page.screenshot({path:`../docs/execution/conversational-workspace/sample-${kind}-390.png`,fullPage:true});
+  await page.screenshot({path:evidencePath(`sample-${kind}-390.png`),fullPage:true});
   // A persisted request opens the existing canvas and saves through its atomic answer API.
   const imageId=new URL(page.url()).searchParams.get("image")!;
   const feedbackPath=`/api/workflow-sample-tests/${envelope.request_id}/images/${imageId}/feedback`;
@@ -415,7 +417,7 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
     await history.locator("summary").focus();await page.keyboard.press("Enter");
     await expect(help.getByText(human.question,{exact:true})).toBeVisible();
     await help.evaluate(element=>element.scrollIntoView({block:"start"}));
-    await page.screenshot({path:"../docs/execution/conversational-workspace/request-task-history.png",fullPage:true});
+    await page.screenshot({path:evidencePath("request-task-history.png"),fullPage:true});
     const operationPath=`/api/projects/${project}/sample-operations/${human.sample_test_id}`;
     const operationSnapshot=await (await request.get(operationPath)).json();
     const independentTask=new URL(page.url()).searchParams.get("task")!;
@@ -458,7 +460,7 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
     await expect.poll(async()=>page.getByRole("region",{name:"Deferred sample request",exact:true}).locator("rect.aa-annotation-shape").evaluate(rect=>Number(rect.getAttribute("width"))/(rect.ownerSVGElement?.viewBox.baseVal.width??1))).toBeCloseTo(0.15,5);
     const lateAnswer=await request.post(`${humanRoot}/${human.id}/answer`,{data:{answer:{...previous,revision_id:randomUUID(),sequence:human.expected_feedback_sequence+1}}});
     expect(lateAnswer.ok()).toBe(false);expect(await lateAnswer.text()).toContain("deferred");
-    await page.screenshot({path:"../docs/execution/conversational-workspace/deferred-request.png",fullPage:true});
+    await page.screenshot({path:evidencePath("deferred-request.png"),fullPage:true});
     await help.getByRole("button",{name:"Reopen request",exact:true}).click();
     await expect(page.getByRole("button",{name:"Submit correction",exact:true})).toBeVisible();
     expect(await (await request.get(`${taskRoot}/budget`)).json()).toEqual(beforeDeferral);
@@ -471,11 +473,11 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   if(kind==="bbox")await page.getByRole("spinbutton",{name:"width",exact:true}).fill("0.12");
   await page.locator(".conversation-panel").evaluate(element=>{const card=element.querySelector<HTMLElement>('[aria-label="Human requests"]');if(card)element.scrollTop=card.offsetTop-element.getBoundingClientRect().top;});
   await page.locator(".conversation-image-panel").evaluate(element=>element.scrollTop=0);
-  await page.screenshot({path:`../docs/execution/conversational-workspace/human-request-${kind}.png`,fullPage:true});
+  await page.screenshot({path:evidencePath(`human-request-${kind}.png`),fullPage:true});
   await page.setViewportSize({width:390,height:844});
   await page.getByRole("button",{name:/Images \(/}).click();
   await expect(page.getByRole("button",{name:"Submit correction",exact:true})).toBeVisible();
-  await page.screenshot({path:`../docs/execution/conversational-workspace/human-request-${kind}-390.png`,fullPage:true});
+  await page.screenshot({path:evidencePath(`human-request-${kind}-390.png`),fullPage:true});
   await page.setViewportSize({width:1280,height:800});
   let answer:any;
   await page.route(`**${humanRoot}/${human.id}/answer`,async route=>{answer=route.request().postDataJSON().answer;const response=await fetchWithinMutationLimit(route);expect(response.ok(),await response.text()).toBe(true);await route.abort("failed");},{times:1});
@@ -535,7 +537,7 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   const savedRepair=repairCard.locator(".conversation-completed-stage > summary");
   if(await savedRepair.isVisible())await savedRepair.click();
   await repairCard.getByRole("heading",{name:"Revise the plan from your correction",exact:true}).evaluate(element=>element.scrollIntoView({block:"start"}));
-  await page.screenshot({path:`../docs/execution/conversational-workspace/repair-${kind}.png`,fullPage:true});
+  await page.screenshot({path:evidencePath(`repair-${kind}.png`),fullPage:true});
   await repairCard.getByRole("button",{name:"Review sample authorization",exact:true}).click();
   await repairCard.getByRole("checkbox",{name:/Allow these sample images/}).check();
   await repairCard.getByRole("button",{name:"Test these samples",exact:true}).click();
@@ -565,7 +567,7 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   await expect(page).toHaveURL(comparisonUrl);
   await expect(origin).toBeVisible();
   await origin.evaluate(element=>element.scrollIntoView({block:"start"}));
-  await page.screenshot({path:`../docs/execution/conversational-workspace/comparison-origin-${kind}.png`,fullPage:true});
+  await page.screenshot({path:evidencePath(`comparison-origin-${kind}.png`),fullPage:true});
   expect(await (await request.get(`${taskRoot}/calls`)).json()).toEqual(afterComparison);
   if(kind==="bbox"){
   const comparisonId=new URL(comparisonUrl).searchParams.get("test");
@@ -579,7 +581,7 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   await expect(page.getByRole("button",{name:"Submit correction",exact:true})).toBeVisible();
   await page.getByRole("spinbutton",{name:"width",exact:true}).fill("0.14");
   await automaticCard.evaluate(element=>element.scrollIntoView({block:"start"}));
-  await page.screenshot({path:"../docs/execution/conversational-workspace/automatic-human-request.png",fullPage:true});
+  await page.screenshot({path:evidencePath("automatic-human-request.png"),fullPage:true});
   await page.getByRole("button",{name:"Submit correction",exact:true}).click();
   await expect.poll(async()=> (await (await request.get(humanRoot)).json()).find((value:any)=>value.input.id===automatic.input.id)?.status).toBe("applied");
   expect(await (await request.get(`${taskRoot}/calls`)).json()).toEqual(afterComparison);
@@ -608,11 +610,11 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
     await authorizationCheckbox.scrollIntoViewIfNeeded();
     await expect(authorizationCheckbox).toBeChecked();
     await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
-    await page.screenshot({path:"../docs/execution/conversational-workspace/processing-confirm-390.png",fullPage:true,animations:"disabled"});
+    await page.screenshot({path:evidencePath("processing-confirm-390.png"),fullPage:true,animations:"disabled"});
     await page.setViewportSize({width:1280,height:800});
   }
   await confirmCard.evaluate(element=>element.scrollIntoView({block:"start"}));
-  await page.screenshot({path:`../docs/execution/conversational-workspace/processing-confirm-${scenario}.png`,fullPage:true,animations:"disabled"});
+  await page.screenshot({path:evidencePath(`processing-confirm-${scenario}.png`),fullPage:true,animations:"disabled"});
   let confirmation:any;
   await page.route(`**/api/projects/${project}/processing-operations`,async route=>{
     confirmation=route.request().postDataJSON();
@@ -654,11 +656,11 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   await expect(liveStatus.getByText(`Current status: ${requiresReview ? "awaiting review" : "completed"}`,{exact:true})).toBeVisible();
   await expect(liveStatus.getByRole("button",{name:"Resume",exact:true})).toHaveCount(0);
   await expect(liveStatus.getByRole("button",{name:"Cancel processing",exact:true})).toHaveCount(0);
-  if(scenario==="bbox") await liveStatus.screenshot({path:"../docs/execution/conversational-workspace/processing-current-status.png",animations:"disabled"});
+  if(scenario==="bbox") await liveStatus.screenshot({path:evidencePath("processing-current-status.png"),animations:"disabled"});
   await expect(processingCard.getByRole("button",{name:"Open processing results",exact:true})).toBeVisible();
   expect(new URL(page.url()).searchParams.get("test")).toBe(selection.sample_test_id);
   await processingCard.evaluate(element=>element.scrollIntoView({block:"start"}));
-  await page.screenshot({path:`../docs/execution/conversational-workspace/processing-linked-${scenario}.png`,fullPage:true});
+  await page.screenshot({path:evidencePath(`processing-linked-${scenario}.png`),fullPage:true});
   const savedWorkspaceUrl=page.url();
   await processingCard.getByRole("button",{name:"Open processing results",exact:true}).click();
   await expect(page).toHaveURL(new RegExp(`batch=${started.batch_id}`));
@@ -720,7 +722,7 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
       expect(exported.project.annotations[0].value).toEqual(accepted.annotation.value);
       expect(exported.project.annotations[0].review_status).toBe("human_accepted");
       await expect(page.getByRole("heading",{name:"Dataset exported successfully",exact:true})).toBeVisible();
-      await page.screenshot({path:`../docs/execution/conversational-workspace/formal-export-${kind}.png`,fullPage:true,animations:"disabled"});
+      await page.screenshot({path:evidencePath(`formal-export-${kind}.png`),fullPage:true,animations:"disabled"});
       await page.goBack();
       await expect(page).toHaveURL(reviewUrl);
     }
@@ -732,7 +734,7 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   await page.getByRole("button",{name:"Back to annotation workspace",exact:true}).click();
   await expect(page).toHaveURL(formalUrl);
   await expect(formalResults).toBeVisible();
-  await page.screenshot({path:`../docs/execution/conversational-workspace/processing-results-${scenario}.png`,fullPage:true,animations:"disabled"});
+  await page.screenshot({path:evidencePath(`processing-results-${scenario}.png`),fullPage:true,animations:"disabled"});
   const foreignUrl=new URL(page.url());foreignUrl.searchParams.set("batch",crypto.randomUUID());
   await page.goto(foreignUrl.toString());
   await expect(page.getByRole("alert").filter({hasText:"This Batch is not linked to this conversation"})).toBeVisible();
@@ -795,8 +797,8 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
     await page.setViewportSize({width:390,height:844});
     await expect(reference).toBeVisible();
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
-    await page.screenshot({path:`../docs/execution/conversational-workspace/candidate-message-${kind}-390.png`,fullPage:true,animations:"disabled"});
-    await reference.screenshot({path:`../docs/execution/conversational-workspace/candidate-reference-chip-${kind}.png`,animations:"disabled"});
+    await page.screenshot({path:evidencePath(`candidate-message-${kind}-390.png`),fullPage:true,animations:"disabled"});
+    await reference.screenshot({path:evidencePath(`candidate-reference-chip-${kind}.png`),animations:"disabled"});
     await page.setViewportSize({width:1280,height:800});
     let lost=false;let sent:any;
     await page.route("**/conversations/*/messages",async route=>{
@@ -828,7 +830,7 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
     else await expect(historical.getByLabel("Image classification results",{exact:true})).toContainText(original.value.labels.join(", "));
     await page.reload();
     await expect(historical).toContainText("Original saved candidate");
-    await historical.screenshot({path:`../docs/execution/conversational-workspace/message-reference-reopen-${kind}.png`,animations:"disabled"});
+    await historical.screenshot({path:evidencePath(`message-reference-reopen-${kind}.png`),animations:"disabled"});
     const forged=new URL(referenceUrl);forged.searchParams.set("message",randomUUID());
     await page.goto(forged.toString());
     await expect(page.getByRole("alert").filter({hasText:"The message reference does not match"})).toBeVisible();

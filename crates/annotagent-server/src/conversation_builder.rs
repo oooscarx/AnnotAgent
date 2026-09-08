@@ -184,8 +184,12 @@ pub(super) async fn preview(
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct BuilderHistoryQuery {
-    operation_id: Option<uuid::Uuid>,
-    image_class_review_id: Option<uuid::Uuid>,
+    #[serde(rename = "operation_id")]
+    operation: Option<uuid::Uuid>,
+    #[serde(rename = "image_class_review_id")]
+    image_class_review: Option<uuid::Uuid>,
+    #[serde(rename = "repair_request_id")]
+    repair_request: Option<uuid::Uuid>,
 }
 pub(super) async fn history(
     State(state): State<ServerState>,
@@ -198,8 +202,9 @@ pub(super) async fn history(
             &project,
             conversation,
             task,
-            query.operation_id,
-            query.image_class_review_id,
+            query.operation,
+            query.image_class_review,
+            query.repair_request,
         )
         .map(Json)
         .map_err(ApiError::bad_request)

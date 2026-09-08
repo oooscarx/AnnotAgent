@@ -1629,6 +1629,57 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(repaired.status, "completed");
+        let repair_history = reopened
+            .conversation_builder_history_scoped(
+                "schema-test",
+                conversation,
+                task,
+                None,
+                None,
+                Some(snapshot.request_id),
+            )
+            .unwrap();
+        assert_eq!(repair_history["items"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            repair_history["items"][0]["operation"]["id"],
+            repair.operation_id.to_string()
+        );
+        assert!(
+            reopened
+                .conversation_builder_history_scoped(
+                    "schema-test",
+                    conversation,
+                    task,
+                    None,
+                    None,
+                    Some(Uuid::new_v4())
+                )
+                .is_err()
+        );
+        assert!(
+            reopened
+                .conversation_builder_history_scoped(
+                    "schema-test",
+                    Uuid::new_v4(),
+                    task,
+                    None,
+                    None,
+                    Some(snapshot.request_id)
+                )
+                .is_err()
+        );
+        assert!(
+            reopened
+                .conversation_builder_history_scoped(
+                    "schema-test",
+                    conversation,
+                    task,
+                    Some(repair.operation_id),
+                    None,
+                    Some(snapshot.request_id)
+                )
+                .is_err()
+        );
         let repaired_session = reopened
             .store
             .get_agent_session(repair.operation_id)
