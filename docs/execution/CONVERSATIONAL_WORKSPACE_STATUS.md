@@ -4715,3 +4715,19 @@ change and is live through test 78, with the recorded test-50 failure. Do not re
 mid-run: the server uses ServeDir over that actual directory, so rebuilding would change its
 test subject. After completion archive traces, then run new preview/cache + repaired human Schema
 tests on the fresh source. Metadata remains an all-image index, not server-side pagination.
+
+### 2026-09-09 — Bound historical task context fan-out
+
+Conversation assistance previously started a Promise.all over every task, each loading human
+requests and processing records. The existing loaders now run through four read workers. Result
+order and all task records are preserved; cancellation or a read failure stops queued admission.
+The same AbortSignal still reaches the real APIs and old-context updates remain guarded. There
+are no model actions, retries or new persistence entities in this queue.
+
+Three tests run against the previous Promise.all behavior failed (7 concurrent reads instead of
+3, admission after cancellation, and admission after failure); they pass with the bounded queue.
+Web typecheck and **221 tests / 46 files** pass (handle 3792). This is a bounded-concurrency claim,
+not a completed long-history pagination or total-transfer reduction claim. Full message loading
+and historical context pagination still need attention. Browser round 87265 predates this change,
+remains live through test 121, and has the already recorded test-50 failure; fresh preview/cache
+and human Schema verification remains next after its completion.

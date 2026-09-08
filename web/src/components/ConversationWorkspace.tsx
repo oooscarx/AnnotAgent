@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { api, type ProcessingReceipt } from "../api";
 import { queryKeys, workspaceQueries } from "../queryCache";
+import { boundedReads } from "../boundedReads";
 import { projectWorkPath, projectBuildPath, projectBatchPath, parseWorkspaceRoute, conversationSettingsPath, type ConversationResultsContext } from "../navigation";
 import type { ConversationMessage, ConversationMessageInput, ConversationTask, ImageItem, ProjectSummary } from "../types";
 import "./conversation-workspace.css";
@@ -87,11 +88,11 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   useEffect(()=>{
     const controller=new AbortController();setRequestsReady(false);
     if(!conversation)return()=>controller.abort();
-    void api.conversationTasks(project.id,conversation,controller.signal).then(tasks=>Promise.all(tasks.map(async task=>({
+    void api.conversationTasks(project.id,conversation,controller.signal).then(tasks=>boundedReads(tasks,4,async task=>({
       task,
       requests:await api.conversationHumanRequests(project.id,conversation,task.input.id,controller.signal),
       processing:await api.conversationProcessing(project.id,conversation,task.input.id,controller.signal),
-    })))).then(values=>{if(!controller.signal.aborted){setTasks(values.map(value=>value.task));setRequests(values.flatMap(value=>value.requests));setProcessing(values.flatMap(value=>value.processing));setRequestsReady(true);}}).catch((error:Error)=>{if(!controller.signal.aborted)setError(error.message);});
+    }),controller.signal)).then(values=>{if(!controller.signal.aborted){setTasks(values.map(value=>value.task));setRequests(values.flatMap(value=>value.requests));setProcessing(values.flatMap(value=>value.processing));setRequestsReady(true);}}).catch((error:Error)=>{if(!controller.signal.aborted)setError(error.message);});
     return()=>controller.abort();
   },[project.id,conversation,taskId,sampleTestId,processingOperationId,requestRefresh]);
   const updateRequest=(value:HumanRequest)=>setRequests(items=>items.map(item=>item.input.id===value.input.id ? value : item));
