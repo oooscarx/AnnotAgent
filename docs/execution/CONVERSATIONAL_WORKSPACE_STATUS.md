@@ -4740,3 +4740,17 @@ typecheck and **222 tests / 46 files** pass (handle 31860). No model retry was a
 
 Round 4 is still live, but test 122 (Automation Recipe) timed out and skipped its later serial
 management cases. Inspect its saved trace before attributing the failure or changing timeouts.
+
+Round 4 handle 87265 terminated: **134 passed, 4 failed, 32 not run (24.2m)**. Complete traces
+were copied to `/tmp/annotagent-round4-traces-bffAzU/test-results` before any new run.
+The four failures are human Schema lost-ACK pacing (patched, awaiting fresh run), Pipeline
+Builder disabled with empty target selects, dataset results missing manual-add controls, and
+Expert Worker setup unable to select the new Project. The latter three are not simply slow
+timeouts: their snapshots expose missing Project data outside the first dashboard page.
+
+The parent already resolves an exact routed Project, but WorkflowsPage and Batch/Run consumers
+received only the paginated dashboard array. Those scoped consumers now also receive that
+verified Project (deduplicated by stable ID, never inferred from a name). This preserves normal
+management inventory pagination. Expert setup is global and still needs actual project-page
+navigation; adding a routed owner alone cannot fix that selector. No timeout increase is used
+for these missing-data cases. Fresh targeted browser checks and final combined checks remain.

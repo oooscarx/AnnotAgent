@@ -510,6 +510,8 @@ export function App() {
   }, [routeProjectId, Boolean(listedProject)]);
   const resolvedRouteProject = routeProject?.id===routeProjectId ? routeProject : undefined;
   const selectedProject = listedProject ?? resolvedRouteProject?.project;
+  // The dashboard is a page, not the complete set of owners of routed objects.
+  const contextProjects = selectedProject && !listedProject ? [...projects, selectedProject] : projects;
   const projectLookupError = !selectedProject ? resolvedRouteProject?.error : undefined;
   const projectNotFound = projectLookupError instanceof ApiRequestError && projectLookupError.status===404;
   const loaded = dashboardLoaded && (!routeProjectId || Boolean(selectedProject) || projectNotFound);
@@ -752,7 +754,7 @@ export function App() {
         {loaded && route.kind === "build" && route.step === "pipeline" && route.workspaceReturn && <section className="conversation-consent conversation-setup-return" aria-label={t(route.workspaceReturn.includes("class_review=") ? "Return to image-class review" : "Back to annotation workspace")}><p>{t("This revision Draft is separate from the saved sample. Returning does not run a model or apply the Draft.")}</p><button onClick={() => navigate(route.workspaceReturn!)}>{t(route.workspaceReturn.includes("class_review=") ? "Return to image-class review" : "Back to annotation workspace")}</button></section>}
         {loaded && route.kind === "build" && route.step === "pipeline" && (
           <WorkflowsPage
-            projects={projects}
+            projects={contextProjects}
             runs={runs}
             activeProjectId={projectId}
             selectedDraftId={route.draftId}
@@ -819,7 +821,7 @@ export function App() {
           <RunsPage
             onNavigationGuardChange={setNavigationGuard}
             runs={runs}
-            projects={projects}
+            projects={contextProjects}
             activeProject={selectedProject}
             route={route}
             onNavigate={navigate}
@@ -832,7 +834,7 @@ export function App() {
             onNavigationGuardChange={setNavigationGuard}
             route={route}
             runs={runs}
-            projects={projects}
+            projects={contextProjects}
             onNavigate={navigate}
             onRefresh={refresh}
             onError={setError}
@@ -850,7 +852,7 @@ export function App() {
         {loaded && (route.kind === "review" || route.kind === "projectReview") && (
           <ReviewPage
             project={selectedProject}
-            projects={projects}
+            projects={contextProjects}
             models={models}
             events={events}
             route={route}
