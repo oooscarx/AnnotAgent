@@ -4,7 +4,7 @@ import { t } from "../i18n";
 import type { Annotation, ImageItem, SampleFeedbackRevision, WorkflowDryRunReport } from "../types";
 import { AnnotationCanvas } from "./AnnotationCanvas";
 import { useSampleFreshness } from "../useSampleFreshness";
-import { sampleAnnotations } from "../sampleAnnotations";
+import { terminalSampleAnnotations } from "../sampleAnnotations";
 import { sampleFeedbackOverlay, type ExcludedSampleCandidate } from "../sampleFeedbackOverlay";
 import { SampleExcludedCandidates } from "./SampleExcludedCandidates";
 
@@ -31,7 +31,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
   initialOutcomeId?: string;
 }) {
   const freshness = useSampleFreshness(projectId, draftId, testId);
-  const original = sampleAnnotations(sample.projection ? sample.outcomes : [],image.image_id,testId);
+  const original = terminalSampleAnnotations(sample,image.image_id,testId);
   const [annotations, setAnnotations] = useState(original);
   const [excluded, setExcluded] = useState<ExcludedSampleCandidate[]>([]);
   const [selected, setSelected] = useState<string>();
@@ -64,7 +64,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
       const position = baseline.inputs.findIndex((input) => input.image_id === image.image_id && input.content_hash === image.content_hash);
       const originalSample = baseline.report.samples[position];
       if (!originalSample?.projection) return;
-      setBefore({ draftId: baseline.draft_id, testId: baseline.id, annotations: originalSample.outcomes.flatMap((outcome) => outcome.value ? [{ id: outcome.id, image_id: image.image_id, task_id: "sample", label: outcome.label, value: outcome.value, attributes: {}, source: "original sample", review_status: "needs_review" as const, provenance: {}, created_at: "" }] : []) });
+      setBefore({ draftId: baseline.draft_id, testId: baseline.id, annotations: terminalSampleAnnotations(originalSample,image.image_id,baseline.id) });
     }).catch((error: Error) => { if (current && !(error instanceof ApiRequestError && error.status === 404)) setError(error.message); });
     return () => { current = false; mounted.current = false; };
   }, [projectId, draftId, image.image_id, image.content_hash]);

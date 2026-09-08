@@ -4496,3 +4496,19 @@ All baseline failures now have passing targeted verification, but that is not a 
 pass. A fresh full `npm run test:e2e` has been started with evidence isolated under
 `/tmp/annotagent-full-browser-round2`; await its terminal result before claiming full regression.
 Local changes in this repair sequence: `9ef54e0`, `be0fe85`, `ba496a3`. No push, no remote change.
+
+### 2026-09-09 — Final-only comparison correction (browser verification pending)
+
+Full round two is confirmed live on handle 21905, isolated workspace
+`/tmp/annotagent-guided-e2e-2275`, 167 tests. It uses the build from before the change below;
+do not attribute its results to later source edits, or rebuild/restart its server mid-run.
+
+Source audit found that SampleFeedbackEditor gated its original comparison on projection
+existence but then drew `originalSample.outcomes`, which can include intermediate detections.
+Both original and current editor predictions now use the same terminal-only helper, selecting
+final/review projections, deduplicating candidate IDs and retaining the saved test provenance.
+Absent projection and a no-target empty projection produce no invented annotation. Existing
+human feedback is still applied separately; no accepted annotation or model/geometry rule changed.
+The regression was first observed failing, then passes with coarse+final+review mixed input,
+duplicate candidate, legacy absence and empty terminal cases. Typecheck and **207 unit tests**
+pass. Browser comparison verification requires a fresh isolated build after handle 21905 ends.
