@@ -1602,3 +1602,39 @@ Final targeted rerun `/tmp/annotagent-guided-e2e-10515`: both human delivery pat
 asserting the exact authorization-changed rejection for attempted budget reset (not merely any
 HTTP failure). Overall coordinator, Project-lifetime budgets, richer conversation references and
 the remaining whole-product acceptance matrix are still open.
+
+### M2 continuation — frozen candidate reference boundary (2026-09-08)
+
+The journal previously froze only an image UUID/hash. Added an optional typed `sample_candidate`
+reference retaining task ID/base Project Schema revision, Sample Test ID, exact Workflow Draft
+revision, terminal candidate ID and source Artifact UUID. Project/conversation remain the owned
+journal envelope, and image/hash remain the existing frozen input. Old message JSON omits this
+optional field and continues to deserialize/equal-replay unchanged. No new database or parallel
+message store is needed. Existing Rust message fixtures explicitly retain no selection.
+
+Application admission verifies the task and immutable sample operation/report, owner, Draft
+revision, matching image/hash and exactly one terminal candidate/Artifact pair. Intermediate or
+made-up candidates, foreign tasks and mismatched revisions fail. Storage rechecks task ownership
+and image hash in the append transaction. Identical retry restores the original saved reference
+even after current image state changes; changing the same message ID's reference fails. Neither
+admission nor retry authorizes inference, edits feedback, changes labels or accepts annotations.
+
+A selected-object message cannot be admitted as a new project-wide goal. The existing task
+admission rejects that widening explicitly, and the journal replaces its Use as goal button with
+a visible candidate-only scope note. This prevents loss of scope while richer task coordination
+is still being built. It is not yet automatic natural-language local correction: the canvas
+selection → composer chip → send integration, corrected-feedback revision references, formal
+annotation references and model-context propagation are still pending. Current references identify
+the saved terminal sample outcome, not a later unsaved canvas edit.
+
+Evidence: new persistent journal restart/scope-widening test, two existing message tests and two
+task-admission tests passed. Complete Application all-feature suite: 100 unit + one integration
+passed, one paid test ignored. Workspace all-target check, Server all-target/all-feature clippy,
+Web typecheck and 115 unit tests passed. Existing full HTTP TEST human-classification and human-bbox
+journeys were expanded with reference POST/read/idempotency/invalid-reference/budget assertions;
+both passed in `/tmp/annotagent-guided-e2e-11021`, then again in
+`/tmp/annotagent-guided-e2e-11172` with the project-goal widening guard. No live/paid model, real
+Workspace mutation, old key, push or remote changes. This is a selection-boundary foundation,
+not a claim that the complete conversational pointing interaction is delivered.
+Final browser rerun `/tmp/annotagent-guided-e2e-11452`: 2/2 passed, including reload visibility of
+the candidate-only scope note and absence of a project-wide goal action for that message.

@@ -624,6 +624,7 @@ mod tests {
         let conversation = app.create_project_conversation("human-schema").unwrap();
         let other = app.create_project_conversation("other-schema").unwrap();
         let message = ConversationMessageInput {
+            reference: None,
             id: Uuid::new_v4(),
             text: "TEST 用户原始目标".into(),
             image: None,
@@ -936,6 +937,7 @@ mod tests {
         app.create_project("schema-test", yaml).unwrap();
         let conversation = app.create_project_conversation("schema-test").unwrap();
         let message = ConversationMessageInput {
+            reference: None,
             id: Uuid::new_v4(),
             text: "Find cups, not bottles".into(),
             image: None,
@@ -1599,6 +1601,7 @@ mod tests {
             calls_before_retry + 2
         );
         let message = ConversationMessageInput {
+            reference: None,
             id: Uuid::new_v4(),
             text: "TEST cancellation".into(),
             image: None,
@@ -1678,6 +1681,7 @@ mod tests {
                 .is_empty()
         );
         let orphan_message = ConversationMessageInput {
+            reference: None,
             id: Uuid::new_v4(),
             text: "TEST dropped handler".into(),
             image: None,

@@ -12,6 +12,21 @@ pub struct ConversationImageRef {
     pub sha256: String,
 }
 
+/// A selected Sandbox object, never permission to change project-wide labels.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "scope", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ConversationSelectionRef {
+    SampleCandidate {
+        task_id: Uuid,
+        project_schema_revision: String,
+        draft_id: String,
+        draft_revision: u64,
+        sample_test_id: String,
+        candidate_id: String,
+        source_artifact_id: Uuid,
+    },
+}
+
 /// A user-authored journal input. It grants no model or execution authority.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -19,6 +34,8 @@ pub struct ConversationMessageInput {
     pub id: Uuid,
     pub text: String,
     pub image: Option<ConversationImageRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<ConversationSelectionRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,6 +132,11 @@ impl SqliteStore {
                 if saved != *input { return Err(invalid("message ID already has different content or references")); }
                 return Ok(ConversationMessage { conversation_id: conversation, sequence, input: saved });
             }
+            if let Some(ConversationSelectionRef::SampleCandidate { task_id, project_schema_revision, .. }) = &input.reference {
+                if input.image.is_none() { return Err(invalid("Selected candidate requires an image reference")); }
+                let task_owned: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM conversation_tasks WHERE id=?1 AND conversation_id=?2 AND schema_revision=?3)", params![task_id.to_string(),conversation.to_string(),project_schema_revision], |row| row.get(0))?;
+                if !task_owned { return Err(invalid("Selected candidate task or Schema revision does not match this conversation")); }
+            }
             if let Some(image) = &input.image {
                 let hash: Option<String> = transaction.query_row("SELECT sha256 FROM images WHERE id=?1 AND project_id=?2", params![image.image_id, project], |row| row.get(0)).optional()?;
                 if hash.as_deref() != Some(image.sha256.as_str()) { return Err(invalid("image is foreign, missing or changed since selection")); }
@@ -148,6 +170,104 @@ impl SqliteStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn candidate_reference_survives_restart_and_cannot_become_a_project_goal() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TEST-reference.db");
+        let store = SqliteStore::open(&path).unwrap();
+        let project = Uuid::new_v4().to_string();
+        let conversation = store.create_conversation(&project).unwrap();
+        let image = store
+            .ensure_project_image(project.parse().unwrap(), "TEST.png", "hash", "{}")
+            .unwrap()
+            .image_id
+            .to_string();
+        let goal = ConversationMessageInput {
+            id: Uuid::new_v4(),
+            text: "TEST goal".into(),
+            image: None,
+            reference: None,
+        };
+        store
+            .append_conversation_message(&project, conversation, &goal)
+            .unwrap();
+        let task = crate::BeginConversationTask {
+            id: Uuid::new_v4(),
+            source_message_id: goal.id,
+            schema_revision: "a".repeat(64),
+        };
+        store
+            .begin_conversation_task(&project, conversation, &task)
+            .unwrap();
+        // Storage tests the journal contract; Application tests validate real sample evidence.
+        let input = ConversationMessageInput {
+            id: Uuid::new_v4(),
+            text: "TEST only this object".into(),
+            image: Some(ConversationImageRef {
+                image_id: image.clone(),
+                sha256: "hash".into(),
+            }),
+            reference: Some(ConversationSelectionRef::SampleCandidate {
+                task_id: task.id,
+                project_schema_revision: task.schema_revision.clone(),
+                draft_id: "TEST-draft".into(),
+                draft_revision: 2,
+                sample_test_id: "TEST-sample".into(),
+                candidate_id: "TEST-candidate".into(),
+                source_artifact_id: Uuid::new_v4(),
+            }),
+        };
+        let saved = store
+            .append_conversation_message(&project, conversation, &input)
+            .unwrap();
+        assert!(
+            store
+                .begin_conversation_task(
+                    &project,
+                    conversation,
+                    &crate::BeginConversationTask {
+                        id: Uuid::new_v4(),
+                        source_message_id: input.id,
+                        schema_revision: task.schema_revision
+                    }
+                )
+                .is_err()
+        );
+        store
+            .with_connection(|db| {
+                db.execute("UPDATE images SET sha256='changed' WHERE id=?1", [&image])?;
+                Ok(())
+            })
+            .unwrap();
+        drop(store);
+        let store = SqliteStore::open(&path).unwrap();
+        assert_eq!(
+            store
+                .append_conversation_message(&project, conversation, &input)
+                .unwrap(),
+            saved
+        );
+        assert_eq!(
+            store
+                .conversation_message(&project, conversation, input.id)
+                .unwrap(),
+            Some(saved)
+        );
+        let mut conflict = input.clone();
+        conflict.reference = None;
+        assert!(
+            store
+                .append_conversation_message(&project, conversation, &conflict)
+                .is_err()
+        );
+        let mut stale = input;
+        stale.id = Uuid::new_v4();
+        assert!(
+            store
+                .append_conversation_message(&project, conversation, &stale)
+                .is_err()
+        );
+    }
     use crate::SqliteStore;
 
     #[test]
@@ -181,6 +301,7 @@ mod tests {
         let conversation = store.create_conversation(&project).unwrap();
         assert_eq!(store.create_conversation(&project).unwrap(), conversation);
         let input = ConversationMessageInput {
+            reference: None,
             id: uuid::Uuid::new_v4(),
             text: "Annotate this image".into(),
             image: Some(ConversationImageRef {
@@ -237,6 +358,7 @@ mod tests {
                 .is_err()
         );
         let goal_only = ConversationMessageInput {
+            reference: None,
             id: Uuid::new_v4(),
             text: "Goal before upload".into(),
             image: None,

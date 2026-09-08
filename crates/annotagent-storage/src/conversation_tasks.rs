@@ -58,11 +58,14 @@ impl SqliteStore {
                 }
                 return Ok(ConversationTask { conversation_id: conversation, input: BeginConversationTask { id: Uuid::parse_str(&id).map_err(|_| invalid("invalid saved task ID"))?, ..input.clone() }, created_at });
             }
-            let source_exists: bool = transaction.query_row(
-                "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE conversation_id=?1 AND message_id=?2)",
+            let source: Option<String> = transaction.query_row(
+                "SELECT input_json FROM conversation_messages WHERE conversation_id=?1 AND message_id=?2",
                 params![conversation.to_string(),input.source_message_id.to_string()], |row| row.get(0),
-            )?;
-            if !source_exists { return Err(invalid("task requires a saved message in this conversation")); }
+            ).optional()?;
+            let source = source.ok_or_else(|| invalid("task requires a saved message in this conversation"))?;
+            if serde_json::from_str::<crate::ConversationMessageInput>(&source)?.reference.is_some() {
+                return Err(invalid("A candidate-scoped message cannot become a new project-wide annotation goal; explicitly define a separate goal"));
+            }
             let created_at = chrono::Utc::now().to_rfc3339();
             transaction.execute("INSERT INTO conversation_tasks(id,conversation_id,source_message_id,schema_revision,created_at) VALUES(?1,?2,?3,?4,?5)", params![input.id.to_string(),conversation.to_string(),input.source_message_id.to_string(),input.schema_revision,created_at])?;
             transaction.commit()?;
@@ -103,6 +106,7 @@ mod tests {
         let conversation = store.create_conversation(&project).unwrap();
         let other = store.create_conversation(&other_project).unwrap();
         let message = ConversationMessageInput {
+            reference: None,
             id: Uuid::new_v4(),
             text: "Find cups, not bottles".into(),
             image: None,

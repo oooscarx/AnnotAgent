@@ -8,6 +8,7 @@ pub use conversation_processing::ConversationProcessingContext;
 mod conversation_vision_calls;
 pub use conversation_builder::{ConversationBuilderExecution, ConversationBuilderRepair};
 pub use conversation_vision_calls::ConversationVisionCalls;
+mod conversation_references;
 mod conversation_schema;
 pub use conversation_provider::ConversationTaskProvider;
 mod guidance;
@@ -9396,6 +9397,13 @@ impl LocalApplication {
         input: &annotagent_storage::ConversationMessageInput,
     ) -> Result<annotagent_storage::ConversationMessage> {
         let owner = self.conversation_project_identity(project_id)?;
+        if self
+            .store
+            .conversation_message(&owner, conversation_id, input.id)?
+            .is_none()
+        {
+            self.validate_conversation_message_selection(project_id, conversation_id, input)?;
+        }
         Ok(self
             .store
             .append_conversation_message(&owner, conversation_id, input)?)
@@ -22415,6 +22423,7 @@ export:
             .draft;
         let conversation = app.create_project_conversation(project).unwrap();
         let message = annotagent_storage::ConversationMessageInput {
+            reference: None,
             id: uuid::Uuid::new_v4(),
             text: "TEST offline classification".into(),
             image: None,
@@ -27118,6 +27127,7 @@ export:
             app.create_project_conversation("conversation-a").unwrap()
         );
         let input = annotagent_storage::ConversationMessageInput {
+            reference: None,
             id: uuid::Uuid::new_v4(),
             text: "Find cups, not bottles".into(),
             image: None,
@@ -27201,6 +27211,7 @@ export:
             task
         );
         let message = annotagent_storage::ConversationMessageInput {
+            reference: None,
             id: uuid::Uuid::new_v4(),
             text: "Find bottles".into(),
             image: None,

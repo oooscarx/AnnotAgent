@@ -81,6 +81,23 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
     expect(resetAttempt.ok()).toBe(false);
     expect(await resetAttempt.text()).toContain("Task authorization changed");
     expect(await (await request.get(`${taskRoot}/budget`)).json()).toEqual(before);
+    const sample=(await (await request.get(`/api/workflow-drafts/${envelope.draft_id}/sample-test?test_id=${envelope.request_id}`)).json()).sample_test;
+    const candidate=sample.report.samples[0].projection.final_candidates[0] ?? sample.report.samples[0].projection.review_candidates[0].candidate;
+    const tasks=await (await request.get(taskRoot.slice(0,taskRoot.lastIndexOf("/")))).json();
+    const referenced={id:randomUUID(),text:"TEST 这个对象的边界需要检查，仅指当前候选",image:{image_id:sample.inputs[0].image_id,sha256:sample.inputs[0].content_hash},reference:{scope:"sample_candidate",task_id:envelope.conversation.task_id,project_schema_revision:tasks.find((task:any)=>task.input.id===envelope.conversation.task_id).input.schema_revision,draft_id:sample.draft_id,draft_revision:sample.draft_revision,sample_test_id:sample.id,candidate_id:candidate.outcome.id,source_artifact_id:candidate.source_artifact_id}};
+    const messages=`/api/projects/${project}/conversations/${envelope.conversation.conversation_id}/messages`;
+    const first=await request.post(messages,{data:referenced});expect(first.ok(),await first.text()).toBe(true);
+    const saved=await first.json();
+    expect(await (await request.post(messages,{data:referenced})).json()).toEqual(saved);
+    for(const changed of [{candidate_id:"TEST-intermediate"},{source_artifact_id:randomUUID()},{draft_revision:sample.draft_revision+1},{task_id:randomUUID()},{project_schema_revision:"f".repeat(64)}]){
+      expect((await request.post(messages,{data:{...referenced,id:randomUUID(),reference:{...referenced.reference,...changed}}})).ok()).toBe(false);
+    }
+    expect((await request.post(messages,{data:{...referenced,id:randomUUID(),image:null}})).ok()).toBe(false);
+    expect((await request.post(messages,{data:{...referenced,reference:{...referenced.reference,candidate_id:"changed"}}})).ok()).toBe(false);
+    expect((await (await request.get(messages)).json()).filter((message:any)=>message.input.id===referenced.id)).toEqual([saved]);
+    expect(await (await request.get(`${taskRoot}/budget`)).json()).toEqual(before);
+    const widened=await request.post(taskRoot.slice(0,taskRoot.lastIndexOf("/")),{data:{id:randomUUID(),source_message_id:referenced.id,schema_revision:referenced.reference.project_schema_revision}});
+    expect(widened.ok()).toBe(false);expect(await widened.text()).toContain("candidate-scoped message");
   }
   const processingPreviewResponse = await request.get(`/api/projects/${project}/processing-preview?draft_id=${envelope.draft_id}&sample_test_id=${envelope.request_id}`);
   expect(processingPreviewResponse.ok(), await processingPreviewResponse.text()).toBe(true);
@@ -134,6 +151,10 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   await page.getByRole("button",{name:"Save sample feedback",exact:true}).click();
   await expect(page.getByText("Sample feedback saved",{exact:true})).toBeVisible();
   await page.reload();
+  if(humanSchema){
+    await expect(page.getByRole("list",{name:"Saved messages",exact:true})).toContainText("This is not a project-wide goal.");
+    await expect(page.getByRole("button",{name:"Use message 2 as annotation goal",exact:true})).toHaveCount(0);
+  }
   if(kind==="classification")await expect(page.getByLabel("Image classification results",{exact:true})).toContainText("室外");
   else {
     const box = page.locator(".conversation-sample-canvas .annotation-shape rect.aa-annotation-shape");

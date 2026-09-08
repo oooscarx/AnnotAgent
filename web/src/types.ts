@@ -1865,6 +1865,7 @@ export interface NodeReplayReport {
 }
 
 export interface ConversationMessageInput {
+  reference?: {scope:"sample_candidate"; task_id:string; project_schema_revision:string; draft_id:string; draft_revision:number; sample_test_id:string; candidate_id:string; source_artifact_id:string};
   id: string;
   text: string;
   image: { image_id: string; sha256: string } | null;

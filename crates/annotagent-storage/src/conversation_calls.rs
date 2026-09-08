@@ -442,6 +442,7 @@ mod tests {
         let project = project_id.as_str();
         let conversation = store.create_conversation(project).unwrap();
         let message = ConversationMessageInput {
+            reference: None,
             id: Uuid::new_v4(),
             text: "TEST cups".into(),
             image: None,
@@ -674,6 +675,7 @@ mod tests {
         let project = Uuid::new_v4().to_string();
         let conversation = store.create_conversation(&project).unwrap();
         let message = ConversationMessageInput {
+            reference: None,
             id: Uuid::new_v4(),
             text: "TEST cups".into(),
             image: None,

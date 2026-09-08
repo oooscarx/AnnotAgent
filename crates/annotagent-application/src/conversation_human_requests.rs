@@ -446,6 +446,7 @@ pub(crate) mod tests {
         let image = app.list_project_image_summaries(project).unwrap().remove(0);
         let conversation = app.create_project_conversation(project).unwrap();
         let message = annotagent_storage::ConversationMessageInput {
+            reference: None,
             id: Uuid::new_v4(),
             text: "TEST target".into(),
             image: None,

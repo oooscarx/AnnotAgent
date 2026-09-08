@@ -37,6 +37,7 @@ mod tests {
         let owner = Uuid::new_v4().to_string();
         let conversation = store.create_conversation(&owner).unwrap();
         let message = ConversationMessageInput {
+            reference: None,
             id: Uuid::new_v4(),
             text: "TEST correct this example".into(),
             image: None,

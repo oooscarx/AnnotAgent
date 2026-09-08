@@ -442,6 +442,7 @@ mod tests {
         let conversation = app.create_project_conversation(project).unwrap();
         let task = uuid::Uuid::new_v4();
         let source = annotagent_storage::ConversationMessageInput {
+            reference: None,
             id: uuid::Uuid::new_v4(),
             text: "TEST classify day/night".into(),
             image: None,

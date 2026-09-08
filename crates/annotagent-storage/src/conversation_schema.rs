@@ -24,6 +24,7 @@ mod tests {
     fn task(store: &SqliteStore, project: &str) -> Uuid {
         let conversation = store.create_conversation(project).unwrap();
         let message = ConversationMessageInput {
+            reference: None,
             id: Uuid::new_v4(),
             text: "TEST classify objects".into(),
             image: None,

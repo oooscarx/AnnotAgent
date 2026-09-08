@@ -19,7 +19,9 @@ pub use conversation_human_requests::{
 pub use conversation_schema::{ConversationSchemaDefinition, ConversationSchemaDraft};
 mod conversations;
 pub use conversation_tasks::{BeginConversationTask, ConversationTask};
-pub use conversations::{ConversationImageRef, ConversationMessage, ConversationMessageInput};
+pub use conversations::{
+    ConversationImageRef, ConversationMessage, ConversationMessageInput, ConversationSelectionRef,
+};
 mod management;
 mod processing_operations;
 mod sample_feedback;
