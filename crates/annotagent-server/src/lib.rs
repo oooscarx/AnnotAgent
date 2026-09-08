@@ -12535,7 +12535,7 @@ export:
         assert_eq!(summary["readiness"], readiness);
 
         let incoming = temp.path().join("incoming.png");
-        annotagent_image_tools::generate_synthetic_inspection(&incoming).expect("incoming image");
+        annotagent_image_tools::generate_synthetic_robocup(&incoming).expect("incoming image");
         let imported = response_json(
             request(
                 &service,
@@ -12583,6 +12583,7 @@ export:
         std::fs::write(&preview_file, &preview_bytes).unwrap();
         let frame = annotagent_image_tools::load_image(&preview_file, 256 * 256).unwrap();
         assert!(frame.metadata.width <= 256 && frame.metadata.height <= 256);
+        assert_eq!(frame.metadata.width, 256);
         let foreign = request(
             &service,
             axum::http::Method::GET,

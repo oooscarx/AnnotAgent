@@ -4671,3 +4671,12 @@ loads as a complete index. No end-to-end latency improvement has been measured. 
 integration. Wait for that round before rebuilding/restarting its server or overwriting traces;
 then verify preview network bytes/dimensions and unchanged full-resolution canvas in a fresh run.
 No real workspace data, original PNG edits, Provider or remote was modified. No push.
+
+Preview evidence tightened: the earlier server fixture was only 160px and proved the size cap,
+not downscaling. It now imports a 640px TEST image and asserts exactly 256px output while original
+bytes remain unchanged; the server regression passes (handle 35419). A new browser test
+`conversation-previews.spec.ts` checks thumbnail intrinsic dimensions, full-resolution canvas
+source, and read-only reload. Playwright discovery passes, but execution is pending until the
+existing combined run finishes; discovery is not browser evidence. The prior goal turn changed
+implementation and tests; this increment strengthens the acceptance test rather than claiming
+a new model-quality result. Combined run 87265 is still live (most recently tests 44–47 passed).
