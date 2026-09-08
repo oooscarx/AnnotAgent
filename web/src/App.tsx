@@ -2690,10 +2690,12 @@ function ProjectExportPage({
   const [result, setResult] = useState<ProjectExportResult>();
   const [copyStatus, setCopyStatus] = useState("");
   const exportPending = useRef(false);
+  const exportObservation = useRef<AbortController|undefined>(undefined);
+  useEffect(()=>()=>exportObservation.current?.abort(),[project?.id]);
   const exportOwner = useRef(project?.id); exportOwner.current = project?.id;
   const readinessGeneration = useRef(0);
   const exportMounted = useRef(false);
-  useEffect(() => { exportMounted.current = true; return () => { exportMounted.current = false; readinessGeneration.current += 1; }; }, []);
+  useEffect(() => { exportMounted.current = true; return () => { exportMounted.current = false; exportObservation.current?.abort(); readinessGeneration.current += 1; }; }, []);
   const activeReadiness = readiness?.project_id === project?.id ? readiness : undefined;
   const loadReadiness = (signal?: AbortSignal) => {
     if (!project) return Promise.resolve();
@@ -2734,10 +2736,11 @@ function ProjectExportPage({
       if(context && receiptKey){const id=sessionStorage.getItem(receiptKey) ?? crypto.randomUUID();sessionStorage.setItem(receiptKey,id);operation={...context,id};}
     } catch {onError("Cannot preserve the export retry identity in this browser. No export was started.");return;}
     exportPending.current = true;
+    const observation=new AbortController();exportObservation.current=observation;
     setExporting(true);
     setCopyStatus("");
     void api
-      .export(project.id, format, operation)
+      .export(project.id, format, operation,observation.signal)
       .then((value) => {
         if(receiptKey)try{sessionStorage.removeItem(receiptKey);}catch{/* Keeping the completed identity is safe on retry. */}
         if (!exportMounted.current || exportOwner.current !== project.id) return;
@@ -2745,6 +2748,7 @@ function ProjectExportPage({
         return loadReadiness();
       })
       .catch(async (error: Error) => {
+        if(observation.signal.aborted)return;
         let explanation=error.message;
         if(context && operation && receiptKey)try{
           const history=await api.conversationExports(project.id,context.conversation_id,context.task_id);
@@ -2755,7 +2759,7 @@ function ProjectExportPage({
         }catch{/* Unknown outcomes retain their retry identity; no new work is admitted. */}
         if (exportMounted.current && exportOwner.current === project.id) onError(explanation);
       })
-      .finally(() => { if(context)workspaceQueries.invalidate(`conversation-exports:${project.id}:${context.conversation_id}:${context.task_id}`); exportPending.current = false; if (exportMounted.current) setExporting(false); });
+      .finally(() => { if(context)workspaceQueries.invalidate(`conversation-exports:${project.id}:${context.conversation_id}:${context.task_id}`); if(exportObservation.current===observation){exportPending.current = false; if (exportMounted.current) setExporting(false);} });
   };
   const copyOutputPath = () => {
     if (!result) return;
@@ -2813,6 +2817,7 @@ function ProjectExportPage({
                 {exporting ? t("Exporting dataset…") : `Export ${activeReadiness.formats.find((item) => item.format === format)?.display_name ?? "dataset"} dataset`}
               </button>
             </div>
+            {exporting && workspaceReturn && <p role="status">Export runs on the server. Leaving this page stops status observation, not the export. Its result remains linked to your conversation.</p>}
           </section>
 
           {result && <section className="export-success" aria-live="polite">

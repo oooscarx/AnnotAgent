@@ -14,6 +14,19 @@ pub struct ConversationExport {
 }
 
 impl SqliteStore {
+    pub fn conversation_export(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+    ) -> Result<ConversationExport, StorageError> {
+        self.with_connection(|db|{
+            let row:Option<(String,String,Option<String>,Option<String>)>=db.query_row("SELECT e.format,e.created_at,e.result_json,e.error FROM conversation_exports e JOIN conversation_tasks t ON t.id=e.task_id JOIN project_conversations c ON c.id=t.conversation_id WHERE e.id=?1 AND e.project_id=?2 AND e.conversation_id=?3 AND e.task_id=?4 AND c.id=e.conversation_id AND c.project_id=e.project_id",params![id.to_string(),project,conversation.to_string(),task.to_string()],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).optional()?;
+            let(format,created_at,result,error)=row.ok_or_else(||StorageError::InvalidConversation("Export is unavailable in this task".into()))?;
+            Ok(ConversationExport{id,format,created_at,result:result.map(|value|serde_json::from_str(&value)).transpose()?,error})
+        })
+    }
     pub fn completed_conversation_export(
         &self,
         id: Uuid,

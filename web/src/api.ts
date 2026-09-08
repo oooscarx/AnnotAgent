@@ -1148,11 +1148,26 @@ export const api = {
   exportReadiness: (projectId: string, signal?: AbortSignal) =>
     request<ExportReadiness>(`/api/projects/${projectId}/export-readiness`, { signal }),
   conversationExports: (project:string,conversation:string,task:string,signal?:AbortSignal,before?:string,limit=100)=>request<{id:string;error?:string|null;result?:ProjectExportResult|null;format:string;created_at:string}[]>(`/api/projects/${encodeURIComponent(project)}/conversations/${conversation}/tasks/${task}/exports?limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ""}`,{signal}),
-  export: (projectId: string, format: string, conversation?:{id:string;conversation_id:string;task_id:string}) =>
-    request<ProjectExportResult>(`/api/projects/${projectId}/export`, {
+  conversationExportStatus:(project:string,conversation:string,task:string,id:string,signal?:AbortSignal)=>request<{job:{id:string;result?:ProjectExportResult|null;error?:string|null};active:boolean}>(`/api/projects/${encodeURIComponent(project)}/conversations/${conversation}/tasks/${task}/exports/${id}`,{signal}),
+  export: async (projectId: string, format: string, conversation?:{id:string;conversation_id:string;task_id:string}, signal?:AbortSignal) => {
+    type Job={job:{id:string;result?:ProjectExportResult|null;error?:string|null};active:boolean};
+    let value=await request<ProjectExportResult|Job>(`/api/projects/${projectId}/export`, {
       method: "POST",
-      body: JSON.stringify({ format, conversation }),
-    }),
+      body: JSON.stringify({ format, conversation, background:Boolean(conversation) }),signal,
+    });
+    if(!("job" in value))return value;
+    while(true){
+      if(value.job.result)return value.job.result;
+      if(value.job.error)throw new Error(value.job.error);
+      if(!value.active)throw new Error("Export completion is unconfirmed and no active worker was found. Retry checks the saved files; it will not regenerate them.");
+      await new Promise<void>((resolve,reject)=>{
+        const abort=()=>{clearTimeout(timer);signal?.removeEventListener("abort",abort);reject(new DOMException("Export status observation stopped","AbortError"));};
+        const timer=setTimeout(()=>{signal?.removeEventListener("abort",abort);resolve();},1000);
+        signal?.addEventListener("abort",abort,{once:true});if(signal?.aborted)abort();
+      });
+      value=await request<Job>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${conversation!.conversation_id}/tasks/${conversation!.task_id}/exports/${conversation!.id}`,{signal});
+    }
+  },
   importAnnotations: (
     projectId: string,
     format: string,

@@ -97,6 +97,31 @@ pub(crate) fn package(root: &Path, id: Uuid, report: &ExportReport) -> Result<Ex
 }
 
 impl LocalApplication {
+    pub fn admit_conversation_export(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+        format: &str,
+    ) -> Result<bool> {
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self
+            .store
+            .begin_conversation_export(&owner, conversation, task, id, format)?)
+    }
+    pub fn conversation_export_status(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+    ) -> Result<annotagent_storage::ConversationExport> {
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self
+            .store
+            .conversation_export(&owner, conversation, task, id)?)
+    }
     pub fn conversation_export_history(
         &self,
         project: &str,
@@ -156,6 +181,22 @@ impl LocalApplication {
             bail!(
                 "This export request is pending, interrupted or failed. Inspect its saved status; it was not executed again."
             );
+        }
+        self.execute_admitted_export(project, conversation, task, id, format)
+            .await
+    }
+    /// Caller owns the dispatch claim. Does not create an admission or retry a terminal job.
+    pub async fn execute_admitted_export(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+        format: &str,
+    ) -> Result<ProjectExportResult> {
+        let receipt = self.conversation_export_status(project, conversation, task, id)?;
+        if receipt.format != format || receipt.result.is_some() || receipt.error.is_some() {
+            bail!("Export dispatch no longer matches its pending receipt");
         }
         match self
             .export_project_dataset_with_id(project, format, id)

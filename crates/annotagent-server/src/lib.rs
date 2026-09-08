@@ -9,6 +9,7 @@ mod conversation_journey;
 mod conversation_schema;
 mod conversation_stop;
 mod conversations;
+mod export_jobs;
 mod processing_operations;
 mod sample_operations;
 mod security;
@@ -128,6 +129,8 @@ pub struct ServerState {
     model_install_operations: Arc<RwLock<BTreeMap<uuid::Uuid, ModelInstallOperation>>>,
     sample_cancellations: Arc<RwLock<BTreeMap<String, CancellationToken>>>,
     journey_workers: Arc<tokio::sync::Semaphore>,
+    export_workers: Arc<tokio::sync::Semaphore>,
+    export_jobs: Arc<tokio::sync::Mutex<BTreeMap<uuid::Uuid, tokio::task::JoinHandle<()>>>>,
     processing_gate: Arc<tokio::sync::Mutex<()>>,
     security: security::LocalSecurity,
 }
@@ -236,6 +239,8 @@ impl ServerState {
             model_install_operations: Arc::new(RwLock::new(BTreeMap::new())),
             sample_cancellations: Arc::new(RwLock::new(BTreeMap::new())),
             journey_workers: Arc::new(tokio::sync::Semaphore::new(8)),
+            export_workers: Arc::new(tokio::sync::Semaphore::new(2)),
+            export_jobs: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
             processing_gate: Arc::new(tokio::sync::Mutex::new(())),
             security: security::LocalSecurity::default(),
         })
@@ -7854,6 +7859,8 @@ struct ExportBody {
     #[serde(default = "default_export_format")]
     format: String,
     conversation: Option<ExportConversation>,
+    #[serde(default)]
+    background: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -7909,6 +7916,14 @@ async fn export_dataset(
     AxumPath(project_id): AxumPath<String>,
     Json(request): Json<ExportBody>,
 ) -> ApiResult<Json<Value>> {
+    if request.background {
+        let source = request.conversation.ok_or_else(|| {
+            ApiError::bad_request(anyhow::anyhow!(
+                "Background export requires a saved conversation task"
+            ))
+        })?;
+        return export_jobs::start(state, project_id, source, request.format).await;
+    }
     let result = if let Some(source) = request.conversation {
         state
             .application

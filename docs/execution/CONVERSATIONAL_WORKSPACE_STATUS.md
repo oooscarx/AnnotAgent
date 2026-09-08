@@ -4097,3 +4097,40 @@ smoke ignored). Both complete TEST browser paths pass (10.1s/10.0s; 1.0m harness
 builds), isolated workspace `/tmp/annotagent-guided-e2e-91081`, screenshots under
 `/tmp/annotagent-export-recovery-evidence`. Production Web build succeeds with the existing
 bundle-size warning; no new frontend visual behavior was introduced in this increment.
+
+### 2026-09-09 — Detached, bounded export Jobs
+
+Conversation export now opts into Job-ID-first HTTP admission. The existing receipt is
+reserved before a worker is dispatched; two blocking-worker permits bound concurrent archive
+work. The worker owns its Application reference and request scope independently of HTTP
+response/browser lifetime and invokes the same existing exporter. Existing synchronous
+clients remain supported. Duplicate IDs validate the original owner/format and cannot
+dispatch twice. The status endpoint is a read-only, exact owned-Job lookup. Active status
+comes from the current server's actual JoinHandle, not a persisted pending flag. A finished
+or absent worker with no result is unconfirmed; it is not automatically restarted. Explicit
+POST retry can use the prior verified-file recovery path.
+
+The export page observes the returned Job with GETs; unmount/project change aborts only that
+observation and retains the retry identity. Conversation pending cards query only their Job
+and refresh the receipt page when it becomes terminal. Errors have an explicit status retry.
+The UI explains that leaving does not cancel export. Completion notifications currently use
+bounded per-Job polling, not durable export SSE events; that remaining requirement is open.
+
+New server regression verifies capacity exhaustion writes no receipt, response ownership can
+end independently of the registered worker, real empty-Project failure is persisted, terminal
+retry does not spawn another worker, and foreign-task status fails. Client regressions cover
+one POST plus read-only observation, abort without cancellation/re-execution, and no blind
+retry on unconfirmed inactive work. A hard process-kill / live long-export browser-disconnect
+test has not been performed; the existing reopened-Application recovery test covers its
+specific durable-file window only.
+
+Validation: full changed-package all-feature tests pass (146 Storage, 144 Application plus
+one explicitly billable ignored smoke, 46 Server; associated integration suites pass).
+Targeted strict all-target Clippy, fmt, Web typecheck and 202 unit tests pass. Both complete
+browser paths pass against real background Job receipts and actual ZIPs (12.5s/12.0s;
+52.9s harness), isolated workspace `/tmp/annotagent-guided-e2e-92099`; evidence under
+`/tmp/annotagent-background-export-evidence`. Production build retains the known size warning.
+All model data in these tests is explicit TEST fixture data, not Live quality evidence.
+No real workspace, service 8787, credential, historical PNG edit or remote changed; no push.
+Overall M4/goal remains incomplete (persistent events, interruption end-to-end evidence,
+history-view restoration and broader accessibility/performance acceptance remain).

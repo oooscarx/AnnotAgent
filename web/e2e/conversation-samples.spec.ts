@@ -723,11 +723,16 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
       const exportHttp=await exportResponse;
       const exportInput=exportHttp.request().postDataJSON();
       expect(exportInput.conversation?.task_id).toBeTruthy();
-      const delivered=await exportHttp.json();
+      expect(exportInput.background).toBe(true);
+      const admission=await exportHttp.json();
+      expect(admission.job.id).toBe(exportInput.conversation.id);
       const exportHistoryPath=`/api/projects/${project}/conversations/${exportInput.conversation.conversation_id}/tasks/${exportInput.conversation.task_id}/exports`;
+      const exportStatusPath=`${exportHistoryPath}/${admission.job.id}`;
+      await expect.poll(async()=> (await (await request.get(exportStatusPath)).json()).job.result).toBeTruthy();
+      const delivered=(await (await request.get(exportStatusPath)).json()).job.result;
       const duplicateExport=await request.post(`/api/projects/${project}/export`,{data:exportInput});
       expect(duplicateExport.ok(),await duplicateExport.text()).toBe(true);
-      expect((await duplicateExport.json()).delivery.id).toBe(delivered.delivery.id);
+      expect((await duplicateExport.json()).job.result.delivery.id).toBe(delivered.delivery.id);
       expect(await (await request.get(exportHistoryPath)).json()).toHaveLength(1);
       expect(await (await request.get(`${exportHistoryPath}?limit=1&before=${delivered.delivery.id}`)).json()).toEqual([]);
       expect((await request.get(`${exportHistoryPath}?before=${randomUUID()}`)).ok()).toBe(false);

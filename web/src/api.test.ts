@@ -4,6 +4,7 @@ import { api, resetLocalApiSessionForTests } from "./api";
 afterEach(() => {
   resetLocalApiSessionForTests();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 function mutationFetch(result: unknown) {
@@ -35,6 +36,33 @@ function apiCalls(fetch: ReturnType<typeof vi.fn>) {
 }
 
 describe("API client", () => {
+  it("observes a background export with GETs and never repeats its POST",async()=>{
+    vi.useFakeTimers();
+    const context={id:"operation",conversation_id:"conversation",task_id:"task"};
+    const delivered={format:"native",TEST:"saved export"};
+    const base=mutationFetch({job:{id:context.id,result:null,error:null},active:true});
+    const fetch=vi.fn((url:string,init?:RequestInit)=>url.endsWith("/exports/operation") ? Promise.resolve({ok:true,json:async()=>({job:{id:context.id,result:delivered},active:false})}) : base(url,init));
+    vi.stubGlobal("fetch",fetch);
+    const result=api.export("TEST","native",context);
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(await result).toEqual(delivered);
+    expect(apiCalls(fetch).filter(([,init])=>init?.method==="POST")).toHaveLength(1);
+    expect(apiCalls(fetch)).toHaveLength(2);
+  });
+  it("stopping observation sends no export cancellation or repeat execution",async()=>{
+    vi.useFakeTimers();const fetch=mutationFetch({job:{id:"operation",result:null},active:true});vi.stubGlobal("fetch",fetch);
+    const controller=new AbortController();
+    const result=api.export("TEST","native",{id:"operation",conversation_id:"conversation",task_id:"task"},controller.signal);
+    const rejected=expect(result).rejects.toMatchObject({name:"AbortError"});
+    await vi.advanceTimersByTimeAsync(0);controller.abort();await rejected;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(apiCalls(fetch)).toHaveLength(1);
+  });
+  it("does not auto-retry an unconfirmed export without an active worker",async()=>{
+    const fetch=mutationFetch({job:{id:"operation",result:null},active:false});vi.stubGlobal("fetch",fetch);
+    await expect(api.export("TEST","native",{id:"operation",conversation_id:"conversation",task_id:"task"})).rejects.toThrow("unconfirmed");
+    expect(apiCalls(fetch)).toHaveLength(1);
+  });
   it("reports server errors instead of silently accepting them", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: false,
