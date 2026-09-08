@@ -76,6 +76,9 @@ impl SqliteStore {
                 return Err(StorageError::InvalidSampleOperation("this Project already has an active sample task".to_owned()));
             }
             transaction.execute("INSERT INTO sample_operations(id,project_id,draft_id,authorization_fingerprint,request_json,status,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,'queued',?6,?6)", params![value.id,value.project_id,value.draft_id,value.authorization_fingerprint,request,value.created_at])?;
+            if value.request["conversation"]["human_review"] == true {
+                transaction.execute("INSERT INTO conversation_sample_assistance(sample_id) VALUES(?1)",[&value.id])?;
+            }
             if let Some(scope) = scope {
                 transaction.execute("INSERT INTO sample_scope_seals(sample_test_id,scope_json) VALUES(?1,?2)", params![value.id,serde_json::to_string(scope)?])?;
             }
@@ -86,6 +89,36 @@ impl SqliteStore {
 
     pub fn start_sample_operation(&self, id: &str) -> Result<bool, StorageError> {
         self.with_connection(|connection| Ok(connection.execute("UPDATE sample_operations SET status='running',updated_at=?2 WHERE id=?1 AND status='queued'", params![id, Utc::now().to_rfc3339()])? == 1))
+    }
+
+    /// Durable local work becomes deliverable only once the actual sample report is saved.
+    pub fn pending_sample_assistance(&self) -> Result<Vec<SampleOperation>, StorageError> {
+        let ids = self.with_connection(|db| {
+            let mut query = db.prepare("SELECT a.sample_id FROM conversation_sample_assistance a JOIN sample_operations o ON o.id=a.sample_id JOIN workflow_sample_tests t ON t.id=a.sample_id WHERE a.status='waiting' AND o.status='succeeded' ORDER BY o.rowid")?;
+            Ok(query.query_map([], |row| row.get::<_,String>(0))?.collect::<Result<Vec<_>,_>>()?)
+        })?;
+        ids.iter()
+            .map(|id| self.sample_operation(id))
+            .collect::<Result<Vec<_>, _>>()
+            .map(|items| items.into_iter().flatten().collect())
+    }
+
+    pub fn settle_sample_assistance(
+        &self,
+        id: &str,
+        error: Option<&str>,
+    ) -> Result<(), StorageError> {
+        self.with_connection(|db| {
+            db.execute("UPDATE conversation_sample_assistance SET status=CASE WHEN ?2 IS NULL THEN 'completed' ELSE 'failed' END,error=?2 WHERE sample_id=?1 AND status='waiting'",params![id,error.map(|error|error.chars().take(1600).collect::<String>())])?;
+            Ok(())
+        })
+    }
+
+    pub fn sample_assistance_status(
+        &self,
+        id: &str,
+    ) -> Result<Option<serde_json::Value>, StorageError> {
+        self.with_connection(|db| Ok(db.query_row("SELECT status,error FROM conversation_sample_assistance WHERE sample_id=?1",[id],|row| Ok(serde_json::json!({"status":row.get::<_,String>(0)?,"error":row.get::<_,Option<String>>(1)?}))).optional()?))
     }
 
     pub fn cancel_sample_operation(&self, id: &str, project_id: &str) -> Result<(), StorageError> {
@@ -135,6 +168,55 @@ mod tests {
             updated_at: Utc::now().to_rfc3339(),
         }
     }
+    #[test]
+    fn assistance_opt_in_is_atomic_and_failures_do_not_loop() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("TEST-assistance.sqlite");
+        let store = SqliteStore::open(&path).unwrap();
+        let legacy = operation("legacy");
+        store.reserve_sample_operation(&legacy).unwrap();
+        store.finish_sample_operation(&legacy.id, None).unwrap();
+        assert!(
+            store
+                .sample_assistance_status(&legacy.id)
+                .unwrap()
+                .is_none()
+        );
+        let mut opted = operation("opted");
+        opted.request = serde_json::json!({"conversation":{"human_review":true}});
+        store.with_connection(|db| { db.execute_batch("CREATE TRIGGER fail_assistance BEFORE INSERT ON conversation_sample_assistance BEGIN SELECT RAISE(ABORT,'TEST rollback'); END;")?;Ok(()) }).unwrap();
+        assert!(store.reserve_sample_operation(&opted).is_err());
+        assert!(store.sample_operation(&opted.id).unwrap().is_none());
+        store
+            .with_connection(|db| {
+                db.execute_batch("DROP TRIGGER fail_assistance;")?;
+                Ok(())
+            })
+            .unwrap();
+        store.reserve_sample_operation(&opted).unwrap();
+        store.finish_sample_operation(&opted.id, None).unwrap();
+        assert!(
+            store.pending_sample_assistance().unwrap().is_empty(),
+            "no report means no delivery"
+        );
+        store
+            .settle_sample_assistance(&opted.id, Some("TEST unavailable source"))
+            .unwrap();
+        drop(store);
+        let store = SqliteStore::open(&path).unwrap();
+        assert!(store.pending_sample_assistance().unwrap().is_empty());
+        assert_eq!(
+            store.sample_assistance_status(&opted.id).unwrap().unwrap()["error"],
+            "TEST unavailable source"
+        );
+        assert!(
+            store
+                .sample_assistance_status(&legacy.id)
+                .unwrap()
+                .is_none()
+        );
+    }
+
     #[test]
     fn admission_is_atomic_and_terminal_receipts_do_not_execute_twice() {
         let store = std::sync::Arc::new(SqliteStore::open_in_memory().unwrap());

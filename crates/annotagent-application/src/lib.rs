@@ -7275,6 +7275,7 @@ impl LocalApplication {
         };
         application.reconcile_legacy_project_ownership()?;
         application.recover_conversation_corrections()?;
+        application.recover_conversation_sample_assistance()?;
         Ok(application)
     }
 

@@ -24,6 +24,8 @@ pub(super) struct ConversationSampleConsent {
     scope_hash: String,
     expires_at: chrono::DateTime<chrono::Utc>,
     allow_unknown_cost: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    human_review: bool,
 }
 
 #[derive(Deserialize)]
@@ -187,7 +189,15 @@ pub(super) async fn get_operation(
     State(state): State<ServerState>,
     AxumPath((project_id, id)): AxumPath<(String, String)>,
 ) -> ApiResult<Json<Value>> {
-    Ok(Json(json!(owned(&state, &project_id, &id)?)))
+    let mut value = json!(owned(&state, &project_id, &id)?);
+    value["assistance"] = json!(
+        state
+            .application
+            .store()
+            .sample_assistance_status(&id)
+            .map_err(ApiError::internal)?
+    );
+    Ok(Json(value))
 }
 
 pub(super) async fn cancel_operation(
@@ -413,6 +423,9 @@ pub(super) async fn start_operation(
             eprintln!("could not finish sample operation {id}: {error}");
         }
         state.sample_cancellations.write().await.remove(&id);
+        if let Err(error) = state.application.recover_conversation_sample_assistance() {
+            eprintln!("could not deliver sample assistance for {id}: {error}");
+        }
     });
     Ok((StatusCode::ACCEPTED, Json(json!(response))))
 }

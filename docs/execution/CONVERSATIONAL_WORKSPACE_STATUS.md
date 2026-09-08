@@ -1078,3 +1078,36 @@ No UI/server completion hook is enabled yet: durable completion delivery/restart
 recovery must be connected next, without backfilling historical user samples on GET.
 No screenshot or automatic browser-request claim for this backend prerequisite.
 No Live model, real workspace mutation, push or remote change.
+
+### Durable sample-completion assistance delivery (M3 increment)
+
+Migration 33 adds a local assistance queue keyed by the existing Sample Operation.
+Only a new operation whose conversation consent contains `human_review: true` queues
+work, in the same reservation transaction. No backfill is performed. Duplicate
+reservation retains the same queue item and receipt. Delivery requires both a saved
+Sample Test and successful operation; cancellation/unfinished reports do not trigger
+new requests.
+
+The existing sample worker invokes local assistance delivery after settling its
+operation. Application startup performs the same delivery after ordinary sample
+recovery, closing the report/notification crash gap without repeating inference.
+The deterministic preparation command supports partial-delivery replay. Completed or
+failed deliveries leave the pending set; bounded errors persist separately from the
+successful sample report, and the scoped Sample Operation GET includes `assistance`.
+It does not claim that a report failed merely because human-request creation failed.
+Failed delivery currently requires a future explicit retry control, not a restart loop.
+
+Regression: Application correction test now opts in, simulates stopping after saved
+report/operation completion, reopens the real isolated Application, verifies generated
+request/completed queue state, then continues the existing correction/outbox tests.
+Storage injects queue-insert failure and verifies reservation rollback, confirms old
+operations remain unqueued, and verifies failed delivery survives reopening without
+looping. Storage all-features (**52 unit plus existing integrations**), Application
+**99 passed / 1 billable ignored**, Server **36/36**, and strict Clippy passed.
+
+Frontend opt-in and automatic notification are not enabled in this increment; current
+browser sample requests omit the new flag. This deliberately avoids silently changing
+existing saved request bodies or real user history. Next: wire the flag and visible
+delivery outcomes into the conversation's sample card, then test automatic request
+creation/answer in both browser paths. No real server restart/mutation, Live calls,
+push or remote change. No new UI screenshot claim.

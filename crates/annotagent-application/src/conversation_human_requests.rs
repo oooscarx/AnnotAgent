@@ -74,6 +74,34 @@ fn validate_subject(
 }
 
 impl LocalApplication {
+    /// Deliver only persisted, opted-in completion work. No inference or historical backfill.
+    pub fn recover_conversation_sample_assistance(&self) -> Result<()> {
+        for operation in self.store.pending_sample_assistance()? {
+            let result = (|| {
+                let conversation = serde_json::from_value(
+                    operation.request["conversation"]["conversation_id"].clone(),
+                )?;
+                let task =
+                    serde_json::from_value(operation.request["conversation"]["task_id"].clone())?;
+                self.prepare_conversation_sample_requests(
+                    &operation.project_id,
+                    conversation,
+                    task,
+                    &operation.id,
+                )
+            })();
+            self.store.settle_sample_assistance(
+                &operation.id,
+                result
+                    .as_ref()
+                    .err()
+                    .map(std::string::ToString::to_string)
+                    .as_deref(),
+            )?;
+        }
+        Ok(())
+    }
+
     /// Prepare bounded human work from saved terminal evidence. This command is local only;
     /// it neither predicts new objects nor treats a review flag as proof of inaccuracy.
     pub fn prepare_conversation_sample_requests(
@@ -448,11 +476,25 @@ pub(crate) mod tests {
             .clone();
         sample.report.samples[0].outcomes.push(outcome.clone());
         app.store.save_workflow_sample_test(&sample).unwrap();
-        app.store.reserve_sample_operation(&annotagent_storage::SampleOperation { id:sample.id.clone(),project_id:project.into(),draft_id:sample.draft_id.clone(),authorization_fingerprint:"TEST".into(),request:serde_json::json!({"conversation":{"conversation_id":conversation,"task_id":task.id}}),status:"queued".into(),error:None,created_at:chrono::Utc::now().to_rfc3339(),updated_at:chrono::Utc::now().to_rfc3339() }).unwrap();
+        app.store.reserve_sample_operation(&annotagent_storage::SampleOperation { id:sample.id.clone(),project_id:project.into(),draft_id:sample.draft_id.clone(),authorization_fingerprint:"TEST".into(),request:serde_json::json!({"conversation":{"conversation_id":conversation,"task_id":task.id,"human_review":true}}),status:"queued".into(),error:None,created_at:chrono::Utc::now().to_rfc3339(),updated_at:chrono::Utc::now().to_rfc3339() }).unwrap();
         input.conversation_id = conversation;
         input.task_id = task.id;
         input.image_id = image.image_id.to_string();
         input.content_hash = image.content_hash;
+        assert!(app.store.pending_sample_assistance().unwrap().is_empty());
+        app.store.finish_sample_operation(&sample.id, None).unwrap();
+        assert_eq!(app.store.pending_sample_assistance().unwrap().len(), 1);
+        // Crash after report/operation completion, before local assistance delivery.
+        drop(app);
+        let app = LocalApplication::new(temporary.path()).unwrap();
+        assert!(app.store.pending_sample_assistance().unwrap().is_empty());
+        assert_eq!(
+            app.store
+                .sample_assistance_status(&sample.id)
+                .unwrap()
+                .unwrap()["status"],
+            "completed"
+        );
         let prepared = app
             .prepare_conversation_sample_requests(project, conversation, task.id, &sample.id)
             .unwrap();
