@@ -76,3 +76,30 @@ test("conversation journal restores, freezes image references and retries withou
   }
   expect(charged).toEqual([]);
 });
+
+test("large TEST image index renders bounded thumbnails and restores the selected page",async({page,request})=>{
+  const project=`conversation-large-${Date.now()}`;
+  expect((await request.post("/api/projects",{data:{id:project,yaml:"version: 1\nproject:\n  name: TEST large image index\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n"}})).ok()).toBeTruthy();
+  // Browser-only metadata fixture: this checks DOM growth, not server import throughput.
+  const images=Array.from({length:1001},(_,i)=>({image_id:`test-image-${i}`,name:`TEST image ${i}`,url:"/brand/core/pwa-192.png",content_hash:`test-hash-${i}`}));
+  await page.route(`**/api/projects/${project}/images`,route=>route.fulfill({json:{images}}));
+  await page.goto(`/projects/${project}/work?image=test-image-1000`);
+  const thumbnails=page.getByRole("navigation",{name:"Select image",exact:true});
+  await expect(thumbnails.getByRole("button")).toHaveCount(17);
+  await expect(thumbnails.getByRole("button",{name:"TEST image 1000",exact:true})).toHaveAttribute("aria-current","true");
+  const pages=page.getByRole("navigation",{name:"Image pages",exact:true});
+  await expect(pages).toContainText("985–1001 of 1001");
+  await pages.getByRole("button",{name:"Previous images",exact:true}).click();
+  await expect(thumbnails.getByRole("button")).toHaveCount(24);
+  expect(new URL(page.url()).searchParams.get("image")).toBe("test-image-1000");
+  await thumbnails.getByRole("button",{name:"TEST image 960",exact:true}).click();
+  await expect(page).toHaveURL(/image=test-image-960/);
+  await page.goBack();
+  await expect(pages).toContainText("985–1001 of 1001");
+  await page.goForward();
+  await page.reload();
+  await expect(pages).toContainText("961–984 of 1001");
+  await expect(thumbnails.getByRole("button",{name:"TEST image 960",exact:true})).toHaveAttribute("aria-current","true");
+  await pages.scrollIntoViewIfNeeded();
+  await page.screenshot({path:resolve(process.env.ANNOTAGENT_E2E_EVIDENCE_DIR ?? "../docs/execution/conversational-workspace","large-image-index-TEST.png"),fullPage:true,animations:"disabled"});
+});

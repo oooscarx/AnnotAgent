@@ -4247,3 +4247,27 @@ are visible without horizontal overflow. Web 203 unit tests and typecheck pass. 
 harness rebuilt production assets successfully, retaining the existing bundle-size warning.
 No real workspace, paid model, credential, remote or push action occurred. Overall goal stays
 open; this is bounded keyboard evidence, not a claim that all accessibility requirements pass.
+
+### 2026-09-09 — Bounded dataset thumbnail rendering
+
+Code inspection found that the conversation workspace rendered every dataset image as a
+button/image/span. Native lazy image loading did not bound that DOM. A browser-only 1,001-row
+TEST metadata fixture reproduced 1,001 buttons where the last page should contain 17.
+ConversationImages now slices the existing dataset index into 24-image pages; it does not
+introduce another dataset, query or ownership model. Paging the strip does not select an image,
+change the canvas, write business state or request inference. Selecting an image still uses
+the existing guarded URL navigation. A selected-object change resets the strip to that image's
+page; this also fixes a separately reproduced browser Back failure caused by stale browsing state.
+
+The two journal/large-index browser tests pass (7.8s harness, isolated workspace
+`/tmp/annotagent-guided-e2e-96130`), checking bounded DOM, previous-page browsing without selection,
+exact image selection, Back/Forward and reload. Web 203 unit tests and typecheck pass, and the
+browser harness production build passes with the existing size warning. Screenshot evidence is
+under `/tmp/annotagent-large-images-evidence`; the large-index image uses the app icon as an
+explicit layout fixture, not real imported data, inference output or a model-quality example.
+
+Limit: the existing image-index API still transfers the full metadata list, and thumbnails
+still reference image assets rather than server-generated small previews. This increment proves
+bounded thumbnail rendering, not server-side pagination, lower index-transfer bytes or a measured
+end-to-end speedup. Those remain relevant to the broader performance audit. No real workspace,
+Provider, remote or previous repository PNG was changed; no push or Live/human claim.
