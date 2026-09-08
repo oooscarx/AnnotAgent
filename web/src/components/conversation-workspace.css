@@ -102,3 +102,10 @@
 .conversation-setup-return h2 { margin: 0; font-size: 1.25rem; line-height: 1.4; }
 .conversation-setup-return p { margin: 0; max-width: 70ch; line-height: 1.5; }
 .conversation-setup-return button { justify-self: start; white-space: normal; }
+.conversation-human-requests { display: grid; gap: .75rem; }
+.conversation-human-requests > h3,
+.conversation-human-requests > p { margin: 0; }
+.conversation-human-requests > button { justify-self: start; }
+.conversation-human-requests summary { cursor: pointer; overflow-wrap: anywhere; padding-block: .5rem; }
+.conversation-request-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.conversation-request-actions button { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }

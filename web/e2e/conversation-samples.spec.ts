@@ -230,6 +230,23 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   expect((await request.post(humanRoot,{data:human})).ok()).toBe(true);
   await page.setViewportSize({width:1280,height:800});
   await page.getByRole("button",{name:"Refresh requests",exact:true}).click();
+  if(scenario==="bbox"){
+    const originalTask=new URL(page.url()).searchParams.get("task");
+    await page.getByLabel("Your message",{exact:true}).fill("TEST independent goal without changing the original correction");
+    await page.getByRole("button",{name:"Save message",exact:true}).click();
+    const newGoal=page.getByRole("list",{name:"Saved messages",exact:true}).locator("li").filter({hasText:"TEST independent goal without changing the original correction"});
+    await newGoal.getByRole("button",{name:/Use message .* as annotation goal/}).click();
+    await expect.poll(()=>new URL(page.url()).searchParams.get("task")).not.toBe(originalTask);
+    const help=page.getByRole("region",{name:"Human requests",exact:true});
+    await expect(help.getByText("No outstanding visual requests for this goal.",{exact:true})).toBeVisible();
+    await expect(help.getByText(human.question,{exact:true})).not.toBeVisible();
+    const history=help.locator("details");
+    await expect(history.locator("summary")).toContainText("awaiting help in other goals");
+    await history.locator("summary").focus();await page.keyboard.press("Enter");
+    await expect(help.getByText(human.question,{exact:true})).toBeVisible();
+    await help.evaluate(element=>element.scrollIntoView({block:"start"}));
+    await page.screenshot({path:"../docs/execution/conversational-workspace/request-task-history.png",fullPage:true});
+  }
   await page.locator("article").filter({hasText:human.question}).getByRole("button",{name:"Open requested result",exact:true}).click();
   await expect(page.getByRole("button",{name:"Submit correction",exact:true})).toBeVisible();
   expect(new URL(page.url()).searchParams.get("request")).toBe(human.id);

@@ -2142,3 +2142,41 @@ uses the existing navigation callback; complete browser-history/replace semantic
 multi-tab usability pass remain open. No live 8787 workspace changes, real Provider calls, old
 keys, push or remote changes. The broader coordinator and remaining HumanRequest types are not
 complete. Unrelated regenerated screenshot changes are left unstaged.
+
+### M3/M4 continuation — task-scoped human help instead of a flat request inventory
+
+The workspace previously rendered all requests across all saved goals as equal active cards,
+including cancelled and applied history. Extracted the existing request presentation (same APIs,
+request IDs, answer and resume service) into `ConversationHumanRequests`. Current-goal pending and
+answered requests stay directly visible; the explicitly opened request stays visible after it is
+applied/cancelled, so saving does not remove the object being inspected. Other goals and closed
+history remain in one keyboard-operable native disclosure, with an outstanding-other-goals count
+and action-needed requests first. Opening a historical request still uses its exact saved task,
+Sample Test and image. No request is deleted, automatically answered or converted to a new goal.
+Loading hides stale request controls until the owned request snapshot arrives. Cancel/retry buttons
+show saving state and disable while the existing asynchronous command is pending. No new engine,
+authorization, model call or automatic navigation was added.
+
+Regression-first component contract initially failed because the extracted component did not yet
+exist; three rendering tests then verified current-vs-other ownership, closed history, explicitly
+selected completion and loading. The first real browser run `/tmp/annotagent-guided-e2e-23491`
+failed both selected flows: legacy conversation entry can omit URL task while its saved goal has
+an existing server task. Using only URL task hid that current goal's requests in history. Fixed
+the component input to reuse the existing `referenceTask` resolved by saved goal source-message ID,
+not a task name, local active-project preference or arbitrary first pending request.
+
+Corrected `/tmp/annotagent-guided-e2e-23741` passed classification and bbox full sample/correction/
+continuation/formal-delivery flows, 2/2 in 22.6 seconds. The bbox scenario adds another independent
+saved goal, verifies the first goal's request is not presented as current, opens the native history
+with Enter and returns through the saved request to its exact task/image. Existing response-loss
+answer, revision repair and formal export checks remain in that scenario. Typecheck, 122 Web units
+and production build passed, with the existing chunk warning. A final screenshot/order check is
+recorded below. No Rust business logic changed in this increment. All browser data/model transports
+were isolated TEST fixtures; no Live model quality or human usability claim, real workspace changes,
+push or remote changes. Structured request types beyond the implemented clarification/correction,
+bounded continuous coordination and full acceptance matrix remain incomplete.
+Final bbox repeat `/tmp/annotagent-guided-e2e-23838` passed 1/1 in 14.5 seconds after history ordering
+and screenshot positioning. Inspected `conversational-workspace/request-task-history.png`: the
+pending other-goal request appears before cancelled history, with separate, wrapping open/cancel
+actions and unchanged TEST image pixels. Keyboard focus remains visible on the disclosure. Web
+typecheck and 122 units passed again. This is not a native-zoom or full browser-suite result.

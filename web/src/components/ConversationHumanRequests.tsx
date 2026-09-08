@@ -1,0 +1,43 @@
+import {useState} from "react";
+import type {HumanRequest} from "../conversation-human-api";
+
+/** A view of existing durable requests, not a second request queue or task state. */
+export function ConversationHumanRequests({requests,taskId,activeId,ready,onRefresh,onOpen,onCancel,onRetry,onInspect}:{
+  requests:HumanRequest[];taskId?:string;activeId?:string;ready:boolean;
+  onRefresh:()=>void;onOpen:(request:HumanRequest)=>void;
+  onCancel:(request:HumanRequest)=>Promise<void>;onRetry:(request:HumanRequest)=>Promise<void>;
+  onInspect:(request:HumanRequest)=>void;
+}){
+  const [pending,setPending]=useState<string>();
+  const current=requests.filter(value=>value.input.task_id===taskId&&(value.status==="pending"||value.status==="answered"||value.input.id===activeId));
+  const currentIds=new Set(current.map(value=>value.input.id));
+  const needsAction=(value:HumanRequest)=>value.status==="pending"||value.status==="answered";
+  const history=requests.filter(value=>!currentIds.has(value.input.id)).sort((a,b)=>Number(needsAction(b))-Number(needsAction(a)));
+  const otherPending=history.filter(value=>value.input.task_id!==taskId&&value.status==="pending").length;
+  async function act(value:HumanRequest,action:(request:HumanRequest)=>Promise<void>){
+    if(pending)return;
+    setPending(value.input.id);
+    try{await action(value);}finally{setPending(undefined);}
+  }
+  function card(value:HumanRequest){return <article key={value.input.id} className="conversation-consent" aria-label={`Request: ${value.input.question}`}>
+    {value.input.task_id!==taskId&&<small>Another annotation goal · opens its saved task and image</small>}
+    <p>{value.input.question}</p>
+    <p role="status">{value.resume_draft_id ? "Correction saved · revision Draft available" : value.status==="answered" ? "Correction saved · awaiting task continuation" : value.status}</p>
+    {value.resume_error&&<p role="alert">Correction saved, but Draft preparation failed: {value.resume_error}</p>}
+    <div className="conversation-request-actions">
+      <button disabled={Boolean(pending)} onClick={()=>onOpen(value)}>Open requested result</button>
+      {value.status==="answered"&&<button disabled={Boolean(pending)} onClick={()=>void act(value,onRetry)}>Retry Draft preparation</button>}
+      {value.resume_draft_id&&<button disabled={Boolean(pending)} onClick={()=>onInspect(value)}>Inspect revision Draft</button>}
+      {value.status==="pending"&&<button disabled={Boolean(pending)} onClick={()=>void act(value,onCancel)}>Cancel request</button>}
+    </div>
+    {pending===value.input.id&&<p role="status">Saving request state…</p>}
+  </article>;}
+  return <section aria-label="Human requests" className="conversation-human-requests">
+    {!ready ? <p role="status">Loading saved requests…</p> : <>
+      {current.length>0&&<><h3>Requests for your help</h3><p className="muted">For the current annotation goal. Opening a request does not call a model.</p>{current.map(card)}</>}
+      {history.length>0&&<details><summary>Request history and other goals ({history.length}){otherPending>0 ? ` · ${otherPending} awaiting help in other goals` : ""}</summary>{history.map(card)}</details>}
+      {current.length===0&&<p className="muted">{taskId ? "No outstanding visual requests for this goal." : "Select an annotation goal to see its requests."}</p>}
+    </>}
+    <button disabled={!ready||Boolean(pending)} onClick={onRefresh}>Refresh requests</button>
+  </section>;
+}
