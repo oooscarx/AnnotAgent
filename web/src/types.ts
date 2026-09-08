@@ -1894,21 +1894,24 @@ export interface ConversationSchemaDraft {
   } };
 }
 export interface ConversationBuilderRepair { request_id:string; draft_id:string; revision:number; content_hash:string }
-export interface ConversationBuilderSelection { operation_id: string; schema_id: string; schema_revision: number; model_id?: string; repair_request_id?:string }
+export interface ConversationImageClassBuilderRepair { review_id:string; draft_id:string; revision:number; content_hash:string; schema_id:string; schema_revision:number; scope_digest:string; feedback_digest:string }
+export interface ConversationBuilderSelection { operation_id: string; schema_id: string; schema_revision: number; model_id?: string; repair_request_id?:string; image_class_review_id?:string }
 export interface ConversationBuilderPreview {
   project_call_limit?: ProjectCallLimitSnapshot;
   repair?: ConversationBuilderRepair | null;
+  image_class_repair?: ConversationImageClassBuilderRepair | null;
   selection: ConversationBuilderSelection; previous_grant_id: string | null; scope_hash: string; expires_at: string;
   model_name: string; remote_model: string; destination: string; maximum_builder_calls: number; maximum_calls: number;
   used_calls: number; image_count: number; estimated_cost: null; data_scope: string; operation: string;
 }
 export interface ConversationBuilderConsent {
   repair?: ConversationBuilderRepair | null;
+  image_class_repair?: ConversationImageClassBuilderRepair | null;
   selection: ConversationBuilderSelection; previous_grant_id: string | null; scope_hash: string; expires_at: string; allow_unknown_cost: boolean;
 }
 export interface ConversationBuilderOperation {
   id: string; task_id: string; request_hash: string; status: "reserved" | "completed" | "interrupted";
-  evidence?: { draft_id?: string; session_id?: string; outcome?: string; error?: string; schema_revision?: number; schema_id?: string };
+  evidence?: { draft_id?: string; session_id?: string; outcome?: string; error?: string; schema_revision?: number; schema_id?: string; repair_source?: {kind:"image_class_review";reference:ConversationImageClassBuilderRepair} | {kind:"human_request";reference:ConversationBuilderRepair} | null };
 }
 export interface ConversationBuilderItem { operation: ConversationBuilderOperation; session?: AgentSession | null; schema_id?: string | null; schema_revision?: number | null }
 export interface ConversationCallReceipt {

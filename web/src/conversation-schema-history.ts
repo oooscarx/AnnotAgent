@@ -12,6 +12,11 @@ export function builderMatchesSchema(item: ConversationBuilderItem, schema: Sche
   if (item.schema_revision && evidence?.schema_revision && item.schema_revision !== evidence.schema_revision) return false;
   return (item.schema_id ?? evidence?.schema_id) === schema.id && (item.schema_revision ?? evidence?.schema_revision) === schema.revision;
 }
+/** Class repairs require the admitted source, including before a working Draft exists. */
+export function builderMatchesClassRepair(item: ConversationBuilderItem, schema: SchemaIdentity, review: {id:string;draft:string}) {
+  const source=item.operation.evidence?.repair_source;
+  return builderMatchesSchema(item,schema) && source?.kind==="image_class_review" && source.reference.review_id===review.id && source.reference.draft_id===review.draft && source.reference.schema_id===schema.id && source.reference.schema_revision===schema.revision;
+}
 export function journeyMatchesSchema(item: JourneyStatus, schema?: SchemaIdentity) {
   if (!schema) return true;
   if (item.record.resolved_consent) return consentMatchesSchema(item.record.resolved_consent, schema);

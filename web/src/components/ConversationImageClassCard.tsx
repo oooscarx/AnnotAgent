@@ -7,10 +7,13 @@ import { sampleAnnotations } from "../sampleAnnotations";
 import { sampleFeedbackOverlay } from "../sampleFeedbackOverlay";
 import type { SampleTestOutcomeRecord } from "../types";
 import { t } from "../i18n";
+import { ConversationClassRepairCard } from "./ConversationRepairCard";
+import type { OpenConversationSample } from "./ConversationSampleCard";
 
-export function ConversationImageClassCard({ project, value, cancelled, blocked, captureOpen, onDirtyChange }: {
+export function ConversationImageClassCard({ project, value, cancelled, blocked, captureOpen, onDirtyChange, onSample, onAssistance }: {
   project: string; value: FeedbackStatus; cancelled: boolean; blocked: boolean;
   captureOpen: () => (review: ImageClassReview) => void; onDirtyChange?: (dirty: boolean) => void;
+  onSample:OpenConversationSample;onAssistance?:()=>void;
 }) {
   const call = value.authorization.consent.call_id, conversation = value.authorization.context.message.conversation_id, task = value.authorization.grant.task_id;
   const storageKey = `annotagent.image-class-create:${project}:${conversation}:${task}:${call}`;
@@ -48,6 +51,13 @@ export function ConversationImageClassCard({ project, value, cancelled, blocked,
     })().catch((reason: Error) => { if (!controller.signal.aborted && ticket === version.current) { setError(reason.message); setReady(true); } });
     return () => { alive.current = false; version.current++; controller.abort(); dirty.current?.(false); };
   }, [project, conversation, task, call]);
+  useEffect(()=>{
+    if(!saved || saved.status==="applied" || saved.status==="cancelled")return;
+    const controller=new AbortController();let fetching=false;
+    const refresh=async()=>{if(fetching)return;fetching=true;try{const result=await imageClassApi.get(project,conversation,task,saved.id,controller.signal);if(!controller.signal.aborted)apply(result);}catch(reason){if(!controller.signal.aborted)setError((reason as Error).message);}finally{fetching=false;}};
+    const timer=window.setInterval(()=>void refresh(),1500);
+    return()=>{controller.abort();window.clearInterval(timer);};
+  },[project,conversation,task,saved?.id,saved?.status]);
   async function loadPreview() {
     if (pending.current || cancelled || blocked || !token) return;
     pending.current = true; setBusy(true); setError(""); const ticket = ++version.current;
@@ -78,5 +88,6 @@ export function ConversationImageClassCard({ project, value, cancelled, blocked,
     {cancelled && <p>{t(saved ? "The source feedback is cancelled. This existing image-class review keeps its own state. To stop it, open the review and cancel it explicitly." : "The source feedback is cancelled. No new image-class review will be created.")}</p>}
     {blocked && !saved && <p>{t("Resolve the existing task request before opening another correction.")}</p>}
     {error && <p role="alert">{error}</p>}
+    {saved?.status==="applied" && <ConversationClassRepairCard key={saved.id} project={project} review={saved} editing={blocked} onSample={onSample} onAssistance={onAssistance} />}
   </section>;
 }

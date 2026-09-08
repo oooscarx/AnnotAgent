@@ -3777,3 +3777,65 @@ Application source tests, 2/2 passing. `cargo fmt --all --check`, full-workspace
 all-feature Clippy with warnings denied, and `cargo build --workspace --all-features` passed.
 Web source was unchanged in this checkpoint; Web/browser tests were not rerun and are not
 claimed as evidence for the new group continuation. Overall goal remains active.
+
+### Same-chat class correction → Builder → sample continuation
+
+Backend source/recovery support was committed as `b41a339`. The Web continuation now reuses
+the existing repair-context loader, Builder card and Sample card rather than introducing a new
+executor or disguising class reviews as single HumanRequests. Applied group reviews display
+their own repair card; pending/Answered reviews poll only the owned saved record, allowing
+the card to update after canvas save without model work. The original sealed sample supplies
+the Schema identity, and the backend revalidates the full source at authorization/execution.
+
+Builder history uses the exact operation when known and the admitted class-review source
+otherwise. A class repair cannot match an unrelated working Draft or a record with absent
+source provenance. Confirmed requests persist their original preview and consent in scoped
+session storage before POST; storage failure prevents dispatch. Refresh reads receipts, while
+an unknown outcome offers an explicit retry of the same envelope. It does not renew a grant
+or auto-dispatch. A recovered authoritative receipt replaces the transient transport warning;
+the saved operation's real failure evidence remains displayed.
+
+Three new pure Web tests cover exact pending-envelope restoration, incorrect source/Schema/
+Draft/authorization rejection, and matching admitted provenance before a session seed. The
+full Web suite passes 197 tests in 41 files, and typecheck passes. The isolated production-build
+browser harness retains its existing bundle-size warning.
+
+The first real browser test in `/tmp/annotagent-guided-e2e-82888` passed through saved group
+decisions, explicit Builder authorization, explicit sample authorization and canvas opening.
+The subsequent two-case run in `/tmp/annotagent-guided-e2e-83061` also passed a deliberately
+dropped successful Builder response plus failed receipt reads, then refresh recovery without
+another POST/model call. Screenshot inspection found that explicit result opening selected
+the first input rather than the corrected image. The group callback now supplies its original
+image ID; both cases passed again in `/tmp/annotagent-guided-e2e-83173` with an exact image URL
+assertion. This is an actual navigation fix, not a screenshot-only adjustment.
+
+Final bbox/classification and narrow-screen evidence is recorded below after completion.
+All new model work uses the explicit TEST transport on 8796 in disposable 8791 workspaces.
+Fixture detections on synthetic images are not accuracy evidence or Live improvements. No
+real workspace/service8787, credential, formal user annotation or remote was changed. Old
+screenshots are preserved; only new continuation screenshots belong to this slice.
+
+Final run `/tmp/annotagent-guided-e2e-83300`: **4/4 browser cases passed**. Bounding-box and
+classification groups each exercise normal completion and lost successful Builder response
+with temporarily unreadable receipt GETs. The latter recover after reload with one Builder
+POST, then authorize samples separately. All cases assert the prepared repair Draft is reused,
+the exact group provenance is returned, refresh does not add calls, and explicit sample opening
+retains the original correction image. The two unknown-ack cases also verify 390×844 navigation
+without document horizontal overflow; this is not a claim of complete mobile annotation or
+native 200% zoom accessibility.
+
+Two new 1280×800 actual TEST screenshots were inspected:
+`conversational-workspace/image-class-builder-continuation.png` and
+`conversational-workspace/image-class-builder-classification.png`. The chat is scrolled to the
+saved sample action and the canvas shows the original correction image. Synthetic soccer
+pixels with scripted cup/bottle labels test transport and UI only; they deliberately provide
+no model-quality evidence. Long chat/canvas content still scrolls within the workspace; these
+captures do not prove the full layout/accessibility acceptance matrix.
+
+This slice completes the basic same-chat group repair/sample path, not the whole objective.
+Next checks include advanced Pipeline detail return context from the new Builder card (the
+existing generic detail link still lacks a return context), storage-corruption/blocked-storage
+browser recovery, source changes during authorization, and broader single-request regression,
+long-history performance and accessibility coverage. No real-user usability study was run.
+Rust source is unchanged from `b41a339`; its preceding Rust regression is not reported as a new
+run here. No push; main branch and the user's historical screenshot modifications are retained.

@@ -86,6 +86,69 @@ async function imageClassSample(request: APIRequestContext, page: Page, bbox: bo
   return { ...selected, ...feedback, other, view, candidates, url, target: bbox ? "cup" : "室内" };
 }
 type State = Awaited<ReturnType<typeof imageClassSample>>;
+
+for (const bbox of [true,false]) {
+for (const lostAck of [false,true]) {
+test(`image class repair continues in chat with separate Builder and sample consent: ${bbox ? "bbox" : "classification"}${lostAck ? " after unknown acknowledgement" : ""}`, async ({page,request})=>{
+  test.setTimeout(240_000);
+  const state=await imageClassSample(request,page,bbox), group=await openGroup(request,state);
+  await post(request,`${group.endpoint}/answer`,{command_id:randomUUID(),expected_scope_digest:group.review.scope_digest,actions:group.review.scope.members.map((member:any)=>({action:"keep",outcome_id:member.outcome.id,source_artifact_id:member.source_artifact_id}))});
+  const applied=await post(request,`${group.endpoint}/resume`,{});
+  expect(applied.status).toBe("applied");
+  const callsBefore=await read(request,`${state.taskRoot}/calls`);
+  await page.goto(state.url);
+  const card=page.getByRole("region",{name:"Repair annotation pipeline",exact:true});
+  await expect(card.getByRole("button",{name:"Review Builder authorization",exact:true})).toBeVisible();
+  await page.reload();
+  await expect(card.getByRole("button",{name:"Review Builder authorization",exact:true})).toBeVisible();
+  expect(await read(request,`${state.taskRoot}/calls`)).toEqual(callsBefore);
+  await card.getByRole("button",{name:"Review Builder authorization",exact:true}).click();
+  await card.getByRole("checkbox",{name:"Allow this bounded Builder request; actual cost is unknown"}).check();
+  let blockedReads=false, builderPosts=0;
+  const operationRoute=`**${state.taskRoot}/builder-operations*`;
+  if(lostAck)await page.route(operationRoute,async route=>{
+    if(route.request().method()==="POST") {
+      builderPosts++;
+      const result=await fetchWithinMutationLimit(route);
+      expect(result.ok(),await result.text()).toBe(true);
+      blockedReads=true;await route.abort("failed");
+    } else if(blockedReads)await route.abort("failed");
+    else await route.continue();
+  });
+  await card.getByRole("button",{name:"Build Pipeline Draft",exact:true}).click();
+  if(lostAck){
+    await expect(card.getByRole("button",{name:"Retry the same Builder request",exact:true})).toBeVisible();
+    expect(await page.evaluate(()=>Object.keys(sessionStorage).some(key=>key.startsWith("annotagent.builder-pending:")))).toBe(true);
+    await page.unroute(operationRoute);await page.reload();
+    expect(builderPosts).toBe(1);
+  }
+  await expect(card.getByRole("button",{name:"Review sample authorization",exact:true})).toBeVisible();
+  const operations=await read(request,`${state.taskRoot}/builder-operations?image_class_review_id=${group.review.id}`);
+  expect(operations.items).toHaveLength(1);
+  expect(operations.items[0].operation.status).toBe("completed");
+  expect(operations.items[0].operation.evidence.repair_source.reference.review_id).toBe(group.review.id);
+  expect(operations.items[0].session.working_draft.draft_id).toBe(applied.repair_draft_id);
+  const callsAfterBuilder=await read(request,`${state.taskRoot}/calls`);
+  await page.reload();
+  await expect(card.getByRole("button",{name:"Review sample authorization",exact:true})).toBeVisible();
+  expect(await read(request,`${state.taskRoot}/calls`)).toEqual(callsAfterBuilder);
+  await card.getByRole("button",{name:"Review sample authorization",exact:true}).click();
+  await card.getByRole("checkbox",{name:"Allow these sample images to be sent to the listed models; actual cost is unknown"}).check();
+  await card.getByRole("button",{name:"Test these samples",exact:true}).click();
+  await expect(card.getByRole("button",{name:"View sample results in canvas",exact:true})).toBeVisible();
+  await card.getByRole("button",{name:"View sample results in canvas",exact:true}).click();
+  await expect(page).toHaveURL(new RegExp(`draft=${applied.repair_draft_id}`));
+  await expect(page).toHaveURL(new RegExp(`image=${state.image.image_id}`));
+  const url=page.url(), settledCalls=await read(request,`${state.taskRoot}/calls`);
+  await page.reload();await expect(page).toHaveURL(url);
+  await expect(card.getByRole("button",{name:"View sample results in canvas",exact:true})).toBeVisible();
+  expect(await read(request,`${state.taskRoot}/calls`)).toEqual(settledCalls);
+  if(!lostAck){await card.getByRole("button",{name:"View sample results in canvas",exact:true}).scrollIntoViewIfNeeded();await page.screenshot({path:resolve(`../docs/execution/conversational-workspace/image-class-builder-${bbox ? "continuation" : "classification"}.png`),fullPage:true});}
+  else {await page.setViewportSize({width:390,height:844});await card.getByRole("button",{name:"View sample results in canvas",exact:true}).scrollIntoViewIfNeeded();await expect(card.getByRole("button",{name:"View sample results in canvas",exact:true})).toBeVisible();await expect(page).toHaveURL(url);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);}
+});
+}
+}
+
 const feedbackPath = (state: State, image = state.image.image_id) => `/api/workflow-sample-tests/${state.record.id}/images/${image}/feedback`;
 async function unchanged(request: APIRequestContext, state: State) {
   const drafts = (await read(request, `/api/workflow-drafts?project_id=${state.project}`)).drafts;
