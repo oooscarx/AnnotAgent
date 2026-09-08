@@ -3,9 +3,11 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { expect, test } from "./fixtures";
 
-for(const scenario of ["classification","bbox","classification-review"] as const){
-const kind = scenario === "bbox" ? "bbox" : "classification";
-const requiresReview = scenario !== "classification";
+for(const scenario of ["classification","bbox","classification-review","human-classification","human-bbox"] as const){
+const humanSchema = scenario.startsWith("human-");
+const transport = humanSchema ? scenario.slice(6) : scenario;
+const kind = transport === "bbox" ? "bbox" : "classification";
+const requiresReview = transport !== "classification";
 test(`conversation ${scenario} authorizes HTTP fixture samples and restores editable terminal canvas`,async({page,request})=>{
   test.setTimeout(120_000);
   // Each scenario must bind its own TEST transport, not an earlier compatible registry model.
@@ -17,7 +19,7 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   }
   const provider=await (await request.post("/api/providers",{data:{display_name:"Conversation sample TEST transport",adapter:"open_ai_compatible",base_url:"http://127.0.0.1:8796/openai/v1"}})).json();
   expect((await request.post(`/api/providers/${provider.id}/credential`,{data:{source:"workspace_file",secret:"TEST-conversation-samples-only"}})).ok()).toBeTruthy();
-  const model=await (await request.post("/api/model-profiles",{data:{provider_id:provider.id,display_name:`Conversation TEST ${scenario}`,remote_model_id:`e2e-conversation-${scenario}`,input_modalities:["text","image"],task_capabilities:["text_generation","vision_language","image_classification"],protocol_features:{tool_calls:true,structured_output:true}}})).json();
+  const model=await (await request.post("/api/model-profiles",{data:{provider_id:provider.id,display_name:`Conversation TEST ${scenario}`,remote_model_id:`e2e-conversation-${transport}`,input_modalities:["text","image"],task_capabilities:["text_generation","vision_language","image_classification"],protocol_features:{tool_calls:true,structured_output:true}}})).json();
   expect((await request.post(`/api/providers/${provider.id}/active-probe`,{data:{model_profile_id:model.id,confirmed_billable:true}})).ok()).toBeTruthy();
   const defaults=await (await request.get("/api/agent-model-bindings")).json();
   expect((await request.put("/api/agent-model-bindings",{data:{...defaults,pipeline_builder:model.id}})).ok()).toBeTruthy();
@@ -29,11 +31,25 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   await expect(page.getByText("Images saved on this server. No model has been called.",{exact:true})).toBeVisible();
   await page.getByLabel("Your message",{exact:true}).fill(kind==="classification" ? "按室内和室外给图片分类" : "Find cups, not bottles. Draw a tight box around each cup.");
   await page.getByRole("button",{name:"Save message",exact:true}).click();
+  if(humanSchema){
+    await page.getByRole("button",{name:"Define labels myself · no LLM needed",exact:true}).click();
+    await page.getByLabel("Output type",{exact:true}).selectOption(kind==="bbox"?"bounding_box":"classification");
+    await page.getByLabel("Labels · one per line",{exact:true}).fill(kind==="bbox"?"cup":"室内\n室外");
+    await page.getByRole("button",{name:"Save label draft without a model",exact:true}).click();
+    await expect(page.getByRole("region",{name:"Saved label draft",exact:true})).toContainText("Revision 1");
+    await page.reload();
+  }else{
   await page.getByRole("button",{name:"Prepare label proposal",exact:true}).click();
   await page.getByRole("checkbox",{name:/Allow this text request/}).check();
   await page.getByRole("button",{name:"Generate label proposal",exact:true}).click();
   await page.getByRole("button",{name:"Save as editable Schema Draft",exact:true}).click();
+  }
+  const builderPreviewPromise=page.waitForResponse(response=>response.url().includes("/builder-preview"));
   await page.getByRole("button",{name:"Review Builder authorization",exact:true}).click();
+  const builderPreview=await (await builderPreviewPromise).json();
+  if(humanSchema){
+    expect(builderPreview.previous_grant_id).toBeNull();expect(builderPreview.maximum_calls).toBe(8);expect(builderPreview.used_calls).toBe(0);
+  }
   await page.getByRole("checkbox",{name:/Allow this bounded Builder request/}).check();
   await page.getByRole("button",{name:"Build Pipeline Draft",exact:true}).click();
   await page.getByRole("button",{name:"Review sample authorization",exact:true}).click();
@@ -55,7 +71,17 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   const calls=await (await request.get(`${taskRoot}/calls`)).json();
   const initialReport = (await (await request.get(`/api/workflow-drafts/${envelope.draft_id}/sample-test?test_id=${envelope.request_id}`)).json()).sample_test.report;
   expect(initialReport.validation.valid).toBe(true);
-  expect(initialReport.samples[0].nodes.some((node:any)=>node.metadata.model === `e2e-conversation-${scenario}`)).toBe(true);
+  expect(initialReport.samples[0].nodes.some((node:any)=>node.metadata.model === `e2e-conversation-${transport}`)).toBe(true);
+  if(humanSchema){
+    const schemas=await (await request.get(`${taskRoot}/human-schema-drafts`)).json();
+    expect(schemas).toHaveLength(1);expect(schemas[0].source_call_id).toBeNull();
+    expect(calls.every((call:any)=>!call.evidence?.decision)).toBe(true);
+    const before=await (await request.get(`${taskRoot}/budget`)).json();
+    const resetAttempt=await request.post(`${taskRoot}/builder-operations`,{data:{selection:{...builderPreview.selection,operation_id:randomUUID()},previous_grant_id:null,scope_hash:builderPreview.scope_hash,expires_at:builderPreview.expires_at,allow_unknown_cost:true}});
+    expect(resetAttempt.ok()).toBe(false);
+    expect(await resetAttempt.text()).toContain("Task authorization changed");
+    expect(await (await request.get(`${taskRoot}/budget`)).json()).toEqual(before);
+  }
   const processingPreviewResponse = await request.get(`/api/projects/${project}/processing-preview?draft_id=${envelope.draft_id}&sample_test_id=${envelope.request_id}`);
   expect(processingPreviewResponse.ok(), await processingPreviewResponse.text()).toBe(true);
   const processingPreview = await processingPreviewResponse.json();

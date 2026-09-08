@@ -721,6 +721,71 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+        assert!(
+            app.optional_conversation_builder_budget("human-schema", conversation, task)
+                .unwrap()
+                .is_none()
+        );
+        let grant = annotagent_storage::ConversationCallGrant {
+            id: Uuid::new_v4(),
+            task_id: task,
+            scope_hash: "b".repeat(64),
+            maximum_calls: 8,
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+        };
+        assert!(
+            app.initial_conversation_builder_authorization("other-schema", other, &grant)
+                .is_err()
+        );
+        app.initial_conversation_builder_authorization("human-schema", conversation, &grant)
+            .unwrap();
+        app.initial_conversation_builder_authorization("human-schema", conversation, &grant)
+            .unwrap();
+        let owner = app.conversation_project_identity("human-schema").unwrap();
+        let call = Uuid::new_v4();
+        app.store
+            .reserve_conversation_call(&owner, task, call, &grant.scope_hash, &"c".repeat(64))
+            .unwrap();
+        app.store
+            .finish_conversation_call(
+                &owner,
+                task,
+                call,
+                annotagent_storage::ConversationCallStatus::Completed,
+                json!({"TEST":"budget evidence only"}),
+            )
+            .unwrap();
+        app.initial_conversation_builder_authorization("human-schema", conversation, &grant)
+            .unwrap();
+        assert_eq!(
+            app.conversation_builder_budget("human-schema", conversation, task)
+                .unwrap()
+                .used_calls,
+            1
+        );
+        let next = annotagent_storage::ConversationCallGrant {
+            id: Uuid::new_v4(),
+            maximum_calls: 16,
+            ..grant.clone()
+        };
+        assert!(
+            app.initial_conversation_builder_authorization("human-schema", conversation, &next)
+                .is_err()
+        );
+        app.advance_conversation_builder_authorization(
+            "human-schema",
+            conversation,
+            grant.id,
+            &next,
+        )
+        .unwrap();
+        app.initial_conversation_builder_authorization("human-schema", conversation, &grant)
+            .unwrap();
+        let budget = app
+            .conversation_builder_budget("human-schema", conversation, task)
+            .unwrap();
+        assert_eq!(budget.used_calls, 1);
+        assert_eq!(budget.current_grant, next);
     }
 
     struct TestProvider {

@@ -119,6 +119,15 @@ impl LocalApplication {
         conversation: Uuid,
         task: Uuid,
     ) -> Result<annotagent_storage::ConversationCallBudget> {
+        self.optional_conversation_builder_budget(project, conversation, task)?
+            .ok_or_else(|| anyhow!("Task authorization not found"))
+    }
+    pub fn optional_conversation_builder_budget(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+    ) -> Result<Option<annotagent_storage::ConversationCallBudget>> {
         if !self
             .conversation_tasks(project, conversation)?
             .iter()
@@ -127,9 +136,18 @@ impl LocalApplication {
             bail!("Task belongs to another conversation");
         }
         let owner = self.conversation_project_identity(project)?;
-        self.store
-            .conversation_call_budget(&owner, task)?
-            .ok_or_else(|| anyhow!("Task authorization not found"))
+        Ok(self.store.conversation_call_budget(&owner, task)?)
+    }
+    pub fn initial_conversation_builder_authorization(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        grant: &annotagent_storage::ConversationCallGrant,
+    ) -> Result<()> {
+        self.optional_conversation_builder_budget(project, conversation, grant.task_id)?;
+        let owner = self.conversation_project_identity(project)?;
+        self.store.authorize_conversation_calls(&owner, grant)?;
+        Ok(())
     }
     pub fn advance_conversation_builder_authorization(
         &self,

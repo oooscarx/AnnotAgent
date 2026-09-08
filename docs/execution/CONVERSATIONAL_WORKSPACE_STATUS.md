@@ -1563,3 +1563,42 @@ processing, Review and export journeys. Those latter scenarios still use explici
 TEST transports; they do not prove a human-authored Schema has completed the Builder/sample chain.
 Final type/output-summary and zero-authorized-budget checks: typecheck and both browser paths
 passed in `/tmp/annotagent-guided-e2e-9694`. Final desktop/classification-mobile screenshots inspected.
+
+### M2 continuation — human Schema to authorized Builder and real delivery (2026-09-08)
+
+End-to-end inspection found a real integration gap: Builder preview required an existing task
+grant, which had previously always come from the Schema model call. A legitimate human Schema
+therefore could not proceed. Builder now distinguishes preview, first explicit authorization,
+and continuation of an existing authorization. With no grant, preview reports zero previous
+spend and at most eight Builder calls; GET creates nothing. Only explicit consent creates the
+initial grant through the existing transactional call ledger. Subsequent phases retain the
+original cumulative rules. A repeated initial authorization cannot replace another grant or
+reset spend. Existing persisted operation receipts retain their original replay path. No fake
+Schema completion/grant, extra executor, new Provider or automatic authorization was added.
+
+Expanded the existing full sample/delivery E2E with human-classification and human-bbox variants,
+not a separate simplified pipeline. Each uploads a TEST image, manually saves semantics, reloads,
+confirms the zero-spend/eight-call Builder preview, authorizes the existing HTTP TEST planner,
+authorizes samples, receives terminal results, then follows the same conditional assistance,
+formal confirmation, Batch results, Review and native-export assertions as the model-authored
+scenarios. Both passed in `/tmp/annotagent-guided-e2e-10145` (29.4 seconds total). The tests reject
+a new request attempting to reuse `previous_grant_id:null` after authorization and verify that
+the complete task budget is unchanged. Model-call history contains no Schema proposal receipt.
+
+Application tests additionally cover absent initial budget, owner rejection, duplicate initial
+grant, one recorded call, rejected fresh initial grant, explicit cumulative continuation and
+retrying the old grant without changing current scope or spend. Five Schema tests and two call
+ledger tests passed; Server all-target/all-feature clippy, Web typecheck and 115 unit tests passed.
+Initial test run had a local `human` variable shadowing the scenario flag; renamed the flag.
+Clippy requested an explicit three-case authorization enum and Copy semantics; both corrected.
+These are TEST transport/control-flow results, not real model accuracy or human usability.
+No real Workspace, paid model, old key, push or remote change.
+Combined post-fix delivery regression in `/tmp/annotagent-guided-e2e-10367`: all five scenarios
+passed (1.6 minutes), including existing model-authored classification, bbox and uncertain
+classification. Inspected `sample-human-classification.png` and `sample-human-bbox.png` from the
+isolated browser. Their synthetic image/fixture predictions illustrate transport and editable
+terminal-result handling only: the fixture cup bbox is deliberately not real semantic evidence.
+Final targeted rerun `/tmp/annotagent-guided-e2e-10515`: both human delivery paths passed, including
+asserting the exact authorization-changed rejection for attempted budget reset (not merely any
+HTTP failure). Overall coordinator, Project-lifetime budgets, richer conversation references and
+the remaining whole-product acceptance matrix are still open.

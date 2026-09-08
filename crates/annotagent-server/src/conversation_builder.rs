@@ -19,12 +19,18 @@ pub(super) struct BuilderSelection {
 #[serde(deny_unknown_fields)]
 pub(super) struct BuilderConsent {
     selection: BuilderSelection,
-    previous_grant_id: uuid::Uuid,
+    previous_grant_id: Option<uuid::Uuid>,
     scope_hash: String,
     expires_at: DateTime<Utc>,
     allow_unknown_cost: bool,
     #[serde(default)]
     repair: Option<ConversationBuilderRepair>,
+}
+#[derive(Clone, Copy, PartialEq)]
+enum AuthorizationBase {
+    Preview,
+    Initial,
+    Existing(uuid::Uuid),
 }
 fn scope(
     state: &ServerState,
@@ -32,16 +38,19 @@ fn scope(
     conversation: uuid::Uuid,
     task: uuid::Uuid,
     selection: &BuilderSelection,
-    previous: Option<uuid::Uuid>,
+    previous: AuthorizationBase,
 ) -> ApiResult<(PipelineBuilderModelRuntime, Value)> {
     let mut budget = state
         .application
-        .conversation_builder_budget(project, conversation, task)
+        .optional_conversation_builder_budget(project, conversation, task)
         .map_err(ApiError::bad_request)?;
-    if budget.revoked {
+    if budget.as_ref().is_some_and(|budget| budget.revoked) {
         return Err(ApiError::bad_request("Task authorization was revoked"));
     }
-    if let Some(previous) = previous {
+    if let AuthorizationBase::Existing(previous) = previous {
+        let budget = budget
+            .as_mut()
+            .ok_or_else(|| ApiError::bad_request("Previous authorization not found"))?;
         if budget.current_grant.id != previous && budget.current_grant.id != selection.operation_id
         {
             return Err(ApiError::bad_request(
@@ -52,6 +61,19 @@ fn scope(
             .application
             .conversation_builder_grant(project, conversation, task, previous)
             .map_err(ApiError::bad_request)?;
+    }
+    if previous == AuthorizationBase::Initial {
+        if budget
+            .as_ref()
+            .is_some_and(|budget| budget.current_grant.id != selection.operation_id)
+        {
+            return Err(ApiError::bad_request(
+                "Task authorization changed; review the cumulative scope",
+            ));
+        }
+        // A retry after initial grant persistence uses its original zero-grant preview.
+        // Existing operation receipts were already handled by launch before reaching scope.
+        budget = None;
     }
     let schema = state
         .application
@@ -74,11 +96,13 @@ fn scope(
     config.max_retries = 0;
     config.max_output_tokens = config.max_output_tokens.min(4096);
     let maximum_calls = budget
-        .current_grant
-        .maximum_calls
+        .as_ref()
+        .map_or(0, |budget| budget.current_grant.maximum_calls)
         .saturating_add(8)
         .min(128);
-    if maximum_calls == budget.used_calls {
+    let used_calls = budget.as_ref().map_or(0, |budget| budget.used_calls);
+    let previous_id = budget.as_ref().map(|budget| budget.current_grant.id);
+    if maximum_calls == used_calls {
         return Err(ApiError::bad_request(
             "Task cumulative call limit exhausted",
         ));
@@ -96,10 +120,10 @@ fn scope(
         })
         .transpose()
         .map_err(ApiError::bad_request)?;
-    let hash=annotagent_image_tools::sha256(&serde_json::to_vec(&json!({"contract":"conversation-builder-v1","selection":canonical_selection,"repair":repair,"schema":schema,"model":selected.model,"provider":selected.provider,"config":config,"previous":budget.current_grant.id,"maximum_calls":maximum_calls,"images":0,"dry_runs":0})).map_err(ApiError::internal)?);
+    let hash=annotagent_image_tools::sha256(&serde_json::to_vec(&json!({"contract":"conversation-builder-v1","selection":canonical_selection,"repair":repair,"schema":schema,"model":selected.model,"provider":selected.provider,"config":config,"previous":previous_id,"maximum_calls":maximum_calls,"images":0,"dry_runs":0})).map_err(ApiError::internal)?);
     Ok((
         selected.clone(),
-        json!({"selection":BuilderSelection { model_id:Some(selected.model.id),..selection.clone() },"repair":repair,"previous_grant_id":budget.current_grant.id,"scope_hash":hash,"model_name":selected.model.display_name,"remote_model":selected.model.remote_model_id,"destination":selected.provider.endpoint_summary(),"used_calls":budget.used_calls,"maximum_calls":maximum_calls,"maximum_builder_calls":maximum_calls.saturating_sub(budget.used_calls).min(16),"image_count":0,"estimated_cost":null,"expires_at":Utc::now()+Duration::minutes(30),"data_scope":if repair.is_some() {"Saved goal, Schema, preserved Draft, scoped human feedback and terminal result metadata, and Registry descriptions. No image pixels."} else {"Saved goal, Schema and registered model/skill descriptions. No image pixels."},"operation":if repair.is_some() {"Repair this exact editable Draft only. No sample inference, publication or dataset Run."} else {"Build an editable Pipeline Draft only. No sample inference, publication or dataset Run."}}),
+        json!({"selection":BuilderSelection { model_id:Some(selected.model.id),..selection.clone() },"repair":repair,"previous_grant_id":previous_id,"scope_hash":hash,"model_name":selected.model.display_name,"remote_model":selected.model.remote_model_id,"destination":selected.provider.endpoint_summary(),"used_calls":used_calls,"maximum_calls":maximum_calls,"maximum_builder_calls":maximum_calls.saturating_sub(used_calls).min(16),"image_count":0,"estimated_cost":null,"expires_at":Utc::now()+Duration::minutes(30),"data_scope":if repair.is_some() {"Saved goal, Schema, preserved Draft, scoped human feedback and terminal result metadata, and Registry descriptions. No image pixels."} else {"Saved goal, Schema and registered model/skill descriptions. No image pixels."},"operation":if repair.is_some() {"Repair this exact editable Draft only. No sample inference, publication or dataset Run."} else {"Build an editable Pipeline Draft only. No sample inference, publication or dataset Run."}}),
     ))
 }
 pub(super) async fn preview(
@@ -107,7 +131,15 @@ pub(super) async fn preview(
     AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
     Query(selection): Query<BuilderSelection>,
 ) -> ApiResult<Json<Value>> {
-    scope(&state, &project, conversation, task, &selection, None).map(|(_, preview)| Json(preview))
+    scope(
+        &state,
+        &project,
+        conversation,
+        task,
+        &selection,
+        AuthorizationBase::Preview,
+    )
+    .map(|(_, preview)| Json(preview))
 }
 pub(super) async fn history(
     State(state): State<ServerState>,
@@ -179,10 +211,13 @@ pub(super) async fn launch(
         conversation,
         task,
         &consent.selection,
-        Some(consent.previous_grant_id),
+        consent
+            .previous_grant_id
+            .map_or(AuthorizationBase::Initial, AuthorizationBase::Existing),
     )?;
     if preview["scope_hash"] != consent.scope_hash
-        || preview["previous_grant_id"] != consent.previous_grant_id.to_string()
+        || preview["previous_grant_id"]
+            != serde_json::to_value(consent.previous_grant_id).map_err(ApiError::internal)?
         || preview["repair"] != serde_json::to_value(&consent.repair).map_err(ApiError::internal)?
     {
         return Err(ApiError::bad_request(
@@ -212,15 +247,17 @@ pub(super) async fn launch(
             .map_err(ApiError::internal)?,
         expires_at: consent.expires_at,
     };
-    state
-        .application
-        .advance_conversation_builder_authorization(
-            &project,
-            conversation,
-            consent.previous_grant_id,
-            &grant,
-        )
-        .map_err(ApiError::bad_request)?;
+    if let Some(previous) = consent.previous_grant_id {
+        state
+            .application
+            .advance_conversation_builder_authorization(&project, conversation, previous, &grant)
+            .map_err(ApiError::bad_request)?;
+    } else {
+        state
+            .application
+            .initial_conversation_builder_authorization(&project, conversation, &grant)
+            .map_err(ApiError::bad_request)?;
+    }
     let settings = state.settings.read().await.clone();
     let execution = ConversationBuilderExecution {
         conversation_id: conversation,
