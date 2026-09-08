@@ -5,8 +5,9 @@ import { ConversationSampleCard, type OpenConversationSample } from "./Conversat
 import type { ConversationBuilderConsent, ConversationBuilderItem, ConversationBuilderPreview, ConversationSchemaDraft } from "../types";
 
 /** Restoring history only reads. Model work requires a new, explicit consent. */
-export function ConversationBuilderCard({ project, conversation, task, schema, editing, onSample }: {
-  project: string; conversation: string; task: string; schema: ConversationSchemaDraft; editing: boolean; onSample: OpenConversationSample;
+export function ConversationBuilderCard({ project, conversation, task, schema, editing, onSample, repairRequest }: {
+  project: string; conversation: string; task: string; schema: Pick<ConversationSchemaDraft,"id"|"revision">; editing: boolean; onSample: OpenConversationSample;
+  repairRequest?: {id:string;draft:string};
 }) {
   const [item,setItem]=useState<ConversationBuilderItem>();
   const [preview,setPreview]=useState<ConversationBuilderPreview>();
@@ -23,10 +24,10 @@ export function ConversationBuilderCard({ project, conversation, task, schema, e
   useEffect(()=>{
     alive.current=true; const controller=new AbortController();
     void api.conversationBuilderHistory(project,conversation,task,controller.signal).then((history)=>{
-      if(!controller.signal.aborted) { setItem(history.items[0]);setReady(true); }
+      if(!controller.signal.aborted) { setItem(history.items.find(entry=>repairRequest ? entry.session?.working_draft?.draft_id===repairRequest.draft : entry.session?.working_draft?.build_mode.kind!=="repair_draft"));setReady(true); }
     }).catch((error:Error)=>{if(!controller.signal.aborted)setError(error.message);});
     return ()=>{alive.current=false;controller.abort();};
-  },[project,conversation,task]);
+  },[project,conversation,task,repairRequest?.draft]);
   useEffect(()=>{
     if(!running)return;
     const controller=new AbortController(); let fetching=false;
@@ -46,7 +47,7 @@ export function ConversationBuilderCard({ project, conversation, task, schema, e
   async function prepare() {
     if(pending.current || running || editing)return; pending.current=true;setBusy(true);setError("");
     try {
-      const result=await api.conversationBuilderPreview(project,conversation,task,{operation_id:crypto.randomUUID(),schema_id:schema.id,schema_revision:schema.revision});
+      const result=await api.conversationBuilderPreview(project,conversation,task,{operation_id:crypto.randomUUID(),schema_id:schema.id,schema_revision:schema.revision,repair_request_id:repairRequest?.id});
       if(alive.current){setPreview(result);setConfirmed(false);setCancelled(false);}
     } catch(error) {if(alive.current)setError((error as Error).message);}
     finally {pending.current=false;if(alive.current)setBusy(false);}
@@ -55,7 +56,7 @@ export function ConversationBuilderCard({ project, conversation, task, schema, e
     if(pending.current || !preview || !confirmed || editing)return;
     if(preview.selection.schema_revision!==schema.revision){setError("Labels changed. Review a fresh Builder authorization before continuing.");setPreview(undefined);return;}
     pending.current=true;setBusy(true);setError("");setItem(undefined);
-    frozen.current ??= {selection:preview.selection,scope_hash:preview.scope_hash,previous_grant_id:preview.previous_grant_id,expires_at:preview.expires_at,allow_unknown_cost:true};
+    frozen.current ??= {selection:preview.selection,repair:preview.repair,scope_hash:preview.scope_hash,previous_grant_id:preview.previous_grant_id,expires_at:preview.expires_at,allow_unknown_cost:true};
     try {
       const operation=await api.launchConversationBuilder(project,conversation,task,frozen.current);
       const history=await api.conversationBuilderHistory(project,conversation,task);
@@ -82,8 +83,9 @@ export function ConversationBuilderCard({ project, conversation, task, schema, e
   const session=item?.session;
   const draftId=item?.operation.evidence?.draft_id ?? session?.working_draft?.draft_id;
   const builtRevision=preview?.selection.schema_revision ?? item?.schema_revision ?? item?.operation.evidence?.schema_revision;
-  return <section className="conversation-builder-card" aria-label="Build annotation pipeline">
-    <h3>Build the annotation plan</h3>
+  return <section className="conversation-builder-card" aria-label={repairRequest ? "Repair annotation pipeline" : "Build annotation pipeline"}>
+    <h3>{repairRequest ? "Revise the plan from your correction" : "Build the annotation plan"}</h3>
+    {repairRequest && <p>Your saved correction is evidence for revising this plan, not proof of improved accuracy. The original plan remains unchanged.</p>}
     <p>{builtRevision ? `This operation uses Schema revision ${builtRevision}.` : `A new build will use saved labels at revision ${schema.revision}.`} This step builds a Draft; it does not test images or publish.</p>
     {builtRevision && builtRevision!==schema.revision && <p role="status">Labels are now revision {schema.revision}; this saved operation has not been rebuilt for those changes.</p>}
     {!running && !preview && <button disabled={!ready || busy || editing} onClick={()=>void prepare()}>{item ? "Review another build request" : "Review Builder authorization"}</button>}

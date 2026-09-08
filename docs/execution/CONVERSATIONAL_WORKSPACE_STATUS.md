@@ -990,3 +990,36 @@ Application **98 passed / 1 billable ignored**; Server **36/36** existing regres
 passed; strict Application/Server Clippy and formatting/diff checks passed. New HTTP
 repair flow still needs dedicated browser coverage. No Live calls, real workspace
 mutation/restart, screenshot change for this increment, push or remote change.
+
+### Conversation repair card and separately authorized comparison sample (M3 increment)
+
+An opened Applied human request now restores its frozen Sample Schema into the existing
+Builder card, scoped to the prepared repair Draft. It previews the actual repair text
+data destination/allowance, submits the sealed repair binding, and shows the saved
+Builder outcome plus the existing sample authorization card. Initial-build history
+and repair-copy history are selected separately. Reads/mount do not start inference;
+dirty sample edits disable repair. Requests and the original sample remain accessible.
+Preparation-status wording is historical: it no longer falsely says that no later
+model repair/test occurred after the local copy was created.
+
+Browser evidence uses the actual Rust server and explicitly TEST HTTP transport in
+`/tmp/annotagent-guided-e2e-95181`: classification and bbox **2/2**, 17.6s. Each covers
+goal/Schema/Builder/sample, editable correction with lost-response retry, local resume,
+explicit repair consent, <=8 additional text calls, exact copy and RepairDraft mode,
+duplicate repair POST without extra calls, and reload restoration. Each then separately
+authorizes a new sample of the repaired copy, opens its new Sample Test ID in the same
+workspace, and reloads without changing call history. No quality improvement is claimed.
+The first attempted E2E exposed a wrong test listener URL (not a product failure); it
+was corrected to the existing builder-operations endpoint before the passing runs.
+
+Screenshots inspected: `conversational-workspace/repair-bbox.png` and
+`conversational-workspace/repair-classification.png`. Synthetic source pixels and TEST
+labels are intentionally not real semantic accuracy evidence. Web typecheck and
+**107/107** unit tests passed; production build passed with its existing >500kB chunk
+warning. No Rust change in this increment. No live Provider, real workspace mutation,
+push or remote change; no real-user usability test.
+
+Remaining: automatic request generation/notification, broader request kinds, early
+operation-reservation restoration races, concise conversation layout, origin context
+when opening a comparison sample, full processing/Review/export and M4 verification.
+The workspace remains opt-in; this milestone is not the complete default experience.

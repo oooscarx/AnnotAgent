@@ -5,6 +5,7 @@ import type { ConversationMessage, ConversationMessageInput, ImageItem, ProjectS
 import "./conversation-workspace.css";
 import { ConversationSchemaCard } from "./ConversationSchemaCard";
 import { ConversationSampleCanvas } from "./ConversationSampleCanvas";
+import { ConversationRepairCard } from "./ConversationRepairCard";
 import type { HumanRequest } from "../conversation-human-api";
 
 /** The journal and image importer share the existing Project; neither starts inference. */
@@ -27,6 +28,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   const [requests,setRequests]=useState<HumanRequest[]>([]);
   const [requestsReady,setRequestsReady]=useState(false);
   const [requestRefresh,setRequestRefresh]=useState(0);
+  const [repairEditing,setRepairEditing]=useState(false);
   const activeRequest=requests.find(value=>value.input.id===humanRequestId && value.input.task_id===taskId);
   useEffect(()=>{
     const controller=new AbortController();setRequestsReady(false);
@@ -58,7 +60,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   const unsent = useRef("");
   const schemaDirty = useRef(false);
   const sampleDirty = useRef(false);
-  const sampleDirtyChange = useCallback((dirty:boolean)=>{sampleDirty.current=dirty;},[]);
+  const sampleDirtyChange = useCallback((dirty:boolean)=>{sampleDirty.current=dirty;setRepairEditing(dirty);},[]);
   const schemaDirtyChange = useCallback((dirty: boolean) => { schemaDirty.current = dirty; }, []);
   const frozen = useRef<ConversationMessageInput | undefined>(undefined);
   const alive = useRef(true);
@@ -144,7 +146,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
       <section className="conversation-panel" aria-label="Project conversation">
         <h2>What would you like to annotate?</h2>
         <p className="muted">Describe your goal before or after uploading images.</p>
-        <p className="conversation-development-note">Workspace integration in progress: label proposals, Pipeline Drafts, sample tests and human corrections share saved server state. Dataset processing and model-based repair are not connected here yet.</p>
+        <p className="conversation-development-note">Workspace integration in progress: label proposals, Pipeline Drafts, sample tests, human corrections and authorized plan revisions share saved server state. Dataset processing is not connected here yet.</p>
         <ol className="conversation-messages" aria-label="Saved messages">
           {messages.map((message) => <li key={message.input.id}><p>{message.input.text}</p>{message.input.image && <button onClick={() => {
             const reference = message.input.image;
@@ -153,8 +155,9 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
             openImage(image.image_id);
           }}>Referenced image · {images.find((image) => image.image_id === message.input.image?.image_id)?.name ?? message.input.image.image_id}</button>}<small>Saved · {message.sequence}</small></li>)}
         </ol>
-        {conversation && <section aria-label="Human requests"><h3>Requests for your help</h3><button onClick={()=>{if(sampleDirty.current){setError("Save or undo this correction before refreshing requests.");return;}setRequestRefresh(value=>value+1);}}>Refresh requests</button>{requests.map(value=><article key={value.input.id} className="conversation-consent"><p>{value.input.question}</p><p>{value.resume_draft_id ? "Revision Draft prepared · not rebuilt or tested" : value.status==="answered" ? "Correction saved · awaiting task continuation" : value.status}</p>{value.resume_error && <p role="alert">Correction saved, but Draft preparation failed: {value.resume_error}</p>}<button onClick={()=>void openRequest(value)}>Open requested result</button>{value.status==="answered" && <button onClick={()=>void retryContinuation(value)}>Retry Draft preparation</button>}{value.resume_draft_id && <button onClick={()=>onNavigate(projectBuildPath(project.id,"pipeline",{draftId:value.resume_draft_id!}))}>Inspect revision Draft</button>}{value.status==="pending" && <button onClick={()=>void cancelRequest(value)}>Cancel request</button>}</article>)}</section>}
+        {conversation && <section aria-label="Human requests"><h3>Requests for your help</h3><button onClick={()=>{if(sampleDirty.current){setError("Save or undo this correction before refreshing requests.");return;}setRequestRefresh(value=>value+1);}}>Refresh requests</button>{requests.map(value=><article key={value.input.id} className="conversation-consent"><p>{value.input.question}</p><p>{value.resume_draft_id ? "Correction saved · revision Draft available" : value.status==="answered" ? "Correction saved · awaiting task continuation" : value.status}</p>{value.resume_error && <p role="alert">Correction saved, but Draft preparation failed: {value.resume_error}</p>}<button onClick={()=>void openRequest(value)}>Open requested result</button>{value.status==="answered" && <button onClick={()=>void retryContinuation(value)}>Retry Draft preparation</button>}{value.resume_draft_id && <button onClick={()=>onNavigate(projectBuildPath(project.id,"pipeline",{draftId:value.resume_draft_id!}))}>Inspect revision Draft</button>}{value.status==="pending" && <button onClick={()=>void cancelRequest(value)}>Cancel request</button>}</article>)}</section>}
         {conversation && messages[0] && <ConversationSchemaCard key={`${conversation}:${messages[0].input.id}`} project={project.id} conversation={conversation} message={messages[0].input.id} onDirtyChange={schemaDirtyChange} onSample={(draft,test,image)=>void openSample(draft,test,image)} />}
+        {activeRequest?.status==="applied" && activeRequest.resume_draft_id && <ConversationRepairCard key={activeRequest.input.id} project={project.id} request={activeRequest} editing={repairEditing} onSample={(draft,test,image)=>void openSample(draft,test,image)} />}
         <form onSubmit={(event) => { event.preventDefault(); void send(); }} className="conversation-composer">
           <label htmlFor="conversation-message">Your message</label>
           <textarea id="conversation-message" value={text} disabled={busy || Boolean(frozen.current)} rows={3} placeholder="Find cups, but not bottles" onChange={(event) => { unsent.current = event.target.value; setText(event.target.value); }} />

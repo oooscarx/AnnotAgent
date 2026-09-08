@@ -1879,13 +1879,16 @@ export interface ConversationSchemaDraft {
     attributes: Record<string, { type: string; required: boolean; values: string[] }>;
   } };
 }
-export interface ConversationBuilderSelection { operation_id: string; schema_id: string; schema_revision: number; model_id?: string }
+export interface ConversationBuilderRepair { request_id:string; draft_id:string; revision:number; content_hash:string }
+export interface ConversationBuilderSelection { operation_id: string; schema_id: string; schema_revision: number; model_id?: string; repair_request_id?:string }
 export interface ConversationBuilderPreview {
+  repair?: ConversationBuilderRepair | null;
   selection: ConversationBuilderSelection; previous_grant_id: string; scope_hash: string; expires_at: string;
   model_name: string; remote_model: string; destination: string; maximum_builder_calls: number; maximum_calls: number;
   used_calls: number; image_count: number; estimated_cost: null; data_scope: string; operation: string;
 }
 export interface ConversationBuilderConsent {
+  repair?: ConversationBuilderRepair | null;
   selection: ConversationBuilderSelection; previous_grant_id: string; scope_hash: string; expires_at: string; allow_unknown_cost: boolean;
 }
 export interface ConversationBuilderOperation {
