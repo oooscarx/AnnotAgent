@@ -5,6 +5,7 @@ export type SampleOperation = {
   error?: string | null;
 };
 export type JourneyConsent = {
+  continue_after_clarification?:boolean;
   schema_proposal?:import("./types").ConversationSchemaAuthorization;
   id:string; task_id:string; builder_operation_id:string; sample_operation_id:string;
   builder_model_id:string; previous_grant_id:string|null; builder_scope_hash:string;
@@ -16,6 +17,7 @@ export type JourneyConsent = {
 export type JourneyStatus = {
   record:{consent:JourneyConsent;resolved_consent?:JourneyConsent|null;revoked:boolean;sample:{draft_id:string;draft_revision:number}|null};
   schema?:import("./types").ConversationCallReceipt|null;
+  clarification?:{schema_draft_id:string|null;status:string}|null;
   builder:import("./types").ConversationBuilderOperation|null; sample:SampleOperation|null;
   dispatch:{attempt_id:string;status:"running"|"settled"|"interrupted";error:string|null}|null;
 };
@@ -606,7 +608,7 @@ export const api = {
   conversationSchemaDraftForCall: (project: string, conversation: string, task: string, call: string, signal?: AbortSignal) => request<import("./types").ConversationSchemaDraft | null>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/tasks/${encodeURIComponent(task)}/calls/${encodeURIComponent(call)}/schema-draft`, { signal }),
   saveConversationSchemaDraft: (project: string, conversation: string, task: string, call: string) => request<import("./types").ConversationSchemaDraft>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/tasks/${encodeURIComponent(task)}/calls/${encodeURIComponent(call)}/schema-draft`, { method: "POST" }),
   humanConversationSchemas: (project: string, conversation: string, task: string, signal?: AbortSignal) => request<import("./types").ConversationSchemaDraft[]>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/tasks/${encodeURIComponent(task)}/human-schema-drafts`, { signal }),
-  saveHumanConversationSchema: (project: string, conversation: string, task: string, input: {request_id: string; decision: unknown; clarification?:{call_id:string;expected_schema_revision:string}}) => request<import("./types").ConversationSchemaDraft>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/tasks/${encodeURIComponent(task)}/human-schema-drafts`, {method:"POST",body:JSON.stringify(input)}),
+  saveHumanConversationSchema: (project: string, conversation: string, task: string, input: {request_id: string; decision: unknown; journey_consent_id?:string; clarification?:{call_id:string;expected_schema_revision:string}}) => request<import("./types").ConversationSchemaDraft & {journey_resume?:{consent_id:string;error?:string}}>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/tasks/${encodeURIComponent(task)}/human-schema-drafts`, {method:"POST",body:JSON.stringify(input)}),
   conversationSchemaDraft: (project: string, draft: string, signal?: AbortSignal) => request<import("./types").ConversationSchemaDraft>(`/api/projects/${encodeURIComponent(project)}/conversation-schema-drafts/${encodeURIComponent(draft)}`, {signal}),
   editConversationSchemaDraft: (project: string, draft: string, input: { request_id: string; expected_revision: number; decision: unknown }) => request<import("./types").ConversationSchemaDraft>(`/api/projects/${encodeURIComponent(project)}/conversation-schema-drafts/${encodeURIComponent(draft)}`, { method: "POST", body: JSON.stringify(input) }),
   conversationSchemaCalls: (project: string, conversation: string, task: string, signal?: AbortSignal) => request<import("./types").ConversationCallReceipt[]>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/tasks/${encodeURIComponent(task)}/calls`, { signal }),

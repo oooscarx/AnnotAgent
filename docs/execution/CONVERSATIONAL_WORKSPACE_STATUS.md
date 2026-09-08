@@ -1,6 +1,6 @@
 # Conversational Annotation Workspace — execution record
 
-## Current checkpoint (after `7a5a87f`, with initial-goal journey UI; not a completion declaration)
+## Current checkpoint (after `ee18c33`, with bounded clarification continuation; not a completion declaration)
 
 The default Project entry now uses the persisted conversation/image workspace. Explicit goal
 selection survives re-entry, sample candidate references are frozen, and clarification/correction
@@ -16,8 +16,11 @@ background dispatch and the existing Schema/Builder/Sample services. Valid first
 continue to samples without a second phase consent. Refresh restores owned work;
 explicit phase-by-phase building and manual labels remain available.
 
-Still incomplete: continuing the original bounded authorization after a human clarification
-answer (currently requires a fresh preview from saved labels); automatic interpretation of scoped conversational feedback;
+New initial-goal consent explicitly allows continuing after its linked human clarification
+answer within the original scope. Older consent does not acquire that permission. Answers save
+before continuation admission; model/scope changes stop inference without discarding the answer.
+
+Still incomplete: automatic interpretation of scoped conversational feedback;
 the other structured visual/setup request kinds; complete scope-change/Schema patch and stop-text
 semantics; large-history performance and the remaining accessibility/context restoration audit.
 Schema setup and repair phase cards still require explicit intermediate actions. Live model quality, native
@@ -2857,3 +2860,61 @@ and the existing complete Schema authorization/budget/recovery regression. The l
 cancelled status after refresh and absence of a new proposal action. No user Workspace access,
 new inference authorization, push or remote changes. Other regenerated historical screenshots
 remain unstaged. Goal remains active; this is an initial-goal UI milestone, not final acceptance.
+
+### M2 clarification continuation — same bounded consent, linked human semantics
+
+New initial envelopes explicitly opt into `continue_after_clarification`; deserializing old
+envelopes defaults to false and omits that field on serialization. The consent UI explains that
+saving a clarification answer may continue only within the frozen images/models, original
+call limits and expiry. No budget renewal, model substitution or second Schema model call.
+
+Human answer submission can carry that exact journey ID. The server checks its owned task and
+original clarification call, persists the existing human Schema/answer first, and only then
+requests background continuation. A failed continuation admission returns a saved Schema plus
+a distinct continuation error; it does not falsely report a failed label save. Unknown response
+retry keeps the same human request, journey, Builder and sample IDs. The old answer-only API and
+phase-by-phase flow remain supported; they do not implicitly gain new authorization.
+
+Resolution accepts only revision one of the human Schema linked to the authorized completed
+clarification, not another Schema in the same task or an edited answer. The original goal,
+Registry binding snapshots, image bytes, scope hash and expiry are rechecked before inference.
+Scope changes remain blocked after the answer is safely saved. GET, refresh and restart do not
+start continuation. Schema-only consent from an older envelope cannot queue the new operation.
+
+Migration 43 records an explicit answer-continuation intent. This is needed for the narrow race
+where the answer arrives while the original worker is settling its clarification result. Worker
+settlement checks the intent and unresolved Schema seal in one transaction: either it retains
+the same bounded worker, or the answer handler sees a settled dispatch and claims the next
+attempt. Stale workers cannot settle a new attempt. No polling loop repeats a failed/unknown
+model call: errors settle normally, resolved Schema ends this continuation check, and all child
+IDs still use the existing idempotent receipts. Restart marks dispatch interrupted and does not
+consume queued intent without an explicit action. Answer routes retain expensive-action
+admission, CSRF/ownership and concurrency limits; they cannot use the Stop control bypass.
+
+Tests and evidence:
+
+- Storage resolution coverage: explicit opt-in, unchanged legacy serialization, wrong same-task
+  Schema rejection, exact answer linkage, edited revision rejection, revoked permission,
+  immutable replay, and the answer/settlement race including a stale attempt. All seven focused
+  journey tests passed; subsequent full Storage tests passed (69 unit + 16 integration).
+- Application, Storage and Server all-feature tests passed; the existing paid Provider smoke
+  remains ignored. Final Server run passed 41 tests, including new expensive-route coverage.
+  Server all-target/all-feature Clippy and final format/diff checks passed. Initial Clippy
+  reported the serde reference predicate and redundant `continue`; both were corrected.
+- Web typecheck, 123 unit tests and production build passed; known chunk-size warning remains.
+- `/tmp/annotagent-guided-e2e-43240`: 9/9 initial-journey cases, including automatic linked
+  continuation, legacy denial and a disabled model that preserves labels but blocks inference.
+- `/tmp/annotagent-guided-e2e-44069`: 11/11 (1.8 min), including old answer/cancel flows and a
+  browser-aborted saved-answer response followed by exact retry. No additional journey POST
+  comes from refresh/navigation, consent remains byte-equivalent JSON, and there is one Schema
+  receipt. Same-answer replay adds no model receipts.
+- `/tmp/annotagent-guided-e2e-44666`: final UI clarification rerun passed after screenshot framing
+  adjustment. `initial-clarification-continuation.png` shows the real saved-scope explanation and
+  answer controls; `initial-clarification-result.png` shows the existing terminal result canvas.
+  The answer-panel capture uses a 1280×1100 viewport to avoid sticky-header occlusion; result
+  uses 1280×800. This is not native 200% zoom or novice-usability evidence.
+
+Only isolated TEST HTTP models and synthetic data were used. No user data changes, old API keys,
+real inference, real Workspace restart/migration, push or remote edits. No claim of Live model
+quality or human usability. Scoped conversational-feedback interpretation and the remaining
+objective items are still incomplete; goal stays active.

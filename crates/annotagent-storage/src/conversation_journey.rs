@@ -31,6 +31,10 @@ pub struct ConversationJourneyConsent {
     /// Nil `schema_id` and revision zero mean unresolved, never a fake Schema.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema_proposal: Option<crate::ConversationSchemaAuthorization>,
+    /// Only newly acknowledged envelopes may resume after a linked human answer.
+    /// Older saved consents never acquire this permission through deserialization.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub continue_after_clarification: bool,
     pub id: Uuid,
     pub task_id: Uuid,
     pub builder_operation_id: Uuid,
@@ -84,6 +88,10 @@ impl ConversationJourneyRecord {
 
 fn invalid(message: &str) -> StorageError {
     StorageError::InvalidConversation(message.into())
+}
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde skip predicate requires a reference.
+fn is_false(value: &bool) -> bool {
+    !value
 }
 fn digest(value: &str) -> bool {
     value.len() == 64
@@ -274,15 +282,40 @@ impl SqliteStore {
         })
     }
     /// Attempt CAS prevents an obsolete worker from settling a newer dispatch.
+    /// True retains the worker for an explicitly queued answer that arrived
+    /// during settlement. Checking and settlement share one transaction.
     pub fn finish_conversation_journey_dispatch(
         &self,
         id: Uuid,
         attempt: Uuid,
         error: Option<&str>,
-    ) -> Result<(), StorageError> {
+    ) -> Result<bool, StorageError> {
         self.with_connection(|db| {
-            db.execute("UPDATE conversation_journey_dispatch SET status='settled',error=?3,updated_at=?4 WHERE consent_id=?1 AND attempt_id=?2 AND status='running'",params![id.to_string(),attempt.to_string(),error,Utc::now().to_rfc3339()])?;
-            Ok(())
+            let tx=db.unchecked_transaction()?;
+            let resume:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_journey_dispatch d JOIN conversation_journey_answer_continuations a ON a.consent_id=d.consent_id JOIN conversation_journey_consents c ON c.id=d.consent_id WHERE d.consent_id=?1 AND d.attempt_id=?2 AND d.status='running' AND c.revoked=0 AND NOT EXISTS(SELECT 1 FROM conversation_journey_schema_resolution r WHERE r.consent_id=d.consent_id))",params![id.to_string(),attempt.to_string()],|row|row.get(0))?;
+            if resume && error.is_none() {tx.commit()?;return Ok(true);}
+            tx.execute("UPDATE conversation_journey_dispatch SET status='settled',error=?3,updated_at=?4 WHERE consent_id=?1 AND attempt_id=?2 AND status='running'",params![id.to_string(),attempt.to_string(),error,Utc::now().to_rfc3339()])?;
+            tx.commit()?;Ok(false)
+        })
+    }
+    pub fn queue_conversation_journey_answer(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+        schema: Uuid,
+    ) -> Result<(), StorageError> {
+        self.with_connection(|db|{
+            let tx=db.unchecked_transaction()?;
+            owned(&tx,project,conversation,task)?;
+            let saved=read(&tx,task,id)?.ok_or_else(||invalid("Journey consent not found"))?;
+            if saved.revoked || saved.consent.expires_at<=Utc::now() || !saved.consent.continue_after_clarification {return Err(invalid("Answer saved; journey permission is absent, expired or revoked"));}
+            let proposal=saved.consent.schema_proposal.as_ref().ok_or_else(||invalid("Journey has no initial clarification"))?;
+            let question=crate::conversation_clarifications::read(&tx,project,task,proposal.call_id)?;
+            if question.status!="applied" || question.schema_draft_id!=Some(schema) {return Err(invalid("Journey continuation requires its exact saved clarification answer"));}
+            tx.execute("INSERT OR IGNORE INTO conversation_journey_answer_continuations(consent_id,schema_draft_id) VALUES(?1,?2)",params![id.to_string(),schema.to_string()])?;
+            tx.commit()?;Ok(())
         })
     }
     pub fn recover_conversation_journey_dispatches(&self) -> Result<(), StorageError> {
@@ -357,7 +390,13 @@ impl SqliteStore {
             expected.schema_digest.clone_from(&resolved.schema_digest);expected.builder_scope_hash.clone_from(&resolved.builder_scope_hash);
             expected.previous_grant_id=Some(proposal.call_id);
             if expected!=*resolved || resolved.schema_revision!=1{return Err(invalid("Schema resolution expanded the original journey scope"));}
-            let definition:Option<String>=tx.query_row("SELECT r.definition_json FROM conversation_schema_drafts d JOIN conversation_schema_revisions r ON r.draft_id=d.id JOIN conversation_model_calls c ON c.id=d.source_call_id WHERE d.id=?1 AND d.task_id=?2 AND d.source_call_id=?3 AND r.revision=1 AND c.status='completed' AND json_extract(c.evidence_json,'$.decision.Ok.decision')='draft'",params![resolved.schema_id.to_string(),resolved.task_id.to_string(),proposal.call_id.to_string()],|row|row.get(0)).optional()?;
+            let mut definition:Option<String>=tx.query_row("SELECT r.definition_json FROM conversation_schema_drafts d JOIN conversation_schema_revisions r ON r.draft_id=d.id JOIN conversation_model_calls c ON c.id=d.source_call_id WHERE d.id=?1 AND d.task_id=?2 AND d.source_call_id=?3 AND r.revision=1 AND c.status='completed' AND json_extract(c.evidence_json,'$.decision.Ok.decision')='draft'",params![resolved.schema_id.to_string(),resolved.task_id.to_string(),proposal.call_id.to_string()],|row|row.get(0)).optional()?;
+            if definition.is_none() && saved.consent.continue_after_clarification {
+                let question=crate::conversation_clarifications::read(&tx,project,resolved.task_id,proposal.call_id)?;
+                if question.status=="applied" && question.schema_draft_id==Some(resolved.schema_id) {
+                    definition=tx.query_row("SELECT r.definition_json FROM conversation_schema_revisions r JOIN conversation_schema_drafts d ON d.id=r.draft_id WHERE d.id=?1 AND d.task_id=?2 AND r.revision=1 AND (SELECT MAX(revision) FROM conversation_schema_revisions WHERE draft_id=d.id)=1",params![resolved.schema_id.to_string(),resolved.task_id.to_string()],|row|row.get(0)).optional()?;
+                }
+            }
             if definition.is_none_or(|value|annotagent_image_tools::sha256(value.as_bytes())!=resolved.schema_digest){return Err(invalid("Schema is not the authorized call's valid initial Draft"));}
             tx.execute("INSERT INTO conversation_journey_schema_resolution(consent_id,resolved_json) VALUES(?1,?2)",params![resolved.id.to_string(),serde_json::to_string(resolved)?])?;
             tx.commit()?;saved.resolved_consent=Some(resolved.clone());Ok(saved)
@@ -519,6 +558,7 @@ mod tests {
             .create_human_conversation_schema_draft(&project, task.id, Uuid::new_v4(), &definition)
             .unwrap();
         let consent = ConversationJourneyConsent {
+            continue_after_clarification: false,
             schema_proposal: None,
             id: Uuid::new_v4(),
             task_id: task.id,
@@ -564,6 +604,182 @@ mod tests {
             maximum_calls: 10,
         };
         (project, conversation, consent, sample)
+    }
+
+    #[test]
+    fn clarification_resolution_requires_opt_in_link_and_unedited_answer() {
+        for case in ["allowed", "legacy", "edited", "revoked"] {
+            let dir = tempfile::tempdir().unwrap();
+            let store = SqliteStore::open(dir.path().join("TEST-answer.db")).unwrap();
+            let (project, conversation, human, _) = setup(&store);
+            let call = Uuid::new_v4();
+            let mut initial = human.clone();
+            initial.continue_after_clarification = case != "legacy";
+            initial.schema_proposal = Some(crate::ConversationSchemaAuthorization {
+                call_id: call,
+                model_id: human.builder_model_id.unwrap(),
+                scope_hash: human.builder_scope_hash.clone(),
+                expires_at: human.expires_at,
+                allow_unknown_cost: true,
+            });
+            initial.schema_id = Uuid::nil();
+            initial.schema_revision = 0;
+            initial.schema_digest = "a".repeat(64);
+            store
+                .save_conversation_journey(&project, conversation, &initial)
+                .unwrap();
+            store
+                .authorize_conversation_calls(
+                    &project,
+                    &crate::ConversationCallGrant {
+                        id: call,
+                        task_id: initial.task_id,
+                        scope_hash: initial.builder_scope_hash.clone(),
+                        maximum_calls: 1,
+                        expires_at: initial.expires_at,
+                    },
+                )
+                .unwrap();
+            store
+                .reserve_conversation_call(
+                    &project,
+                    initial.task_id,
+                    call,
+                    &initial.builder_scope_hash,
+                    &"c".repeat(64),
+                )
+                .unwrap();
+            store.finish_conversation_call(&project, initial.task_id, call, crate::ConversationCallStatus::Completed,
+                serde_json::json!({"decision":{"Ok":{"decision":"clarify","question":"TEST labels?"}}})).unwrap();
+            let mut resolved = human.clone();
+            resolved.continue_after_clarification = initial.continue_after_clarification;
+            resolved.previous_grant_id = Some(call);
+            // A valid human Schema in the same task is insufficient without the answer link.
+            assert!(
+                store
+                    .resolve_conversation_journey_schema(&project, conversation, &resolved)
+                    .is_err()
+            );
+            let definition = store
+                .conversation_schema_draft(&project, human.schema_id, None)
+                .unwrap()
+                .definition;
+            let answer = store
+                .create_human_schema_with_clarification(
+                    &project,
+                    initial.task_id,
+                    Uuid::new_v4(),
+                    &definition,
+                    Some(&crate::SchemaClarificationRef {
+                        call_id: call,
+                        expected_schema_revision: "a".repeat(64),
+                    }),
+                )
+                .unwrap();
+            resolved.schema_id = answer.id;
+            let attempt = Uuid::new_v4();
+            if case == "allowed" {
+                store
+                    .claim_conversation_journey_dispatch(
+                        &project,
+                        conversation,
+                        initial.task_id,
+                        initial.id,
+                        attempt,
+                    )
+                    .unwrap();
+                assert!(
+                    store
+                        .queue_conversation_journey_answer(
+                            &project,
+                            conversation,
+                            initial.task_id,
+                            initial.id,
+                            human.schema_id
+                        )
+                        .is_err()
+                );
+                store
+                    .queue_conversation_journey_answer(
+                        &project,
+                        conversation,
+                        initial.task_id,
+                        initial.id,
+                        answer.id,
+                    )
+                    .unwrap();
+                // An answer queued while the original worker is settling retains
+                // that worker. A stale worker cannot consume or settle it.
+                assert!(
+                    !store
+                        .finish_conversation_journey_dispatch(initial.id, Uuid::new_v4(), None)
+                        .unwrap()
+                );
+                assert!(
+                    store
+                        .finish_conversation_journey_dispatch(initial.id, attempt, None)
+                        .unwrap()
+                );
+            }
+            if case == "edited" {
+                store
+                    .revise_conversation_schema_draft(
+                        &project,
+                        answer.id,
+                        Uuid::new_v4(),
+                        1,
+                        &definition,
+                    )
+                    .unwrap();
+            }
+            if case == "revoked" {
+                store
+                    .revoke_conversation_journey(
+                        &project,
+                        conversation,
+                        initial.task_id,
+                        initial.id,
+                    )
+                    .unwrap();
+            }
+            let result =
+                store.resolve_conversation_journey_schema(&project, conversation, &resolved);
+            assert_eq!(result.is_ok(), case == "allowed", "{case}: {result:?}");
+            if let Ok(saved) = result {
+                assert_eq!(saved.consent, initial);
+                assert_eq!(saved.effective_consent(), &resolved);
+                assert_eq!(
+                    store
+                        .resolve_conversation_journey_schema(&project, conversation, &resolved)
+                        .unwrap(),
+                    saved
+                );
+                assert!(
+                    !store
+                        .finish_conversation_journey_dispatch(initial.id, attempt, None)
+                        .unwrap()
+                );
+                assert_eq!(
+                    store
+                        .conversation_journey_dispatch(
+                            &project,
+                            conversation,
+                            initial.task_id,
+                            initial.id
+                        )
+                        .unwrap()
+                        .unwrap()["status"],
+                    "settled"
+                );
+            }
+            let legacy = serde_json::to_value(&human).unwrap();
+            assert!(legacy.get("continue_after_clarification").is_none());
+            assert!(
+                !serde_json::from_value::<ConversationJourneyConsent>(legacy)
+                    .unwrap()
+                    .continue_after_clarification
+            );
+        }
     }
 
     #[test]

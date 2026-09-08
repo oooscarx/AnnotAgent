@@ -82,6 +82,7 @@ pub(super) async fn preview(
             allow_unknown_cost: false,
         };
         let consent = ConversationJourneyConsent {
+            continue_after_clarification: true,
             schema_proposal: Some(proposal.clone()),
             id: selection.consent_id,
             task_id: task,
@@ -130,6 +131,7 @@ pub(super) async fn preview(
         AuthorizationBase::Preview,
     )?;
     let consent = ConversationJourneyConsent {
+        continue_after_clarification: false,
         schema_proposal: None,
         id: selection.consent_id,
         task_id: task,
@@ -370,26 +372,33 @@ pub(super) async fn execute(
         let worker_project = project.clone();
         tokio::spawn(async move {
             let _permit = permit;
-            let result = AssertUnwindSafe(Box::pin(advance(
-                worker_state.clone(),
-                worker_project,
-                conversation,
-                task,
-                id,
-            )))
-            .catch_unwind()
-            .await;
-            let error = match result {
+            loop {
+                let result = AssertUnwindSafe(Box::pin(advance(
+                    worker_state.clone(),
+                    worker_project.clone(),
+                    conversation,
+                    task,
+                    id,
+                )))
+                .catch_unwind()
+                .await;
+                let error = match result {
                 Ok(Ok(_)) => None,
                 Ok(Err(error)) => Some(error.body["error"].as_str().unwrap_or("Journey execution failed; child receipts remain saved.").to_owned()),
                 Err(_) => Some("Journey worker stopped unexpectedly. Saved child receipts remain; no automatic retry was started.".to_owned()),
             };
-            if let Err(error) = worker_state
-                .application
-                .store()
-                .finish_conversation_journey_dispatch(id, attempt, error.as_deref())
-            {
-                eprintln!("could not settle journey dispatch {id}: {error}");
+                match worker_state
+                    .application
+                    .store()
+                    .finish_conversation_journey_dispatch(id, attempt, error.as_deref())
+                {
+                    Ok(true) => {}
+                    Ok(false) => break,
+                    Err(error) => {
+                        eprintln!("could not settle journey dispatch {id}: {error}");
+                        break;
+                    }
+                }
             }
         });
     }
@@ -448,17 +457,46 @@ async fn advance(
                     .0
                 }
             };
-            if receipt.status != annotagent_storage::ConversationCallStatus::Completed
-                || serde_json::to_value(&receipt).map_err(ApiError::internal)?["evidence"]["decision"]
-                    ["Ok"]["decision"]
-                    != "draft"
-            {
+            if receipt.status != annotagent_storage::ConversationCallStatus::Completed {
                 return status(State(state), AxumPath((project, conversation, task, id))).await;
             }
-            let schema = state
-                .application
-                .save_conversation_schema_draft(&project, conversation, task, proposal.call_id)
-                .map_err(ApiError::bad_request)?;
+            let decision = serde_json::to_value(&receipt).map_err(ApiError::internal)?["evidence"]
+                ["decision"]["Ok"]["decision"]
+                .as_str()
+                .unwrap_or("")
+                .to_owned();
+            let schema = match decision.as_str() {
+                "draft" => state
+                    .application
+                    .save_conversation_schema_draft(&project, conversation, task, proposal.call_id)
+                    .map_err(ApiError::bad_request)?,
+                "clarify" if saved.consent.continue_after_clarification => {
+                    let question = state
+                        .application
+                        .schema_clarification(&project, conversation, task, proposal.call_id)
+                        .map_err(ApiError::bad_request)?;
+                    let Some(schema_id) = question
+                        .schema_draft_id
+                        .filter(|_| question.status == "applied")
+                    else {
+                        return status(State(state), AxumPath((project, conversation, task, id)))
+                            .await;
+                    };
+                    let schema = state
+                        .application
+                        .conversation_schema_draft(&project, schema_id, None)
+                        .map_err(ApiError::bad_request)?;
+                    if schema.task_id != task || schema.revision != 1 {
+                        return Err(ApiError::bad_request(
+                            "Clarification labels changed after the answer. Review a new authorization.",
+                        ));
+                    }
+                    schema
+                }
+                _ => {
+                    return status(State(state), AxumPath((project, conversation, task, id))).await;
+                }
+            };
             let (_, builder) = conversation_builder::scope(
                 &state,
                 &project,

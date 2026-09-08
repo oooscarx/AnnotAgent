@@ -29,6 +29,19 @@ pub struct ConversationJourneyDataScope {
 }
 
 impl LocalApplication {
+    pub fn queue_conversation_journey_answer(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+        schema: Uuid,
+    ) -> Result<()> {
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self
+            .store
+            .queue_conversation_journey_answer(&owner, conversation, task, id, schema)?)
+    }
     pub fn resolve_initial_journey_schema(
         &self,
         project: &str,
@@ -97,12 +110,21 @@ impl LocalApplication {
             .transpose()?
             .flatten();
         let mut sample_value = serde_json::json!(sample);
+        let clarification = match schema.as_ref() {
+            Some(receipt)
+                if serde_json::to_value(receipt)?["evidence"]["decision"]["Ok"]["decision"]
+                    == "clarify" =>
+            {
+                Some(self.schema_clarification(project, conversation, task, receipt.id)?)
+            }
+            _ => None,
+        };
         if let Some(sample) = sample {
             sample_value["assistance"] =
                 serde_json::json!(self.store.sample_assistance_status(&sample.id)?);
         }
         Ok(
-            serde_json::json!({"record":record,"schema":schema,"builder":builder,"sample":sample_value,"dispatch":dispatch}),
+            serde_json::json!({"record":record,"schema":schema,"clarification":clarification,"builder":builder,"sample":sample_value,"dispatch":dispatch}),
         )
     }
 
@@ -558,6 +580,7 @@ mod tests {
         assert_eq!(scope.images.len(), 1);
         assert_eq!(scope.models[0].destination, provider.endpoint_summary());
         let consent = ConversationJourneyConsent {
+            continue_after_clarification: false,
             schema_proposal: None,
             id: Uuid::new_v4(),
             task_id: task,

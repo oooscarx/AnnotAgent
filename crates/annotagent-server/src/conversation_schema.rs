@@ -24,6 +24,7 @@ pub(super) struct HumanSchemaInput {
     request_id: uuid::Uuid,
     decision: annotagent_application::ConversationSchemaDecision,
     clarification: Option<annotagent_storage::SchemaClarificationRef>,
+    journey_consent_id: Option<uuid::Uuid>,
 }
 
 pub(super) async fn clarification(
@@ -77,8 +78,31 @@ pub(super) async fn save_human_draft(
     State(state): State<ServerState>,
     AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
     Json(input): Json<HumanSchemaInput>,
-) -> ApiResult<Json<annotagent_storage::ConversationSchemaDraft>> {
-    state
+) -> ApiResult<Json<Value>> {
+    if let Some(id) = input.journey_consent_id {
+        let saved = state
+            .application
+            .conversation_journey_consent(&project, conversation, task, id)
+            .map_err(ApiError::bad_request)?
+            .ok_or_else(|| ApiError::bad_request("Journey authorization not found"))?;
+        if !saved.consent.continue_after_clarification
+            || saved
+                .consent
+                .schema_proposal
+                .as_ref()
+                .map(|proposal| proposal.call_id)
+                != input
+                    .clarification
+                    .as_ref()
+                    .map(|reference| reference.call_id)
+            || input.clarification.is_none()
+        {
+            return Err(ApiError::bad_request(
+                "This answer is not linked to the authorized journey clarification",
+            ));
+        }
+    }
+    let saved = state
         .application
         .save_human_schema_with_clarification(
             &project,
@@ -88,8 +112,35 @@ pub(super) async fn save_human_draft(
             &input.decision,
             input.clarification.as_ref(),
         )
-        .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::bad_request)?;
+    let schema_id = saved.id;
+    let mut result = serde_json::to_value(saved).map_err(ApiError::internal)?;
+    if let Some(id) = input.journey_consent_id {
+        // The answer is already durable. Failure to admit continuation must not
+        // turn a saved human answer into an ambiguous failed-save response.
+        let queued = state.application.queue_conversation_journey_answer(
+            &project,
+            conversation,
+            task,
+            id,
+            schema_id,
+        );
+        if let Err(error) = queued {
+            result["journey_resume"] = json!({"consent_id":id,"error":error.to_string()});
+            return Ok(Json(result));
+        }
+        result["journey_resume"] = match conversation_journey::execute(
+            State(state),
+            AxumPath((project, conversation, task, id)),
+            Json(conversation_journey::ExecuteJourney {}),
+        )
+        .await
+        {
+            Ok(value) => json!({"consent_id":id,"status":value.0}),
+            Err(error) => json!({"consent_id":id,"error":error.body["error"]}),
+        };
+    }
+    Ok(Json(result))
 }
 
 pub(super) async fn save_draft(

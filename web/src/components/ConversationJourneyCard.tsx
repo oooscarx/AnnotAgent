@@ -23,7 +23,7 @@ export function ConversationJourneyCard({project,conversation,task,schema,disabl
   const alive=useRef(true),pending=useRef(false),frozen=useRef<JourneyConsent|undefined>(undefined);
   const prepared=useRef(false);
   const storageKey=`annotagent.journey:${project}:${conversation}:${task}`;
-  const usableHistory=(items:JourneyStatus[])=>items.filter(item=>!(schema&&item.record.consent.schema_proposal&&!item.record.resolved_consent&&item.schema?.status==="completed"&&item.schema.evidence?.decision?.Ok?.decision!=="draft"));
+  const usableHistory=(items:JourneyStatus[])=>items.filter(item=>!(schema&&item.record.consent.schema_proposal&&!item.record.resolved_consent&&item.schema?.status==="completed"&&item.schema.evidence?.decision?.Ok?.decision!=="draft"&&!(item.record.consent.continue_after_clarification&&item.clarification?.schema_draft_id===schema.id)));
   const clearFrozen=()=>{frozen.current=undefined;try{sessionStorage.removeItem(storageKey);}catch{/* Server history owns saved consent. */}};
   const apply=(value:JourneyStatus)=>{setSaved(value);if(frozen.current?.id===value.record.consent.id)clearFrozen();};
   useEffect(()=>{
@@ -107,6 +107,7 @@ export function ConversationJourneyCard({project,conversation,task,schema,disabl
       <details><summary>Model permissions and frozen bindings</summary>{preview.data.models.map(model=><div key={model.scope.model_id}><strong>{model.display_name}</strong><pre>{JSON.stringify(model.permissions,null,2)}</pre></div>)}</details>
       <p>Up to {preview.consent.maximum_builder_calls+(preview.consent.schema_proposal?1:0)} planning calls{preview.consent.schema_proposal?" (including one label proposal)":""} + {preview.consent.maximum_sample_calls} image-model calls. Cost unknown. Permission expires at {new Date(preview.consent.expires_at).toLocaleTimeString()}.</p>
       <p>No publish, dataset run or annotation acceptance. If the generated plan needs another model or a different scope, testing stops for your decision.</p>
+      {preview.consent.continue_after_clarification&&<p>If clarification is needed, saving your answer continues this same request only within the listed models, images, call limits and expiry. Changing that scope requires new authorization.</p>}
       <ConversationBudgetNotice value={preview.project_call_limit} maximumCalls={preview.consent.maximum_builder_calls+preview.consent.maximum_sample_calls+(preview.consent.schema_proposal?1:0)} busy={busy} onRefresh={()=>void prepare()}/>
       <label><input type="checkbox" checked={confirmed} disabled={busy} onChange={event=>setConfirmed(event.target.checked)}/>Allow this plan and sample test within the listed scope; actual cost is unknown</label>
       <div className="button-row"><button disabled={busy} onClick={()=>{setPreview(undefined);setConfirmed(false);}}>Back</button><button className="primary" disabled={!confirmed||busy||disabled||projectBudgetAvailability(preview.project_call_limit).blocked} onClick={()=>void start()}>Build plan and test samples</button></div>
