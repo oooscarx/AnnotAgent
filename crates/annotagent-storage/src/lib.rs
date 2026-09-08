@@ -601,6 +601,7 @@ impl SqliteStore {
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (25, ?1, ?2)", params!["conversation_tasks", Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (24, ?1, ?2)", params!["project_conversations", Utc::now().to_rfc3339()])?;
             transaction.commit()?;
+            crate::conversation_schema::migrate_sources(connection)?;
             Ok(())
         })
     }

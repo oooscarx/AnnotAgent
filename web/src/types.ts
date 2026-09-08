@@ -1881,7 +1881,7 @@ export interface ConversationSchemaPreview {
   expires_at: string; maximum_output_tokens: number; data_scope: string; operation: string;
 }
 export interface ConversationSchemaDraft {
-  id: string; task_id: string; source_call_id: string; base_schema_revision: string; revision: number;
+  id: string; task_id: string; source_call_id: string | null; source_request_id: string | null; base_schema_revision: string; revision: number;
   definition: { goal: string; boundary_rules: string[]; task: {
     id: string; kind: "classification" | "bounding_box"; labels: string[]; multi_label: boolean;
     attributes: Record<string, { type: string; required: boolean; values: string[] }>;

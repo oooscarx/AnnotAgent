@@ -1493,3 +1493,32 @@ Inspected `task-model-setup.png` and `task-model-setup-390.png`. No Live/paid Pr
 Workspace mutation, old credential use, push or remote change. No Rust changes this step.
 Remaining: structured no-LLM fallback, continuous bounded coordination, richer references and
 human requests, default entry, and final whole-product acceptance/performance/a11y audit.
+
+### M2 continuation — human Schema provenance foundation (2026-09-08)
+
+The existing Schema Draft required a completed model call, so a no-LLM entry could not truthfully
+use it. Migration 34 now allows exactly one provenance source: a real model-call ID or a human
+request ID. It transactionally rebuilds the metadata and revision tables with foreign keys kept
+enabled, copies all IDs/revisions/request keys unchanged, verifies their foreign keys and records
+the migration once. No synthetic model call or parallel Schema store was introduced.
+
+Storage now supports idempotent human-authored creation and the existing versioned edits/reloads.
+The application validates the same bounded classification/bbox decision and derives the goal
+from the task's original saved message. Human creation neither requires a Provider/grant nor
+changes Project YAML, permissions, Workflows, published versions or formal annotations. Owner,
+payload-conflict and unsupported-output checks remain enforced. Web transport typing reflects
+nullable model provenance and explicit human request provenance. The API and visible structured
+entry are not connected yet; this is a tested persistence/application foundation, not a claim
+that the user-facing no-LLM journey is complete.
+
+Evidence: all 71 Storage tests passed, including new human zero-call/restart/idempotency tests and
+a genuine old-format Schema migration test with two revisions. That migration test checks exact
+model provenance, old edit-request replay, enforced child foreign keys, exclusive provenance and
+second restart. All 5 Schema application tests passed, covering both human output types, stable
+saved goal, invalid labels, owner mismatch, unchanged Project goal and empty model-call history.
+The first test incorrectly unwrapped an unsupported polygon enum; fixed the test to assert its
+earlier deserialization rejection. Storage/Application all-target/all-feature clippy and Web
+typecheck passed. No real Workspace was opened or migrated; all test databases were temporary.
+No browser screenshot is claimed for this backend-only step. No push or remote change.
+The complete Application all-feature rerun also passed: 100 unit tests plus one integration
+test; one paid Provider smoke test remained intentionally ignored. Rust formatting passed.

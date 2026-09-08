@@ -159,6 +159,43 @@ impl crate::LocalApplication {
         )?)
     }
 
+    /// Explicit structured human input. No Provider, grant or generated-response evidence.
+    pub fn save_human_conversation_schema_draft(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        request: Uuid,
+        decision: &ConversationSchemaDecision,
+    ) -> Result<annotagent_storage::ConversationSchemaDraft> {
+        let record = self
+            .conversation_tasks(project, conversation)?
+            .into_iter()
+            .find(|item| item.input.id == task)
+            .ok_or_else(|| anyhow::anyhow!("task does not belong to this conversation"))?;
+        let config = decision.task_config(task)?.ok_or_else(|| {
+            anyhow::anyhow!("Choose an output type and labels to save a human Schema Draft")
+        })?;
+        let ConversationSchemaDecision::Draft { boundary_rules, .. } = decision else {
+            unreachable!()
+        };
+        let owner = self.conversation_project_identity(project)?;
+        let source = self
+            .store
+            .conversation_message(&owner, conversation, record.input.source_message_id)?
+            .ok_or_else(|| anyhow::anyhow!("Saved task goal not found"))?;
+        Ok(self.store.create_human_conversation_schema_draft(
+            &owner,
+            task,
+            request,
+            &annotagent_storage::ConversationSchemaDefinition {
+                goal: source.input.text,
+                task: config,
+                boundary_rules: boundary_rules.clone(),
+            },
+        )?)
+    }
+
     pub fn conversation_schema_draft(
         &self,
         project: &str,
@@ -558,6 +595,116 @@ mod tests {
     use super::*;
     use annotagent_core::{CoreResult, ModelCapabilities, ModelToolCall, TokenUsage};
     use std::sync::Mutex;
+
+    #[test]
+    fn human_schema_needs_no_provider_and_preserves_goal_owner_and_validation() {
+        use annotagent_storage::{BeginConversationTask, ConversationMessageInput};
+        let temp = tempfile::tempdir().unwrap();
+        let app = crate::LocalApplication::new(temp.path()).unwrap();
+        let yaml = "version: 1\nproject:\n  name: TEST human schema\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n";
+        app.create_project("human-schema", yaml).unwrap();
+        app.create_project("other-schema", yaml).unwrap();
+        let conversation = app.create_project_conversation("human-schema").unwrap();
+        let other = app.create_project_conversation("other-schema").unwrap();
+        let message = ConversationMessageInput {
+            id: Uuid::new_v4(),
+            text: "TEST 用户原始目标".into(),
+            image: None,
+        };
+        app.append_project_conversation_message("human-schema", conversation, &message)
+            .unwrap();
+        let base = app.project_goal("human-schema").unwrap();
+        let task = Uuid::new_v4();
+        app.begin_conversation_task(
+            "human-schema",
+            conversation,
+            &BeginConversationTask {
+                id: task,
+                source_message_id: message.id,
+                schema_revision: base["revision"].as_str().unwrap().into(),
+            },
+        )
+        .unwrap();
+        for (kind, labels) in [
+            ("bounding_box", vec!["杯子"]),
+            ("classification", vec!["室内", "室外"]),
+        ] {
+            let decision: ConversationSchemaDecision =
+                serde_json::from_value(draft(kind, &labels)).unwrap();
+            let request = Uuid::new_v4();
+            let saved = app
+                .save_human_conversation_schema_draft(
+                    "human-schema",
+                    conversation,
+                    task,
+                    request,
+                    &decision,
+                )
+                .unwrap();
+            assert_eq!(saved.definition.goal, message.text);
+            assert_eq!(saved.definition.task.labels, labels);
+            assert_eq!(saved.source_call_id, None);
+            assert_eq!(saved.source_request_id, Some(request));
+            assert_eq!(
+                app.save_human_conversation_schema_draft(
+                    "human-schema",
+                    conversation,
+                    task,
+                    request,
+                    &decision
+                )
+                .unwrap(),
+                saved
+            );
+            assert!(
+                app.save_human_conversation_schema_draft(
+                    "other-schema",
+                    other,
+                    task,
+                    request,
+                    &decision
+                )
+                .is_err()
+            );
+            assert!(
+                app.save_human_conversation_schema_draft(
+                    "human-schema",
+                    other,
+                    task,
+                    request,
+                    &decision
+                )
+                .is_err()
+            );
+        }
+        assert!(
+            serde_json::from_value::<ConversationSchemaDecision>(draft("polygon", &["cup"]))
+                .is_err()
+        );
+        for invalid in [
+            draft("classification", &[]),
+            draft("bounding_box", &["cup", "cup"]),
+            json!({"decision":"clarify","question":"Which objects?","rationale":"TEST"}),
+        ] {
+            let decision: ConversationSchemaDecision = serde_json::from_value(invalid).unwrap();
+            assert!(
+                app.save_human_conversation_schema_draft(
+                    "human-schema",
+                    conversation,
+                    task,
+                    Uuid::new_v4(),
+                    &decision
+                )
+                .is_err()
+            );
+        }
+        assert_eq!(app.project_goal("human-schema").unwrap(), base);
+        assert!(
+            app.conversation_schema_calls("human-schema", conversation, task)
+                .unwrap()
+                .is_empty()
+        );
+    }
 
     struct TestProvider {
         requests: Mutex<Vec<ModelRequest>>,
