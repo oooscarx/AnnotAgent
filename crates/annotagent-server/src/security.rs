@@ -16,6 +16,169 @@ use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use url::Url;
 use uuid::Uuid;
 
+#[cfg(test)]
+mod control_tests {
+    use super::*;
+    use axum::{Router, body::Body, middleware, routing::post};
+    use tower::ServiceExt;
+
+    fn request(security: &LocalSecurity, path: &str, authorized: bool) -> Request {
+        let mut request = Request::builder()
+            .method(Method::POST)
+            .uri(path)
+            .header(header::HOST, "127.0.0.1:8791")
+            .header(header::COOKIE, security.session_cookie());
+        if authorized {
+            request = request.header(CSRF_HEADER, security.csrf_token.as_str());
+        }
+        request.body(Body::empty()).unwrap()
+    }
+    #[test]
+    fn control_allowlist_rejects_resume_and_suffix_impostors() {
+        let id = Uuid::new_v4();
+        for path in [
+            format!("/api/batches/{id}/pause"),
+            format!("/api/agent-sessions/{id}/cancel"),
+            format!("/api/projects/test/sample-operations/{id}/cancel"),
+            format!("/api/projects/test/conversations/{id}/tasks/{id}/calls/{id}/cancel"),
+            format!(
+                "/api/projects/test/conversations/{id}/tasks/{id}/calls/{id}/clarification/cancel"
+            ),
+            format!("/api/projects/test/conversations/{id}/tasks/{id}/human-requests/{id}/cancel"),
+        ] {
+            assert!(is_execution_control(&Method::POST, &path), "{path}");
+            assert!(!is_execution_control(&Method::DELETE, &path));
+        }
+        for path in [
+            format!("/api/runs/{id}/resume"),
+            "/api/runs/not-an-id/cancel".into(),
+            format!("/api/models/{id}/cancel"),
+            format!("/api/runs/{id}/cancel/extra"),
+            format!("/api/runs/{id}/cancel/"),
+            format!("/api/projects/test/conversations/{id}/tasks/{id}/builder-operations"),
+            format!("/api/projects/test/conversations/{id}/tasks/{id}/human-requests/{id}/resume"),
+        ] {
+            assert!(!is_execution_control(&Method::POST, &path), "{path}");
+        }
+    }
+    #[tokio::test]
+    async fn control_lane_has_its_own_rate_and_concurrency_bounds() {
+        let security = LocalSecurity::default();
+        let path = format!("/api/runs/{}/cancel", Uuid::new_v4());
+        let router = Router::new()
+            .route(
+                "/api/runs/{id}/cancel",
+                post(|| async { StatusCode::NO_CONTENT }),
+            )
+            .layer(middleware::from_fn_with_state(
+                security.clone(),
+                protect_local_api,
+            ));
+        let held = security
+            .control_limit
+            .clone()
+            .acquire_many_owned(MAX_CONCURRENT_CONTROL_ACTIONS as u32)
+            .await
+            .unwrap();
+        let limited = router
+            .clone()
+            .oneshot(request(&security, &path, true))
+            .await
+            .unwrap();
+        assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+        let body = axum::body::to_bytes(limited.into_body(), 4096)
+            .await
+            .unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("control_action_concurrency_limited"));
+        drop(held);
+        for _ in 1..MAX_CONTROL_ACTIONS_PER_MINUTE {
+            assert_eq!(
+                router
+                    .clone()
+                    .oneshot(request(&security, &path, true))
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::NO_CONTENT
+            );
+        }
+        let limited = router
+            .oneshot(request(&security, &path, true))
+            .await
+            .unwrap();
+        assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+        let body = axum::body::to_bytes(limited.into_body(), 4096)
+            .await
+            .unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("control_action_rate_limited"));
+        assert!(security.mutation_times.lock().await.is_empty());
+    }
+    #[tokio::test]
+    async fn stop_survives_mutation_saturation_without_bypassing_auth_or_start_limits() {
+        let security = LocalSecurity::default();
+        for _ in 0..MAX_MUTATIONS_PER_MINUTE {
+            assert!(security.mutation_rate_available().await);
+        }
+        let _held = security
+            .mutation_limit
+            .clone()
+            .acquire_many_owned(MAX_CONCURRENT_MUTATIONS as u32)
+            .await
+            .unwrap();
+        let router = Router::new()
+            .route(
+                "/api/runs/{id}/cancel",
+                post(|| async { StatusCode::NO_CONTENT }),
+            )
+            .route(
+                "/api/runs/{id}/resume",
+                post(|| async { StatusCode::NO_CONTENT }),
+            )
+            .layer(middleware::from_fn_with_state(
+                security.clone(),
+                protect_local_api,
+            ));
+        let id = Uuid::new_v4();
+        let cancel = format!("/api/runs/{id}/cancel");
+        assert_eq!(
+            router
+                .clone()
+                .oneshot(request(&security, &cancel, false))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            router
+                .clone()
+                .oneshot(request(&security, &cancel, true))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            router
+                .clone()
+                .oneshot(request(&security, &format!("/api/runs/{id}/resume"), true))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        let mut cross = request(&security, &cancel, true);
+        cross.headers_mut().insert(
+            header::ORIGIN,
+            HeaderValue::from_static("https://foreign.invalid"),
+        );
+        assert_eq!(
+            router.oneshot(cross).await.unwrap().status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+}
+
 pub(crate) const MAX_JSON_BODY_BYTES: usize = 2 * 1024 * 1024;
 pub(crate) const SESSION_COOKIE: &str = "annotagent_session";
 pub(crate) const CSRF_HEADER: &str = "x-annotagent-csrf";
@@ -24,6 +187,8 @@ pub(crate) const REQUEST_ID_HEADER: &str = "x-request-id";
 
 const MAX_MUTATIONS_PER_MINUTE: usize = 120;
 const MAX_CONCURRENT_MUTATIONS: usize = 16;
+const MAX_CONTROL_ACTIONS_PER_MINUTE: usize = 30;
+const MAX_CONCURRENT_CONTROL_ACTIONS: usize = 4;
 const MAX_CONCURRENT_EXPENSIVE_ACTIONS: usize = 4;
 const MAX_SSE_CLIENTS: usize = 8;
 const PRIVILEGED_GRANT_LIFETIME: Duration = Duration::from_secs(30);
@@ -41,6 +206,8 @@ pub(crate) struct LocalSecurity {
     privileged_grants: Arc<Mutex<HashMap<String, PrivilegedGrant>>>,
     mutation_times: Arc<Mutex<VecDeque<Instant>>>,
     mutation_limit: Arc<Semaphore>,
+    control_times: Arc<Mutex<VecDeque<Instant>>>,
+    control_limit: Arc<Semaphore>,
     expensive_action_limit: Arc<Semaphore>,
     sse_limit: Arc<Semaphore>,
 }
@@ -53,6 +220,8 @@ impl Default for LocalSecurity {
             privileged_grants: Arc::new(Mutex::new(HashMap::new())),
             mutation_times: Arc::new(Mutex::new(VecDeque::new())),
             mutation_limit: Arc::new(Semaphore::new(MAX_CONCURRENT_MUTATIONS)),
+            control_times: Arc::new(Mutex::new(VecDeque::new())),
+            control_limit: Arc::new(Semaphore::new(MAX_CONCURRENT_CONTROL_ACTIONS)),
             expensive_action_limit: Arc::new(Semaphore::new(MAX_CONCURRENT_EXPENSIVE_ACTIONS)),
             sse_limit: Arc::new(Semaphore::new(MAX_SSE_CLIENTS)),
         }
@@ -106,13 +275,17 @@ impl LocalSecurity {
     }
 
     async fn mutation_rate_available(&self) -> bool {
+        Self::rate_available(&self.mutation_times, MAX_MUTATIONS_PER_MINUTE).await
+    }
+
+    async fn rate_available(history: &Mutex<VecDeque<Instant>>, maximum: usize) -> bool {
         let now = Instant::now();
         let cutoff = now.checked_sub(Duration::from_secs(60)).unwrap_or(now);
-        let mut times = self.mutation_times.lock().await;
+        let mut times = history.lock().await;
         while times.front().is_some_and(|time| *time < cutoff) {
             times.pop_front();
         }
-        if times.len() >= MAX_MUTATIONS_PER_MINUTE {
+        if times.len() >= maximum {
             return false;
         }
         times.push_back(now);
@@ -121,6 +294,57 @@ impl LocalSecurity {
 
     pub(crate) fn try_acquire_sse(&self) -> Option<OwnedSemaphorePermit> {
         self.sse_limit.clone().try_acquire_owned().ok()
+    }
+}
+
+/// Only known, non-starting controls may use the bounded stop lane. A suffix or
+/// arbitrary request body cannot turn a start/resume/delete action into a control.
+fn is_execution_control(method: &Method, path: &str) -> bool {
+    if method != Method::POST {
+        return false;
+    }
+    let segments: Vec<_> = path.split('/').collect();
+    let uuid = |id: &str| Uuid::parse_str(id).is_ok();
+    match segments.as_slice() {
+        ["", "api", "runs" | "batches", id, "cancel" | "pause"]
+        | ["", "api", "agent-sessions", id, "cancel"] => uuid(id),
+        [
+            "",
+            "api",
+            "projects",
+            project,
+            "sample-operations",
+            id,
+            "cancel",
+        ] => !project.is_empty() && uuid(id),
+        [
+            "",
+            "api",
+            "projects",
+            project,
+            "conversations",
+            conversation,
+            "tasks",
+            task,
+            "calls" | "human-requests",
+            id,
+            "cancel",
+        ]
+        | [
+            "",
+            "api",
+            "projects",
+            project,
+            "conversations",
+            conversation,
+            "tasks",
+            task,
+            "calls",
+            id,
+            "clarification",
+            "cancel",
+        ] => !project.is_empty() && uuid(conversation) && uuid(task) && uuid(id),
+        _ => false,
     }
 }
 
@@ -342,20 +566,49 @@ pub(crate) async fn protect_local_api(
                 &request_id,
             );
         }
-        if !security.mutation_rate_available().await {
+        let control = is_execution_control(request.method(), &path);
+        let available = if control {
+            LocalSecurity::rate_available(&security.control_times, MAX_CONTROL_ACTIONS_PER_MINUTE)
+                .await
+        } else {
+            security.mutation_rate_available().await
+        };
+        if !available {
             return json_error(
                 StatusCode::TOO_MANY_REQUESTS,
-                "mutation_rate_limited",
-                "too many workspace changes were requested in this local session",
+                if control {
+                    "control_action_rate_limited"
+                } else {
+                    "mutation_rate_limited"
+                },
+                if control {
+                    "too many stop or pause actions were requested in this local session; ordinary work cannot consume this reserved allowance"
+                } else {
+                    "too many workspace changes were requested in this local session"
+                },
                 &request_id,
             );
         }
-        mutation_permit = security.mutation_limit.clone().try_acquire_owned().ok();
+        mutation_permit = if control {
+            security.control_limit.clone()
+        } else {
+            security.mutation_limit.clone()
+        }
+        .try_acquire_owned()
+        .ok();
         if mutation_permit.is_none() {
             return json_error(
                 StatusCode::TOO_MANY_REQUESTS,
-                "mutation_concurrency_limited",
-                "too many workspace changes are already in progress",
+                if control {
+                    "control_action_concurrency_limited"
+                } else {
+                    "mutation_concurrency_limited"
+                },
+                if control {
+                    "too many stop or pause actions are already in progress"
+                } else {
+                    "too many workspace changes are already in progress"
+                },
                 &request_id,
             );
         }

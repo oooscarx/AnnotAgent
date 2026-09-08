@@ -2310,3 +2310,35 @@ the documented CSS reflow boundary, not a verified native browser zoom operation
 Rust tests (paid Builder provider smoke and four externally supplied model-process weights) remain
 unexecuted. All evidence is isolated TEST transport/fixtures, not Live inference quality or real
 human novice usability. The overall goal remains active with the gaps listed at the top.
+
+### M4 continuation — bounded stop/pause capacity under ordinary mutation saturation
+
+The full-regression investigation identified a real limitation beyond test pacing: ordinary
+workspace changes could exhaust both the rate window and concurrent mutation permits used by
+stop controls. Added an executable middleware baseline test filling all 120 mutation-window
+entries and holding all 16 mutation permits. A valid authenticated Run cancel returned 429
+instead of reaching its handler; the test failed before the implementation changed.
+
+`LocalSecurity` now gives an exact allowlist of existing POST pause/cancel routes its own
+30/minute window and four concurrent permits. The allowlist covers Run/Batch pause/cancel,
+AgentSession cancel, Project Sample Operation cancel, conversation call cancel, clarification
+cancel and human-request cancel, with UUID route identities. Start, resume, authorization,
+installation, management/deletion and arbitrary `.../cancel` suffixes do not qualify. This is
+not an unbounded exemption: exhausting either control limit returns a distinct structured 429.
+Host/origin, local session, CSRF, JSON bounds and applicable privileged confirmation checks remain
+in the same middleware; Application still validates object ownership and command semantics.
+The change admits the stop command under ordinary write saturation; it does not guarantee an
+external provider will physically stop an already-issued request or refund its charge.
+
+Three added tests cover saturation survival, unchanged resume rejection, CSRF/cross-origin
+denial, strict allowlist matching and independent control rate/concurrency bounds. All 40 server
+tests passed with all features, including original security, management and runtime API tests;
+server all-target/all-feature Clippy with denied warnings passed after merging identical match
+arms, and format/diff checks passed. Browser `/tmp/annotagent-guided-e2e-27135` passed 2/2 in 15.4
+seconds: actual Schema/Builder cancellation/recovery and local API security. Saturation itself is
+verified in the middleware test, not claimed as a real-user browser load test. No Web behavior or
+model budget was relaxed; the prior TEST pacing fixes remain appropriate for ordinary writes.
+This supersedes the ordinary-write-starvation limitation noted in the preceding checkpoint,
+while finite control-lane saturation and cooperative provider cancellation remain explicit.
+No Live model quality/human usability validation, real Workspace changes, old keys, push or remote
+changes. The prior 78/78 full-browser result predates this change; no new full-suite claim here.
