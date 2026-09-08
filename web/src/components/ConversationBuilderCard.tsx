@@ -6,7 +6,7 @@ import { projectBuildPath } from "../navigation";
 import { ConversationSampleCard, type OpenConversationSample } from "./ConversationSampleCard";
 import {ConversationJourneyCard} from "./ConversationJourneyCard";
 import type { ConversationBuilderConsent, ConversationBuilderItem, ConversationBuilderPreview, ConversationSchemaDraft } from "../types";
-import { builderMatchesSchema, builderMatchesClassRepair, consentMatchesSchema } from "../conversation-schema-history";
+import { builderMatchesSchema, builderMatchesClassRepair, builderMatchesHumanRepair, consentMatchesSchema } from "../conversation-schema-history";
 import { builderConsent, restoreBuilderPending } from "../conversation-builder-pending";
 
 /** Restoring history only reads. Model work requires a new, explicit consent. */
@@ -21,7 +21,7 @@ export function ConversationBuilderCard(props: BuilderCardProps) {
 function BuilderCard({ project, conversation, task, schema, editing, onSample, repairRequest, imageClassRepair, onAssistance }: BuilderCardProps) {
   const repair=Boolean(repairRequest || imageClassRepair);
   const historyScope=imageClassRepair ? {image_class_review_id:imageClassRepair.id} : undefined;
-  const matches=(entry:ConversationBuilderItem)=>entry.operation.task_id===task && (imageClassRepair ? builderMatchesClassRepair(entry,schema,imageClassRepair) : builderMatchesSchema(entry,schema) && (repairRequest ? entry.session?.working_draft?.draft_id===repairRequest.draft : !entry.operation.evidence?.repair_source && entry.session?.working_draft?.build_mode.kind!=="repair_draft"));
+  const matches=(entry:ConversationBuilderItem)=>entry.operation.task_id===task && (imageClassRepair ? builderMatchesClassRepair(entry,schema,imageClassRepair) : repairRequest ? builderMatchesHumanRepair(entry,schema,repairRequest) : builderMatchesSchema(entry,schema) && !entry.operation.evidence?.repair_source && entry.session?.working_draft?.build_mode.kind!=="repair_draft");
   const [advanced,setAdvanced]=useState(false);
   const [journeyActive,setJourneyActive]=useState(false);
   const [item,setItem]=useState<ConversationBuilderItem>();

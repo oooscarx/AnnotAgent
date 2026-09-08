@@ -85,7 +85,9 @@ impl LocalApplication {
         let id = request
             .resume_draft_id
             .ok_or_else(|| anyhow!("Repair Draft is unavailable"))?;
-        let draft = self.store.get_workflow_draft(&id)?;
+        let draft = self
+            .store
+            .available_conversation_repair_draft(project, &id)?;
         if draft.project_id != project
             || id != request.input.resume_checkpoint_ref.to_string()
             || matches!(
@@ -335,7 +337,9 @@ impl LocalApplication {
                     "Repair Draft changed; review the current revision before authorizing another call"
                 );
             }
-            let draft = self.store.get_workflow_draft(&actual.draft_id)?;
+            let draft = self
+                .store
+                .available_conversation_repair_draft(project, &actual.draft_id)?;
             if draft.revision != expected.revision || draft.content_hash != expected.content_hash {
                 bail!("Repair Draft changed while loading the authorized revision");
             }
@@ -355,7 +359,7 @@ impl LocalApplication {
             }
             let draft = self
                 .store
-                .available_image_class_repair_draft(project, &expected.draft_id)?;
+                .available_conversation_repair_draft(project, &expected.draft_id)?;
             if draft.revision != expected.revision || draft.content_hash != expected.content_hash {
                 bail!("Image-class repair Draft changed while loading the authorized revision");
             }

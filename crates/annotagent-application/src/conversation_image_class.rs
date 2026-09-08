@@ -49,7 +49,7 @@ impl LocalApplication {
         }
         let draft = self
             .store
-            .available_image_class_repair_draft(project, draft_id)?;
+            .available_conversation_repair_draft(project, draft_id)?;
         if draft.project_id != project
             || matches!(
                 draft.status,

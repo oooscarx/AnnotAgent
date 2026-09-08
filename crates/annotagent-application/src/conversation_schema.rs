@@ -1687,6 +1687,57 @@ mod tests {
             builder_provider.requests.lock().unwrap().len(),
             calls_before_retry + 2
         );
+        // A completed correction remains historical evidence after its editable
+        // copy is moved to Trash; it must not authorize another model repair.
+        let lifecycle = reopened
+            .list_pipeline_lifecycle("schema-test", false, false)
+            .unwrap();
+        let object = lifecycle
+            .iter()
+            .flat_map(|pipeline| &pipeline.drafts)
+            .find(|draft| draft.object.id == copy.id)
+            .unwrap()
+            .object
+            .clone();
+        let mut trash = annotagent_core::ManagementRequest {
+            project_id: "schema-test".into(),
+            objects: vec![object],
+            action: annotagent_core::ManagementAction::MoveToTrash,
+            replacement_default_version: None,
+            clear_default: false,
+            display_name: None,
+            idempotency_key: Uuid::new_v4().to_string(),
+            confirmation_token: None,
+        };
+        let preview = reopened.preview_management(&trash).unwrap();
+        assert!(preview.blockers.is_empty(), "{:?}", preview.blockers);
+        trash.confirmation_token = Some(preview.confirmation_token);
+        reopened.execute_management(&trash).unwrap();
+        assert!(
+            reopened
+                .conversation_builder_repair("schema-test", conversation, task, snapshot.request_id)
+                .is_err(),
+            "A trashed repair must not be offered for fresh authorization"
+        );
+        assert_eq!(
+            reopened
+                .build_conversation_pipeline(
+                    "schema-test",
+                    &repair,
+                    &settings,
+                    &selected_builder,
+                    &builder_provider,
+                    CancellationToken::default()
+                )
+                .await
+                .unwrap(),
+            repaired,
+            "An existing operation remains readable after its editable Draft is trashed"
+        );
+        assert_eq!(
+            builder_provider.requests.lock().unwrap().len(),
+            calls_before_retry + 2
+        );
         let message = ConversationMessageInput {
             reference: None,
             id: Uuid::new_v4(),

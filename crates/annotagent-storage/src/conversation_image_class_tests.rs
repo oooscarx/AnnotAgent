@@ -82,12 +82,12 @@ fn repair_lookup_rejects_foreign_deleted_archived_and_published_drafts() {
         .unwrap();
     assert!(
         store
-            .available_image_class_repair_draft(&sample.project_id, &sample.draft_id)
+            .available_conversation_repair_draft(&sample.project_id, &sample.draft_id)
             .is_ok()
     );
     assert!(
         store
-            .available_image_class_repair_draft("TEST-other-project", &sample.draft_id)
+            .available_conversation_repair_draft("TEST-other-project", &sample.draft_id)
             .is_err()
     );
     for mutation in [
@@ -107,7 +107,7 @@ fn repair_lookup_rejects_foreign_deleted_archived_and_published_drafts() {
             .unwrap();
         assert!(
             store
-                .available_image_class_repair_draft(&sample.project_id, &sample.draft_id)
+                .available_conversation_repair_draft(&sample.project_id, &sample.draft_id)
                 .is_err(),
             "{mutation}"
         );
@@ -118,7 +118,7 @@ fn repair_lookup_rejects_foreign_deleted_archived_and_published_drafts() {
     }
     assert!(
         store
-            .available_image_class_repair_draft(&sample.project_id, &sample.draft_id)
+            .available_conversation_repair_draft(&sample.project_id, &sample.draft_id)
             .is_ok()
     );
 }

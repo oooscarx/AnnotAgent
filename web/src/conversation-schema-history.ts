@@ -17,6 +17,14 @@ export function builderMatchesClassRepair(item: ConversationBuilderItem, schema:
   const source=item.operation.evidence?.repair_source;
   return builderMatchesSchema(item,schema) && source?.kind==="image_class_review" && source.reference.review_id===review.id && source.reference.draft_id===review.draft && source.reference.schema_id===schema.id && source.reference.schema_revision===schema.revision;
 }
+export function builderMatchesHumanRepair(item: ConversationBuilderItem, schema: SchemaIdentity, request: {id:string;draft:string}) {
+  if(!builderMatchesSchema(item,schema))return false;
+  const source=item.operation.evidence?.repair_source;
+  if(source)return source.kind==="human_request" && source.reference.request_id===request.id && source.reference.draft_id===request.draft;
+  // Only legacy receipts lack admission provenance. Never use this fallback
+  // to override a conflicting modern source or a normal build.
+  return item.session?.working_draft?.build_mode.kind==="repair_draft" && item.session.working_draft.draft_id===request.draft;
+}
 export function journeyMatchesSchema(item: JourneyStatus, schema?: SchemaIdentity) {
   if (!schema) return true;
   if (item.record.resolved_consent) return consentMatchesSchema(item.record.resolved_consent, schema);

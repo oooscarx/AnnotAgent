@@ -3886,3 +3886,43 @@ authorization/source changes in flight, long-history behavior/performance and th
 accessibility/requirement audit. This commit does not claim completion of the overall goal.
 Only this slice's source, tests, log and two owned screenshot updates are included. Historical
 unrelated PNG changes remain excluded; no push or remote/workspace/service8787 changes.
+
+### Authorization changes and existing single-candidate repair lifecycle (2026-09-09)
+
+Re-read the original Conversational Annotation Workspace attachment against the current
+implementation, retaining its full scope. The preceding return/recovery slice is `fff2139`.
+This checkpoint adds bbox and classification browser cases where another editor changes the
+prepared Draft **after** the displayed authorization preview. The old confirmation is rejected
+before any Builder receipt/model call or cumulative grant increase. Explicitly requesting a
+fresh preview then completes the existing repair/sample/detail-return flow. Both cases passed
+in `/tmp/annotagent-guided-e2e-85139` using the TEST transport only; no screenshots were rewritten.
+
+The original single-candidate repair resolver still read Drafts through the historical getter,
+which includes Trash. A new TempDir-only regression uses the existing management service to
+move a prepared repair Draft to Trash and then asks for a repair preview. It first failed with
+`A trashed repair must not be offered for fresh authorization`. The resolver and execution load
+now share the same availability check as class repairs: owner, editable state, Draft lifecycle
+and parent Pipeline lifecycle must remain usable. The helper name is generalized; no duplicate
+executor or deletion implementation was added. The test passes after the fix and additionally
+checks that the already completed operation is still readable without new Provider calls.
+
+Single-candidate frontend matching now prefers its admitted `human_request` provenance, even
+before a session/working Draft exists. Conflicting modern provenance is never overridden by a
+working-Draft heuristic. Only source-less legacy records retain the existing repair-mode and
+Draft-ID fallback. A unit regression covers the no-session receipt, wrong request, wrong Schema
+and rejection as a class review. Broad single-candidate browser regression and source-filtered
+retrieval beyond the ordinary history window remain to be completed; this matching change
+alone does not claim those broader behaviors.
+
+Final test results are recorded below. The real workspace, service8787, remote configuration
+and credentials were not changed. All lifecycle mutations above occur only in the Rust test's
+temporary workspace. No Live model, real-world accuracy or human-usability claim is made.
+
+Checkpoint verification: full `cargo test --workspace --all-features -q` exited successfully
+(143 Application passed/1 ignored; 144 Storage passed; 45 Server passed; remaining workspace,
+integration and doc suites passed; five environment-dependent tests ignored overall). Full
+workspace/all-target/all-feature strict Clippy, formatting check and build pass. Web typecheck,
+199 unit tests in 41 files and production build pass; the existing large-bundle warning remains.
+The two new browser authorization-change cases passed, not the whole browser suite. No new
+screenshot/Live/native-IME/200%-zoom/human-test evidence is claimed. Only owned source/tests and
+this log are committed; historical PNG modifications remain excluded and the goal stays active.

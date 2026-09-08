@@ -88,7 +88,7 @@ async function imageClassSample(request: APIRequestContext, page: Page, bbox: bo
 type State = Awaited<ReturnType<typeof imageClassSample>>;
 
 for (const bbox of [true,false]) {
-for (const transport of ["normal","lost_ack","storage_blocked","storage_corrupt"]) {
+for (const transport of ["normal","lost_ack","storage_blocked","storage_corrupt","draft_changed"]) {
 const lostAck=transport==="lost_ack";
 test(`image class repair continues in chat with separate Builder and sample consent: ${bbox ? "bbox" : "classification"} ${transport}`, async ({page,request})=>{
   test.setTimeout(240_000);
@@ -121,6 +121,14 @@ test(`image class repair continues in chat with separate Builder and sample cons
   });
   await card.getByRole("button",{name:"Review Builder authorization",exact:true}).click();
   await card.getByRole("checkbox",{name:"Allow this bounded Builder request; actual cost is unknown"}).check();
+  const originalBudget=await read(request,`${state.taskRoot}/budget`);
+  if(transport==="draft_changed"){
+    const drafts=(await read(request,`/api/workflow-drafts?project_id=${state.project}`)).drafts;
+    const draft=drafts.find((entry:any)=>entry.id===applied.repair_draft_id);
+    expect(draft).toBeTruthy();
+    const changed=await request.patch(`/api/workflow-drafts/${draft.id}`,{headers:{"if-match":String(draft.revision)},data:{...draft,name:"TEST separate editor changed this repair after preview"}});
+    expect(changed.ok(),await changed.text()).toBe(true);
+  }
   let blockedReads=false, builderPosts=0;
   const operationRoute=`**${state.taskRoot}/builder-operations*`;
   if(lostAck)await page.route(operationRoute,async route=>{
@@ -133,6 +141,15 @@ test(`image class repair continues in chat with separate Builder and sample cons
     else await route.continue();
   });
   await card.getByRole("button",{name:"Build Pipeline Draft",exact:true}).click();
+  if(transport==="draft_changed"){
+    await expect(card.getByRole("alert")).toContainText("Builder authorization changed");
+    expect(await read(request,`${state.taskRoot}/calls`)).toEqual(callsBefore);
+    expect(await read(request,`${state.taskRoot}/budget`)).toEqual(originalBudget);
+    expect((await read(request,`${state.taskRoot}/builder-operations?image_class_review_id=${group.review.id}`)).items).toHaveLength(0);
+    await card.getByRole("button",{name:"Review Builder authorization",exact:true}).click();
+    await card.getByRole("checkbox",{name:"Allow this bounded Builder request; actual cost is unknown"}).check();
+    await card.getByRole("button",{name:"Build Pipeline Draft",exact:true}).click();
+  }
   if(transport==="storage_blocked"){
     await expect(card.getByRole("alert")).toContainText("No model call was started");
     expect(await read(request,`${state.taskRoot}/calls`)).toEqual(callsBefore);
