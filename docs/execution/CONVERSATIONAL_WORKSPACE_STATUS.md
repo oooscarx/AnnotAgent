@@ -1678,3 +1678,39 @@ scope, image, candidate and revision wrap without horizontal overflow; removal r
 The full mobile history remains long and is not claimed as finished compact UX. Existing TEST
 fixture predictions are not accuracy evidence. No Rust changes in this step, no push, no remote
 change and no real Workspace/paid Provider/old credential use. Real-human usability unexecuted.
+
+### M2 continuation — reopen frozen candidate messages (2026-09-08)
+
+Saved candidate-scoped messages now open the original terminal prediction in the existing
+conversation canvas. The canonical work URL stores the message ID together with its exact
+conversation/task/Draft/Test/image context. The loaded owned journal must match that context;
+the saved sample must also match the Draft revision, image hash and unique candidate/Artifact
+pair. Invalid references show an error without selecting another result. Refresh and model setup
+return preserve the same reference. Opening the current sample corrections deliberately removes
+the historical-message context. None of those navigation actions writes feedback or calls a model.
+
+The historical view uses the shared AnnotationCanvas in read-only mode, with the original
+terminal outcome rather than later sample feedback. A shared outcome-to-annotation converter
+keeps the existing editable sample path and historical bbox/classification rendering consistent.
+The original-prediction explanation and current-corrections action make this boundary explicit.
+Screenshots revealed an unnecessarily tall historical canvas; it now uses a bounded responsive
+height without changing image pixels. This does not complete corrected-feedback references or
+the model's interpretation of a candidate-scoped message; both remain outstanding.
+
+Typecheck and 117 Web unit tests passed. The initial two human-schema browser journeys passed
+in `/tmp/annotagent-guided-e2e-13067`. Expanded tests verify original bbox geometry/classification,
+reload, forged message and image rejection, setup-return context and zero navigation mutations.
+A subsequent combined suite exposed a TEST harness defect: its successful-response-loss simulation
+discarded a real 429 mutation-rate rejection. The existing TEST-only pacing helper now checks
+pre-execution rate-limit responses before simulating loss, and asserts success. Production limits
+are unchanged. A first retry then timed out at the default 10-second UI assertion while the helper
+was legitimately waiting for the rate window; the assertion now allows the helper's bounded wait.
+The full combined rerun result is recorded below when available. No Live/paid Provider, real user
+data changes, old key use, push or remote modification. Real-human usability remains unexecuted.
+Final combined rerun `/tmp/annotagent-guided-e2e-13684`: 6/6 passed (2.2 minutes), including
+five full sample/delivery scenarios and independent goals/model setup. Typecheck and diff hygiene
+passed after the changes. Inspected both `message-reference-reopen-*.png` screenshots: the
+bounded canvas now fits the complete source image without distorting it; desktop panel scrolling
+still places the current-corrections button below the screenshot crop, and the test operates that
+button successfully. These synthetic classifications and boxes remain explicitly TEST evidence,
+not real-world model quality evidence. The production-build large-chunk warning remains open.

@@ -4,6 +4,7 @@ import { t } from "../i18n";
 import type { Annotation, ImageItem, SampleFeedbackRevision, WorkflowDryRunReport } from "../types";
 import { AnnotationCanvas } from "./AnnotationCanvas";
 import { useSampleFreshness } from "../useSampleFreshness";
+import { sampleAnnotations } from "../sampleAnnotations";
 
 const reasons: [SampleFeedbackRevision["reason"], string][] = [
   ["correct", "Target and boundary are correct"], ["wrong_target", "Wrong target"],
@@ -27,11 +28,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
   initialOutcomeId?: string;
 }) {
   const freshness = useSampleFreshness(projectId, draftId, testId);
-  const original: Annotation[] = (sample.projection ? sample.outcomes : []).flatMap((outcome) => outcome.value ? [{
-    id: outcome.id, image_id: image.image_id, task_id: "sample", label: outcome.value.kind === "classification" ? outcome.value.labels.join(", ") : outcome.label,
-    value: outcome.value, attributes: {}, confidence: outcome.confidence ?? undefined,
-    source: "sample test", review_status: "needs_review" as const, provenance: { sample_test_id: testId }, created_at: "",
-  }] : []);
+  const original = sampleAnnotations(sample.projection ? sample.outcomes : [],image.image_id,testId);
   const [annotations, setAnnotations] = useState(original);
   const [selected, setSelected] = useState<string>();
   const [history, setHistory] = useState<Annotation[][]>([]);

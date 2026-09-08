@@ -48,6 +48,7 @@
 .conversation-sample-canvas header { display: grid; gap: 6px; }
 .conversation-sample-canvas header h2, .conversation-sample-canvas header p { margin: 0; }
 .conversation-sample-canvas .annotation-canvas { min-width: 0; width: 100%; }
+.conversation-sample-canvas > .canvas-shell .annotation-canvas { height: clamp(240px, 48dvh, 600px); }
 .conversation-sample-canvas .sample-feedback-image { display: grid; gap: 10px; }
 .focus-layout .conversation-sample-canvas .sample-feedback-image .annotation-canvas { height: clamp(240px, calc(100dvh - 500px), 600px); min-height: 0; }
 @media (min-width: 761px) {

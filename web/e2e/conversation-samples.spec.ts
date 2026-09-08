@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { expect, test } from "./fixtures";
+import { expect, test, fetchWithinMutationLimit } from "./fixtures";
 
 for(const scenario of ["classification","bbox","classification-review","human-classification","human-bbox"] as const){
 const humanSchema = scenario.startsWith("human-");
@@ -203,7 +203,7 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   await page.screenshot({path:`../docs/execution/conversational-workspace/human-request-${kind}-390.png`,fullPage:true});
   await page.setViewportSize({width:1280,height:800});
   let answer:any;
-  await page.route(`**${humanRoot}/${human.id}/answer`,async route=>{answer=route.request().postDataJSON().answer;await route.fetch();await route.abort("failed");},{times:1});
+  await page.route(`**${humanRoot}/${human.id}/answer`,async route=>{answer=route.request().postDataJSON().answer;const response=await fetchWithinMutationLimit(route);expect(response.ok(),await response.text()).toBe(true);await route.abort("failed");},{times:1});
   await page.getByRole("button",{name:"Submit correction",exact:true}).click();
   await expect(page.locator(".sample-confirm-action [role=alert]")).toBeVisible();
   if(kind==="bbox")await expect(page.getByRole("spinbutton",{name:"width",exact:true})).toHaveValue("0.12");
@@ -337,11 +337,15 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   await page.screenshot({path:`../docs/execution/conversational-workspace/processing-confirm-${scenario}.png`,fullPage:true,animations:"disabled"});
   let confirmation:any;
   await page.route(`**/api/projects/${project}/processing-operations`,async route=>{
-    confirmation=route.request().postDataJSON(); await route.fetch(); await route.abort("failed");
+    confirmation=route.request().postDataJSON();
+    const response=await fetchWithinMutationLimit(route);
+    expect(response.ok(),await response.text()).toBe(true);
+    await route.abort("failed");
   },{times:1});
   await confirmCard.getByRole("button",{name:"Confirm and start processing",exact:true}).click();
   await expect.poll(()=>confirmation?.request_id).toBeTruthy();
   await expect(page).toHaveURL(new RegExp(`processing=${confirmation.request_id}`));
+  await expect(confirmCard.getByRole("button",{name:"Retry this confirmed action",exact:true})).toBeEnabled({timeout:50_000});
   await page.reload();
   await expect(confirmCard.getByRole("heading",{name:"Processing started",exact:true})).toBeVisible();
   const started=await (await request.get(`/api/projects/${project}/processing-operations/${confirmation.request_id}`)).json();
@@ -512,7 +516,7 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
     await page.setViewportSize({width:1280,height:800});
     let lost=false;let sent:any;
     await page.route("**/conversations/*/messages",async route=>{
-      if(route.request().method()==="POST"&&!lost){lost=true;sent=route.request().postDataJSON();await route.fetch();await route.abort("failed");}else await route.continue();
+      if(route.request().method()==="POST"&&!lost){lost=true;sent=route.request().postDataJSON();const response=await fetchWithinMutationLimit(route);expect(response.ok(),await response.text()).toBe(true);await route.abort("failed");}else await route.fallback();
     });
     await page.getByRole("button",{name:"Save message",exact:true}).click();
     await expect(page.getByRole("button",{name:"Retry saving message",exact:true})).toBeVisible();
@@ -525,6 +529,40 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
     const messages=await (await request.get(`/api/projects/${project}/conversations/${envelope.conversation.conversation_id}/messages`)).json();
     expect(messages.filter((message:any)=>message.input.id===sent.id).map((message:any)=>message.input)).toEqual([sent]);
     expect(await (await request.get(`${taskRoot}/budget`)).json()).toEqual(beforeMessage);
+    const mutationCount=starts.length;
+    const item=page.getByRole("list",{name:"Saved messages",exact:true}).locator("li").filter({hasText:"TEST UI 只讨论刚才选中的原始候选"});
+    await item.getByRole("button",{name:"Open referenced candidate",exact:true}).click();
+    await expect(page).toHaveURL(new RegExp(`message=${sent.id}`));
+    const referenceUrl=page.url();
+    const historical=page.getByRole("region",{name:"Referenced sample candidate",exact:true});
+    await expect(historical).toContainText("This historical prediction is read-only");
+    await expect(historical.getByRole("button",{name:"Save sample feedback",exact:true})).toHaveCount(0);
+    const evidence=(await (await request.get(`/api/workflow-drafts/${sent.reference.draft_id}/sample-test?test_id=${sent.reference.sample_test_id}`)).json()).sample_test;
+    const projection=evidence.report.samples[0].projection;
+    const original=[...projection.final_candidates,...projection.review_candidates.map((value:any)=>value.candidate)].find((value:any)=>value.outcome.id===sent.reference.candidate_id).outcome;
+    if(kind==="bbox")await expect.poll(async()=>Number(await historical.locator("rect.aa-annotation-shape").getAttribute("width"))).toBeCloseTo(original.value.rect[2]*640,3);
+    else await expect(historical.getByLabel("Image classification results",{exact:true})).toContainText(original.value.labels.join(", "));
+    await page.reload();
+    await expect(historical).toContainText("Original saved candidate");
+    await historical.screenshot({path:`../docs/execution/conversational-workspace/message-reference-reopen-${kind}.png`,animations:"disabled"});
+    const forged=new URL(referenceUrl);forged.searchParams.set("message",randomUUID());
+    await page.goto(forged.toString());
+    await expect(page.getByRole("alert").filter({hasText:"The message reference does not match"})).toBeVisible();
+    await expect(historical).toHaveCount(0);
+    const wrongImage=new URL(referenceUrl);wrongImage.searchParams.set("image",randomUUID());
+    await page.goto(wrongImage.toString());
+    await expect(page.getByRole("alert").filter({hasText:"The message reference does not match"})).toBeVisible();
+    await expect(historical).toHaveCount(0);
+    await page.goto(referenceUrl);
+    await page.getByRole("button",{name:"Review model setup",exact:true}).click();
+    await page.reload();
+    await page.getByRole("button",{name:"Return to annotation task",exact:true}).click();
+    await expect(page).toHaveURL(referenceUrl);
+    await expect(historical).toContainText("Original saved candidate");
+    await historical.getByRole("button",{name:"View current sample corrections",exact:true}).click();
+    await expect(page.getByLabel("Saved sample results",{exact:true})).toBeVisible();
+    expect(new URL(page.url()).searchParams.has("message")).toBe(false);
+    expect(starts.length).toBe(mutationCount);
   }
 });
 }

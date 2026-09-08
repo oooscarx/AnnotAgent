@@ -4,8 +4,11 @@ import type { ImageItem, WorkflowSampleTestRecord, ConversationMessageInput } fr
 import { SampleFeedbackEditor } from "./SampleFeedbackEditor";
 import type { OpenConversationSample } from "./ConversationSampleCard";
 import type { HumanRequest } from "../conversation-human-api";
+import { AnnotationCanvas } from "./AnnotationCanvas";
+import { sampleAnnotations } from "../sampleAnnotations";
 
-export function ConversationSampleCanvas({project, draft, test, image, onDirtyChange, onOpen, humanRequest, onAnswered, referenceTask, onReference}: {
+export function ConversationSampleCanvas({project, draft, test, image, onDirtyChange, onOpen, humanRequest, onAnswered, referenceTask, onReference, messageReference}: {
+  messageReference?:ConversationMessageInput;
   referenceTask?:{id:string;schema_revision:string};
   onReference?:(input:Pick<ConversationMessageInput,"image"|"reference">,name:string)=>void;
   project: string; draft: string; test: string; image?: ImageItem;
@@ -35,6 +38,12 @@ export function ConversationSampleCanvas({project, draft, test, image, onDirtyCh
   if(!sample)return <section aria-label="Sample test failure"><h2>Sample execution did not produce a result</h2><ul>{record.report.validation.issues.map((issue,index)=><li key={index}>{issue.message}</li>)}</ul><figure className="conversation-image"><img src={image.url} alt={image.name}/><figcaption>Original image · No result was substituted</figcaption></figure></section>;
   if(!sample.projection)return <section><p role="alert">This older test has no terminal-result projection. Intermediate boxes are not final results.</p><figure className="conversation-image"><img src={image.url} alt={image.name}/></figure></section>;
   const projection=sample.projection;
+  if(messageReference){
+    const ref=messageReference.reference;
+    const candidate=[...projection.final_candidates,...projection.review_candidates.map(item=>item.candidate)].filter(item=>item.outcome.id===ref?.candidate_id && item.source_artifact_id===ref?.source_artifact_id);
+    if(!ref || ref.draft_revision!==record.draft_revision || ref.draft_id!==draft || ref.sample_test_id!==test || messageReference.image?.sha256!==source.content_hash || candidate.length!==1)return <p role="alert">The referenced candidate, Artifact or revision is not available in this saved sample. No replacement was selected.</p>;
+    return <section className="conversation-sample-canvas" aria-label="Referenced sample candidate"><header><h2>{image.name}</h2><p>Original saved candidate · Draft revision {ref.draft_revision}</p></header><p>{messageReference.text}</p><p>This historical prediction is read-only. Later sample corrections and formal annotations remain separate.</p><AnnotationCanvas imageUrl={image.url} annotations={sampleAnnotations([candidate[0].outcome],image.image_id,test)} selectedId={ref.candidate_id} readOnly compactList onSelect={()=>{}} onChange={()=>{}}/><button onClick={()=>onOpen(draft,test,image.image_id)}>View current sample corrections</button></section>;
+  }
   const outcomes=[...projection.final_candidates.map(candidate=>candidate.outcome),...projection.review_candidates.map(item=>item.candidate.outcome)];
   if(humanRequest && !outcomes.some(outcome=>outcome.id===humanRequest.input.outcome_id))return <p role="alert">The requested candidate is not in this sample's terminal results. No replacement was selected.</p>;
   const terminal={...sample,outcomes:outcomes.filter((item,index,items)=>items.findIndex(other=>other.id===item.id)===index)};

@@ -13,6 +13,13 @@ import {
 } from "./navigation";
 
 describe("guided workspace routing", () => {
+  it("retains a frozen reference message and its exact sample context",()=>{
+    const context={conversationId:"conversation",taskId:"task",referenceMessageId:"message",draftId:"draft",sampleTestId:"sample",imageId:"image"};
+    const path=projectWorkPath("project",context),url=new URL(path,"http://localhost");
+    const route=parseWorkspaceRoute(url.pathname,url.search);
+    expect(route).toMatchObject({kind:"conversation",...context,canonicalPath:path});
+    expect(routeFocusKey(route)).toBe(routeFocusKey(parseWorkspaceRoute(url.pathname,"?image=other")));
+  });
   it("restores a conversation image without stealing page focus or accepting external returns", () => {
     const path = projectWorkPath("project a", { conversationId: "saved", imageId: "image" });
     const url = new URL(path, "http://localhost");
