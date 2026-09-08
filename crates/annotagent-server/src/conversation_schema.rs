@@ -288,17 +288,32 @@ pub(super) async fn propose(
         remote_model: selected.model.remote_model_id,
         scope_hash: consent.scope_hash,
     };
-    state
-        .application
-        .execute_conversation_schema(
-            &project,
-            &execution,
-            &provider,
-            CancellationToken::default(),
+    // A dropped HTTP response must not drop an admitted model operation. The
+    // existing call receipt/cancellation service remains the execution owner.
+    let permit = state.journey_workers.clone().try_acquire_owned().map_err(|_| ApiError {
+        status: StatusCode::TOO_MANY_REQUESTS,
+        body: json!({"error":"Background planning capacity is full. The original Schema authorization remains saved; no new model call was admitted.","code":"journey_capacity_exhausted"}),
+    })?;
+    let application = state.application.clone();
+    tokio::spawn(async move {
+        let _permit = permit;
+        application
+            .execute_conversation_schema(
+                &project,
+                &execution,
+                &provider,
+                CancellationToken::default(),
+            )
+            .await
+    })
+    .await
+    .map_err(|_| {
+        ApiError::internal(
+            "Schema worker stopped unexpectedly; read the saved call receipt before retrying.",
         )
-        .await
-        .map(Json)
-        .map_err(ApiError::bad_request)
+    })?
+    .map(Json)
+    .map_err(ApiError::bad_request)
 }
 
 pub(super) async fn receipt(

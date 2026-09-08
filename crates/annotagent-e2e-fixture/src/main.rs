@@ -382,6 +382,11 @@ async fn openai_completion(
         return Json(response);
     }
     let tools = tools_by_name(&request);
+    if request["model"] == "e2e-conversation-classification-schema-background"
+        && tools.contains_key("propose_annotation_schema")
+    {
+        tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+    }
     if request["model"] == "e2e-conversation-classification-background"
         && !tools.is_empty()
         && !tools.contains_key("propose_annotation_schema")

@@ -2731,3 +2731,37 @@ Still needed: initial Schema/goal coordination under one suitable consent, advan
 types and scoped message interpretation, comprehensive multi-history/context and a11y audit,
 full final regression, Live quality and real-human usability. No push, remote changes, user data
 mutation, real workspace restart or old API keys.
+
+### M2 initial-goal integration prerequisite — Schema execution survives client disconnect
+
+Rechecked the task's initial-goal/Schema and authorization sections. Full first-message-to-sample
+consent still needs to bind an as-yet-unknown Schema safely; it must not reuse a text-only Schema
+permission as permission to transmit images. Before that integration, fixed a lifecycle mismatch:
+the Schema UI said leaving does not cancel, while its server handler directly owned the inference
+future. The handler now awaits a separately spawned, bounded worker. Dropping its HTTP wait
+detaches the worker rather than dropping an admitted model call. Existing Application call
+receipts, cancellation tokens, Project/task budget, expiry, automatic Draft materialization and
+startup unknown-outcome recovery remain authoritative. The shared eight-worker planning bound
+is acquired before dispatch; capacity rejection preserves the original saved authorization.
+No new Schema executor, migration, retry policy or expanded image permission was added.
+
+New isolated browser test uses a named slow TEST Schema model and an actual browser fetch with
+AbortController (not merely dropping an already-completed response). It waits for the model-call
+receipt to become reserved, aborts the client, navigates away, then verifies one completed call,
+the automatically saved classification Schema revision and restoration in the original task.
+A second task explicitly cancels the worker while the request is in flight and verifies there
+is no Schema Draft and no extra call from returning to the task.
+
+Initial `/tmp/annotagent-guided-e2e-38632` failed because the TEST expected cancellation to mean
+`failed`. Inspection of the saved receipt and existing Application contract showed `in_doubt`
+is correct once the Provider may have received the request: remote completion and cost are
+unknown. Corrected the test, not production evidence semantics. Final
+`/tmp/annotagent-guided-e2e-38877` passed the new lifecycle case and existing Schema authorization,
+budget/retry/ownership/Draft test (2/2 in 15.6 s). Server 40 tests, focused Application Schema
+tests (5), Server/E2E-fixture all-target/all-feature Clippy, format/diff checks passed. Web
+production build passed with the existing chunk-size warning. No changed layout or new screenshot
+claim; all transport is explicit TEST, not Live quality evidence.
+
+Initial Schema-to-Builder/sample consent integration remains outstanding, as do the other
+incomplete objective items. No real workspace restart/data changes, old keys, push or remote
+changes. The lifecycle correction is a prerequisite, not a redefinition of the full goal.
