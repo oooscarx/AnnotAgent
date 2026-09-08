@@ -15,6 +15,32 @@ pub struct ConversationProcessingContext {
 }
 
 impl LocalApplication {
+    pub fn pending_conversation_schema_authorization(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+    ) -> Result<Option<annotagent_storage::ConversationSchemaAuthorization>> {
+        self.optional_conversation_builder_budget(project, conversation, task)?;
+        Ok(self.store.pending_conversation_schema_authorization(
+            &self.conversation_project_identity(project)?,
+            task,
+        )?)
+    }
+    pub fn authorize_conversation_schema_request(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        input: &annotagent_storage::ConversationSchemaAuthorization,
+    ) -> Result<()> {
+        self.optional_conversation_builder_budget(project, conversation, task)?;
+        Ok(self.store.authorize_conversation_schema(
+            &self.conversation_project_identity(project)?,
+            task,
+            input,
+        )?)
+    }
     pub fn project_conversation_call_limit(
         &self,
         project: &str,

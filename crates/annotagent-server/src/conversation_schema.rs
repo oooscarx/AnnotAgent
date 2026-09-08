@@ -1,8 +1,8 @@
 //! Explicit consent boundary for one text-only Schema proposal. No publish/start.
 use super::*;
 use annotagent_application::{ConversationSchemaExecution, PipelineBuilderModelRuntime};
-use annotagent_storage::{ConversationCallGrant, ConversationCallReceipt};
-use chrono::{DateTime, Duration, Utc};
+use annotagent_storage::ConversationCallReceipt;
+use chrono::{Duration, Utc};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -122,14 +122,17 @@ pub(super) struct ModelSelection {
     model_id: Option<ModelProfileId>,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct SchemaConsent {
-    call_id: uuid::Uuid,
-    model_id: ModelProfileId,
-    scope_hash: String,
-    expires_at: DateTime<Utc>,
-    allow_unknown_cost: bool,
+pub(super) type SchemaConsent = annotagent_storage::ConversationSchemaAuthorization;
+
+pub(super) async fn pending_authorization(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+) -> ApiResult<Json<Option<SchemaConsent>>> {
+    state
+        .application
+        .pending_conversation_schema_authorization(&project, conversation, task)
+        .map(Json)
+        .map_err(ApiError::bad_request)
 }
 
 fn preview_scope(
@@ -221,13 +224,6 @@ pub(super) async fn propose(
             "Schema authorization scope changed. Review the current model and data scope again; no request was sent.",
         ));
     }
-    let grant = ConversationCallGrant {
-        id: consent.call_id,
-        task_id: task,
-        scope_hash: consent.scope_hash.clone(),
-        maximum_calls: 1,
-        expires_at: consent.expires_at,
-    };
     let credential = resolve_provider_credential(&state, &selected.provider)
         .await?
         .ok_or_else(|| {
@@ -245,7 +241,7 @@ pub(super) async fn propose(
     .map_err(ApiError::bad_request)?;
     state
         .application
-        .authorize_conversation_task_calls(&project, conversation, &grant)
+        .authorize_conversation_schema_request(&project, conversation, task, &consent)
         .map_err(ApiError::bad_request)?;
     let execution = ConversationSchemaExecution {
         conversation_id: conversation,

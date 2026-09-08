@@ -18,6 +18,16 @@ pub struct ConversationCallGrant {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConversationSchemaAuthorization {
+    pub call_id: Uuid,
+    pub model_id: annotagent_core::ModelProfileId,
+    pub scope_hash: String,
+    pub expires_at: DateTime<Utc>,
+    pub allow_unknown_cost: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConversationCallBudget {
     pub current_grant: ConversationCallGrant,
     pub used_calls: u32,
@@ -336,12 +346,50 @@ impl SqliteStore {
         project: &str,
         grant: &ConversationCallGrant,
     ) -> Result<(), StorageError> {
+        self.authorize_initial_request(project, grant, None)
+    }
+    pub fn authorize_conversation_schema(
+        &self,
+        project: &str,
+        task: Uuid,
+        input: &ConversationSchemaAuthorization,
+    ) -> Result<(), StorageError> {
+        if !input.allow_unknown_cost {
+            return Err(invalid("Explicit unknown-cost consent is required"));
+        }
+        let grant = ConversationCallGrant {
+            id: input.call_id,
+            task_id: task,
+            scope_hash: input.scope_hash.clone(),
+            maximum_calls: 1,
+            expires_at: input.expires_at,
+        };
+        self.authorize_initial_request(project, &grant, Some(input))
+    }
+    pub fn pending_conversation_schema_authorization(
+        &self,
+        project: &str,
+        task: Uuid,
+    ) -> Result<Option<ConversationSchemaAuthorization>, StorageError> {
+        self.with_connection(|db|{
+            owner(db,project,task)?;
+            let saved:Option<String>=db.query_row("SELECT a.input_json FROM conversation_schema_authorizations a JOIN conversation_call_grants g ON g.id=a.call_id WHERE a.task_id=?1 AND NOT EXISTS(SELECT 1 FROM conversation_model_calls m WHERE m.id=a.call_id) AND NOT EXISTS(SELECT 1 FROM conversation_call_cancellations c WHERE c.call_id=a.call_id)",[task.to_string()],|row|row.get(0)).optional()?;
+            saved.map(|value|serde_json::from_str(&value).map_err(Into::into)).transpose()
+        })
+    }
+    fn authorize_initial_request(
+        &self,
+        project: &str,
+        grant: &ConversationCallGrant,
+        request: Option<&ConversationSchemaAuthorization>,
+    ) -> Result<(), StorageError> {
         if !digest(&grant.scope_hash) || !(1..=128).contains(&grant.maximum_calls) {
             return Err(invalid("invalid bounded call authorization"));
         }
         self.with_connection(|db| {
             let tx = db.unchecked_transaction()?;
             owner(&tx, project, grant.task_id)?;
+            let authorize = || -> Result<(), StorageError> {
             let historical: Option<(String,String,u32,String)> = tx.query_row("SELECT task_id,scope_hash,maximum_calls,expires_at FROM conversation_authorization_revisions WHERE id=?1 AND previous_id IS NULL", [grant.id.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).optional()?;
             if let Some((task,scope,maximum,expires)) = historical {
                 if task != grant.task_id.to_string() || scope != grant.scope_hash || maximum != grant.maximum_calls || expires != grant.expires_at.to_rfc3339() { return Err(invalid("initial authorization retry conflicts")); }
@@ -355,6 +403,17 @@ impl SqliteStore {
             if grant.expires_at <= Utc::now() { return Err(invalid("task authorization expired")); }
             tx.execute("INSERT INTO conversation_call_grants(task_id,id,scope_hash,maximum_calls,expires_at) VALUES(?1,?2,?3,?4,?5)", params![grant.task_id.to_string(),grant.id.to_string(),grant.scope_hash,grant.maximum_calls,grant.expires_at.to_rfc3339()])?;
             tx.execute("INSERT INTO conversation_authorization_revisions(id,task_id,scope_hash,maximum_calls,expires_at) VALUES(?1,?2,?3,?4,?5)",params![grant.id.to_string(),grant.task_id.to_string(),grant.scope_hash,grant.maximum_calls,grant.expires_at.to_rfc3339()])?;
+            Ok(())
+            };
+            authorize()?;
+            if let Some(input)=request {
+                let saved:Option<String>=tx.query_row("SELECT input_json FROM conversation_schema_authorizations WHERE call_id=?1",[input.call_id.to_string()],|row|row.get(0)).optional()?;
+                if let Some(saved)=saved {
+                    if serde_json::from_str::<ConversationSchemaAuthorization>(&saved)?!=*input{return Err(invalid("Schema authorization retry changed the original consent"));}
+                }else{
+                    tx.execute("INSERT INTO conversation_schema_authorizations(call_id,task_id,input_json) VALUES(?1,?2,?3)",params![input.call_id.to_string(),grant.task_id.to_string(),serde_json::to_string(input)?])?;
+                }
+            }
             tx.commit()?; Ok(())
         })
     }
@@ -454,6 +513,177 @@ mod tests {
     use super::*;
     use crate::{BeginConversationTask, ConversationMessageInput};
     use chrono::Duration;
+
+    #[test]
+    fn schema_consent_survives_pre_admission_failure_without_a_new_grant_or_call() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("TEST-schema-consent.db");
+        let store = SqliteStore::open(&path).unwrap();
+        let project = Uuid::new_v4().to_string();
+        let conversation = store.create_conversation(&project).unwrap();
+        let message = ConversationMessageInput {
+            id: Uuid::new_v4(),
+            text: "TEST saved consent".into(),
+            image: None,
+            reference: None,
+        };
+        store
+            .append_conversation_message(&project, conversation, &message)
+            .unwrap();
+        let task = Uuid::new_v4();
+        store
+            .begin_conversation_task(
+                &project,
+                conversation,
+                &BeginConversationTask {
+                    id: task,
+                    source_message_id: message.id,
+                    schema_revision: "a".repeat(64),
+                },
+            )
+            .unwrap();
+        let consent = ConversationSchemaAuthorization {
+            call_id: Uuid::new_v4(),
+            model_id: annotagent_core::ModelProfileId::new(),
+            scope_hash: "a".repeat(64),
+            expires_at: Utc::now() + Duration::minutes(10),
+            allow_unknown_cost: true,
+        };
+        let limit = crate::ProjectCallLimitInput {
+            id: Uuid::new_v4(),
+            expected_revision: 0,
+            maximum_calls: 0,
+        };
+        store
+            .set_project_conversation_call_limit(&project, &limit)
+            .unwrap();
+        // A failed envelope write cannot leave a stranded authorization behind.
+        store.with_connection(|db|{db.execute_batch("CREATE TRIGGER fail_schema_consent BEFORE INSERT ON conversation_schema_authorizations BEGIN SELECT RAISE(ABORT,'TEST atomic consent'); END;")?;Ok(())}).unwrap();
+        assert!(
+            store
+                .authorize_conversation_schema(&project, task, &consent)
+                .is_err()
+        );
+        assert!(
+            store
+                .conversation_call_budget(&project, task)
+                .unwrap()
+                .is_none()
+        );
+        store
+            .with_connection(|db| {
+                db.execute_batch("DROP TRIGGER fail_schema_consent;")?;
+                Ok(())
+            })
+            .unwrap();
+        store
+            .authorize_conversation_schema(&project, task, &consent)
+            .unwrap();
+        assert!(
+            store
+                .reserve_conversation_call(
+                    &project,
+                    task,
+                    consent.call_id,
+                    &consent.scope_hash,
+                    &"b".repeat(64)
+                )
+                .is_err()
+        );
+        assert!(
+            store
+                .conversation_call(&project, task, consent.call_id)
+                .unwrap()
+                .is_none()
+        );
+        drop(store);
+        let store = SqliteStore::open(path).unwrap();
+        assert_eq!(
+            store
+                .pending_conversation_schema_authorization(&project, task)
+                .unwrap(),
+            Some(consent.clone())
+        );
+        store
+            .authorize_conversation_schema(&project, task, &consent)
+            .unwrap();
+        assert!(
+            store
+                .authorize_conversation_schema(
+                    &project,
+                    task,
+                    &ConversationSchemaAuthorization {
+                        model_id: annotagent_core::ModelProfileId::new(),
+                        ..consent.clone()
+                    }
+                )
+                .is_err()
+        );
+        assert!(
+            store
+                .authorize_conversation_schema(
+                    &project,
+                    task,
+                    &ConversationSchemaAuthorization {
+                        call_id: Uuid::new_v4(),
+                        ..consent.clone()
+                    }
+                )
+                .is_err()
+        );
+        assert!(
+            store
+                .pending_conversation_schema_authorization("foreign", task)
+                .is_err()
+        );
+        store
+            .set_project_conversation_call_limit(
+                &project,
+                &crate::ProjectCallLimitInput {
+                    id: Uuid::new_v4(),
+                    expected_revision: 1,
+                    maximum_calls: 1,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .reserve_conversation_call(
+                    &project,
+                    task,
+                    consent.call_id,
+                    &consent.scope_hash,
+                    &"b".repeat(64)
+                )
+                .unwrap(),
+            ConversationCallAdmission::Admitted
+        );
+        assert!(
+            store
+                .pending_conversation_schema_authorization(&project, task)
+                .unwrap()
+                .is_none()
+        );
+        assert!(matches!(
+            store
+                .reserve_conversation_call(
+                    &project,
+                    task,
+                    consent.call_id,
+                    &consent.scope_hash,
+                    &"b".repeat(64)
+                )
+                .unwrap(),
+            ConversationCallAdmission::Existing(_)
+        ));
+        assert_eq!(
+            store
+                .project_conversation_call_limit(&project)
+                .unwrap()
+                .reserved_calls,
+            1
+        );
+    }
 
     #[test]
     fn next_phase_keeps_spend_and_original_receipts_without_scope_or_retry_reset() {

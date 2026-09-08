@@ -1877,6 +1877,7 @@ export interface ConversationTask {
   created_at: string;
 }
 export interface ProjectCallLimitSnapshot {revision:number;maximum_calls:number|null;reserved_calls:number}
+export interface ConversationSchemaAuthorization {call_id:string;model_id:string;scope_hash:string;expires_at:string;allow_unknown_cost:boolean}
 export interface ConversationSchemaPreview {
   project_call_limit?: ProjectCallLimitSnapshot;
   model_id: string; model_name: string; remote_model: string; destination: string;

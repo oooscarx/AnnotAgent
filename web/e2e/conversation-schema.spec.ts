@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { expect, test } from "./fixtures";
+import { expect, test, fetchWithinMutationLimit } from "./fixtures";
 
 test("authorized conversation Schema crosses actual HTTP Provider transport once and restores receipts", async ({ page, request }) => {
   test.setTimeout(120_000);
@@ -32,7 +32,33 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
     const rejected=await request.post(`${taskRoot}/schema-proposals`,{data:consent});
     expect(rejected.ok()).toBe(false);expect(await rejected.text()).toContain("Project conversation call limit exhausted");
     expect((await (await request.get(limitPath)).json()).reserved_calls).toBe(beforeLimit.reserved_calls);
+    expect(await (await request.get(`${taskRoot}/schema-authorizations/pending`)).json()).toEqual(consent);
+    expect((await request.get(`${taskRoot.replace(task,randomUUID())}/schema-authorizations/pending`)).ok()).toBe(false);
+    if(kind==="bounding_box"){
+      await page.goto(`/projects/${project}/work?conversation=${conversation}&task=${task}`);
+      await expect(page.getByRole("region",{name:"Annotation Schema proposal",exact:true})).toContainText("The original Schema request is saved, but no model call was admitted");
+      await expect(page.getByText("Request recorded or being submitted.",{exact:false})).toHaveCount(0);
+      await page.getByRole("button",{name:"Review saved Schema request",exact:true}).click();
+      await expect(page.getByRole("button",{name:"Retry saved Schema request",exact:true})).toBeDisabled();
+      await page.reload();
+      await expect(page.getByLabel("Saved Schema authorization",{exact:true})).toContainText(consent.expires_at);
+      await page.getByLabel("Saved Schema authorization",{exact:true}).screenshot({path:"../docs/execution/conversational-workspace/schema-pending-authorization.png",animations:"disabled"});
+    }
     expect((await request.post(limitPath,{data:{id:randomUUID(),expected_revision:beforeLimit.revision,maximum_calls:beforeLimit.reserved_calls+1}})).ok()).toBe(true);
+    if(kind==="bounding_box"){
+      await page.getByRole("button",{name:"Review saved Schema request",exact:true}).click();
+      await expect(page.getByRole("button",{name:"Retry saved Schema request",exact:true})).toBeEnabled();
+      let actual:any;
+      await page.route(`**${taskRoot}/schema-proposals`,async route=>{
+        actual=route.request().postDataJSON();const saved=await fetchWithinMutationLimit(route);expect(saved.ok(),await saved.text()).toBe(true);await route.abort("failed");
+      },{times:1});
+      await page.getByRole("button",{name:"Retry saved Schema request",exact:true}).click();
+      await expect(page.getByText("Schema proposal saved",{exact:true})).toBeVisible();
+      await expect(page.getByRole("region",{name:"Annotation Schema proposal",exact:true}).getByRole("alert")).toHaveCount(0);
+      expect(actual).toEqual(consent);
+      await page.reload();await expect(page.getByText("Schema proposal saved",{exact:true})).toBeVisible();
+      await page.getByRole("region",{name:"Annotation Schema proposal",exact:true}).screenshot({path:"../docs/execution/conversational-workspace/schema-original-consent-recovered.png",animations:"disabled"});
+    }
     const response = await request.post(`${taskRoot}/schema-proposals`,{data:consent});
     expect(response.ok()).toBeTruthy(); const receipt = await response.json();
     expect(receipt.status).toBe("completed");
