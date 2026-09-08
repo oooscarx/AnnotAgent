@@ -4330,3 +4330,19 @@ continuation must poll that handle or inspect its authoritative process state be
 Output files observed under the temporary root confirm that old repository screenshots were
 not used as the new evidence destination. Full-suite results and failures will be recorded after
 termination. No real workspace, Live provider, credential, remote or push action was used.
+
+### 2026-09-09 — Visual assistance contract audit during full regression
+
+Inspected the actual `ConversationHumanRequestInput`, Web `HumanRequest` type and
+`ConversationSampleCanvas` submission path. This request contract requires an outcome ID and
+the canvas rejects a request if that ID is absent from terminal results. The structured answer
+uses the existing SampleFeedbackRevision. This proves an existing-candidate correction path,
+not a generalized point-identification or candidate-comparison request protocol. Candidate-free
+visual assistance therefore remains a concrete gap in the requested interaction coverage; do
+not label all suggested request kinds as implemented based on the correction golden path.
+Separate Schema clarification, class-scope and setup/authorization cards retain their existing
+contracts; this audit does not remove them or alter persisted requests.
+
+The same full E2E command (handle 79494) is still live, with the first 43 tests passing, including
+future-rule lost ACK, stop, independent manual draft and cross-tab cancellation scenarios. No
+restart or source/product change was made to the active test run. Its terminal result is pending.
