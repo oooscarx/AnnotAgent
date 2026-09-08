@@ -5,6 +5,19 @@ use rusqlite::{OptionalExtension, params};
 use serde_json::Value;
 
 impl SqliteStore {
+    /// Existing receipts remain the truth; no backfill or new processing is triggered by reads.
+    pub fn conversation_processing_operations(
+        &self,
+        project: &str,
+        conversation: uuid::Uuid,
+        task: uuid::Uuid,
+    ) -> Result<Vec<Value>, StorageError> {
+        self.with_connection(|connection| {
+            let mut statement = connection.prepare("SELECT state_json FROM processing_operations WHERE project_id=?1 AND json_extract(state_json,'$.authorization.conversation.conversation_id')=?2 AND json_extract(state_json,'$.authorization.conversation.task_id')=?3 ORDER BY created_at DESC,id DESC LIMIT 100")?;
+            let rows = statement.query_map(params![project,conversation.to_string(),task.to_string()], |row| row.get::<_,String>(0))?;
+            rows.map(|row| serde_json::from_str(&row?).map_err(Into::into)).collect()
+        })
+    }
     /// Reserve before an external request; failed/uncertain sends are never refunded.
     pub fn reserve_batch_model_call(
         &self,
@@ -97,6 +110,46 @@ impl SqliteStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn conversation_history_reads_only_exact_persisted_processing_links() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("TEST-processing.sqlite");
+        let store = SqliteStore::open(&path).unwrap();
+        let conversation = uuid::Uuid::new_v4();
+        let task = uuid::Uuid::new_v4();
+        for (id, project, linked_task) in [
+            ("one", "p", task),
+            ("foreign", "other", task),
+            ("other-task", "p", uuid::Uuid::new_v4()),
+        ] {
+            let request = serde_json::json!({"id":id});
+            let state = serde_json::json!({"id":id,"phase":"published_start_failed","authorization":{"conversation":{"conversation_id":conversation,"task_id":linked_task}}});
+            store
+                .reserve_processing_operation(id, project, &request, &state)
+                .unwrap();
+        }
+        drop(store);
+        let store = SqliteStore::open(&path).unwrap();
+        let saved = store
+            .conversation_processing_operations("p", conversation, task)
+            .unwrap();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0]["id"], "one");
+        assert_eq!(saved[0]["phase"], "published_start_failed");
+        assert_eq!(
+            store
+                .conversation_processing_operations("p", conversation, task)
+                .unwrap(),
+            saved
+        );
+        assert!(
+            store
+                .conversation_processing_operations("p", uuid::Uuid::new_v4(), task)
+                .unwrap()
+                .is_empty()
+        );
+    }
 
     #[test]
     fn confirmation_key_is_scoped_and_survives_partial_publication() {

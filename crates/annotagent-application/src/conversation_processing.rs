@@ -1,0 +1,91 @@
+//! Link the existing processing service to saved conversation evidence, not another executor.
+use crate::LocalApplication;
+use annotagent_core::WorkflowDraft;
+use annotagent_storage::ConversationSchemaDraft;
+use anyhow::{Context, Result, bail};
+use serde::Serialize;
+use uuid::Uuid;
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ConversationProcessingContext {
+    pub conversation_id: Uuid,
+    pub task_id: Uuid,
+    pub source_message_id: Uuid,
+    pub schema: ConversationSchemaDraft,
+}
+
+impl LocalApplication {
+    /// Derive ownership from the persisted sample command; never trust active UI selection.
+    /// A later Schema revision does not reinterpret the exact revision tested by this Draft.
+    pub fn conversation_processing_context(
+        &self,
+        project: &str,
+        draft: &WorkflowDraft,
+        sample_id: &str,
+    ) -> Result<Option<ConversationProcessingContext>> {
+        if draft.project_id != project {
+            bail!("Processing Draft belongs to another Project");
+        }
+        let operation = self.store.sample_operation(sample_id)?;
+        let consent = operation
+            .as_ref()
+            .and_then(|value| value.request.get("conversation"));
+        let Some(consent) = consent.filter(|value| !value.is_null()) else {
+            if draft.annotation_schema.is_some() {
+                bail!("Conversation Schema requires its saved conversation Sample Operation");
+            }
+            return Ok(None);
+        };
+        let operation = operation.as_ref().context("Sample Operation missing")?;
+        if operation.project_id != project || operation.draft_id != draft.id {
+            bail!("Conversation Sample Operation belongs to another Project or Draft");
+        }
+        let conversation_id: Uuid = serde_json::from_value(consent["conversation_id"].clone())?;
+        let task_id: Uuid = serde_json::from_value(consent["task_id"].clone())?;
+        let task = self
+            .conversation_tasks(project, conversation_id)?
+            .into_iter()
+            .find(|task| task.input.id == task_id)
+            .context("Processing task does not belong to this conversation")?;
+        let binding = draft
+            .annotation_schema
+            .as_ref()
+            .context("Conversation processing requires the tested Schema snapshot")?;
+        let schema = self.conversation_schema_draft(
+            project,
+            Uuid::parse_str(&binding.schema_draft_id)?,
+            Some(binding.revision),
+        )?;
+        if schema.task_id != task_id
+            || schema.definition.goal != binding.goal
+            || schema.definition.task != binding.task
+            || schema.definition.boundary_rules != binding.boundary_rules
+        {
+            bail!("Processing Schema snapshot differs from the owned conversation revision");
+        }
+        Ok(Some(ConversationProcessingContext {
+            conversation_id,
+            task_id,
+            source_message_id: task.input.source_message_id,
+            schema,
+        }))
+    }
+
+    pub fn conversation_processing_history(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+    ) -> Result<Vec<serde_json::Value>> {
+        if !self
+            .conversation_tasks(project, conversation)?
+            .iter()
+            .any(|item| item.input.id == task)
+        {
+            bail!("Processing task does not belong to this conversation");
+        }
+        Ok(self
+            .store
+            .conversation_processing_operations(project, conversation, task)?)
+    }
+}

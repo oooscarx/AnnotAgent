@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { api } from "../api";
-import { projectWorkPath, projectBuildPath } from "../navigation";
+import { api, type ProcessingReceipt } from "../api";
+import { projectWorkPath, projectBuildPath, projectBatchPath } from "../navigation";
 import type { ConversationMessage, ConversationMessageInput, ImageItem, ProjectSummary } from "../types";
 import "./conversation-workspace.css";
 import { ConversationSchemaCard } from "./ConversationSchemaCard";
@@ -27,6 +27,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   const [mobileView, setMobileView] = useState("conversation");
   const [width, setWidth] = useState(32);
   const [requests,setRequests]=useState<HumanRequest[]>([]);
+  const [processing,setProcessing]=useState<ProcessingReceipt[]>([]);
   const [requestsReady,setRequestsReady]=useState(false);
   const [requestRefresh,setRequestRefresh]=useState(0);
   const assistanceChanged=useCallback(()=>setRequestRefresh(value=>value+1),[]);
@@ -36,7 +37,10 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   useEffect(()=>{
     const controller=new AbortController();setRequestsReady(false);
     if(!conversation)return()=>controller.abort();
-    void api.conversationTasks(project.id,conversation,controller.signal).then(tasks=>Promise.all(tasks.map(task=>api.conversationHumanRequests(project.id,conversation,task.input.id,controller.signal)))).then(values=>{if(!controller.signal.aborted){setRequests(values.flat());setRequestsReady(true);}}).catch((error:Error)=>{if(!controller.signal.aborted)setError(error.message);});
+    void api.conversationTasks(project.id,conversation,controller.signal).then(tasks=>Promise.all(tasks.map(async task=>({
+      requests:await api.conversationHumanRequests(project.id,conversation,task.input.id,controller.signal),
+      processing:await api.conversationProcessing(project.id,conversation,task.input.id,controller.signal),
+    })))).then(values=>{if(!controller.signal.aborted){setRequests(values.flatMap(value=>value.requests));setProcessing(values.flatMap(value=>value.processing));setRequestsReady(true);}}).catch((error:Error)=>{if(!controller.signal.aborted)setError(error.message);});
     return()=>controller.abort();
   },[project.id,conversation,sampleTestId,requestRefresh]);
   const updateRequest=(value:HumanRequest)=>setRequests(items=>items.map(item=>item.input.id===value.input.id ? value : item));
@@ -150,7 +154,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
       <section className="conversation-panel" aria-label="Project conversation">
         <h2>What would you like to annotate?</h2>
         <p className="muted">Describe your goal before or after uploading images.</p>
-        <p className="conversation-development-note">Workspace integration in progress: label proposals, Pipeline Drafts, sample tests, human corrections and authorized plan revisions share saved server state. Dataset processing is not connected here yet.</p>
+        <p className="conversation-development-note">Workspace integration in progress: label proposals, sample tests, corrections and processing history share saved server state. Starting dataset processing from this conversation is not connected yet.</p>
         <ol className="conversation-messages" aria-label="Saved messages">
           {messages.map((message) => <li key={message.input.id}><p>{message.input.text}</p>{message.input.image && <button onClick={() => {
             const reference = message.input.image;
@@ -159,6 +163,13 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
             openImage(image.image_id);
           }}>Referenced image · {images.find((image) => image.image_id === message.input.image?.image_id)?.name ?? message.input.image.image_id}</button>}<small>Saved · {message.sequence}</small></li>)}
         </ol>
+        {processing.length>0 && <section className="conversation-consent" aria-label="Saved processing tasks"><h3>Processing tasks</h3>{processing.map(operation=><article className="conversation-consent" key={operation.id}>
+          <h4>{operation.authorization.goal.goal || operation.authorization.plan_name}</h4>
+          <p>{operation.phase==="started" ? "Processing was started. Open its saved results for current progress." : operation.phase==="published_start_failed" ? "Plan published; processing did not start." : `Saved operation: ${operation.phase}`}</p>
+          <p>{operation.authorization.image_count} images · Schema revision {operation.authorization.conversation?.schema.revision} · Plan revision {operation.authorization.revision}</p>
+          {operation.error && <p role="alert">{operation.error}</p>}
+          {operation.batch_id && <button onClick={()=>onNavigate(projectBatchPath(project.id,operation.batch_id!))}>Open processing results</button>}
+        </article>)}</section>}
         {conversation && <section aria-label="Human requests"><h3>Requests for your help</h3><button onClick={()=>{if(sampleDirty.current){setError("Save or undo this correction before refreshing requests.");return;}setRequestRefresh(value=>value+1);}}>Refresh requests</button>{requests.map(value=><article key={value.input.id} className="conversation-consent"><p>{value.input.question}</p><p>{value.resume_draft_id ? "Correction saved · revision Draft available" : value.status==="answered" ? "Correction saved · awaiting task continuation" : value.status}</p>{value.resume_error && <p role="alert">Correction saved, but Draft preparation failed: {value.resume_error}</p>}<button onClick={()=>void openRequest(value)}>Open requested result</button>{value.status==="answered" && <button onClick={()=>void retryContinuation(value)}>Retry Draft preparation</button>}{value.resume_draft_id && <button onClick={()=>onNavigate(projectBuildPath(project.id,"pipeline",{draftId:value.resume_draft_id!}))}>Inspect revision Draft</button>}{value.status==="pending" && <button onClick={()=>void cancelRequest(value)}>Cancel request</button>}</article>)}</section>}
         {conversation && messages[0] && <ConversationSchemaCard key={`${conversation}:${messages[0].input.id}`} project={project.id} conversation={conversation} message={messages[0].input.id} onDirtyChange={schemaDirtyChange} onAssistance={assistanceChanged} onSample={(draft,test,image)=>void openSample(draft,test,image)} />}
         {activeRequest?.status==="applied" && activeRequest.resume_draft_id && <ConversationRepairCard key={activeRequest.input.id} project={project.id} request={activeRequest} editing={repairEditing} onAssistance={assistanceChanged} onSample={(draft,test,image)=>void openSample(draft,test,image)} />}

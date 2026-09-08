@@ -2,7 +2,9 @@
 
 mod conversation_builder;
 mod conversation_human_requests;
+mod conversation_processing;
 mod conversation_provider;
+pub use conversation_processing::ConversationProcessingContext;
 mod conversation_vision_calls;
 pub use conversation_builder::{ConversationBuilderExecution, ConversationBuilderRepair};
 pub use conversation_vision_calls::ConversationVisionCalls;

@@ -55,6 +55,15 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   const initialReport = (await (await request.get(`/api/workflow-drafts/${envelope.draft_id}/sample-test?test_id=${envelope.request_id}`)).json()).sample_test.report;
   expect(initialReport.validation.valid).toBe(true);
   expect(initialReport.samples[0].nodes.some((node:any)=>node.metadata.model === `e2e-conversation-${scenario}`)).toBe(true);
+  const processingPreviewResponse = await request.get(`/api/projects/${project}/processing-preview?draft_id=${envelope.draft_id}&sample_test_id=${envelope.request_id}`);
+  expect(processingPreviewResponse.ok(), await processingPreviewResponse.text()).toBe(true);
+  const processingPreview = await processingPreviewResponse.json();
+  expect(processingPreview.conversation.conversation_id).toBe(envelope.conversation.conversation_id);
+  expect(processingPreview.conversation.task_id).toBe(envelope.conversation.task_id);
+  expect(processingPreview.conversation.schema.definition.task.kind).toBe(kind === "bbox" ? "bounding_box" : "classification");
+  expect(processingPreview.goal.goal).toBe(processingPreview.conversation.schema.definition.goal);
+  expect(await (await request.get(`${taskRoot}/processing-operations`)).json()).toEqual([]);
+  expect((await request.get(taskRoot.replace(envelope.conversation.task_id, randomUUID()) + "/processing-operations")).ok()).toBe(false);
   expect(envelope.conversation.human_review).toBe(true);
   if(requiresReview){
   await expect.poll(async()=> (await (await request.get(`${taskRoot}/human-requests`)).json()).length).toBe(1);
@@ -253,5 +262,36 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   await expect(page.getByText("Correction saved and revision Draft prepared without model calls. Later repairs and tests have separate operation records.",{exact:true})).toBeVisible();
   expect(await (await request.get(`${taskRoot}/calls`)).json()).toEqual(afterComparison);
   }
+  // Exercise the existing formal service using only this isolated HTTP TEST transport.
+  const selection={draft_id:human.resume_checkpoint_ref,sample_test_id:new URL(comparisonUrl).searchParams.get("test"),limit:1};
+  const approvalResponse=await request.get(`/api/projects/${project}/processing-preview?${new URLSearchParams(selection as any)}`);
+  expect(approvalResponse.ok(),await approvalResponse.text()).toBe(true);
+  const approval=await approvalResponse.json();
+  const confirmation={request_id:randomUUID(),selection,expected_revision:approval.revision,authorization_fingerprint:approval.authorization_fingerprint};
+  const startedResponse=await request.post(`/api/projects/${project}/processing-operations`,{data:confirmation});
+  expect(startedResponse.ok(),await startedResponse.text()).toBe(true);
+  const started=await startedResponse.json();
+  expect(started.phase,JSON.stringify(started)).toBe("started");
+  const duplicate=await (await request.post(`/api/projects/${project}/processing-operations`,{data:confirmation})).json();
+  expect(duplicate.batch_id).toBe(started.batch_id);
+  const operations=await (await request.get(`${taskRoot}/processing-operations`)).json();
+  expect(operations).toHaveLength(1);
+  expect(operations[0].authorization.conversation.schema.id).toBe(approval.conversation.schema.id);
+  await expect.poll(async()=> (await (await request.get(`/api/batches/${started.batch_id}`)).json()).batch.images[0].execution_status).toBe(requiresReview ? "awaiting_review" : "completed");
+  await page.reload();
+  const processingCard=page.getByRole("region",{name:"Saved processing tasks",exact:true});
+  await expect(processingCard.getByRole("button",{name:"Open processing results",exact:true})).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("test")).toBe(selection.sample_test_id);
+  await processingCard.evaluate(element=>element.scrollIntoView({block:"start"}));
+  await page.screenshot({path:`../docs/execution/conversational-workspace/processing-linked-${scenario}.png`,fullPage:true});
+  const savedWorkspaceUrl=page.url();
+  await processingCard.getByRole("button",{name:"Open processing results",exact:true}).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${project}/batches/${started.batch_id}`));
+  await expect(page.getByRole("region",{name:"Processing results",exact:true})).toBeVisible();
+  await page.screenshot({path:`../docs/execution/conversational-workspace/processing-results-${scenario}.png`,fullPage:true,animations:"disabled"});
+  await page.goBack();
+  await expect(page).toHaveURL(savedWorkspaceUrl);
+  await expect(page.getByRole("region",{name:"Saved processing tasks",exact:true})).toBeVisible();
+  expect(await (await request.get(`${taskRoot}/processing-operations`)).json()).toHaveLength(1);
 });
 }

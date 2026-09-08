@@ -120,6 +120,10 @@ fn scope(
         .collect::<Result<Vec<_>, _>>()
         .map_err(ApiError::internal)?;
     let feedback_count = sample_feedback.iter().map(Vec::len).sum::<usize>();
+    let conversation = state
+        .application
+        .conversation_processing_context(project, &draft, &sample.id)
+        .map_err(ApiError::bad_request)?;
     let mut value = json!({
         "project_id":project,"draft_id":draft.id,"sample_test_id":sample.id,"revision":draft.revision,"draft_content_hash":draft.content_hash,
         "goal":state.application.project_goal(project).map_err(ApiError::bad_request)?,
@@ -128,6 +132,10 @@ fn scope(
         "sample_feedback":sample_feedback,"sample_feedback_count":feedback_count,
         "sample_images_are_sandbox_only":true,"review_policy":"Uncertain results stay in Review. This action does not accept every output.",
     });
+    if let Some(context) = conversation {
+        value["goal"] = json!({"goal": context.schema.definition.goal});
+        value["conversation"] = json!(context);
+    }
     add_native_scope(&mut value, &native_models);
     if !native_models.is_empty() {
         value["native_models"] = json!(native_model_descriptions(&native_models));
@@ -146,6 +154,17 @@ pub(super) async fn preview(
 ) -> ApiResult<Json<Value>> {
     let settings = state.settings.read().await.clone();
     Ok(Json(scope(&state, &project, &selection, &settings)?))
+}
+
+pub(super) async fn conversation_history(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+) -> ApiResult<Json<Vec<Value>>> {
+    state
+        .application
+        .conversation_processing_history(&project, conversation, task)
+        .map(Json)
+        .map_err(ApiError::bad_request)
 }
 
 fn owned(state: &ServerState, project: &str, id: &str) -> ApiResult<Value> {

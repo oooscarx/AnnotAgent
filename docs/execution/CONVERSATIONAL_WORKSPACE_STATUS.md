@@ -1172,3 +1172,48 @@ scripted labels prove transport/UI behavior only, not quality or真人可用性.
 and tall conversation editor remain. No push, remote modification, real workspace mutation,
 Live inference or new formal annotation. Formal processing integration and other M3/M4 work
 remain unfinished; the goal is still active.
+
+### Formal processing evidence linked to conversation tasks (M4 increment)
+
+Reused the existing `processing-preview` / `processing-operations` publication-and-Batch
+service. Its preview now derives conversation/task/message identity from the saved Sample
+Operation and resolves the exact owned Schema revision frozen in the tested Workflow Draft.
+It rejects missing conversation provenance, wrong Project/Draft/task and altered Schema
+snapshots; later Schema revisions do not reinterpret this revision. Legacy non-conversation
+plans retain their existing path. The actual Schema goal replaces the empty Project goal in
+this confirmation summary, and the complete context participates in the authorization hash.
+
+Existing processing receipts persist that context. A read-only, task-owned history endpoint
+filters those receipts (bounded to 100); it creates no duplicate execution entity, does not
+backfill old history, and cannot infer owner from the active UI. The conversation displays
+saved processing cards and a link to the actual Project Batch, without claiming that the
+historical `started` receipt is current completion status or moving the selected image.
+
+Regression covers a persisted Schema revision 1 after revision 2 exists, missing sample
+command, altered snapshot, foreign owner, and legacy fallback. Storage verifies exact
+Project/conversation/task filtering after reopening, including a published/start-failed
+receipt. Browser scenarios additionally invoke the real existing confirmation API on ONE
+isolated TEST image, retry the same key, assert one linked Batch, restore its card, open
+canonical processing results and Back to the exact sample URL. High classification reaches
+`completed`; bbox and confidence-0.4 classification reach `awaiting_review`. An initial test
+incorrectly expected `completed` for all three; it was corrected to require those distinct
+states, not by accepting or hiding pending reviews.
+
+Checks: Application **99 passed / 1 billable ignored**, Server **36/36**, targeted Storage
+processing tests **3/3**, strict Storage/Application/Server Clippy, Web typecheck and **108/108**
+unit tests passed. Production build retains the known chunk warning. Browser **3/3 passed**
+in `/tmp/annotagent-guided-e2e-221`; final screenshot recapture disables transitions (the first
+result captures caught the existing route fade-in and were not suitable final evidence).
+Final recapture: **3/3 passed** in `/tmp/annotagent-guided-e2e-312`. Inspected
+`processing-linked-bbox.png`, `processing-results-bbox.png` and
+`processing-results-classification.png` under `conversational-workspace/`; results distinguish
+Review from completed classification. This uses scripted HTTP TEST
+responses and synthetic pixels, not real model quality, billable validation or真人可用性.
+
+Still incomplete: initiating formal processing from the conversation itself, formal-call
+allocation/accounting within the shared task budget, current Batch status in the conversation,
+embedded formal result/Review/export integration, and broader M4/default-experience work.
+The UI explicitly states that starting processing there is not connected; no fake disabled
+confirmation control was added. This increment proves the existing service can execute the
+conversation's frozen plan and be recovered from its task, not the entire requested journey.
+No real workspace mutation/restart, push or remote change. Goal remains active.

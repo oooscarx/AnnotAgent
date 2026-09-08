@@ -795,6 +795,78 @@ mod tests {
             .revise_conversation_schema_draft("schema-test", schema_draft.id, edit_id, 1, &edited)
             .unwrap();
         assert_eq!(saved_edit.revision, 2);
+        // Processing must retain the exact tested Schema, not reinterpret it through revision 2.
+        let mut tested_plan: annotagent_core::WorkflowDraft = serde_json::from_value(serde_json::json!({
+            "id":"TEST-processing-plan","project_id":"schema-test","name":"TEST processing snapshot","status":"editing","nodes":[],
+            "created_at":chrono::Utc::now(),"updated_at":chrono::Utc::now(),
+            "annotation_schema":{"schema_draft_id":schema_draft.id,"revision":1,"goal":schema_draft.definition.goal,
+                "task":schema_draft.definition.task,"boundary_rules":schema_draft.definition.boundary_rules}
+        })).unwrap();
+        assert!(
+            reopened
+                .conversation_processing_context(
+                    "schema-test",
+                    &tested_plan,
+                    "TEST-processing-sample"
+                )
+                .is_err()
+        );
+        reopened.store.reserve_sample_operation(&annotagent_storage::SampleOperation {
+            id:"TEST-processing-sample".into(), project_id:"schema-test".into(),draft_id:tested_plan.id.clone(),
+            authorization_fingerprint:"TEST".into(),request:serde_json::json!({"conversation":{"conversation_id":conversation,"task_id":task}}),
+            status:"queued".into(),error:None,created_at:chrono::Utc::now().to_rfc3339(),updated_at:chrono::Utc::now().to_rfc3339(),
+        }).unwrap();
+        let linked = reopened
+            .conversation_processing_context("schema-test", &tested_plan, "TEST-processing-sample")
+            .unwrap()
+            .unwrap();
+        assert_eq!(linked.schema, schema_draft);
+        assert_eq!(linked.task_id, task);
+        assert_eq!(linked.conversation_id, conversation);
+        assert!(
+            reopened
+                .conversation_processing_context(
+                    "foreign-schema",
+                    &tested_plan,
+                    "TEST-processing-sample"
+                )
+                .is_err()
+        );
+        tested_plan
+            .annotation_schema
+            .as_mut()
+            .unwrap()
+            .goal
+            .push_str(" changed without a Schema revision");
+        assert!(
+            reopened
+                .conversation_processing_context(
+                    "schema-test",
+                    &tested_plan,
+                    "TEST-processing-sample"
+                )
+                .is_err()
+        );
+        tested_plan.annotation_schema = None;
+        assert!(
+            reopened
+                .conversation_processing_context(
+                    "schema-test",
+                    &tested_plan,
+                    "TEST-processing-sample"
+                )
+                .is_err()
+        );
+        assert!(
+            reopened
+                .conversation_processing_context(
+                    "schema-test",
+                    &tested_plan,
+                    "legacy-unlinked-sample"
+                )
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(
             reopened
                 .revise_conversation_schema_draft(
