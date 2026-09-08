@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { parseWorkspaceRoute, projectWorkPath, routeFocusKey, withConversationReturn, conversationReturn } from "../navigation";
+import { parseWorkspaceRoute, projectWorkPath, routeFocusKey, withConversationReturn, conversationReturn, conversationSettingsPath } from "../navigation";
 
 describe("conversation formal results context",()=>{
+  it("preserves setup context only for the explicit owning Project",()=>{
+    const origin=projectWorkPath("p",{conversationId:"c",taskId:"t",imageId:"i",draftId:"d",sampleTestId:"s"});
+    const path=conversationSettingsPath("p","models",origin);
+    const url=new URL(path,"http://localhost");
+    expect(parseWorkspaceRoute(url.pathname,url.search)).toMatchObject({kind:"settings",section:"models",returnProjectId:"p",workspaceReturn:origin,canonicalPath:path});
+    expect(parseWorkspaceRoute("/settings","?return_project=other&workspace_return="+encodeURIComponent(origin))).toMatchObject({workspaceReturn:undefined,canonicalPath:"/settings"});
+    expect(parseWorkspaceRoute("/settings/plugins","?return_project=p&workspace_return=https://evil.example")).toMatchObject({workspaceReturn:undefined,canonicalPath:"/settings/plugins"});
+  });
   it("preserves an owned workspace return through canonical Review and Export",()=>{
     const origin=projectWorkPath("p",{conversationId:"c",results:{batchId:"b",imageId:"i",annotationId:"a"}});
     for(const destination of ["/projects/p/review/a", "/projects/p/export"]){

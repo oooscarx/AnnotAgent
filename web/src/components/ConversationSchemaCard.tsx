@@ -5,7 +5,7 @@ import { ConversationSchemaEditor } from "./ConversationSchemaEditor";
 import type { OpenConversationSample } from "./ConversationSampleCard";
 
 /** Restores server objects; mounting never creates a task or invokes a model. */
-export function ConversationSchemaCard({ project, conversation, message, onDirtyChange, onSample, onAssistance }: { project: string; conversation: string; message: string; onDirtyChange: (dirty: boolean) => void; onAssistance?:()=>void; onSample: OpenConversationSample }) {
+export function ConversationSchemaCard({ project, conversation, message, onDirtyChange, onSample, onAssistance, onSetup }: { project: string; conversation: string; message: string; onDirtyChange: (dirty: boolean) => void; onAssistance?:()=>void; onSample: OpenConversationSample; onSetup?:(task?:string)=>void }) {
   const [task, setTask] = useState<ConversationTask>();
   const [preview, setPreview] = useState<ConversationSchemaPreview>();
   const [receipt, setReceipt] = useState<ConversationCallReceipt>();
@@ -80,5 +80,6 @@ export function ConversationSchemaCard({ project, conversation, message, onDirty
     {receipt && receipt.status !== "reserved" && !decision && <p role="alert">{receipt.evidence?.error || receipt.evidence?.decision?.Err || "No valid Schema proposal was produced. Saved evidence is retained; no automatic retry."}</p>}
     {decision?.decision === "draft" && task && receipt && <ConversationSchemaEditor key={receipt.id} project={project} conversation={conversation} task={task.input.id} call={receipt.id} onDirtyChange={onDirtyChange} onSample={onSample} onAssistance={onAssistance} />}
     {error && <p role="alert">{error}</p>}
+    {onSetup && <button disabled={busy || waiting} onClick={()=>onSetup(task?.input.id)}>Review model setup</button>}
   </section>;
 }

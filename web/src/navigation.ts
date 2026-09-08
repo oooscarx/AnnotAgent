@@ -70,6 +70,8 @@ export type WorkspaceRoute =
       kind: "settings";
       canonicalPath: string;
       section: SettingsSection;
+      workspaceReturn?: string;
+      returnProjectId?: string;
     }
   | { kind: "notFound"; canonicalPath: string; invalidPath: string };
 
@@ -168,6 +170,14 @@ export function withConversationReturn(path: string, returnPath?: string): strin
   if (!valid) return path;
   const params = new URLSearchParams(search.join("?")); params.set("workspace_return", valid);
   return `${pathname}?${canonicalSearch(params)}`;
+}
+
+export function conversationSettingsPath(projectId: string, section: SettingsSection, returnPath?: string): string {
+  const base=section==="providers" ? "/settings" : `/settings/${section}`;
+  const valid=conversationReturn(projectId,returnPath);
+  if(!valid)return base;
+  const params=new URLSearchParams({return_project:projectId,workspace_return:valid});
+  return `${base}?${canonicalSearch(params)}`;
 }
 
 export function projectBuildPath(
@@ -672,11 +682,14 @@ export function parseWorkspaceRoute(
         canonicalPath: `${clean}${search}`,
       };
     const section = candidate;
+    const returnProjectId=params.get("return_project") || undefined;
+    const workspaceReturn=returnProjectId ? conversationReturn(returnProjectId,params.get("workspace_return")) : undefined;
     return {
       kind: "settings",
       section,
-      canonicalPath:
-        section === "providers" ? "/settings" : `/settings/${section}`,
+      workspaceReturn,
+      returnProjectId:workspaceReturn ? returnProjectId : undefined,
+      canonicalPath:conversationSettingsPath(returnProjectId ?? "",section,workspaceReturn),
     };
   }
   return { kind: "notFound", invalidPath: `${clean}${search}`, canonicalPath: `${clean}${search}` };

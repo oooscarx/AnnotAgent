@@ -40,6 +40,7 @@ import {
   projectTrashPath,
   routeFocusKey,
   withConversationReturn,
+  conversationSettingsPath,
   type SettingsSection,
   type WorkspaceRoute,
 } from "./navigation";
@@ -835,14 +836,17 @@ export function App() {
           />
         )}
         {loaded && route.kind === "settings" && (
+          <>
+          {route.workspaceReturn && <section className="conversation-consent conversation-setup-return" aria-label="Return to annotation task"><h2>{t("Model setup for your annotation task")}</h2><p>{projects.find(project=>project.id===route.returnProjectId)?.name ?? route.returnProjectId}</p><p>{t("Changes are saved through the existing settings services. Return when ready or cancel setup; returning does not authorize model calls.")}</p><button onClick={()=>navigate(route.workspaceReturn!)}>{t("Return to annotation task")}</button></section>}
           <SettingsWorkspace
             section={route.section}
             models={models}
             onNavigate={(section) =>
-              navigate(section === "providers" ? "/settings" : `/settings/${section}`)
+              navigate(conversationSettingsPath(route.returnProjectId ?? "",section,route.workspaceReturn))
             }
             onError={setError}
           />
+          </>
         )}
         {loaded && route.kind === "notFound" && (
           <NotFoundPage invalidPath={route.invalidPath} onNavigate={navigate} />

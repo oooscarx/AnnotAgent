@@ -1458,3 +1458,38 @@ scoped navigation, setup, exports, SSE recovery, keyboard/IME, responsive reflow
 The reflow-boundary checks are not a substitute for real browser 200% zoom or human usability.
 No push, remote change, real Workspace mutation or old credential use. Real-human usability and
 Live quality remain unexecuted; all model transports used here are explicitly TEST fixtures.
+
+### M2 continuation — conversation-owned model setup return (2026-09-08)
+
+The Schema/task card now exposes Review model setup, including after a missing-model preview
+error. It opens the existing Provider Registry, not another setup implementation. A typed
+settings return context retains the original Project/conversation/task, image, Draft/Test,
+human request and formal result selection where present. Providers, Models, Expert Model
+Plugins and other existing Settings tabs retain that context. A visible return panel survives
+reload and permits leaving setup without making changes. Only same-Project canonical `/work`
+targets are accepted; external targets and owner mismatches are stripped. The source Project
+name comes from the existing loaded inventory, not a new ownership heuristic.
+
+Returning remounts the saved task and fetches current settings through the existing preview.
+It does not automatically restart a model call, accept a consent checkbox or update a Published
+Version. Draft/sample dirty guards still apply before leaving. Existing Provider credential,
+probe, model binding and plugin permission implementations remain unchanged. This is the real
+setup return surface, not yet a persisted ConfigureCapability Human Request or automatic Agent
+resume on registry events; those remain part of broader coordination work.
+
+Tests: **115/115 Web unit tests**, typecheck/build/diff checks passed. Combined isolated browser
+run `/tmp/annotagent-guided-e2e-7991`: **9/9 passed** (independent goals/setup, three sample and
+formal delivery paths, five Provider Registry regressions). Final setup rerun in
+`/tmp/annotagent-guided-e2e-8145`: **1/1 passed**, including 390×844 no-horizontal-overflow check.
+The setup test first cancels through Models/Plugins back to the original task; then encounters
+missing model configuration, creates a TEST Provider and credential through the existing UI,
+creates a Model Profile, explicitly consents to its TEST active probe, saves the default planner,
+reloads and returns. The task now previews that model, but Generate remains disabled until new
+explicit Schema consent, and task reserved calls stay zero. Probe traffic is a separately
+consented Registry operation, not falsely counted as a free model request. Initial test used a
+region selector for a labelled div; corrected the selector without changing execution behavior.
+
+Inspected `task-model-setup.png` and `task-model-setup-390.png`. No Live/paid Provider, real
+Workspace mutation, old credential use, push or remote change. No Rust changes this step.
+Remaining: structured no-LLM fallback, continuous bounded coordination, richer references and
+human requests, default entry, and final whole-product acceptance/performance/a11y audit.
