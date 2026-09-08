@@ -67,6 +67,14 @@ test("Schema clarification saves without inference then continues to authorized 
   await expect(page.getByRole("button",{name:"Review sample authorization",exact:true})).toBeEnabled();
   await page.reload();
   await expect(page.getByText("Builder outcome saved",{exact:true})).toBeVisible();
+  const savedPlan=page.locator(".conversation-completed-stage");
+  await expect(savedPlan).not.toHaveAttribute("open","");
+  await expect(page.getByRole("button",{name:"Review another build request",exact:true})).toBeHidden();
+  await savedPlan.locator("summary").focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("link",{name:"Open saved Pipeline details",exact:true})).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button",{name:"Review sample authorization",exact:true})).toBeVisible();
   const answered=page.getByLabel("Saved clarification answer",{exact:true});
   await expect(answered).toContainText("Clarification answered");
   await answered.getByText("Why AnnotAgent asked",{exact:true}).click();
@@ -95,4 +103,10 @@ test("Schema clarification saves without inference then continues to authorized 
   expect(await (await request.get(root)).json()).toHaveLength(1);
   expect(writes).toBe(0);
   await page.screenshot({path:"../docs/execution/conversational-workspace/clarification-sample-result.png",fullPage:true,animations:"disabled"});
+  await page.getByRole("button",{name:"Edit labels and boundary rules",exact:true}).click();
+  await page.getByLabel("Labels · one per line",{exact:true}).fill("室内\n室外\n不确定");
+  await page.getByRole("button",{name:"Save Schema changes",exact:true}).click();
+  await expect(page.getByText("Labels are now revision 2; this saved operation has not been rebuilt for those changes.",{exact:true})).toBeVisible();
+  await expect(page.locator(".conversation-completed-stage")).toHaveCount(0);
+  expect(await (await request.get(`${taskRoot}/budget`)).json()).toEqual(after);
 });

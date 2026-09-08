@@ -85,7 +85,8 @@ export function ConversationBuilderCard({ project, conversation, task, schema, e
   const session=item?.session;
   const draftId=item?.operation.evidence?.draft_id ?? session?.working_draft?.draft_id;
   const builtRevision=preview?.selection.schema_revision ?? item?.schema_revision ?? item?.operation.evidence?.schema_revision;
-  return <section className="conversation-builder-card" aria-label={repairRequest ? "Repair annotation pipeline" : "Build annotation pipeline"}>
+  const completed=Boolean(draftId && builtRevision===schema.revision && !editing && !running && !preview && !error && !cancelled && !session?.unresolved_bindings?.length && !item?.operation.evidence?.error && item?.operation.status==="completed" && session?.outcome==="draft_ready_for_human_review");
+  const buildDetails=<>
     <h3>{repairRequest ? "Revise the plan from your correction" : "Build the annotation plan"}</h3>
     {repairRequest && <p>Your saved correction is evidence for revising this plan, not proof of improved accuracy. The original plan remains unchanged.</p>}
     <p>{builtRevision ? `This operation uses Schema revision ${builtRevision}.` : `A new build will use saved labels at revision ${schema.revision}.`} This step builds a Draft; it does not test images or publish.</p>
@@ -95,8 +96,11 @@ export function ConversationBuilderCard({ project, conversation, task, schema, e
     {running && <><p role="status">{session?.phase ? `Builder stage: ${session.phase.replaceAll("_"," ")}` : "Submitting or restoring the saved Builder operation…"}</p>{session?.next_action && <p>{session.next_action}</p>}<button onClick={()=>void stop()}>Stop Builder</button><small>Leaving this page does not stop the server task. No images are being tested.</small></>}
     {cancelled && <p role="status">{running ? "Cancellation saved. Waiting for the server to settle any in-flight call; its cost may be unknown." : "Cancellation saved. The operation has stopped; any prior call cost remains recorded separately."}</p>}
     {uncertain && !busy && <button onClick={()=>void launch()} disabled={cancelled}>Retry the same Builder request</button>}
-    {item && item.operation.status!=="reserved" && <div className="conversation-builder-result"><strong>{item.operation.status==="interrupted" ? "Build interrupted" : "Builder outcome saved"}</strong><p>{session?.outcome?.replaceAll("_"," ") ?? item.operation.evidence?.outcome?.replaceAll("_"," ") ?? item.operation.status}</p>{item.operation.evidence?.error && <p>{item.operation.evidence.error}</p>}{session?.next_action && <p>{session.next_action}</p>}{session?.unresolved_bindings?.length ? <ul>{session.unresolved_bindings.map((binding,index)=><li key={index}>{binding}</li>)}</ul> : null}{draftId && <a href={projectBuildPath(project,"pipeline",{draftId,agentSessionId:session?.id})}>Open saved Pipeline details</a>}<small>No sample result or formal annotation was accepted.</small></div>}
+    {item && item.operation.status!=="reserved" && <div className="conversation-builder-result"><strong>{item.operation.status==="interrupted" ? "Build interrupted" : completed ? "Saved execution record" : "Builder outcome saved"}</strong><p>{session?.outcome?.replaceAll("_"," ") ?? item.operation.evidence?.outcome?.replaceAll("_"," ") ?? item.operation.status}</p>{item.operation.evidence?.error && <p>{item.operation.evidence.error}</p>}{session?.next_action && <p>{session.next_action}</p>}{session?.unresolved_bindings?.length ? <ul>{session.unresolved_bindings.map((binding,index)=><li key={index}>{binding}</li>)}</ul> : null}{draftId && <a href={projectBuildPath(project,"pipeline",{draftId,agentSessionId:session?.id})}>Open saved Pipeline details</a>}<small>No sample result or formal annotation was accepted.</small></div>}
     {error && <p role="alert">{error} Saved operations remain on the server; refreshing will not start another build.</p>}
+  </>;
+  return <section className="conversation-builder-card" aria-label={repairRequest ? "Repair annotation pipeline" : "Build annotation pipeline"}>
+    {completed ? <details className="conversation-completed-stage"><summary><strong>Builder outcome saved</strong><span>View build details</span></summary><div>{buildDetails}</div></details> : buildDetails}
     {draftId && !running && <ConversationSampleCard key={`${task}:${draftId}`} project={project} conversation={conversation} task={task} draft={draftId} disabled={editing || busy} onOpen={onSample} onAssistance={onAssistance} />}
   </section>;
 }

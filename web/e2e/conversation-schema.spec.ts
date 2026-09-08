@@ -160,6 +160,8 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
   },{times:1});
   await page.getByRole("button",{name:"Build Pipeline Draft",exact:true}).click();
   await expect(page.getByText("Builder outcome saved",{exact:true})).toBeVisible();
+  const completedPlan=page.locator(".conversation-completed-stage > summary");
+  if(await completedPlan.isVisible())await completedPlan.click();
   await expect(page.getByRole("link",{name:"Open saved Pipeline details",exact:true})).toHaveAttribute("href",new RegExp(`/projects/${uiProject}/build/pipeline\\?`));
   reloadWrites=0;
   await page.reload();
@@ -172,6 +174,8 @@ test("authorized conversation Schema crosses actual HTTP Provider transport once
     await page.screenshot({path:`../docs/execution/conversational-workspace/schema-${width}.png`,fullPage:true,animations:"disabled"});
   }
   const cancelProject = `${uiProject}-cancel`;
+  const savedStage=page.locator(".conversation-completed-stage > summary");
+  if(await savedStage.isVisible())await savedStage.click();
   await page.getByRole("button",{name:"Review another build request",exact:true}).click();
   await page.getByRole("checkbox",{name:"Allow this bounded Builder request; actual cost is unknown",exact:true}).check();
   let releaseBuilder!:()=>void;

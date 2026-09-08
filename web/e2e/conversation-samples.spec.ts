@@ -301,6 +301,8 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   await page.reload();
   await expect(repairCard.getByText("Builder outcome saved",{exact:true})).toBeVisible();
   expect(await (await request.get(`${taskRoot}/calls`)).json()).toEqual(repairCalls);
+  const savedRepair=repairCard.locator(".conversation-completed-stage > summary");
+  if(await savedRepair.isVisible())await savedRepair.click();
   await repairCard.getByRole("heading",{name:"Revise the plan from your correction",exact:true}).evaluate(element=>element.scrollIntoView({block:"start"}));
   await page.screenshot({path:`../docs/execution/conversational-workspace/repair-${kind}.png`,fullPage:true});
   await repairCard.getByRole("button",{name:"Review sample authorization",exact:true}).click();

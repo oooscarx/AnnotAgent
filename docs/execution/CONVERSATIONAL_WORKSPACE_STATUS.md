@@ -1936,3 +1936,36 @@ assertion: the new compatible TEST profile was not included in the suite's exist
 retirement prefix. Fixed the isolated fixture profile naming and prior-scenario retirement,
 without altering production model selection. Re-run `/tmp/annotagent-guided-e2e-18775` passed
 2/2 (17.6 seconds), including the existing human-classification full delivery regression.
+
+### M3/M4 continuation — fold completed planning history, not active controls
+
+The default conversation previously continued to show Builder introduction, used revision,
+rebuild request, outcome explanation and advanced Pipeline link alongside the current sample
+task. These completed planning controls now live under one native, keyboard-operable “Builder
+outcome saved / View build details” disclosure. It reuses the same component state, API and
+advanced link; no second execution path or management page was created. Sample authorization,
+results, assistance failures and active stop controls remain outside this disclosure.
+
+Folding is conditional on a completed operation with a real Draft, `draft_ready_for_human_review`,
+no unresolved bindings/errors/cancellation, no active request or editor, and exact current Schema
+revision. Blocked/failed/interrupted/unknown results remain exposed. Editing labels to a newer
+revision restores the visible stale-plan warning rather than hiding it in saved history. The
+disclosure does not imply model quality, publication, annotation acceptance or new consent.
+
+Validation: Web typecheck and 119 units passed. Initial isolated combined clarification plus
+human-classification delivery passed 2/2 in `/tmp/annotagent-guided-e2e-19039` (17.6 seconds).
+Added explicit keyboard Enter open/close, advanced link visibility, directly visible next sample
+operation and label-revision-change uncollapse checks. The final Schema cancellation/transport
+regression is recorded below when finished. Inspected `clarification-sample-result.png`: the
+saved-plan controls are folded while the terminal canvas and sample actions remain visible.
+This reduces one historical interaction region, not a claim that the entire default journey or
+all long cards have been simplified. Continuous orchestration and other open requirements remain.
+Only isolated HTTP TEST transport and synthetic data; no Live or human-usability validation,
+real Workspace writes, old credential use, push or remote modification.
+Final `/tmp/annotagent-guided-e2e-19253` passed 2/2 (11.2 seconds): clarification/sample
+continuation including stale-revision exposure, plus original Schema response-loss, restoration,
+advanced-link and cancellation tests. The preceding run caught a test expecting the advanced
+link to be exposed without opening the new disclosure; the test now opens the real details
+control before verifying its href. The link itself and route were not removed or substituted.
+Current typecheck and diff hygiene passed. Production build passed via the harness, retaining
+the known large-chunk warning. No new Rust changes or claim of a new full Rust regression.
