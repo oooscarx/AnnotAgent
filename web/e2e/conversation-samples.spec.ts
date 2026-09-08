@@ -47,6 +47,8 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   await page.getByRole("button",{name:"Save message",exact:true}).click();
   if(humanSchema){
     await page.getByRole("button",{name:"Define labels myself · no LLM needed",exact:true}).click();
+    await expect(page.getByText("No outstanding visual requests for this goal.",{exact:true})).toBeVisible({timeout:10_000});
+    await expect(page.getByText("Select an annotation goal to see its requests.",{exact:true})).toHaveCount(0);
     await page.getByLabel("Output type",{exact:true}).selectOption(kind==="bbox"?"bounding_box":"classification");
     await page.getByLabel("Labels · one per line",{exact:true}).fill(kind==="bbox"?"cup":"室内\n室外");
     await page.getByRole("button",{name:"Save label draft without a model",exact:true}).click();
@@ -54,6 +56,8 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
     await page.reload();
   }else{
   await page.getByRole("button",{name:"Prepare label proposal",exact:true}).click();
+  await expect(page.getByText("No outstanding visual requests for this goal.",{exact:true})).toBeVisible({timeout:10_000});
+  await expect(page.getByText("Select an annotation goal to see its requests.",{exact:true})).toHaveCount(0);
   await page.getByRole("checkbox",{name:/Allow this text request/}).check();
   await page.getByRole("button",{name:"Generate label proposal",exact:true}).click();
   await expect(page.getByText("Schema Draft saved · Revision 1",{exact:true})).toBeVisible();

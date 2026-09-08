@@ -64,6 +64,10 @@ export function ConversationSchemaCard({ project, conversation, message, onDirty
       const current = task ?? await api.beginConversationTask(project,conversation,{id:crypto.randomUUID(),source_message_id:message,schema_revision:goal.revision});
       if (!active.current) return;
       setTask(current);
+      // The legacy saved-message entry can create the task here rather than in
+      // the composer. Refresh the parent's owned task/request snapshot as well;
+      // otherwise its selected goal remains absent until a page reload.
+      if (!task) onAssistance?.();
       if(human){setManual(true);setPreview(undefined);setConfirmed(false);return;}
       const next = await api.conversationSchemaPreview(project,conversation,current.input.id,savedConsent?.model_id);
       if(savedConsent&&next.scope_hash!==savedConsent.scope_hash)throw new Error("The saved Schema authorization no longer matches this model or data scope. It was not replaced or executed.");

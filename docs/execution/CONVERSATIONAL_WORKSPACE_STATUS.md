@@ -2425,3 +2425,23 @@ held-request fallback and keyboard/no-write checks. Format/diff checks passed. N
 suite was rerun for this presentation-only follow-up; the preceding Schema Rust tests and
 Clippy evidence remain scoped to `54ae0d5`. No Live/real-human validation, user data mutation,
 push or remote change. The full coordinator and other gaps listed at the top remain unfinished.
+
+### M1/M2 continuation — synchronize the saved-message task with its parent workspace
+
+At `2ce64f0`, a new bbox browser assertion in `/tmp/annotagent-guided-e2e-28887` failed:
+after “Prepare label proposal”, the parent request panel still asked the user to select a goal.
+The child had created the durable task, but the parent owned-task/request snapshot predated it.
+The newer combined composer action already updates that snapshot; the legacy journal-first
+entry did not. On explicit child task creation, reuse its existing assistance-change callback
+to invalidate/reload the parent owned snapshot. No new task, navigation, provider call or
+mount-time mutation; aborted old parent reads cannot replace the refreshed result.
+The same callback runs for manual label definition, before the human/LLM branches diverge.
+Added assertions for both paths before inference or label saving, then continue their existing
+full sample/correction/formal workflows. This is context synchronization, not a claim that the
+bounded multi-stage coordinator is complete.
+
+Fixed bbox + human-bbox `/tmp/annotagent-guided-e2e-29029` passed 2/2 in 26.0 seconds;
+Web typecheck, 123 unit tests and production build passed (known chunk-size warning remains).
+The regenerated automatic-label-draft screenshot now shows the current goal's request status
+alongside its saved labels, not the obsolete selection prompt. TEST only; no Live inference,
+real-human usability, real workspace writes, push or remote changes.
