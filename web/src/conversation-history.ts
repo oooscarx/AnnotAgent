@@ -15,10 +15,19 @@ export async function loadConversationHistory(reader: HistoryReader, sourceId: s
   const messages = await reader.latest();
   check();
   const context: ConversationMessage[] = [];
+  let referenceError: string | undefined;
   for (const id of new Set([sourceId, referenceId].filter((id): id is string => Boolean(id)))) {
-    const message = messages.find(message => message.input.id === id) ?? await reader.exact(id);
-    check();
-    context.push(message);
+    try {
+      const message = messages.find(message => message.input.id === id) ?? await reader.exact(id);
+      check();
+      context.push(message);
+    } catch (error) {
+      check();
+      if (id === sourceId) throw error;
+      // A bad optional deep link must not strand the valid Project in Loading.
+      // The canvas's exact-reference guard still refuses to substitute a result.
+      referenceError = (error as Error).message;
+    }
   }
   let defaultGoal: ConversationMessage | undefined;
   if (!sourceId) {
@@ -36,5 +45,5 @@ export async function loadConversationHistory(reader: HistoryReader, sourceId: s
       after = next;
     }
   }
-  return { messages, context, defaultGoal };
+  return { messages, context, defaultGoal, referenceError };
 }

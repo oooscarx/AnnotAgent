@@ -211,6 +211,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
           exact: message => api.conversationMessage(project.id, id, message, controller.signal),
         }, source, referenceMessageId, controller.signal);
         saved = history.messages; context = history.context; initialGoal = history.defaultGoal;
+        if (!controller.signal.aborted && history.referenceError) setError(history.referenceError);
       }
       if (controller.signal.aborted) return;
       setMessageContext(context); setDefaultGoal(initialGoal);

@@ -30,3 +30,11 @@ test("an unavailable exact source is an error, never replaced with a newer goal"
   await expect(loadConversationHistory(reader, "TEST-1", undefined, new AbortController().signal)).rejects.toThrow("Source unavailable");
   expect(reader.forward).not.toHaveBeenCalled();
 });
+test("an unavailable optional reference preserves the valid task and exposes the read error", async () => {
+  const reader = { latest: vi.fn(async () => [message(1)]), forward: vi.fn(), exact: vi.fn(async () => { throw new Error("Reference missing"); }) };
+  const result = await loadConversationHistory(reader, "TEST-1", "TEST-missing", new AbortController().signal);
+  expect(result.context).toEqual([message(1)]);
+  expect(result.messages).toEqual([message(1)]);
+  expect(result.referenceError).toBe("Reference missing");
+  expect(reader.forward).not.toHaveBeenCalled();
+});
