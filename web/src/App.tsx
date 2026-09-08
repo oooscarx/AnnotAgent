@@ -32,6 +32,7 @@ import { projectForReview, projectForRun, runsForContext } from "./workspaceCont
 import {
   parseWorkspaceRoute,
   projectBuildPath,
+  projectWorkPath,
   projectJourneyPath,
   projectBatchPath,
   projectReviewPath,
@@ -675,7 +676,7 @@ export function App() {
             createOnOpen={route.create}
             onNavigate={navigate}
             onNavigationGuardChange={setNavigationGuard}
-            onSelect={openProject}
+            onSelect={(id)=>{if(navigate(projectWorkPath(id)))setProjectContext(id);}}
             onRefresh={refresh}
             onError={setError}
           />
@@ -2100,7 +2101,7 @@ function ProjectsPage({
   const [search, setSearch] = useState("");
   if (createOnOpen) return <JourneyImages onNavigationGuardChange={onNavigationGuardChange} onContinue={async (id) => {
     onNavigationGuardChange(undefined);
-    await onRefresh(); onNavigate(projectJourneyPath(id, "goal"));
+    await onRefresh(); onNavigate(projectWorkPath(id));
   }} />;
   return (
     <section className="page-stack">

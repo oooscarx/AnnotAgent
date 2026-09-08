@@ -27,9 +27,11 @@ test("image-first journey saves images and every goal label without model calls"
   await expect(upload.getByRole("button", { name: "Continue", exact: true })).toBeDisabled();
   await upload.getByLabel("Choose images", { exact: false }).setInputFiles(resolve("../examples/robocup/images/synthetic-robocup.png"));
   await upload.getByRole("button", { name: "Continue", exact: true }).click();
-  await expect(page).toHaveURL(/\/task\/goal$/);
+  await expect(page).toHaveURL(/\/work$/);
+  const projectId = new URL(page.url()).pathname.split("/")[2];
+  // Exercise the retained explicit goal editor, not the default creation route.
+  await page.goto(`/projects/${projectId}/task/goal`);
   const url = page.url();
-  const projectId = new URL(url).pathname.split("/")[2];
   await page.reload();
   const goal = page.getByRole("region", { name: "Annotation goal", exact: true });
   await expect(goal.getByAltText("synthetic-robocup.png", { exact: true })).toBeVisible();

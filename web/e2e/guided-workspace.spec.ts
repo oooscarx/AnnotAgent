@@ -275,7 +275,9 @@ test("create and open a generic Project", async ({ page, request }) => {
   await expect(dialog).toBeVisible();
   await dialog.getByLabel("Choose images", { exact: false }).setInputFiles({ name: `${projectName}.png`, mimeType: "image/png", buffer: readFileSync(resolve("../examples/robocup/images/synthetic-robocup.png")) });
   await dialog.getByRole("button", { name: "Continue", exact: true }).click();
-  await expect(page).toHaveURL(/\/task\/goal$/);
+  await expect(page).toHaveURL(/\/work$/);
+  // Keep testing the existing management/legacy editor as a deliberate deep link.
+  await page.goto(`/projects/${new URL(page.url()).pathname.split("/")[2]}/task/goal`);
   const goal = page.getByRole("region", { name: "Annotation goal", exact: true });
   await goal.getByLabel("Categories to keep", { exact: false }).fill("day");
   await goal.getByLabel("Describe your goal", { exact: true }).fill("Classify this scene as day or night.");

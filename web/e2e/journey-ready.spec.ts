@@ -18,8 +18,10 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   await page.goto("/projects?new=1");
   await page.getByLabel("Choose images", { exact: true }).setInputFiles(resolve("../examples/robocup/images/synthetic-robocup.png"));
   await page.getByRole("button", { name: "Continue", exact: true }).click();
-  await expect(page).toHaveURL(/\/task\/goal$/);
+  await expect(page).toHaveURL(/\/work$/);
   const projectId = new URL(page.url()).pathname.split("/")[2];
+  // Retained legacy deep-link contract; new project entry is the conversation workspace.
+  await page.goto(`/projects/${projectId}/task/goal`);
   expect((await request.put(`/api/projects/${projectId}/model-bindings`, { data: { bindings: [{ capability: "image_classification", role: "classification", match_kind: "capability", model_profile_id: model.id, locked: false }] } })).ok()).toBeTruthy();
   await page.getByLabel("Describe your goal", { exact: true }).fill("Classify the scene as day.");
   await page.getByRole("radio", { name: /Image categories/ }).check();

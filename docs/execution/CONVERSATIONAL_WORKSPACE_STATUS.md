@@ -2068,3 +2068,42 @@ Final `/tmp/annotagent-guided-e2e-21308` passed 2/2 (9.2 seconds), Web typecheck
 passed. Inspected `conversational-workspace/first-goal-authorization.png`: real TEST model name,
 destination, one-call limit, text-only scope and unknown-price consent precede the disabled
 Generate action. Production build passed with the known large-chunk warning. Diff hygiene passed.
+
+### M1/M3 continuation — make the conversation workspace the actual project entry
+
+Audited the active App callbacks against the latest specification's replacement of the old
+default guided journey. The baseline browser test failed because newly uploaded projects still
+navigated to `/task/goal`. New Project upload completion and project-inventory selection now use
+the existing `projectWorkPath` route builder and `/projects/:id/work`. The same Project/image
+importer, persisted journal, Schema and runtime are reused. No workflow is copied or automatically
+executed. The first-goal action from the previous increment is now reachable through normal
+creation/inventory entry, not only a hand-entered URL.
+
+`Back to project` still opens the original management overview. Project-menu management, explicit
+Build/Journey, Run/Review/Export deep links and their return callbacks are unchanged. No redirect
+was added to an already-open specific task. The legacy journey tests now deliberately navigate
+to their existing goal-editor deep links after verifying new creation lands in `/work`; their
+model setup, goal persistence, cancellation and sample authorization contracts remain tested.
+This changes the default entry, not the underlying management implementations.
+
+The entry screenshot review caught a misleading transient empty-images prompt while the Project
+inventory was still loading. That state now says “Loading saved images…”; the true empty-state
+import instructions appear only once the saved inventory has loaded. A delayed-images browser
+check verifies the distinction. The entry test also verifies one uploaded image, management return,
+inventory reopening and no API mutations on refresh/navigation. Synthetic TEST names are unique
+so the scenario does not select another Project with the same fixture filename.
+
+Validation: baseline `/tmp/annotagent-guided-e2e-21586` failed at the old `/task/goal` destination;
+initial corrected entry `/tmp/annotagent-guided-e2e-21663` passed. Combined default-entry and
+retained legacy image/goal/model/local-model/ready-sample flows passed 6/6 in
+`/tmp/annotagent-guided-e2e-21784` (46.1 seconds). Web typecheck and 119 units passed. Final
+delayed-image/clarification replay and settled screenshot inspection follow below. No Rust engine
+change, real Workspace mutation, old key, Live model, push or remote change. Existing task deep
+links retain exact context; inventory-based selection of the user's last task still needs a
+durable resume policy rather than guessing from a local active-project preference. The full
+coordinator and other open product requirements, including human usability, remain unfinished.
+Final `/tmp/annotagent-guided-e2e-21917` passed 3/3 (9.9 seconds), covering clarification answer,
+cancellation and entry with delayed image restoration. Inspected the settled
+`conversational-workspace/default-project-entry.png`: uploaded TEST pixels are visible beside
+the first-goal composer with no global sidebar. Build/typecheck passed; the existing chunk-size
+warning remains. This is not a new full-browser-suite or native 200-percent-zoom result.

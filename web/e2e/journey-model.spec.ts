@@ -23,8 +23,10 @@ test("conditional model connection saves, verifies with consent, and returns wit
   await page.goto("/projects?new=1");
   await page.getByLabel("Choose images", { exact: true }).setInputFiles(resolve("../examples/robocup/images/synthetic-robocup.png"));
   await page.getByRole("button", { name: "Continue", exact: true }).click();
-  await expect(page).toHaveURL(/\/task\/goal$/);
+  await expect(page).toHaveURL(/\/work$/);
   const projectId = new URL(page.url()).pathname.split("/")[2];
+  // Retained legacy deep-link contract; new project entry is the conversation workspace.
+  await page.goto(`/projects/${projectId}/task/goal`);
   await page.getByLabel("Describe your goal", { exact: true }).fill("TEST classify day scenes");
   await page.getByLabel("Categories to keep", { exact: true }).fill("day, night");
   await page.getByRole("radio", { name: /Image categories/ }).check();
