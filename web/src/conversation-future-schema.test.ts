@@ -12,6 +12,25 @@ describe("future Schema proposals remain separate and recoverable", () => {
     const input = makeFutureSchemaInput("TEST-command", wire, makeFutureSchemaLocal("TEST-call", wire).fields);
     expect(Object.keys(input.decision).sort()).toEqual(["decision", "kind", "labels", "multi_label", "attributes", "boundary_rules", "rationale"].sort());
   });
+  it("retains the full model proposal and provenance when a human edits fields and retries after reload", () => {
+    const definition = structuredClone(base.definition);
+    definition.task.multi_label = false;
+    definition.task.attributes = { color: { type: "enum", required: true, values: ["yellow", "red"] } };
+    const proposal = { proposal_call_id: "TEST-proposal-call", proposal_digest: "TEST-proposal-digest", definition };
+    const local = { ...makeFutureSchemaLocal("TEST-call", state), proposal };
+    local.fields.labels = "yellow cup";
+    const frozen = makeFutureSchemaInput("TEST-command", state, local.fields, proposal);
+    expect(frozen.decision.attributes).toEqual(definition.task.attributes);
+    expect(frozen.decision.multi_label).toBe(false);
+    expect(frozen.proposal_call_id).toBe(proposal.proposal_call_id);
+    expect(parseFutureSchemaLocal(JSON.stringify({ ...local, frozen }), "TEST-call")).toEqual({ ...local, frozen });
+    const stored = { command_id: frozen.command_id, feedback_call_id: "TEST-call", scope_answer_command_id: frozen.expected_scope_answer_command_id, context_digest: frozen.expected_context_digest, base_schema_id: frozen.base_schema_id, base_schema_revision: frozen.base_schema_revision, proposal_call_id: proposal.proposal_call_id, proposal_digest: proposal.proposal_digest, definition: futureSchemaDefinition(base, local.fields, proposal) };
+    expect(sameSavedFutureSchemaInput(frozen, stored, "TEST-call")).toBe(true);
+    expect(sameSavedFutureSchemaInput(frozen, { ...stored, proposal_digest: "OTHER-model-result" }, "TEST-call")).toBe(false);
+    expect(parseFutureSchemaLocal(JSON.stringify({ ...local, frozen: { ...frozen, proposal_call_id: "OTHER-call" } }), "TEST-call")).toBeUndefined();
+    expect(base.definition.task.multi_label).toBe(true);
+    expect(Object.keys(base.definition.task.attributes)).toEqual(["material"]);
+  });
   it("matches the real saved Store input rather than pretending the POST body is echoed", () => {
     const local = makeFutureSchemaLocal("TEST-call", state);
     const request = makeFutureSchemaInput("TEST-command", state, local.fields);

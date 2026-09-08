@@ -14,7 +14,7 @@ pub struct ConversationTaskProvider<'a> {
     task: Uuid,
     scope: String,
     model: String,
-    recorded_call: Option<(Uuid, serde_json::Value)>,
+    recorded_call: Option<(Uuid, &'static str, serde_json::Value)>,
 }
 
 impl crate::LocalApplication {
@@ -61,7 +61,13 @@ impl ConversationTaskProvider<'_> {
     /// Fixed identity and frozen evidence for a single bounded feedback call.
     /// The same task ledger and pending-human/expiry/Project limits still apply.
     pub(crate) fn for_feedback_call(mut self, id: Uuid, context: serde_json::Value) -> Self {
-        self.recorded_call = Some((id, context));
+        self.recorded_call = Some((id, "feedback_text", context));
+        self
+    }
+
+    /// Another one-call text proposal shares the same ledger and cancellation owner.
+    pub(crate) fn for_future_schema_call(mut self, id: Uuid, context: serde_json::Value) -> Self {
+        self.recorded_call = Some((id, "future_schema_patch_text", context));
         self
     }
 }
@@ -119,7 +125,7 @@ impl VisionModelProvider for ConversationTaskProvider<'_> {
         let id = self
             .recorded_call
             .as_ref()
-            .map_or_else(Uuid::new_v4, |(id, _)| *id);
+            .map_or_else(Uuid::new_v4, |(id, _, _)| *id);
         let hash = annotagent_image_tools::sha256(
             &serde_json::to_vec(&request)
                 .map_err(|_| CoreError::Provider("Cannot freeze model request".into()))?,
@@ -180,8 +186,8 @@ impl VisionModelProvider for ConversationTaskProvider<'_> {
                 serde_json::json!({"phase":"builder_text","error":"Provider outcome and cost are unknown; this call remains consumed"}),
             ),
         };
-        if let Some((_, context)) = &self.recorded_call {
-            evidence["phase"] = serde_json::json!("feedback_text");
+        if let Some((_, phase, context)) = &self.recorded_call {
+            evidence["phase"] = serde_json::json!(phase);
             evidence["context"] = context.clone();
             evidence["cancelled"] = serde_json::json!(cancellation.is_cancelled());
         }

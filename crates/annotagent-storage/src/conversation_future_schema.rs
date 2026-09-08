@@ -1,8 +1,7 @@
 //! Future-only human annotation semantics, branched from the exact tested Schema.
 use crate::{
-    ConversationFeedbackAuthorizationRecord, ConversationFeedbackScopeChoice, ConversationMessage,
-    ConversationSchemaDefinition, ConversationSelectionRef, SqliteStore, StorageError,
-    WorkflowSampleTestInput,
+    ConversationFeedbackAuthorizationRecord, ConversationMessage, ConversationSchemaDefinition,
+    ConversationSelectionRef, SqliteStore, StorageError, WorkflowSampleTestInput,
 };
 use annotagent_core::{AttributeKind, TaskKind, WorkflowSchemaBinding};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -20,6 +19,10 @@ pub struct ConversationFutureSchemaInput {
     pub base_schema_id: Uuid,
     pub base_schema_revision: u64,
     pub definition: ConversationSchemaDefinition,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal_call_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal_digest: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -73,7 +76,7 @@ struct TestedSample {
 }
 
 /// Defense in depth for the Application's bounded human Schema constructor.
-fn validate_definition(
+pub(crate) fn validate_definition(
     definition: &ConversationSchemaDefinition,
     base: &ConversationSchemaDefinition,
 ) -> Result<(), StorageError> {
@@ -128,14 +131,15 @@ fn validate_definition(
 
 /// Resolve only the exact tested binding in the saved message's Sample seal.
 /// Never use the current selection, another draft's latest Schema, or mutate the test.
-fn validate_tested_base(
+pub(crate) fn validate_tested_base(
     db: &Connection,
     project: &str,
     conversation: Uuid,
     task: Uuid,
     record: &ConversationFeedbackAuthorizationRecord,
-    input: &ConversationFutureSchemaInput,
-) -> Result<(), StorageError> {
+    base_schema_id: Uuid,
+    base_schema_revision: u64,
+) -> Result<crate::ConversationSchemaDraft, StorageError> {
     let message: ConversationMessage = serde_json::from_value(record.context["message"].clone())?;
     let Some(ConversationSelectionRef::SampleCandidate {
         sample_test_id,
@@ -189,22 +193,18 @@ fn validate_tested_base(
         invalid("Future Schema requires a sealed tested Schema; run a new sample first")
     })?)?;
     let binding: WorkflowSchemaBinding = serde_json::from_value(seal["annotation_schema"].clone())?;
-    if binding.schema_draft_id != input.base_schema_id.to_string()
-        || binding.revision != input.base_schema_revision
+    if binding.schema_draft_id != base_schema_id.to_string()
+        || binding.revision != base_schema_revision
     {
         return Err(invalid(
             "Future Schema base is not the exact Schema tested in this sample",
         ));
     }
-    let base = crate::conversation_schema::read(
-        db,
-        project,
-        input.base_schema_id,
-        Some(input.base_schema_revision),
-    )?;
-    let head = crate::conversation_schema::read(db, project, input.base_schema_id, None)?;
+    let base =
+        crate::conversation_schema::read(db, project, base_schema_id, Some(base_schema_revision))?;
+    let head = crate::conversation_schema::read(db, project, base_schema_id, None)?;
     if base.task_id != task
-        || head.revision != input.base_schema_revision
+        || head.revision != base_schema_revision
         || binding.task != base.definition.task
         || binding.goal != base.definition.goal
         || binding.boundary_rules != base.definition.boundary_rules
@@ -213,7 +213,7 @@ fn validate_tested_base(
             "Tested Schema binding changed or is no longer its head revision",
         ));
     }
-    validate_definition(&input.definition, &base.definition)
+    Ok(base)
 }
 
 impl SqliteStore {
@@ -250,15 +250,10 @@ impl SqliteStore {
             }
             let collision:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_future_schema_drafts WHERE command_id=?1)",[input.command_id.to_string()],|r|r.get(0))?;
             if collision {return Err(invalid("Future Schema command already belongs to another source"));}
-            let answer=crate::conversation_feedback_scope::read(&tx,task,input.feedback_call_id)?.ok_or_else(||invalid("Save the future-rule scope before creating a Schema Draft"))?;
-            if answer.conversation_id!=conversation || answer.input.choice!=ConversationFeedbackScopeChoice::ProjectFutureRule
-                || answer.input.command_id!=input.scope_answer_command_id || answer.input.expected_context_digest!=input.context_digest {
-                return Err(invalid("Future Schema requires the exact saved future-rule scope answer"));
-            }
-            let source=crate::conversation_calls::receipt(&tx,input.feedback_call_id)?.ok_or_else(||invalid("Future Schema feedback source receipt is missing"))?;
-            let authorization=crate::conversation_feedback_scope::validate_clarification_source(&tx,project,conversation,task,input.feedback_call_id,&source)?;
-            crate::conversation_feedback_scope::validate_live_context(&tx,project,conversation,task,&authorization,&input.context_digest)?;
-            validate_tested_base(&tx,project,conversation,task,&authorization,input)?;
+            let source=crate::ConversationFutureSchemaProposalSource{feedback_call_id:input.feedback_call_id,scope_answer_command_id:input.scope_answer_command_id,context_digest:input.context_digest.clone(),base_schema_id:input.base_schema_id,base_schema_revision:input.base_schema_revision};
+            let (_,base)=crate::conversation_future_schema_proposal::validate_source(&tx,project,conversation,task,&source)?;
+            validate_definition(&input.definition,&base.definition)?;
+            crate::conversation_future_schema_proposal::validate_provenance(&tx,project,conversation,task,input)?;
             let schema_id=crate::conversation_schema::insert_human_schema(&tx,task,input.command_id,&input.definition)?;
             let saved=ConversationFutureSchemaRecord {input:input.clone(),schema_id,created_at:chrono::Utc::now().to_rfc3339()};
             tx.execute("INSERT INTO conversation_future_schema_drafts(feedback_call_id,task_id,conversation_id,command_id,schema_id,input_json,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![input.feedback_call_id.to_string(),task.to_string(),conversation.to_string(),input.command_id.to_string(),schema_id.to_string(),serde_json::to_string(input)?,saved.created_at])?;
@@ -268,18 +263,18 @@ impl SqliteStore {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::*;
     use serde_json::json;
 
-    struct Fixture {
-        source: crate::conversation_feedback_scope::tests::Fixture,
-        input: ConversationFutureSchemaInput,
-        base: ConversationSchemaDraft,
+    pub(crate) struct Fixture {
+        pub(crate) source: crate::conversation_feedback_scope::tests::Fixture,
+        pub(crate) input: ConversationFutureSchemaInput,
+        pub(crate) base: ConversationSchemaDraft,
     }
 
-    fn fixture(store: &SqliteStore) -> Fixture {
+    pub(crate) fn fixture(store: &SqliteStore) -> Fixture {
         let mut source = crate::conversation_feedback_scope::tests::fixture(store, "bounding_box");
         source.answer.choice = ConversationFeedbackScopeChoice::ProjectFutureRule;
         store
@@ -330,6 +325,8 @@ mod tests {
             base_schema_id: base.id,
             base_schema_revision: base.revision,
             definition,
+            proposal_call_id: None,
+            proposal_digest: None,
         };
         Fixture {
             source,

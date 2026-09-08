@@ -5,10 +5,12 @@ export type FutureSchemaDecision = Pick<ConversationSchemaDraft["definition"]["t
 export type FutureSchemaInput = {
   command_id: string; expected_scope_answer_command_id: string; expected_context_digest: string;
   base_schema_id: string; base_schema_revision: number; goal: string; decision: FutureSchemaDecision;
+  proposal_call_id?: string; proposal_digest?: string;
 };
 export type SavedFutureSchemaInput = {
   command_id: string; feedback_call_id: string; scope_answer_command_id: string; context_digest: string;
   base_schema_id: string; base_schema_revision: number; definition: ConversationSchemaDraft["definition"];
+  proposal_call_id?: string | null; proposal_digest?: string | null;
 };
 export type FutureSchemaState = {
   record: { input: SavedFutureSchemaInput; schema_id: string; created_at: string } | null;

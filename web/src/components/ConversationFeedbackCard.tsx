@@ -19,13 +19,14 @@ type FeedbackCardProps = {
   captureCanvasNavigation: () => (request: HumanRequest) => void;
   onScopeDirtyChange?: (dirty: boolean) => void;
   onSample: OpenConversationSample;
+  onSetup?: () => void;
 };
 export function ConversationFeedbackCard(props: FeedbackCardProps) {
   const reference = props.message.input.reference;
   if (reference?.scope !== "sample_candidate") return null;
   return <FeedbackCard {...props} task={reference.task_id} />;
 }
-function FeedbackCard({ project, message, requests, requestsReady, onOpen, onAssistance, captureCanvasNavigation, onScopeDirtyChange, onSample, task }: FeedbackCardProps & { task: string }) {
+function FeedbackCard({ project, message, requests, requestsReady, onOpen, onAssistance, captureCanvasNavigation, onScopeDirtyChange, onSample, onSetup, task }: FeedbackCardProps & { task: string }) {
   const conversation = message.conversation_id;
   const storageKey = `annotagent.feedback:${project}:${conversation}:${task}:${message.input.id}`;
   const [saved, setSaved] = useState<FeedbackStatus>();
@@ -231,7 +232,7 @@ function FeedbackCard({ project, message, requests, requestsReady, onOpen, onAss
       <p role="status">{running ? "Interpreting the saved feedback. Leaving this page does not stop an admitted call." : checking ? "Feedback execution submitted. Checking the saved admission and outcome; no automatic retry." : phase === "cancelled" ? "Cancellation saved. No automatic retry will run; in-flight usage may still be billed." : phase === "expired" ? "Authorization expired before execution. Nothing was automatically renewed." : phase === "authorized" ? "Authorization saved; no model call is recorded. Execution requires your explicit action." : phase === "unknown" ? "Provider outcome unknown. A call may have been billed. This request will not be sent again." : phase === "failed" ? "The feedback request did not produce a result. No correction was applied." : phase === "invalid" ? "The model returned no valid feedback proposal. No correction was applied." : phase === "correction" ? "Correction proposed" : saved.scope_answer ? "Feedback scope recorded" : "Clarify the intended scope"}</p>
       {decision && !cancelled && <><p>{decision.question}</p><p>{decision.rationale}</p><small>Text-only interpretation of your saved message and candidate metadata, not a visual accuracy assessment.</small></>}
       <ConversationFeedbackScope key={saved.authorization.consent.call_id} project={project} value={saved} cancelled={cancelled} busy={busy} onSave={saveScope} onDirtyChange={scopeDirty} />
-      {saved.scope_answer?.input.choice.scope === "project_future_rule" && <ConversationFutureSchemaCard key={`${saved.authorization.consent.call_id}:${saved.scope_answer.input.command_id}`} project={project} conversation={conversation} task={task} call={saved.authorization.consent.call_id} sourceAnswer={saved.scope_answer.input.command_id} cancelled={cancelled} onDirtyChange={futureDirty} onSample={onSample} onAssistance={onAssistance} />}
+      {saved.scope_answer?.input.choice.scope === "project_future_rule" && <ConversationFutureSchemaCard key={`${saved.authorization.consent.call_id}:${saved.scope_answer.input.command_id}`} project={project} conversation={conversation} task={task} call={saved.authorization.consent.call_id} sourceAnswer={saved.scope_answer.input.command_id} cancelled={cancelled} onDirtyChange={futureDirty} onSample={onSample} onAssistance={onAssistance} onSetup={onSetup} />}
       {canCorrect && !waiting && <button className="primary" disabled={busy} onClick={() => void correct()}>Correct in canvas</button>}
       {phase === "clarify" && !waiting && (!saved.scope_answer || saved.scope_answer.input.choice.scope === "current_candidate") && <><button disabled={busy || !requestsReady} onClick={() => void stop()}>{saved.scope_answer ? "Cancel feedback action" : "Cancel scope question"}</button><small>Cancels this feedback action only. Saved answers, annotations and any existing correction requests remain unchanged.</small></>}
       {(running || checking || recoverable) && <button onClick={() => void stop()}>{running || checking ? "Stop feedback request" : "Cancel saved feedback request"}</button>}

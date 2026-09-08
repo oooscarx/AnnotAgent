@@ -3470,3 +3470,126 @@ The overall goal stays active. Remaining slices include bounded LLM-authored Sch
 image-class scope application, other visual Human Requests, long-history/performance and the
 broader accessibility/context acceptance matrix. This checkpoint completes the explicit chat
 stop-command slice only. Real-model quality and real-human usability remain unverified.
+
+### M3 continuation: model-assisted future Schema proposals
+
+Previous checkpoint `b09e8df` is committed. This goal turn starts from that source; only
+pre-existing historical screenshots are dirty. Current instructions and the full conversational
+workspace attachment were read again; no repository/ancestor AGENTS.md or Sites hosting file
+was found. The preceding turn made verified progress (persisted commands, regression evidence
+and a local commit), not merely a status restatement.
+
+The verified gap is that `ConversationFutureSchemaCard` only offers a human-edited future
+fork, explicitly stating it cannot ask a model. The new slice adds a bounded model suggestion
+inside that same card: freeze the original feedback, explicit future-rule scope and exactly
+tested Schema; authorize one text call; persist the proposal and show semantic differences;
+then let the human accept/edit into an independent Draft. It neither rewrites old results nor
+inherits permission to publish, process images, install models or migrate annotations.
+
+The first attempted browser baseline could not compile the concurrently introduced UI unit
+test's missing module; that is not a user-experience failure assertion. The actual baseline
+uses the existing verified `b09e8df` binary/assets in the isolated workspace
+`/tmp/annotagent-future-proposal-baseline-DTPyST`. Its single browser test fails because the
+existing future-rule card has no `Review model proposal authorization` action. Playwright
+records a trace, failure screenshot and context under its temporary test-results directory.
+Only the two test processes were stopped afterward; 8791/8796 are free and 8787 is untouched.
+
+The implementation reuses the existing Conversation model-call receipt, task/Project budget,
+Provider wrapper and cancellation service. Migration 48 adds a unique, source-linked consent
+record, not another model executor or result store. The source is the saved candidate feedback,
+the explicit future-rule scope answer and the exact tested Schema ID/revision. Both admission
+and human confirmation revalidate this source inside their existing SQLite transactions.
+The one-call preview shows the actual configured text model/destination, no image pixels,
+a bounded output allowance and unknown cost; it does not imply permission to test images.
+
+Only a single bounded `propose_future_annotation_schema` tool response is accepted. A Draft
+may change supported labels, output type, multiple-label behavior, attributes, goal and boundary
+rules; a Clarify response asks for missing semantics. Arbitrary actions, unknown fields,
+additional tools, image geometry and free-form response text are not executable. Raw output is
+retained in the existing receipt and revalidated on save, including its source/digest and
+cancellation state. Provider error/unknown completion cannot silently retry or produce a Schema.
+
+The existing future-rule card now previews semantic changes and supports explicit adoption or
+human editing. Saving creates a distinct Schema at revision 1; the previous Schema, goal,
+tested workflow, sample, Run and annotations are unchanged. Proposed attributes and multi-label
+settings survive edits to goal, type, labels and boundary rules. This form displays/adopts
+attribute definitions but does not edit them; it says so rather than rendering a fake editor.
+The independent draft then uses the existing Builder and sample authorization boundaries.
+Model assistance is recorded as provenance, not as a claim of HumanVerified annotation quality.
+
+Initial browser verification passes **11/11** in `/tmp/annotagent-guided-e2e-70292` (2.4 minutes).
+The classification and bbox cases each continue through a fresh actual TEST Builder and one-image
+Sample Test using the exact new Schema binding. Other cases cover manual edits, model clarification,
+invalid output, unknown remote response, changed model/tested Schema, authorization acknowledgement
+loss and actual in-flight cancellation. Repeated POSTs, read/refresh and old-object snapshots
+verify no implicit calls, adoption, publication or historical rewrite. Independent review then
+found two additional UI recovery/control edges, now being regression-tested: manually saving a
+draft while its separate suggestion call is running must not hide Stop; and cross-tab cancellation
+before authorization acknowledgement must not discard the cancelled call's frozen identity.
+
+Full formatting and strict all-workspace Clippy passed before the final edge regressions. Web
+typecheck and **176 unit tests in 38 files** pass. Final aggregate test results and screenshots
+will be recorded after those fixes. All model executions above use an explicitly marked local
+TEST fixture, not Live inference or evidence of annotation quality.
+
+The additional control failures were reproduced before changing production UI in
+`/tmp/annotagent-guided-e2e-70925`: (1) an actual delayed TEST model receipt remained reserved
+after a manually saved independent draft, but its Stop control disappeared; (2) another client
+cancelled a frozen, not-yet-authorized call, and retrying its rejected authorization cleared the
+browser envelope, making that cancellation no longer addressable. Fixes keep model execution
+state independent of draft adoption and preserve a frozen envelope when a matching cancellation
+receipt is known. They neither implicitly cancel a request nor restart one after a rejection.
+The server's human-save and cancellation behavior were not weakened for these UI fixes.
+
+Screenshot inspection also exposed a real default-width problem: the narrow desktop chat pane
+kept a two-column semantic diff because the old CSS responded only to viewport width. The same
+browser case first failed its measured vertical-stacking assertion in
+`/tmp/annotagent-guided-e2e-71036`. Its grid now wraps based on the comparison's available content
+width; wider split views still show a side-by-side diff. The test verifies the narrow default
+before optionally expanding the draggable split to capture readable detailed screenshots.
+
+Final verification for this checkpoint:
+
+- `npm --prefix web run test:e2e -- conversation-future-schema-proposal.spec.ts`: **13/13**
+  pass in 3.3 minutes, isolated `/tmp/annotagent-guided-e2e-71226`. This includes both new
+  control/recovery fixes and the measured narrow-chat layout fix.
+- `npm --prefix web run test:e2e -- conversation-future-schema.spec.ts --grep
+  'forks explicitly|current-image intention'`: **3/3** existing human-only regression cases
+  pass in `/tmp/annotagent-guided-e2e-71827`. Screenshot-producing historical cases were not
+  run, preserving unrelated pre-existing images.
+- `cargo test --workspace --all-features -q`: successful full run, including **136** passing
+  Application unit tests and **129** passing Storage unit tests plus integration suites.
+  Five explicitly Live-dependent tests remain ignored. After adding the model-admission
+  regression, `cargo test -p annotagent-server --all-features` separately passes **44/44**.
+- `cargo fmt --all --check`, strict all-workspace/all-target/all-feature Clippy,
+  `cargo build --workspace --all-features`, Web typecheck, **176** unit tests in **38** files,
+  and the E2E harness's production Web build pass. The existing >500 KB bundle warning
+  remains; these checks do not demonstrate a bundle-size or long-history performance gain.
+- No 8791/8796 listener remains after the browser suites. The user service on 8787 and its
+  workspace were not restarted, migrated or altered.
+
+Two new screenshots were captured from the actual browser and visually inspected:
+`conversational-workspace/future-model-proposal-diff.png` (1280×1400) and
+`conversational-workspace/future-model-proposal-human-reviewed.png` (1280×1800). They show the
+explicit proposal comparison and the independently saved, human-edited Schema with its fresh
+Builder authorization entry, alongside the unchanged sample canvas. Their split is deliberately
+expanded using the real accessible divider to show the detailed diff. The smaller default pane
+has a separate measured stacking assertion; these taller captures do not claim that all controls
+fit a 720px screen. The synthetic scene and scripted labels are TEST evidence only, not a claim
+that the shown object was visually identified correctly. Transient Playwright failure traces
+from earlier runs may be replaced by later runs; the red assertions and workspaces above are
+recorded history, not promises of archived trace files.
+
+This slice permits one saved suggestion per feedback scope. An invalid or unknown completed
+request is not silently replayed; human-only editing remains available. It is not a universal
+free-form rule-migration engine, and attribute definitions are not editable in this compact form.
+No Live Provider, real annotation-quality evaluation, native 200% zoom, native Chinese IME,
+full-repository browser sweep or real-human novice usability test was performed.
+
+Only the checkpoint's source/tests, migration, this log and two new screenshots are included
+in its local commit. Branch remains `main`; origin and tsinghua URLs are unchanged, with no
+push. Pre-existing modified/untracked historical PNGs are preserved and excluded. The full
+Conversational Workspace goal remains active: current-image class-scope application, remaining
+visual/global Human Request behavior, long-history performance and the wider accessibility and
+context acceptance matrix still need implementation or verification. This record does not mark
+M0–M4 complete or claim that the running user instance already serves these changes.

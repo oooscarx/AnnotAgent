@@ -14,6 +14,7 @@ mod conversation_feedback;
 mod conversation_feedback_authorization;
 mod conversation_feedback_intent;
 mod conversation_feedback_scope;
+mod conversation_future_proposal;
 mod conversation_future_schema;
 pub use conversation_future_schema::{
     ConversationFutureSchemaRequest, ConversationFutureSchemaView,

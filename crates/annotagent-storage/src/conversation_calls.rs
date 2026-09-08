@@ -106,7 +106,7 @@ pub(crate) fn request_cancel_in(
     if receipt(db, call)?.is_some_and(|saved| saved.task_id != task) {
         return Err(invalid("call belongs to another task"));
     }
-    let foreign:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM conversation_builder_operations WHERE id=?1 AND task_id!=?2 UNION ALL SELECT 1 FROM conversation_authorization_revisions WHERE id=?1 AND task_id!=?2 UNION ALL SELECT 1 FROM conversation_feedback_authorizations WHERE call_id=?1 AND task_id!=?2)",params![call.to_string(),task.to_string()],|r|r.get(0))?;
+    let foreign:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM conversation_builder_operations WHERE id=?1 AND task_id!=?2 UNION ALL SELECT 1 FROM conversation_authorization_revisions WHERE id=?1 AND task_id!=?2 UNION ALL SELECT 1 FROM conversation_feedback_authorizations WHERE call_id=?1 AND task_id!=?2 UNION ALL SELECT 1 FROM conversation_future_schema_proposal_authorizations WHERE call_id=?1 AND task_id!=?2)",params![call.to_string(),task.to_string()],|r|r.get(0))?;
     if foreign {
         return Err(invalid(
             "operation or authorization belongs to another task",
@@ -523,6 +523,7 @@ impl SqliteStore {
                 return Ok(ConversationCallAdmission::Existing(saved));
             }
             require_call_admission_clear(&tx, task, id)?;
+            crate::conversation_future_schema_proposal::require_current_source_for_call(&tx,project,task,id)?;
             crate::conversation_stop::require_admission_clear(&tx,task,&id.to_string(),true)?;
             let grant: Option<(String,u32,String,bool)> = tx.query_row("SELECT scope_hash,maximum_calls,expires_at,revoked FROM conversation_call_grants WHERE task_id=?1", [task.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).optional()?;
             let Some((scope,maximum,expires,revoked)) = grant else { return Err(invalid("explicit task authorization required")); };

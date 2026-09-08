@@ -2,6 +2,7 @@
 
 mod conversation_builder;
 mod conversation_feedback;
+mod conversation_future_proposal;
 mod conversation_human_requests;
 mod conversation_journey;
 mod conversation_schema;

@@ -610,7 +610,7 @@ impl ConversationSchemaDecision {
     }
 }
 
-fn output_tool() -> ToolDefinition {
+pub(crate) fn output_tool() -> ToolDefinition {
     let string = json!({"type":"string"});
     ToolDefinition {
         name: "propose_annotation_schema".into(),

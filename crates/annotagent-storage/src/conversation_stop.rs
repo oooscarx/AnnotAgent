@@ -368,7 +368,7 @@ fn discover_task(
                 .values()
                 .any(|(_, grant)| grant.as_deref() == Some(&id))
         {
-            let typed:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM conversation_schema_authorizations WHERE call_id=?1 AND task_id=?2 UNION ALL SELECT 1 FROM conversation_feedback_authorizations WHERE call_id=?1 AND task_id=?2)",params![id,task_text],|r|r.get(0))?;
+            let typed:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM conversation_schema_authorizations WHERE call_id=?1 AND task_id=?2 UNION ALL SELECT 1 FROM conversation_feedback_authorizations WHERE call_id=?1 AND task_id=?2 UNION ALL SELECT 1 FROM conversation_future_schema_proposal_authorizations WHERE call_id=?1 AND task_id=?2)",params![id,task_text],|r|r.get(0))?;
             local.insert(
                 (
                     if typed {

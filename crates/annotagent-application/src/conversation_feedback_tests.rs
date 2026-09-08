@@ -1,4 +1,6 @@
 //! Offline application integration checks; all projects and images live in `TempDir`.
+#[path = "conversation_future_proposal_tests.rs"]
+mod future_proposal;
 use super::*;
 use crate::conversation_feedback_intent::{
     ConversationFeedbackDecision, ConversationFeedbackReason,

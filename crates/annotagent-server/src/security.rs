@@ -96,6 +96,24 @@ mod control_tests {
         ));
     }
     #[test]
+    fn future_rule_suggestion_uses_model_admission_not_the_control_lane() {
+        let id = Uuid::new_v4();
+        let root =
+            format!("/api/projects/test/conversations/{id}/tasks/{id}/feedback/{id}/future-schema");
+        for suffix in ["", "/proposal", "/proposal-preview"] {
+            let path = format!("{root}{suffix}");
+            assert!(!is_expensive_action(&path), "{path}");
+            assert!(!is_execution_control(&Method::POST, &path), "{path}");
+        }
+        let dispatch = format!("{root}/proposal/execute");
+        assert!(is_expensive_action(&dispatch));
+        assert!(!is_execution_control(&Method::POST, &dispatch));
+        assert!(!is_execution_control(
+            &Method::POST,
+            &format!("{root}/proposal/cancel")
+        ));
+    }
+    #[test]
     fn control_allowlist_rejects_resume_and_suffix_impostors() {
         let id = Uuid::new_v4();
         for path in [

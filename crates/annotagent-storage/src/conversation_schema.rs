@@ -540,7 +540,8 @@ pub struct ConversationSchemaDraft {
     pub id: Uuid,
     pub task_id: Uuid,
     pub source_call_id: Option<Uuid>,
-    /// Present only for human-authored definitions; never an inference receipt.
+    /// Human confirmation command; model-assisted future forks retain their proposal
+    /// provenance in the linked future-Schema record. Never an inference receipt.
     pub source_request_id: Option<Uuid>,
     pub base_schema_revision: String,
     pub revision: u64,

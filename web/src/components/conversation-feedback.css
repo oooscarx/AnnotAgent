@@ -43,7 +43,7 @@
 .conversation-future-schema :is(p, small, li, h4, h5) { overflow-wrap: anywhere; }
 .conversation-future-schema-diff { padding-block: .75rem; }
 .conversation-future-schema-diff h5 { margin: .5rem 0; font: inherit; font-weight: 600; }
-.conversation-future-schema-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.conversation-future-schema-comparison { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: 1rem; }
 .conversation-future-schema-comparison > div { min-width: 0; }
 .conversation-future-schema-comparison ul { margin: .4rem 0; padding-left: 1.2rem; }
 @media (max-width: 600px) { .conversation-future-schema-comparison { grid-template-columns: minmax(0, 1fr); gap: .5rem; } }
@@ -64,3 +64,6 @@
 .conversation-stop-target-details dl { display: grid; gap: .3rem; margin-block: .6rem; }
 .conversation-stop-target-details dt { font-weight: 600; }
 .conversation-stop-target-details dd { margin: 0 0 .4rem; overflow-wrap: anywhere; }
+.conversation-future-model { display: grid; min-width: 0; gap: .75rem; padding-block: .75rem; }
+.conversation-future-model h5 { margin: 0; font: inherit; font-weight: 600; }
+.conversation-future-model > button { justify-self: start; }

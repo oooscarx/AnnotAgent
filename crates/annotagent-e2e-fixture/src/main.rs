@@ -382,6 +382,82 @@ async fn openai_completion(
         return Json(response);
     }
     let tools = tools_by_name(&request);
+    if tools.contains_key("propose_future_annotation_schema") {
+        // A separate bounded TEST protocol. It never routes through the generic
+        // planner or the original Schema proposal fixture, and proves no quality.
+        let remote = request["model"].as_str().unwrap_or_default();
+        if remote.ends_with("-manual-slow") {
+            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+        } else if remote.ends_with("-slow") {
+            tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+        }
+        let context = request["messages"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|message| message["role"] == "user")
+            .filter_map(message_text)
+            .filter_map(|text| serde_json::from_str::<Value>(&text).ok())
+            .find(|value| value["scope"] == "future_tasks_only");
+        let Some(context) = context else {
+            return Json(
+                json!({"error":"TEST future proposal requires the saved future-only context"}),
+            );
+        };
+        let source = &context["source"];
+        let base = &context["base_schema"];
+        let feedback = &context["feedback"];
+        let labels = base["definition"]["task"]["labels"].as_array();
+        if tools.len() != 1
+            || request.to_string().contains("image_url")
+            || feedback["pixels_supplied"] != false
+            || source["base_schema_id"] != base["id"]
+            || source["base_schema_revision"] != base["revision"]
+            || feedback["message"]["input"]["reference"]["task_id"] != base["task_id"]
+            || feedback["message"]["input"]["reference"]["scope"] != "sample_candidate"
+            || !feedback["message"]["input"]["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("TEST future rule request"))
+            || labels.is_none_or(|labels| labels.len() < 2)
+        {
+            return Json(
+                json!({"error":"TEST future proposal omitted or substituted the exact tested Schema, frozen feedback, or text-only boundary"}),
+            );
+        }
+        if remote.ends_with("-unknown") {
+            return Json(
+                json!({"error":"TEST future proposal completion unavailable after request admission"}),
+            );
+        }
+        let mut labels = labels.cloned().unwrap_or_default();
+        let removed = labels.pop().unwrap_or(Value::Null);
+        let mut rules = base["definition"]["boundary_rules"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        rules.push(json!(if base["definition"]["task"]["kind"] == "bounding_box" {
+            "TEST occluded targets: annotate only the visible region; never infer the hidden extent."
+        } else {
+            "TEST obscured scene evidence requires human review; never infer an excluded category."
+        }));
+        let goal = format!(
+            "TEST future-only rules: {}",
+            base["definition"]["goal"].as_str().unwrap_or_default()
+        );
+        let mut arguments = if remote.ends_with("-clarify") {
+            json!({"goal":goal,"decision":"clarify","question":"TEST: Should occluded targets use visible boundaries only?","rationale":"TEST asks for human semantics; no new Schema was created"})
+        } else {
+            json!({"goal":goal,"decision":"draft","kind":base["definition"]["task"]["kind"],"labels":labels,"multi_label":base["definition"]["task"]["multi_label"],"attributes":base["definition"]["task"]["attributes"],"boundary_rules":rules,"rationale":format!("TEST scripted proposal from Schema {} revision {}; remove {}. No pixels were inspected and no saved data was changed.",base["id"],base["revision"],removed)})
+        };
+        if remote.ends_with("-invalid") {
+            arguments["geometry"] = json!([0.0, 0.0, 1.0, 1.0]);
+        }
+        return Json(json!({
+            "id":format!("TEST-future-schema-{}",uuid::Uuid::new_v4()),"object":"chat.completion",
+            "choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"test-future-schema-call","type":"function","function":{"name":"propose_future_annotation_schema","arguments":arguments.to_string()}}]},"finish_reason":"tool_calls"}],
+            "usage":{"prompt_tokens":40,"completion_tokens":8,"total_tokens":48}
+        }));
+    }
     if tools.contains_key("propose_candidate_feedback") {
         // Deterministic TEST transport only. These scenarios validate bounded
         // orchestration and persisted evidence, not LLM semantic reliability.
@@ -412,7 +488,9 @@ async fn openai_completion(
         let message = context["saved_user_message"].as_str().unwrap_or_default();
         let arguments = if remote.ends_with("-feedback-invalid") {
             json!({"decision":"request_correction","reason":"poor_boundary","question":"TEST unauthorized coordinates","rationale":"TEST invalid output must not become feedback","bbox":[0.0,0.0,1.0,1.0]})
-        } else if remote.ends_with("-feedback-clarify") {
+        } else if remote.ends_with("-feedback-clarify")
+            || remote.ends_with("-feedback-future-base-clarify")
+        {
             json!({"decision":"clarify_scope","question":"TEST: remove this candidate, or change the label definition?","rationale":"TEST ambiguous scope; no change was authorized"})
         } else {
             json!({"decision":"request_correction","reason":if candidate["value"]["kind"] == "bounding_box" {"poor_boundary"} else {"wrong_label"},"question":"TEST: confirm the correction to this saved candidate","rationale":format!("TEST frozen candidate {} and saved message: {}", candidate["id"].as_str().unwrap_or_default(), message)})
@@ -445,6 +523,10 @@ async fn openai_completion(
             json!({"decision":"draft","kind":"classification","labels":[],"multi_label":false,"attributes":{},"boundary_rules":[],"rationale":"TEST invalid empty label set"})
         } else if request["model"] == "e2e-conversation-clarify" {
             json!({"decision":"clarify","question":"TEST: Which output type and labels should this task use?","rationale":"TEST ambiguous goal; human semantics required"})
+        } else if request["model"] == "e2e-conversation-bbox-feedback-future-base-clarify" {
+            // Only this new TEST baseline has two bbox labels, so the later
+            // proposal can remove one without an invalid empty label schema.
+            json!({"decision":"draft","kind":"bounding_box","labels":["cup","bottle"],"multi_label":false,"attributes":{},"boundary_rules":["TEST fixture rule"],"rationale":"TEST two-label baseline for a future-only rule proposal"})
         } else {
             json!({"decision":"draft","kind":if classification {"classification"} else {"bounding_box"},"labels":if classification {json!(["室内","室外"])} else {json!(["cup"])},"multi_label":false,"attributes":{},"boundary_rules":["TEST fixture rule"],"rationale":"TEST scripted Schema proposal, not Live model quality evidence"})
         };

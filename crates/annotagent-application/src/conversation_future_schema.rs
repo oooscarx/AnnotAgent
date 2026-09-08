@@ -22,6 +22,10 @@ pub struct ConversationFutureSchemaRequest {
     pub base_schema_revision: u64,
     pub goal: String,
     pub decision: ConversationSchemaDecision,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal_call_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal_digest: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -177,6 +181,8 @@ impl LocalApplication {
             unreachable!()
         };
         let input = ConversationFutureSchemaInput {
+            proposal_call_id: request.proposal_call_id,
+            proposal_digest: request.proposal_digest.clone(),
             command_id: request.command_id,
             feedback_call_id: call,
             scope_answer_command_id: request.expected_scope_answer_command_id,
@@ -197,6 +203,20 @@ impl LocalApplication {
                 );
             }
             return self.conversation_future_schema(project, conversation, task, call);
+        }
+        match (request.proposal_call_id, request.proposal_digest.as_deref()) {
+            (Some(proposal), Some(digest)) => self.validate_future_proposal_for_save(
+                project,
+                conversation,
+                task,
+                call,
+                proposal,
+                digest,
+            )?,
+            (None, None) => {}
+            _ => bail!(
+                "A model-assisted future draft requires both its exact proposal call and digest"
+            ),
         }
         let preview = self.conversation_future_schema(project, conversation, task, call)?;
         if preview.base_schema.id != request.base_schema_id
