@@ -959,3 +959,34 @@ classification, deduplication, whole-image feedback, foreign scope, malformed re
 candidate-limit and no-target assertions. Workspace formatting and diff checks pass.
 No UI changed, so no new screenshot claim. Existing generated screenshot changes are
 left unstaged. No real workspace change, paid call, push or remote modification.
+
+### Authorized preserved-plan repair command (M3 increment)
+
+Conversation Builder now accepts an optional exact repair reference: Human Request,
+prepared Draft ID, revision and content hash. The Application resolves only Applied
+requests from the owned task, verifies the copy/checkpoint identity and exact saved
+answer evidence, rejects published/archived plans, and checks revision/hash again
+when loading. Its existing Builder loop starts in `RepairDraft`, preserving the
+authored plan and frozen Schema rather than regenerating a FromScratch seed. Model
+calls still use the cumulative task ledger; dry runs remain disabled in this command.
+The existing repair management lease now uses the actual input revision instead of
+hard-coded revision 1. History resolves Schema from the session's working Draft,
+whose identity legitimately differs from the operation UUID during repair.
+
+The existing preview/launch HTTP endpoints accept `repair_request_id`; preview seals
+the resulting exact repair binding into scope and describes saved feedback/terminal
+metadata as outgoing text. Launch requires that returned `repair` binding in consent,
+checks it against current state, and retains the normal idempotent operation receipt.
+No new executor or automatic authorization is introduced. Existing UI is unchanged
+this increment: its in-conversation repair button and browser verification are next.
+
+Extended the Application's scripted Provider regression through a saved Sample Test,
+scoped answer/copy, manual edit to revision >1, authorized actual Repair Builder loop,
+and duplicate retry. Assertions verify the original Draft is unchanged, the session
+uses the prepared copy, the request contains scoped terminal feedback, only two
+additional text calls occur, and stale/foreign/pending references fail before calls.
+This verifies execution semantics, not a measured improvement or real vision quality.
+Application **98 passed / 1 billable ignored**; Server **36/36** existing regressions
+passed; strict Application/Server Clippy and formatting/diff checks passed. New HTTP
+repair flow still needs dedicated browser coverage. No Live calls, real workspace
+mutation/restart, screenshot change for this increment, push or remote change.

@@ -242,9 +242,9 @@ impl LocalApplication {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
-    fn fixture() -> (WorkflowSampleTest, ConversationHumanRequestInput) {
+    pub(crate) fn fixture() -> (WorkflowSampleTest, ConversationHumanRequestInput) {
         let now = chrono::Utc::now();
         let candidate = serde_json::json!({"source_artifact_id":Uuid::new_v4(),"source_artifact_ref":"terminal:1","lineage_id":"lineage","outcome":{"id":"final","label":"cup","confidence":0.8,"status":"needs_review","value":{"kind":"bounding_box","rect":[0.1,0.1,0.2,0.2]}},"localization":"test","geometry":"test","final_status":"test"});
         let test: WorkflowSampleTest=serde_json::from_value(serde_json::json!({

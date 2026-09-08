@@ -19,6 +19,18 @@ pub struct ConversationBuilderExecution {
     pub schema_revision: u64,
     pub operation_id: Uuid,
     pub scope_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair: Option<ConversationBuilderRepair>,
+}
+
+/// Exact editable copy approved for repair, never a mutable pointer to the latest plan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConversationBuilderRepair {
+    pub request_id: Uuid,
+    pub draft_id: String,
+    pub revision: u64,
+    pub content_hash: String,
 }
 
 struct BuilderGuard<'a> {
@@ -38,6 +50,58 @@ impl Drop for BuilderGuard<'_> {
     }
 }
 impl LocalApplication {
+    /// Read-only preview of a delivered correction's existing repair copy.
+    pub fn conversation_builder_repair(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        request_id: Uuid,
+    ) -> Result<ConversationBuilderRepair> {
+        let request = self
+            .conversation_human_requests(project, conversation, task)?
+            .into_iter()
+            .find(|request| request.input.id == request_id)
+            .ok_or_else(|| anyhow!("Human request belongs to another task or is unavailable"))?;
+        if request.status != annotagent_storage::ConversationHumanRequestStatus::Applied {
+            bail!("Submit the correction and finish local Draft preparation before repair");
+        }
+        let id = request
+            .resume_draft_id
+            .ok_or_else(|| anyhow!("Repair Draft is unavailable"))?;
+        let draft = self.store.get_workflow_draft(&id)?;
+        if draft.project_id != project
+            || id != request.input.resume_checkpoint_ref.to_string()
+            || matches!(
+                draft.status,
+                annotagent_core::WorkflowDraftStatus::Published
+                    | annotagent_core::WorkflowDraftStatus::Archived
+            )
+        {
+            bail!("Repair requires this task's editable prepared Draft");
+        }
+        let evidence = self
+            .store
+            .sample_plan_evidence(&id)?
+            .ok_or_else(|| anyhow!("Repair feedback is unavailable"))?;
+        let feedback: Vec<annotagent_storage::SampleFeedbackRevision> =
+            serde_json::from_value(evidence["feedback"].clone())?;
+        if evidence["project_id"] != project
+            || evidence["sample_test_id"] != request.input.sample_test_id
+            || request
+                .answer
+                .as_ref()
+                .is_none_or(|answer| feedback.as_slice() != [answer.clone()])
+        {
+            bail!("Repair evidence no longer matches the submitted correction");
+        }
+        Ok(ConversationBuilderRepair {
+            request_id,
+            draft_id: id,
+            revision: draft.revision,
+            content_hash: draft.content_hash,
+        })
+    }
     pub fn conversation_builder_grant(
         &self,
         project: &str,
@@ -103,7 +167,8 @@ impl LocalApplication {
                     .get_agent_session(operation.id)
                     .ok()
                     .filter(|session| session.project_id.as_deref() == Some(project));
-                let schema_revision=self.store.get_workflow_draft(&operation.id.to_string()).ok().filter(|draft|draft.project_id==project).and_then(|draft|draft.annotation_schema.map(|binding|binding.revision));
+                let draft_id = session.as_ref().and_then(|session| session.working_draft.as_ref()).map_or_else(|| operation.id.to_string(), |draft| draft.draft_id.clone());
+                let schema_revision=self.store.get_workflow_draft(&draft_id).ok().filter(|draft|draft.project_id==project).and_then(|draft|draft.annotation_schema.map(|binding|binding.revision));
                 serde_json::json!({"operation":operation,"session":session,"schema_revision":schema_revision})
             })
             .collect::<Vec<_>>();
@@ -174,6 +239,26 @@ impl LocalApplication {
         if cancellation.is_cancelled() {
             bail!("Builder cancelled before execution");
         }
+        let repair_draft = if let Some(expected) = &execution.repair {
+            let actual = self.conversation_builder_repair(
+                project,
+                execution.conversation_id,
+                execution.task_id,
+                expected.request_id,
+            )?;
+            if &actual != expected {
+                bail!(
+                    "Repair Draft changed; review the current revision before authorizing another call"
+                );
+            }
+            let draft = self.store.get_workflow_draft(&actual.draft_id)?;
+            if draft.revision != expected.revision || draft.content_hash != expected.content_hash {
+                bail!("Repair Draft changed while loading the authorized revision");
+            }
+            Some(draft)
+        } else {
+            None
+        };
         let constraints = WorkflowConstraints::default();
         let mut input = self.workflow_advisor_input(project, settings, constraints.clone())?;
         let binding = WorkflowSchemaBinding {
@@ -193,16 +278,49 @@ impl LocalApplication {
             &models,
             &constraints,
         );
-        let composition =
-            conversation_composition(&input.project_schema, &binding, &constraints, &models)?;
-        seed.draft = composition.compile_draft(
-            project,
-            "Conversation annotation plan",
-            input.project_schema.project.enabled_skill_versions(),
-            chrono::Utc::now(),
-        );
-        crate::bind_available_registry_models(&mut seed.draft, &input);
-        seed.draft.annotation_schema = Some(binding);
+        let build_mode = if let Some(draft) = repair_draft {
+            if draft.annotation_schema.as_ref() != Some(&binding) {
+                bail!("Repair Draft does not use the authorized Schema revision");
+            }
+            let mode = PipelineBuildMode::RepairDraft {
+                draft_id: draft.id.clone(),
+            };
+            seed.draft = draft;
+            seed.rationale = vec!["Repair the preserved plan using the saved scoped human correction; quality remains unverified until a separately authorized comparison test.".into()];
+            seed.estimated_model_calls_per_image = seed
+                .draft
+                .nodes
+                .iter()
+                .filter(|node| node.model_binding.is_some() || node.model_profile_binding.is_some())
+                .count();
+            seed.estimated_latency_ms = None;
+            seed.estimated_cost_tier = "unresolved".into();
+            seed.unresolved_model_bindings = seed
+                .draft
+                .nodes
+                .iter()
+                .filter_map(|node| {
+                    node.unresolved_model_requirement
+                        .as_ref()
+                        .map(|requirement| requirement.reason.clone())
+                })
+                .collect();
+            seed.warnings.clear();
+            seed.alternatives.clear();
+            mode
+        } else {
+            let composition =
+                conversation_composition(&input.project_schema, &binding, &constraints, &models)?;
+            seed.draft = composition.compile_draft(
+                project,
+                "Conversation annotation plan",
+                input.project_schema.project.enabled_skill_versions(),
+                chrono::Utc::now(),
+            );
+            crate::bind_available_registry_models(&mut seed.draft, &input);
+            seed.draft.annotation_schema = Some(binding);
+            PipelineBuildMode::FromScratch
+        };
         let budget = self
             .store
             .conversation_call_budget(&owner, execution.task_id)?
@@ -231,7 +349,7 @@ impl LocalApplication {
                 Some(selected),
                 None,
                 limits,
-                PipelineBuildMode::FromScratch,
+                build_mode,
                 cancellation,
                 Some(execution.operation_id),
             )

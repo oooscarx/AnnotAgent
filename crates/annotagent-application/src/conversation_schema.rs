@@ -1091,6 +1091,7 @@ mod tests {
             schema_revision: 2,
             operation_id: Uuid::new_v4(),
             scope_hash: builder_grant.scope_hash.clone(),
+            repair: None,
         };
         let result = reopened
             .build_conversation_pipeline(
@@ -1136,6 +1137,166 @@ mod tests {
             generated.status,
             annotagent_core::WorkflowDraftStatus::Published
         ));
+        // Exercise the real RepairDraft loop using a delivered local correction.
+        // This fixture seeds a saved Sandbox result; no image inference is claimed.
+        let (mut sample, mut human) = crate::conversation_human_requests::tests::fixture();
+        sample.project_id = "schema-test".into();
+        sample.draft_id = generated.id.clone();
+        sample.draft_revision = generated.revision;
+        sample.draft_content_hash = generated.content_hash.clone();
+        let outcome = sample.report.samples[0].projection.final_candidates[0]
+            .outcome
+            .clone();
+        sample.report.samples[0].outcomes.push(outcome);
+        reopened.store.save_workflow_sample_test(&sample).unwrap();
+        reopened
+            .store
+            .reserve_sample_operation(&annotagent_storage::SampleOperation {
+                id: sample.id.clone(),
+                project_id: "schema-test".into(),
+                draft_id: generated.id.clone(),
+                authorization_fingerprint: "TEST repair".into(),
+                request: json!({"conversation":{"conversation_id":conversation,"task_id":task}}),
+                status: "completed".into(),
+                error: None,
+                created_at: chrono::Utc::now().to_rfc3339(),
+                updated_at: chrono::Utc::now().to_rfc3339(),
+            })
+            .unwrap();
+        human.conversation_id = conversation;
+        human.task_id = task;
+        reopened
+            .store
+            .create_conversation_human_request(&owner, &human)
+            .unwrap();
+        assert!(
+            reopened
+                .conversation_builder_repair("schema-test", conversation, task, human.id)
+                .is_err()
+        );
+        let answer: annotagent_storage::SampleFeedbackRevision = serde_json::from_value(json!({
+            "revision_id":Uuid::new_v4(),"sample_test_id":sample.id,"image_id":human.image_id,
+            "sequence":1,"reason":"poor_boundary","outcome_id":"final","corrected_value":null,
+            "note":"TEST tighter boundary; not evidence of global accuracy", "created_at":chrono::Utc::now(),
+        })).unwrap();
+        reopened
+            .store
+            .answer_conversation_human_request(&owner, human.id, &answer)
+            .unwrap();
+        let copy = reopened
+            .store
+            .copy_sample_plan_for_feedback(
+                &sample.id,
+                "schema-test",
+                &human.resume_checkpoint_ref.to_string(),
+                &answer.revision_id,
+            )
+            .unwrap();
+        reopened
+            .resume_conversation_correction("schema-test", conversation, task, human.id)
+            .unwrap();
+        let mut manually_edited = copy.clone();
+        manually_edited.name.push_str(" · TEST user edit");
+        reopened
+            .store
+            .save_workflow_draft(&manually_edited)
+            .unwrap();
+        let snapshot = reopened
+            .conversation_builder_repair("schema-test", conversation, task, human.id)
+            .unwrap();
+        assert_eq!(snapshot.draft_id, copy.id);
+        assert!(snapshot.revision > 1);
+        assert!(
+            reopened
+                .conversation_builder_repair("schema-test", conversation, Uuid::new_v4(), human.id)
+                .is_err()
+        );
+        let repair_grant = ConversationCallGrant {
+            id: Uuid::new_v4(),
+            scope_hash: "f".repeat(64),
+            maximum_calls: 6,
+            ..builder_grant.clone()
+        };
+        reopened
+            .store
+            .advance_conversation_authorization(&owner, builder_grant.id, &repair_grant)
+            .unwrap();
+        let repair = crate::ConversationBuilderExecution {
+            operation_id: Uuid::new_v4(),
+            scope_hash: repair_grant.scope_hash.clone(),
+            repair: Some(snapshot.clone()),
+            ..build.clone()
+        };
+        let repaired = reopened
+            .build_conversation_pipeline(
+                "schema-test",
+                &repair,
+                &settings,
+                &selected_builder,
+                &builder_provider,
+                CancellationToken::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(repaired.status, "completed");
+        let repaired_session = reopened
+            .store
+            .get_agent_session(repair.operation_id)
+            .unwrap();
+        assert_eq!(
+            repaired_session.working_draft.as_ref().unwrap().draft_id,
+            copy.id
+        );
+        assert_eq!(
+            reopened.store.get_workflow_draft(&generated.id).unwrap(),
+            generated
+        );
+        let prompt = {
+            let requests = builder_provider.requests.lock().unwrap();
+            assert_eq!(requests.len(), calls_before_retry + 2);
+            serde_json::to_string(&requests[calls_before_retry]).unwrap()
+        };
+        assert!(prompt.contains("saved_sample_observations"));
+        assert!(prompt.contains("feedback_subjects_only"));
+        assert!(prompt.contains("TEST tighter boundary"));
+        assert_eq!(
+            reopened
+                .build_conversation_pipeline(
+                    "schema-test",
+                    &repair,
+                    &settings,
+                    &selected_builder,
+                    &builder_provider,
+                    CancellationToken::default()
+                )
+                .await
+                .unwrap(),
+            repaired
+        );
+        assert_eq!(
+            builder_provider.requests.lock().unwrap().len(),
+            calls_before_retry + 2
+        );
+        let mut stale = repair.clone();
+        stale.operation_id = Uuid::new_v4();
+        stale.repair.as_mut().unwrap().revision += 100;
+        assert!(
+            reopened
+                .build_conversation_pipeline(
+                    "schema-test",
+                    &stale,
+                    &settings,
+                    &selected_builder,
+                    &builder_provider,
+                    CancellationToken::default()
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            builder_provider.requests.lock().unwrap().len(),
+            calls_before_retry + 2
+        );
         let message = ConversationMessageInput {
             id: Uuid::new_v4(),
             text: "TEST cancellation".into(),

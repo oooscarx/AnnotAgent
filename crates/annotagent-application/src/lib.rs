@@ -4,7 +4,7 @@ mod conversation_builder;
 mod conversation_human_requests;
 mod conversation_provider;
 mod conversation_vision_calls;
-pub use conversation_builder::ConversationBuilderExecution;
+pub use conversation_builder::{ConversationBuilderExecution, ConversationBuilderRepair};
 pub use conversation_vision_calls::ConversationVisionCalls;
 mod conversation_schema;
 pub use conversation_provider::ConversationTaskProvider;
@@ -12260,7 +12260,7 @@ impl LocalApplication {
                 kind: annotagent_core::ManagementObjectKind::WorkflowDraft,
                 id: id.to_owned(),
                 version: None,
-                expected_revision: 1,
+                expected_revision: safe_suggestion.draft.revision,
             };
             let owner = uuid::Uuid::new_v4().to_string();
             self.store.acquire_management_lease(
