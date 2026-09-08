@@ -6,6 +6,7 @@ import "./conversation-workspace.css";
 import { ConversationSchemaCard } from "./ConversationSchemaCard";
 import { ConversationSampleCanvas } from "./ConversationSampleCanvas";
 import { ConversationRepairCard } from "./ConversationRepairCard";
+import { conversationSampleRelation } from "../conversation-context";
 import type { HumanRequest } from "../conversation-human-api";
 
 /** The journal and image importer share the existing Project; neither starts inference. */
@@ -30,6 +31,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   const [requestRefresh,setRequestRefresh]=useState(0);
   const [repairEditing,setRepairEditing]=useState(false);
   const activeRequest=requests.find(value=>value.input.id===humanRequestId && value.input.task_id===taskId);
+  const requestRelation=activeRequest ? conversationSampleRelation(activeRequest,draftId,sampleTestId,imageId) : undefined;
   useEffect(()=>{
     const controller=new AbortController();setRequestsReady(false);
     if(!conversation)return()=>controller.abort();
@@ -125,7 +127,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
     sampleNavigation.current++;
     if(sampleDirty.current && !window.confirm("Discard unsaved sample edits and change the image?"))return;
     selectingImage.current = true;
-    try { onNavigate(projectWorkPath(project.id, { conversationId: conversation, imageId: id, draftId, sampleTestId })); }
+    try { onNavigate(projectWorkPath(project.id, { conversationId: conversation, imageId: id, draftId, sampleTestId, taskId, humanRequestId })); }
     finally { selectingImage.current = false; }
   };
   async function openSample(draft:string,test:string,image?:string){
@@ -133,7 +135,8 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
     try{const {sample_test}=await api.workflowSampleTest(draft,undefined,test);
       if(!sample_test || sample_test.project_id!==project.id || sample_test.draft_id!==draft || sample_test.id!==test)throw new Error("Sample Test does not belong to this Project.");
       if(!alive.current || request!==sampleNavigation.current)return;
-      onNavigate(projectWorkPath(project.id,{conversationId:conversation,draftId:draft,sampleTestId:test,imageId:image ?? sample_test.inputs[0]?.image_id}));
+      const keepOrigin=activeRequest && conversationSampleRelation(activeRequest,draft,test,image)!=="unrelated";
+      onNavigate(projectWorkPath(project.id,{conversationId:conversation,draftId:draft,sampleTestId:test,imageId:image ?? sample_test.inputs[0]?.image_id,taskId:keepOrigin ? activeRequest.input.task_id : undefined,humanRequestId:keepOrigin ? activeRequest.input.id : undefined}));
       setMobileView("images");
     }catch(error){if(alive.current)setError((error as Error).message);}
   }
@@ -170,8 +173,9 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
         onPointerDown={(event) => event.currentTarget.setPointerCapture(event.pointerId)}
         onPointerMove={(event) => { if (!event.currentTarget.hasPointerCapture(event.pointerId)) return; const bounds = root.current?.getBoundingClientRect(); if (bounds) setWidth(Math.round(Math.max(25, Math.min(50, (event.clientX - bounds.left) / bounds.width * 100)))); }} />
       <section className="conversation-image-panel" aria-label="Project images">
+        {activeRequest && (requestRelation==="baseline" || requestRelation==="comparison") && <aside className="conversation-consent" aria-label="Sample origin"><p>{requestRelation==="comparison" ? "Sample from the revised plan. The original correction remains separate; improvement has not been established." : "Another image from the original sample. The requested correction belongs to a different image."}</p><button onClick={()=>void openRequest(activeRequest)}>Return to original correction</button></aside>}
         <div className="conversation-image-tools"><h2>{images.length ? `${images.length} images` : "Your images"}</h2><label className="conversation-upload">Add images<input type="file" accept="image/png,image/jpeg" multiple disabled={busy || !ready} onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; void upload(files); }} /></label></div>
-        {humanRequestId && !activeRequest ? <p role="status">{requestsReady ? "Human request not found in this task. No other result was substituted." : "Loading saved human request…"}</p> : draftId && sampleTestId ? <ConversationSampleCanvas project={project.id} draft={draftId} test={sampleTestId} image={selected} humanRequest={activeRequest} onAnswered={updateRequest} onDirtyChange={sampleDirtyChange} onOpen={(draft,test,image)=>void openSample(draft,test,image)} /> : imageId && !selected && ready ? <p role="alert">This image is not available in this Project. Select an existing image below.</p> : selected ? <figure className="conversation-image"><img src={selected.url} alt={selected.name} /><figcaption>{selected.name} · Original image · No annotation overlay</figcaption></figure> : <div className="conversation-image-empty"><h3>Start with your own images</h3><p>PNG or JPEG · up to 25 MB per image. Files are uploaded to this AnnotAgent server, not sent to a model.</p></div>}
+        {humanRequestId && (!activeRequest || requestRelation==="unrelated") ? <p role="status">{requestsReady ? "Human request not found in this task. No other result was substituted." : "Loading saved human request…"}</p> : draftId && sampleTestId ? <ConversationSampleCanvas project={project.id} draft={draftId} test={sampleTestId} image={selected} humanRequest={requestRelation==="subject" ? activeRequest : undefined} onAnswered={updateRequest} onDirtyChange={sampleDirtyChange} onOpen={(draft,test,image)=>void openSample(draft,test,image)} /> : imageId && !selected && ready ? <p role="alert">This image is not available in this Project. Select an existing image below.</p> : selected ? <figure className="conversation-image"><img src={selected.url} alt={selected.name} /><figcaption>{selected.name} · Original image · No annotation overlay</figcaption></figure> : <div className="conversation-image-empty"><h3>Start with your own images</h3><p>PNG or JPEG · up to 25 MB per image. Files are uploaded to this AnnotAgent server, not sent to a model.</p></div>}
         <nav className="conversation-thumbnails" aria-label="Select image">{images.map((image) => <button key={image.image_id} aria-label={image.name} aria-current={image.image_id === selected?.image_id ? "true" : undefined} onClick={() => openImage(image.image_id)}><img loading="lazy" src={image.url} alt="" /><span>{image.name}</span></button>)}</nav>
       </section>
     </div>

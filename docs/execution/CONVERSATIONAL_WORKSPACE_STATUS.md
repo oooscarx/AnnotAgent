@@ -1023,3 +1023,32 @@ Remaining: automatic request generation/notification, broader request kinds, ear
 operation-reservation restoration races, concise conversation layout, origin context
 when opening a comparison sample, full processing/Review/export and M4 verification.
 The workspace remains opt-in; this milestone is not the complete default experience.
+
+### Comparison sample origin and exact correction return (M3/M4 increment)
+
+The existing work route now retains task/request IDs while opening a related repaired
+sample and switching its images. A small typed relation helper distinguishes the
+original requested subject, another baseline image, the prepared copy's comparison
+sample, and unrelated context. Only the original subject receives the Human Request
+submission context; a new test cannot accidentally reuse the old answer target.
+Related sample views offer “Return to original correction,” preserving the original
+test/image/request. Unrelated request/Draft pairs show an explicit unavailable-context
+message instead of silently replacing the target.
+
+The shared feedback editor accepts an initial outcome reference. Returning to a
+completed request restores that subject and its relevant saved feedback, even if a
+later whole-image note exists. This only selects the initial object; ordinary canvas
+selection remains available after the request has been answered. Existing dirty guards
+and saved Sandbox feedback remain authoritative; no new annotation store or mutation
+on GET was introduced.
+
+Evidence: Web **108/108**, typecheck and production build passed (same chunk warning).
+Latest isolated browser suite `/tmp/annotagent-guided-e2e-95772`: classification and
+bbox **2/2**, 17.8s. Both verify comparison URL retains task/request, reload restores
+its origin, returning selects the original image/outcome despite a later unrelated
+note, browser Back restores the comparison, and no model calls are added by navigation.
+Inspected screenshots: `conversational-workspace/comparison-origin-bbox.png` and
+`conversational-workspace/comparison-origin-classification.png`. These are TEST transport
+and synthetic pixels, not Live quality or real-user usability evidence. No real
+workspace change, push or remote modification. Automatic request generation, broader
+conversation intent, formal processing/Review/export, and remaining M4 work continue.

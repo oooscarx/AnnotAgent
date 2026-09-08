@@ -185,11 +185,28 @@ test(`conversation ${kind} authorizes HTTP fixture samples and restores editable
   await expect(page).toHaveURL(new RegExp(`draft=${human.resume_checkpoint_ref}`));
   const comparisonUrl=page.url();
   expect(new URL(comparisonUrl).searchParams.get("test")).not.toBe(human.sample_test_id);
+  expect(new URL(comparisonUrl).searchParams.get("request")).toBe(human.id);
+  expect(new URL(comparisonUrl).searchParams.get("task")).toBe(human.task_id);
   const afterComparison=await (await request.get(`${taskRoot}/calls`)).json();
   expect(afterComparison.length).toBeGreaterThan(repairCalls.length);
   await page.reload();
   await expect(page).toHaveURL(comparisonUrl);
   await expect(page.getByRole("heading",{name:"synthetic-robocup.png",exact:true})).toBeVisible();
+  expect(await (await request.get(`${taskRoot}/calls`)).json()).toEqual(afterComparison);
+  const origin=page.getByRole("complementary",{name:"Sample origin",exact:true});
+  await expect(origin).toContainText("improvement has not been established");
+  // A later whole-image note must not replace the request's selected subject on return.
+  expect((await request.post(feedbackPath,{data:{...answer,revision_id:randomUUID(),sequence:answer.sequence+1,outcome_id:null,corrected_value:null,corrected_label:null,reason:"cannot_judge",note:"TEST unrelated whole-image note"}})).ok()).toBe(true);
+  await origin.getByRole("button",{name:"Return to original correction",exact:true}).click();
+  await expect(page).toHaveURL(new RegExp(`test=${human.sample_test_id}`));
+  expect(new URL(page.url()).searchParams.get("image")).toBe(human.image_id);
+  await expect(page.getByText("Correction saved and revision Draft prepared without model calls. Later repairs and tests have separate operation records.",{exact:true})).toBeVisible();
+  await expect(page.getByLabel("Result to inspect",{exact:true})).toHaveValue(human.outcome_id);
+  await page.goBack();
+  await expect(page).toHaveURL(comparisonUrl);
+  await expect(origin).toBeVisible();
+  await origin.evaluate(element=>element.scrollIntoView({block:"start"}));
+  await page.screenshot({path:`../docs/execution/conversational-workspace/comparison-origin-${kind}.png`,fullPage:true});
   expect(await (await request.get(`${taskRoot}/calls`)).json()).toEqual(afterComparison);
 });
 }

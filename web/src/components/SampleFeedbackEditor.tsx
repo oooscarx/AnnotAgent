@@ -11,7 +11,7 @@ const reasons: [SampleFeedbackRevision["reason"], string][] = [
   ["cannot_judge", "Cannot judge yet"],
 ];
 
-export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onConfirmed, navigation, onAdopt, projectId, draftId, onImprove, onKeepOriginal, goalOverride, humanSubmission }: {
+export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onConfirmed, navigation, onAdopt, projectId, draftId, onImprove, onKeepOriginal, goalOverride, humanSubmission, initialOutcomeId }: {
   sample: WorkflowDryRunReport["samples"][number]; image: ImageItem; testId: string;
   onDirtyChange: (dirty: boolean) => void;
   onConfirmed?: () => void;
@@ -23,6 +23,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
   navigation?: ReactNode;
   goalOverride?: {kind:string;labels:string[]};
   humanSubmission?: {outcomeId:string;save:(revision:SampleFeedbackRevision)=>Promise<SampleFeedbackRevision>};
+  initialOutcomeId?: string;
 }) {
   const freshness = useSampleFreshness(projectId, draftId, testId);
   const original: Annotation[] = (sample.projection ? sample.outcomes : []).flatMap((outcome) => outcome.value ? [{
@@ -88,9 +89,11 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
       setAnnotations(restored);
       const last = values.at(-1);
       if (last) { setReason(last.reason); setNote(last.note); setSelected(last.addition_id ? `human-sample:${last.addition_id}` : last.outcome_id ?? undefined); setSaved(true); }
-      if(humanSubmission){
-        setSelected(humanSubmission.outcomeId);setSaved(false);
-        const prior=values.filter(value=>value.outcome_id===humanSubmission.outcomeId).at(-1);
+      const requestedOutcome=humanSubmission?.outcomeId ?? initialOutcomeId;
+      if(requestedOutcome && restored.some(value=>value.id===requestedOutcome)){
+        setSelected(requestedOutcome);
+        const prior=values.filter(value=>value.outcome_id===requestedOutcome).at(-1);
+        setSaved(!humanSubmission && Boolean(prior));
         setReason(prior && prior.reason!=="missing_target" ? prior.reason : "cannot_judge");
         setNote(prior?.note ?? "");
       }
