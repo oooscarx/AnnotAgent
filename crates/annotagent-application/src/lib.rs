@@ -23286,9 +23286,161 @@ export:
         assert_eq!(sessions[0].steps[1].tool_name, "invoke_fallback_detection");
     }
 
+    fn export_test_child_checkpoint(parent: &std::path::Path, handoff: &serde_json::Value) -> ! {
+        let staging = parent.join("handoff.tmp");
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&staging)
+            .unwrap();
+        std::io::Write::write_all(&mut file, &serde_json::to_vec(handoff).unwrap()).unwrap();
+        file.sync_all().unwrap();
+        std::fs::rename(staging, parent.join("handoff.json")).unwrap();
+        loop {
+            std::thread::park();
+        }
+    }
+    #[tokio::test]
+    async fn export_recovers_after_real_child_process_kill() {
+        for phase in ["before_files", "after_files"] {
+            let parent = tempfile::tempdir().unwrap();
+            let handoff = parent.path().join("handoff.json");
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "tests::published_label_pipeline_executes_and_persists_typed_checkpoint",
+                    "--nocapture",
+                ])
+                .env("ANNOTAGENT_TEST_EXPORT_KILL_HANDOFF", parent.path())
+                .env("ANNOTAGENT_TEST_EXPORT_KILL_PHASE", phase)
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            let started = std::time::Instant::now();
+            while !handoff.is_file() {
+                assert!(
+                    child.try_wait().unwrap().is_none(),
+                    "child exited before the durable-file checkpoint"
+                );
+                if started.elapsed() > std::time::Duration::from_secs(30) {
+                    child.kill().unwrap();
+                    child.wait().unwrap();
+                    panic!("child did not reach checkpoint within 30 seconds");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(
+                child.try_wait().unwrap().is_none(),
+                "verified live child at the checkpoint"
+            );
+            child.kill().unwrap();
+            let exit = child.wait().unwrap();
+            assert!(!exit.success());
+            #[cfg(unix)]
+            assert_eq!(
+                std::os::unix::process::ExitStatusExt::signal(&exit),
+                Some(9)
+            );
+            let saved: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(handoff).unwrap()).unwrap();
+            let workspace = PathBuf::from(saved["workspace"].as_str().unwrap());
+            assert!(
+                workspace
+                    .canonicalize()
+                    .unwrap()
+                    .starts_with(parent.path().canonicalize().unwrap())
+            );
+            let conversation = serde_json::from_value(saved["conversation"].clone()).unwrap();
+            let task = serde_json::from_value(saved["task"].clone()).unwrap();
+            let operation = serde_json::from_value(saved["operation"].clone()).unwrap();
+            let application = LocalApplication::new(&workspace).unwrap();
+            assert!(
+                application
+                    .store
+                    .completed_conversation_export(operation)
+                    .unwrap()
+                    .is_none()
+            );
+            let (_, before) = application
+                .conversation_export_events("label-classification", conversation, task, 0)
+                .unwrap();
+            assert_eq!(before.len(), 1);
+            assert_eq!(before[0].kind, "requested");
+            if phase == "before_files" {
+                for _ in 0..2 {
+                    assert!(
+                        application
+                            .export_from_conversation(
+                                "label-classification",
+                                conversation,
+                                task,
+                                operation,
+                                "native"
+                            )
+                            .await
+                            .is_err()
+                    );
+                }
+                assert!(
+                    !workspace
+                        .join("label-classification/exports/deliveries")
+                        .exists()
+                );
+                assert_eq!(
+                    application
+                        .conversation_export_events("label-classification", conversation, task, 0)
+                        .unwrap()
+                        .1
+                        .len(),
+                    1
+                );
+                continue;
+            }
+            let original: ProjectExportResult =
+                serde_json::from_value(saved["result"].clone()).unwrap();
+            for _ in 0..2 {
+                let restored = application
+                    .export_from_conversation(
+                        "label-classification",
+                        conversation,
+                        task,
+                        operation,
+                        "native",
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(restored.completed_at, original.completed_at);
+                assert_eq!(restored.output_path, original.output_path);
+                assert_eq!(
+                    restored.delivery.as_ref().unwrap().sha256,
+                    original.delivery.as_ref().unwrap().sha256
+                );
+            }
+            let (_, events) = application
+                .conversation_export_events("label-classification", conversation, task, 0)
+                .unwrap();
+            assert_eq!(events.len(), 2);
+            assert_eq!(events[1].kind, "completed");
+            assert_eq!(
+                std::fs::read_dir(workspace.join("label-classification/exports/deliveries"))
+                    .unwrap()
+                    .count(),
+                1,
+                "recovery creates no second archive generation"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn published_label_pipeline_executes_and_persists_typed_checkpoint() {
-        let temporary = tempfile::tempdir().expect("temporary workspace");
+        // Only the dedicated child-process regression sets this; production has no fault hook.
+        let crash_parent =
+            std::env::var_os("ANNOTAGENT_TEST_EXPORT_KILL_HANDOFF").map(PathBuf::from);
+        let temporary = match &crash_parent {
+            Some(parent) => tempfile::TempDir::new_in(parent),
+            None => tempfile::tempdir(),
+        }
+        .expect("temporary workspace");
         let application = LocalApplication::new(temporary.path()).expect("application");
         application
             .create_project("label-classification", GENERIC_CLASSIFICATION_PROJECT)
@@ -23522,11 +23674,23 @@ export:
                 "native",
             )
             .unwrap();
+        let checkpoint = |result: Option<&ProjectExportResult>| {
+            if let Some(parent) = &crash_parent {
+                export_test_child_checkpoint(
+                    parent,
+                    &serde_json::json!({"workspace":temporary.path(),"conversation":export_conversation,"task":export_task,"operation":export_operation,"result":result}),
+                );
+            }
+        };
+        if std::env::var("ANNOTAGENT_TEST_EXPORT_KILL_PHASE").as_deref() == Ok("before_files") {
+            checkpoint(None);
+        }
         // Simulate termination after durable files but before the receipt completion write.
         let export = application
             .export_project_dataset_with_id("label-classification", "native", export_operation)
             .await
             .expect("native Project export");
+        checkpoint(Some(&export));
         assert!(
             application
                 .store

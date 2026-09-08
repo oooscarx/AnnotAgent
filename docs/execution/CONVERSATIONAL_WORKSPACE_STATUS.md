@@ -4164,3 +4164,31 @@ build retains the existing size warning. Strict Clippy was rerun after correctin
 placement. No real workspace/service8787, credentials, remote or previous PNG edits changed.
 No push; no Live or human usability validation is claimed. Hard process-kill evidence and
 the remaining view restoration / accessibility / performance acceptance still remain open.
+
+### 2026-09-09 — Actual child-process kill at two export checkpoints
+
+Added an isolated process-level regression, not another simulated reopen. The parent starts
+the current Rust test executable with only the existing generic classification/export test,
+using a child TempDir nested under the parent's owned test directory. Test-only checkpoint
+code publishes a synced handoff file and parks the child. The parent verifies the child is
+still live, calls Child::kill, waits for termination, and on Unix asserts signal 9. It then
+opens the saved workspace in the parent process and retries the same task-scoped operation.
+
+Two checkpoints are covered: (1) admission and requested event saved, before generating
+files — two retries remain unconfirmed, create no directory and no completion event;
+(2) archive/report saved, before completion receipt — two retries preserve original path,
+timestamp and digest, leave exactly one generation, and persist exactly one completed event.
+Both killed children are waited on; all data is under the owning TempDir and cleaned by its
+parent. No production fault-injection hook or model/HTTP call was added.
+
+The process-kill test passes (0.30s runtime after build); Application strict all-target
+all-feature Clippy passes. This proves abrupt process death at these Application/export
+boundaries. It is not a machine-power-loss test, arbitrary mid-compression kill, or a kill of
+the user-facing HTTP service. Previous HTTP Job/SSE/browser evidence remains separate. No
+new screenshot is claimed because this increment changes only test code. Full Application
+regression result follows below. The overall goal remains open for view restoration and
+broader product/accessibility/performance acceptance; Live/human validation remains unexecuted.
+
+Full Application all-feature regression passes: 145 unit tests, one explicitly billable
+smoke ignored, plus the offline advisor integration test. Formatting and diff checks pass.
+No push, remote modification, real workspace mutation or prior screenshot overwrite occurred.
