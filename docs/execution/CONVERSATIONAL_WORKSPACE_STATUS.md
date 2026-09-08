@@ -1,6 +1,6 @@
 # Conversational Annotation Workspace — execution record
 
-## Current checkpoint (structured feedback scope answers; not a completion declaration)
+## Current checkpoint (2026-09-09 acceptance audit; not a completion declaration)
 
 The default Project entry now uses the persisted conversation/image workspace. Explicit goal
 selection survives re-entry, sample candidate references are frozen, and clarification/correction
@@ -26,16 +26,24 @@ receipts after refresh, exposes Stop, and opens the existing correction canvas o
 Pending human work is opened directly instead of silently cancelled or bypassed to spend again.
 Interpretation proposes human work only; it never applies geometry or formal annotations.
 
-Scope clarification now has a controlled saved answer and an explicit current-candidate correction
-handoff. Current-image class and future Project rule selections record intent only; they do not yet
-produce or apply a versioned rule patch. Browser and final regression verification is recorded below.
+Scope clarification has controlled saved answers. Current-image class review now applies a scoped
+atomic Sandbox correction; future-rule proposals produce a separate Schema only after explicit
+acceptance, leaving the old scope intact. These are implemented in `conversation_image_class`,
+`conversation_future_proposal` and `conversation_future_schema`, not merely saved intentions.
+Standalone stop commands have frozen task/operation selection and recovery in `conversation_stop`;
+the workspace parser distinguishes a stop command from an annotation request about a stop sign.
+The earlier statement that these features were absent was stale and is superseded by this audit.
 
-Still incomplete: broader scope-change/Schema patches;
-the other structured visual/setup request kinds; complete stop-text
-semantics; large-history performance and the remaining accessibility/context restoration audit.
-Schema setup and repair phase cards still require explicit intermediate actions. Live model quality, native
-200-percent browser zoom and real-human novice usability are not proven. Full regression results
-and their failures/fixes are recorded chronologically at the end of this file.
+Formal processing and export now link saved task receipts to real immutable archive deliveries;
+background export workers, transactional events, keyset history and URL restoration are implemented.
+Thumbnail rendering is bounded to 24 images, but the dataset metadata API still returns a full index.
+
+Still open: requirement-by-requirement completion audit, all visual/setup request-kind coverage,
+remaining metadata/thumbnail transfer and long-history performance, assistive-technology/native IME/
+actual 200-percent browser zoom, and final full-browser regression results. Schema repair can still
+require explicit intermediate actions. Live model quality and real-human novice usability are not
+proven. The latest full Rust commands pass; the 166-test browser run remains in progress. Tests and
+their actual scope, failures/fixes and limitations are recorded chronologically below.
 
 ## Direction and baseline (M0, 2026-09-08)
 
