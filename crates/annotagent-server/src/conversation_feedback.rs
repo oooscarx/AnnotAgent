@@ -422,3 +422,20 @@ pub(super) async fn human_request(
         .map(Json)
         .map_err(ApiError::bad_request)
 }
+
+pub(super) async fn answer_scope(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task, call)): AxumPath<(
+        String,
+        uuid::Uuid,
+        uuid::Uuid,
+        uuid::Uuid,
+    )>,
+    Json(input): Json<annotagent_storage::ConversationFeedbackScopeAnswerInput>,
+) -> ApiResult<Json<annotagent_storage::ConversationFeedbackScopeAnswer>> {
+    state
+        .application
+        .answer_conversation_feedback_scope(&project, conversation, task, call, &input)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}

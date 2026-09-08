@@ -37,7 +37,7 @@ fn invalid(message: &str) -> StorageError {
     StorageError::InvalidConversation(message.into())
 }
 
-fn owned(db: &Connection, project: &str, task: Uuid) -> Result<Uuid, StorageError> {
+pub(crate) fn owned(db: &Connection, project: &str, task: Uuid) -> Result<Uuid, StorageError> {
     let conversation: Option<String> = db.query_row(
         "SELECT t.conversation_id FROM conversation_tasks t JOIN project_conversations c ON c.id=t.conversation_id WHERE t.id=?1 AND c.project_id=?2",
         params![task.to_string(), project], |row| row.get(0),
@@ -48,7 +48,7 @@ fn owned(db: &Connection, project: &str, task: Uuid) -> Result<Uuid, StorageErro
     .map_err(|_| invalid("Invalid saved feedback conversation"))
 }
 
-fn read(
+pub(crate) fn read(
     db: &Connection,
     task: Uuid,
     call: Uuid,

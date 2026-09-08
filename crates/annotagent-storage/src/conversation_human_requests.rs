@@ -866,11 +866,11 @@ fn read(
 /// Bind a fresh request to the exact, still-actionable interpretation read by the
 /// Application. This runs in the request INSERT transaction, so cancellation and
 /// preparation have one ordering; cancellation never retracts an existing request.
-fn validate_feedback_request_source(
+pub(crate) fn validate_feedback_source<'a>(
     db: &Connection,
-    input: &ConversationHumanRequestInput,
-    source: &crate::ConversationCallReceipt,
-) -> Result<(), StorageError> {
+    expected_task: Uuid,
+    source: &'a crate::ConversationCallReceipt,
+) -> Result<&'a serde_json::Value, StorageError> {
     let current: Option<(String, String, String, Option<String>)> = db
         .query_row(
             "SELECT task_id,request_hash,status,evidence_json FROM conversation_model_calls WHERE id=?1",
@@ -884,8 +884,8 @@ fn validate_feedback_request_source(
         .map(|value| serde_json::from_str(&value))
         .transpose()?;
     if source.id.is_nil()
-        || source.task_id != input.task_id
-        || task != input.task_id.to_string()
+        || source.task_id != expected_task
+        || task != expected_task.to_string()
         || source.status != crate::ConversationCallStatus::Completed
         || status != "completed"
         || request_hash != source.request_hash
@@ -895,7 +895,8 @@ fn validate_feedback_request_source(
             "Feedback source receipt changed or belongs to another task",
         ));
     }
-    let evidence = evidence
+    let evidence = source
+        .evidence
         .as_ref()
         .ok_or_else(|| invalid("Feedback source evidence is missing"))?;
     let cancelled: bool = db.query_row(
@@ -912,6 +913,14 @@ fn validate_feedback_request_source(
             "Feedback source is not an active completed interpretation",
         ));
     }
+    Ok(evidence)
+}
+
+pub(crate) fn validate_feedback_request_subject(
+    input: &ConversationHumanRequestInput,
+    source: &crate::ConversationCallReceipt,
+    evidence: &serde_json::Value,
+) -> Result<(), StorageError> {
     let subject = &evidence["context"]["subject"];
     let message: crate::ConversationMessage = serde_json::from_value(subject["message"].clone())?;
     let Some(crate::ConversationSelectionRef::SampleCandidate {
@@ -948,6 +957,17 @@ fn validate_feedback_request_source(
             "Human request does not match its frozen feedback subject",
         ));
     }
+    Ok(())
+}
+
+fn validate_feedback_request_source(
+    db: &Connection,
+    input: &ConversationHumanRequestInput,
+    source: &crate::ConversationCallReceipt,
+) -> Result<(), StorageError> {
+    let evidence = validate_feedback_source(db, input.task_id, source)?;
+    validate_feedback_request_subject(input, source, evidence)?;
+    let subject = &evidence["context"]["subject"];
     // Application owns the proposal parser. Storage only binds the request fields
     // to that saved single-tool proposal, without interpreting new text or executing it.
     let response: annotagent_core::ModelResponse =
@@ -1040,7 +1060,7 @@ impl SqliteStore {
         project: &str,
         input: &ConversationHumanRequestInput,
     ) -> Result<ConversationHumanRequest, StorageError> {
-        self.create_conversation_human_request_with_policy(project, input, false, None)
+        self.create_conversation_human_request_with_policy(project, input, false, None, None)
     }
     /// Atomically keep at most one pending task request per sample image.
     pub fn create_exclusive_conversation_human_request(
@@ -1048,7 +1068,7 @@ impl SqliteStore {
         project: &str,
         input: &ConversationHumanRequestInput,
     ) -> Result<ConversationHumanRequest, StorageError> {
-        self.create_conversation_human_request_with_policy(project, input, true, None)
+        self.create_conversation_human_request_with_policy(project, input, true, None, None)
     }
     /// Only fresh requests require an uncancelled feedback source in the same
     /// transaction. Exact saved-request retries restore history without a new write.
@@ -1058,7 +1078,24 @@ impl SqliteStore {
         input: &ConversationHumanRequestInput,
         source: &crate::ConversationCallReceipt,
     ) -> Result<ConversationHumanRequest, StorageError> {
-        self.create_conversation_human_request_with_policy(project, input, true, Some(source))
+        self.create_conversation_human_request_with_policy(project, input, true, Some(source), None)
+    }
+    /// A saved current-candidate answer supplies human intent; the original model
+    /// receipt remains a clarification and is never rewritten as a correction.
+    pub fn create_conversation_scoped_feedback_human_request(
+        &self,
+        project: &str,
+        input: &ConversationHumanRequestInput,
+        source: &crate::ConversationCallReceipt,
+        answer: &crate::ConversationFeedbackScopeAnswer,
+    ) -> Result<ConversationHumanRequest, StorageError> {
+        self.create_conversation_human_request_with_policy(
+            project,
+            input,
+            true,
+            Some(source),
+            Some(answer),
+        )
     }
     fn create_conversation_human_request_with_policy(
         &self,
@@ -1066,6 +1103,7 @@ impl SqliteStore {
         input: &ConversationHumanRequestInput,
         exclusive: bool,
         feedback_source: Option<&crate::ConversationCallReceipt>,
+        scope_answer: Option<&crate::ConversationFeedbackScopeAnswer>,
     ) -> Result<ConversationHumanRequest, StorageError> {
         if input.question.trim().is_empty()
             || input.question.len() > 4000
@@ -1101,7 +1139,11 @@ impl SqliteStore {
             owned(&tx,project,input.task_id,input.conversation_id)?;
             let exists: bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_human_requests WHERE id=?1)",[input.id.to_string()],|row|row.get(0))?;
             if exists { let saved=read(&tx,project,input.id)?; if saved.input!=*input { return Err(invalid("Human request idempotency conflict")); } return Ok(saved); }
-            if let Some(source) = feedback_source { validate_feedback_request_source(&tx, input, source)?; }
+            if let Some(source) = feedback_source {
+                if let Some(answer) = scope_answer {
+                    crate::conversation_feedback_scope::validate_scoped_request(&tx, project, input, source, answer)?;
+                } else { validate_feedback_request_source(&tx, input, source)?; }
+            }
             if exclusive {
                 let waiting:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_human_requests WHERE task_id=?1 AND status='pending' AND json_extract(request_json,'$.sample_test_id')=?2 AND json_extract(request_json,'$.image_id')=?3)",params![input.task_id.to_string(),input.sample_test_id,input.image_id],|row|row.get(0))?;
                 if waiting {return Err(invalid("An existing request on this sample image must be resolved first"));}

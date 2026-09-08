@@ -112,6 +112,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   const unsent = useRef("");
   const schemaDirty = useRef(false);
   const budgetDirty=useRef(false);
+  const feedbackScopeDirty=useRef(new Set<string>());
   const budgetDirtyChange=useCallback((dirty:boolean)=>{budgetDirty.current=dirty;},[]);
   const sampleDirty = useRef(false);
   const formalGuard = useRef<(() => boolean) | undefined>(undefined);
@@ -135,8 +136,8 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   const referenceImage = frozen.current ? images.find((image) => image.image_id === frozen.current?.image?.image_id) : results ? images.find(image=>image.image_id===results.imageId) : selected;
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
-    const guard = () => (!formalGuard.current || formalGuard.current()) && (selectingImage.current || (!pending.current && (!(unsent.current || schemaDirty.current || sampleDirty.current || budgetDirty.current) || window.confirm("Leave with unsaved message, Schema, budget or sample edits? Saved workspace data remains on the server."))));
-    const unload = (event: BeforeUnloadEvent) => { if (pending.current || unsent.current || schemaDirty.current || sampleDirty.current || budgetDirty.current) event.preventDefault(); };
+    const guard = () => (!formalGuard.current || formalGuard.current()) && (selectingImage.current || (!pending.current && (!(unsent.current || schemaDirty.current || sampleDirty.current || budgetDirty.current || feedbackScopeDirty.current.size) || window.confirm("Leave with unsaved message, Schema, budget, scope answer or sample edits? Saved workspace data remains on the server."))));
+    const unload = (event: BeforeUnloadEvent) => { if (pending.current || unsent.current || schemaDirty.current || sampleDirty.current || budgetDirty.current || feedbackScopeDirty.current.size) event.preventDefault(); };
     onNavigationGuardChange(guard);
     window.addEventListener("beforeunload", unload);
     return () => { onNavigationGuardChange(undefined); window.removeEventListener("beforeunload", unload); };
@@ -283,7 +284,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
             const image = images.find((item) => item.image_id === reference?.image_id);
             if (!reference || !image || image.content_hash !== reference.sha256) { setError("The referenced image was removed or changed. Its historical reference remains saved; current pixels cannot stand in for that evidence."); return; }
             openImage(image.image_id);
-          }}>Referenced image · {images.find((image) => image.image_id === message.input.image?.image_id)?.name ?? message.input.image.image_id}</button>}<small>Saved · {message.sequence}{goalMessage?.input.id===message.input.id ? " · Current annotation goal" : ""}</small>{!message.input.reference && <button disabled={busy || !ready} aria-pressed={goalMessage?.input.id===message.input.id} onClick={()=>void useMessageAsGoal(message)}>Use message {message.sequence} as annotation goal</button>}{message.input.reference && <><button onClick={()=>openMessageReference(message)}>Open referenced candidate</button><small>Only this sample candidate · {message.input.reference.candidate_id} · Draft revision {message.input.reference.draft_revision}. This is not a project-wide goal.</small><ConversationFeedbackCard key={`${project.id}:${message.input.id}`} project={project.id} message={message} requests={requests} requestsReady={requestsReady} onAssistance={assistanceChanged} captureCanvasNavigation={captureFeedbackNavigation} onOpen={value=>void openRequest(value)} /></>}</li>)}
+          }}>Referenced image · {images.find((image) => image.image_id === message.input.image?.image_id)?.name ?? message.input.image.image_id}</button>}<small>Saved · {message.sequence}{goalMessage?.input.id===message.input.id ? " · Current annotation goal" : ""}</small>{!message.input.reference && <button disabled={busy || !ready} aria-pressed={goalMessage?.input.id===message.input.id} onClick={()=>void useMessageAsGoal(message)}>Use message {message.sequence} as annotation goal</button>}{message.input.reference && <><button onClick={()=>openMessageReference(message)}>Open referenced candidate</button><small>Only this sample candidate · {message.input.reference.candidate_id} · Draft revision {message.input.reference.draft_revision}. This is not a project-wide goal.</small><ConversationFeedbackCard key={`${project.id}:${message.input.id}`} project={project.id} message={message} requests={requests} requestsReady={requestsReady} onAssistance={assistanceChanged} captureCanvasNavigation={captureFeedbackNavigation} onScopeDirtyChange={dirty=>{if(dirty)feedbackScopeDirty.current.add(message.input.id);else feedbackScopeDirty.current.delete(message.input.id);}} onOpen={value=>void openRequest(value)} /></>}</li>)}
         </ol>
         {conversation && draftId && sampleTestId && <section className="conversation-processing" aria-label="Process this dataset">
           {processingOperationId ? <JourneyConfirm key={`${draftId}:${sampleTestId}`} projectId={project.id} draftId={draftId} testId={sampleTestId} imageId={imageId} operationId={processingOperationId==="preview" ? undefined : processingOperationId} expectedConversation={conversation} viewingBatchId={results?.batchId} stayOnReceipt

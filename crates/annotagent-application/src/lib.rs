@@ -13,6 +13,7 @@ pub use conversation_vision_calls::ConversationVisionCalls;
 mod conversation_feedback;
 mod conversation_feedback_authorization;
 mod conversation_feedback_intent;
+mod conversation_feedback_scope;
 mod conversation_references;
 pub use conversation_feedback::{ConversationFeedbackContext, ConversationFeedbackResult};
 pub use conversation_feedback_intent::{ConversationFeedbackDecision, ConversationFeedbackReason};

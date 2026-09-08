@@ -84,6 +84,13 @@ impl LocalApplication {
             .conversation_feedback_authorization(project, conversation, task, call)?
             .context("Feedback authorization not found in this task")?;
         let receipt = self.conversation_call_receipt(project, conversation, task, call)?;
+        let scope_context_digest =
+            annotagent_storage::conversation_feedback_context_digest(&authorization.context)?;
+        let scope_answer = self.store.conversation_feedback_scope_answer(
+            &self.conversation_project_identity(project)?,
+            task,
+            call,
+        )?;
         let cancelled = self
             .conversation_schema_cancellations(project, conversation, task)?
             .iter()
@@ -113,7 +120,7 @@ impl LocalApplication {
             }
         }
         Ok(
-            serde_json::json!({"authorization":authorization,"receipt":receipt,"decision":decision,"cancelled":cancelled,"error":error}),
+            serde_json::json!({"authorization":authorization,"receipt":receipt,"decision":decision,"cancelled":cancelled,"error":error,"scope_context_digest":scope_context_digest,"scope_answer":scope_answer}),
         )
     }
 }

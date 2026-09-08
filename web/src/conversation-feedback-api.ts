@@ -9,6 +9,13 @@ export type FeedbackConsent = {
 export type FeedbackDecision =
   | { decision: "request_correction"; reason: "poor_boundary" | "wrong_label" | "wrong_target"; question: string; rationale: string }
   | { decision: "clarify_scope"; question: string; rationale: string };
+export type FeedbackCorrectionReason = "poor_boundary" | "wrong_label" | "wrong_target";
+export type FeedbackScopeChoice =
+  | { scope: "current_candidate"; reason: FeedbackCorrectionReason }
+  | { scope: "current_image_class" }
+  | { scope: "project_future_rule" };
+export type ScopeAnswerInput = { command_id: string; expected_context_digest: string; choice: FeedbackScopeChoice };
+export type ScopeAnswerRecord = { call_id: string; task_id: string; conversation_id: string; input: ScopeAnswerInput; created_at: string };
 export type FeedbackStatus = {
   authorization: {
     consent: FeedbackConsent;
@@ -20,6 +27,8 @@ export type FeedbackStatus = {
   decision: { Ok: FeedbackDecision } | { Err: string } | null;
   cancelled: boolean;
   error: string | null;
+  scope_context_digest: string;
+  scope_answer: ScopeAnswerRecord | null;
 };
 export type FeedbackPreview = {
   consent: FeedbackConsent; model_name: string; remote_model: string; destination: string;
@@ -45,4 +54,6 @@ export const feedbackApi = {
     request<FeedbackStatus>(`${root(project, conversation, task)}/feedback/${encodeURIComponent(call)}/execute`, { method: "POST", body: "{}" }),
   prepareCorrection: (project: string, conversation: string, task: string, call: string) =>
     request<HumanRequest | null>(`${root(project, conversation, task)}/feedback/${encodeURIComponent(call)}/human-request`, { method: "POST", body: "{}" }),
+  answerScope: (project: string, conversation: string, task: string, call: string, input: ScopeAnswerInput) =>
+    request<ScopeAnswerRecord>(`${root(project, conversation, task)}/feedback/${encodeURIComponent(call)}/scope-answer`, { method: "POST", body: JSON.stringify(input) }),
 };

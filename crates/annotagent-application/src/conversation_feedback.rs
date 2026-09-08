@@ -163,21 +163,57 @@ impl LocalApplication {
         let saved = self
             .read_conversation_feedback(project, conversation, task, call)?
             .context("Feedback interpretation is not saved")?;
-        let decision = saved.decision.map_err(|error| anyhow::anyhow!(error))?;
-        let crate::ConversationFeedbackDecision::RequestCorrection {
-            reason, question, ..
-        } = decision
-        else {
-            return Ok(None);
-        };
-        let context: ConversationFeedbackContext = serde_json::from_value(
-            saved
-                .receipt
-                .evidence
-                .as_ref()
-                .context("Feedback evidence missing")?["context"]["subject"]
-                .clone(),
+        let actionable = saved.decision.map_err(|error| anyhow::anyhow!(error));
+        let evidence = saved
+            .receipt
+            .evidence
+            .as_ref()
+            .context("Feedback evidence missing")?;
+        let context: ConversationFeedbackContext =
+            serde_json::from_value(evidence["context"]["subject"].clone())?;
+        let response: ModelResponse = serde_json::from_value(evidence["response"].clone())?;
+        // Reconstruct only the immutable proposal to compare an existing request.
+        // Cancellation still blocks every path that could create fresh human work.
+        let decision = crate::conversation_feedback_intent::parse_conversation_feedback_response(
+            &response,
+            &serde_json::to_value(&context)?,
         )?;
+        let mut scope_answer = None;
+        let (reason, question) = match decision {
+            crate::ConversationFeedbackDecision::RequestCorrection {
+                reason, question, ..
+            } => {
+                let code = match reason {
+                    crate::ConversationFeedbackReason::PoorBoundary => "poor_boundary",
+                    crate::ConversationFeedbackReason::WrongLabel => "wrong_label",
+                    crate::ConversationFeedbackReason::WrongTarget => "wrong_target",
+                };
+                (code, question)
+            }
+            crate::ConversationFeedbackDecision::ClarifyScope { .. } => {
+                // Human intent remains separate from the model proposal. Scope
+                // alone never implies a false positive or deletion.
+                let Some(answer) = self.store.conversation_feedback_scope_answer(
+                    &self.conversation_project_identity(project)?,
+                    task,
+                    call,
+                )?
+                else {
+                    actionable?;
+                    return Ok(None);
+                };
+                let annotagent_storage::ConversationFeedbackScopeChoice::CurrentCandidate {
+                    reason,
+                } = &answer.input.choice
+                else {
+                    actionable?;
+                    return Ok(None);
+                };
+                let result = (reason.code(), reason.question().to_owned());
+                scope_answer = Some(answer);
+                result
+            }
+        };
         let Some(ConversationSelectionRef::SampleCandidate {
             sample_test_id,
             candidate_id,
@@ -193,11 +229,6 @@ impl LocalApplication {
             .as_ref()
             .context("Saved feedback lacks its image reference")?;
         let id = Uuid::new_v5(&call, b"feedback-human-request-v1");
-        let reason = match reason {
-            crate::ConversationFeedbackReason::PoorBoundary => "poor_boundary",
-            crate::ConversationFeedbackReason::WrongLabel => "wrong_label",
-            crate::ConversationFeedbackReason::WrongTarget => "wrong_target",
-        };
         let input = ConversationHumanRequestInput {
             id,
             task_id: task,
@@ -219,6 +250,7 @@ impl LocalApplication {
             }
             return Ok(Some(existing.clone()));
         }
+        actionable?;
         let current = self.conversation_feedback_context(
             project,
             conversation,
@@ -274,13 +306,19 @@ impl LocalApplication {
         }
         self.validate_conversation_correction_subject(project, &input)?;
         let owner = self.conversation_project_identity(project)?;
-        Ok(Some(
-            self.store.create_conversation_feedback_human_request(
-                &owner,
-                &input,
-                &saved.receipt,
-            )?,
-        ))
+        let created = if let Some(answer) = scope_answer {
+            self.store
+                .create_conversation_scoped_feedback_human_request(
+                    &owner,
+                    &input,
+                    &saved.receipt,
+                    &answer,
+                )?
+        } else {
+            self.store
+                .create_conversation_feedback_human_request(&owner, &input, &saved.receipt)?
+        };
+        Ok(Some(created))
     }
 
     /// Caller resolves and explicitly authorizes the model binding and exact context digest.

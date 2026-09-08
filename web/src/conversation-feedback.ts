@@ -28,7 +28,7 @@ export function mergeFeedbackStatus(current: FeedbackStatus | undefined, incomin
   if (!current || current.authorization.consent.call_id !== incoming.authorization.consent.call_id) return incoming;
   const terminal = current.receipt && current.receipt.status !== "reserved";
   const result = (current.receipt && !incoming.receipt) || (terminal && incoming.receipt?.status === "reserved") ? current : incoming;
-  return (current.cancelled || incoming.cancelled) && !result.cancelled ? { ...result, cancelled: true } : result;
+  return { ...result, cancelled: current.cancelled || incoming.cancelled, scope_answer: current.scope_answer ?? incoming.scope_answer ?? null };
 }
 
 /** Only a definitive rejected authorization plus an empty server lookup frees a preview. */

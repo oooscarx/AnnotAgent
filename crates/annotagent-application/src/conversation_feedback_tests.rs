@@ -267,7 +267,7 @@ fn feedback_authorization(
             allow_unknown_cost: true,
         },
         context: serde_json::to_value(fixture.context()).unwrap(),
-        summary: json!({"model_name":"TEST feedback","destination":"TEST offline provider"}),
+        summary: json!({"model_name":"TEST feedback","remote_model":"TEST offline text model","destination":"TEST offline provider"}),
         grant: ConversationCallGrant {
             id: call,
             task_id: fixture.task.id,
@@ -1246,6 +1246,602 @@ struct GateProvider {
     inner: TestProvider,
     started: tokio::sync::Notify,
     release: tokio::sync::Notify,
+}
+
+async fn scope_fixture() -> (
+    Fixture,
+    TestProvider,
+    annotagent_storage::ConversationFeedbackAuthorizationRecord,
+) {
+    let fixture = fixture(false);
+    let record = feedback_authorization(&fixture);
+    fixture
+        .app
+        .authorize_conversation_feedback(PROJECT, fixture.conversation, fixture.task.id, &record)
+        .unwrap();
+    let mut provider = provider();
+    provider.arguments = json!({"decision":"clarify_scope","question":"Which scope do you mean?","rationale":"This message is not permission to remove a category."});
+    let execution = ConversationSchemaExecution {
+        call_id: record.consent.call_id,
+        ..fixture.execution()
+    };
+    fixture
+        .app
+        .execute_conversation_feedback(
+            PROJECT,
+            &execution,
+            &fixture.context(),
+            &provider,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    (fixture, provider, record)
+}
+
+fn scope_input(
+    record: &annotagent_storage::ConversationFeedbackAuthorizationRecord,
+    choice: &serde_json::Value,
+) -> annotagent_storage::ConversationFeedbackScopeAnswerInput {
+    serde_json::from_value(json!({"command_id":Uuid::new_v4(),"expected_context_digest":annotagent_storage::conversation_feedback_context_digest(&record.context).unwrap(),"choice":choice})).unwrap()
+}
+
+#[tokio::test]
+async fn wider_scope_answers_are_saved_intent_not_implicit_rules_or_bulk_edits() {
+    for scope in ["current_image_class", "project_future_rule"] {
+        let (fixture, provider, record) = scope_fixture().await;
+        let call = record.consent.call_id;
+        let input = scope_input(&record, &json!({"scope":scope}));
+        let before = fixture.app.project_goal(PROJECT).unwrap();
+        let owner = fixture.app.conversation_project_identity(PROJECT).unwrap();
+        let calls = fixture
+            .app
+            .store
+            .conversation_call_history(&owner, fixture.task.id)
+            .unwrap();
+        let answer = fixture
+            .app
+            .answer_conversation_feedback_scope(
+                PROJECT,
+                fixture.conversation,
+                fixture.task.id,
+                call,
+                &input,
+            )
+            .unwrap();
+        assert_eq!(
+            fixture
+                .app
+                .answer_conversation_feedback_scope(
+                    PROJECT,
+                    fixture.conversation,
+                    fixture.task.id,
+                    call,
+                    &input
+                )
+                .unwrap(),
+            answer
+        );
+        assert!(
+            fixture
+                .app
+                .prepare_conversation_feedback_request(
+                    PROJECT,
+                    fixture.conversation,
+                    fixture.task.id,
+                    call
+                )
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            fixture
+                .app
+                .conversation_human_requests(PROJECT, fixture.conversation, fixture.task.id)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(fixture.app.project_goal(PROJECT).unwrap(), before);
+        assert_eq!(
+            fixture
+                .app
+                .store
+                .conversation_call_history(&owner, fixture.task.id)
+                .unwrap(),
+            calls
+        );
+        assert_eq!(
+            fixture
+                .app
+                .store
+                .get_workflow_draft(&fixture.sample.draft_id)
+                .unwrap()
+                .revision,
+            fixture.sample.draft_revision
+        );
+        assert!(
+            fixture
+                .app
+                .store
+                .sample_feedback(&fixture.sample.id, &fixture.human.image_id)
+                .unwrap()
+                .is_empty()
+        );
+        let changed = scope_input(
+            &record,
+            &json!({"scope":"current_candidate","reason":"wrong_target"}),
+        );
+        assert!(
+            fixture
+                .app
+                .answer_conversation_feedback_scope(
+                    PROJECT,
+                    fixture.conversation,
+                    fixture.task.id,
+                    call,
+                    &changed
+                )
+                .is_err()
+        );
+        assert_eq!(provider.requests.lock().unwrap().len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn scope_answer_replay_is_historical_but_fresh_answer_and_request_revalidate_pixels() {
+    for saved_first in [false, true] {
+        let (fixture, provider, record) = scope_fixture().await;
+        let call = record.consent.call_id;
+        let input = scope_input(
+            &record,
+            &json!({"scope":"current_candidate","reason":"poor_boundary"}),
+        );
+        if saved_first {
+            fixture
+                .app
+                .answer_conversation_feedback_scope(
+                    PROJECT,
+                    fixture.conversation,
+                    fixture.task.id,
+                    call,
+                    &input,
+                )
+                .unwrap();
+        }
+        let image = fixture
+            .app
+            .project_image_path(
+                PROJECT,
+                ImageId(Uuid::parse_str(&fixture.human.image_id).unwrap()),
+            )
+            .unwrap();
+        std::fs::write(image, b"TEST replaced pixels, never the real user image").unwrap();
+        let answer = fixture.app.answer_conversation_feedback_scope(
+            PROJECT,
+            fixture.conversation,
+            fixture.task.id,
+            call,
+            &input,
+        );
+        assert_eq!(answer.is_ok(), saved_first);
+        if saved_first {
+            assert!(
+                fixture
+                    .app
+                    .prepare_conversation_feedback_request(
+                        PROJECT,
+                        fixture.conversation,
+                        fixture.task.id,
+                        call
+                    )
+                    .is_err()
+            );
+        }
+        assert!(
+            fixture
+                .app
+                .conversation_human_requests(PROJECT, fixture.conversation, fixture.task.id)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            fixture
+                .app
+                .store
+                .sample_feedback(&fixture.sample.id, &fixture.human.image_id)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(provider.requests.lock().unwrap().len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn scope_answer_owner_and_cancellation_cannot_be_bypassed_by_local_replay() {
+    for saved_first in [false, true] {
+        let (fixture, provider, record) = scope_fixture().await;
+        let call = record.consent.call_id;
+        let input = scope_input(
+            &record,
+            &json!({"scope":"current_candidate","reason":"wrong_target"}),
+        );
+        assert!(
+            fixture
+                .app
+                .answer_conversation_feedback_scope(
+                    PROJECT,
+                    Uuid::new_v4(),
+                    fixture.task.id,
+                    call,
+                    &input
+                )
+                .is_err()
+        );
+        assert!(
+            fixture
+                .app
+                .answer_conversation_feedback_scope(
+                    PROJECT,
+                    fixture.conversation,
+                    Uuid::new_v4(),
+                    call,
+                    &input
+                )
+                .is_err()
+        );
+        if saved_first {
+            fixture
+                .app
+                .answer_conversation_feedback_scope(
+                    PROJECT,
+                    fixture.conversation,
+                    fixture.task.id,
+                    call,
+                    &input,
+                )
+                .unwrap();
+        }
+        fixture
+            .app
+            .cancel_conversation_schema(PROJECT, fixture.conversation, fixture.task.id, call)
+            .unwrap();
+        let restored = fixture.app.answer_conversation_feedback_scope(
+            PROJECT,
+            fixture.conversation,
+            fixture.task.id,
+            call,
+            &input,
+        );
+        assert_eq!(restored.is_ok(), saved_first);
+        assert!(
+            fixture
+                .app
+                .prepare_conversation_feedback_request(
+                    PROJECT,
+                    fixture.conversation,
+                    fixture.task.id,
+                    call
+                )
+                .is_err()
+        );
+        assert!(
+            fixture
+                .app
+                .conversation_human_requests(PROJECT, fixture.conversation, fixture.task.id)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(provider.requests.lock().unwrap().len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn scope_answer_persists_without_applying_feedback_and_opens_only_the_frozen_candidate() {
+    use annotagent_storage::{
+        ConversationFeedbackCorrectionReason as Reason, ConversationFeedbackScopeAnswerInput,
+        ConversationFeedbackScopeChoice,
+    };
+    let fixture = fixture(false);
+    let record = feedback_authorization(&fixture);
+    let call = record.consent.call_id;
+    fixture
+        .app
+        .authorize_conversation_feedback(PROJECT, fixture.conversation, fixture.task.id, &record)
+        .unwrap();
+    let mut provider = provider();
+    provider.arguments = json!({"decision":"clarify_scope","question":"Which scope do you mean?","rationale":"The saved text does not authorize removal."});
+    let execution = ConversationSchemaExecution {
+        call_id: call,
+        ..fixture.execution()
+    };
+    let result = fixture
+        .app
+        .execute_conversation_feedback(
+            PROJECT,
+            &execution,
+            &fixture.context(),
+            &provider,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let input = ConversationFeedbackScopeAnswerInput {
+        command_id: Uuid::new_v4(),
+        expected_context_digest: annotagent_storage::conversation_feedback_context_digest(
+            &record.context,
+        )
+        .unwrap(),
+        choice: ConversationFeedbackScopeChoice::CurrentCandidate {
+            reason: Reason::PoorBoundary,
+        },
+    };
+    assert!(
+        fixture
+            .app
+            .prepare_conversation_feedback_request(
+                PROJECT,
+                fixture.conversation,
+                fixture.task.id,
+                call
+            )
+            .unwrap()
+            .is_none()
+    );
+    let answer = fixture
+        .app
+        .answer_conversation_feedback_scope(
+            PROJECT,
+            fixture.conversation,
+            fixture.task.id,
+            call,
+            &input,
+        )
+        .unwrap();
+    assert_eq!(answer.input, input);
+    assert!(
+        fixture
+            .app
+            .conversation_human_requests(PROJECT, fixture.conversation, fixture.task.id)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        fixture
+            .app
+            .store
+            .sample_feedback(&fixture.sample.id, &fixture.human.image_id)
+            .unwrap()
+            .is_empty()
+    );
+    let status = fixture
+        .app
+        .conversation_feedback_status(PROJECT, fixture.conversation, fixture.task.id, call)
+        .unwrap();
+    assert_eq!(status["scope_answer"], json!(answer));
+    assert_eq!(status["decision"]["Ok"]["decision"], "clarify_scope");
+    assert_eq!(status["receipt"], json!(result.receipt));
+    let reopened = LocalApplication::new(fixture.temporary.path()).unwrap();
+    assert_eq!(
+        reopened
+            .answer_conversation_feedback_scope(
+                PROJECT,
+                fixture.conversation,
+                fixture.task.id,
+                call,
+                &input
+            )
+            .unwrap(),
+        answer
+    );
+    let human = reopened
+        .prepare_conversation_feedback_request(PROJECT, fixture.conversation, fixture.task.id, call)
+        .unwrap()
+        .unwrap();
+    assert_eq!(human.input.outcome_id, fixture.human.outcome_id);
+    assert_eq!(human.input.question, Reason::PoorBoundary.question());
+    assert_eq!(human.input.reason_code, "poor_boundary");
+    assert_eq!(human.status, ConversationHumanRequestStatus::Pending);
+    assert_eq!(
+        reopened
+            .prepare_conversation_feedback_request(
+                PROJECT,
+                fixture.conversation,
+                fixture.task.id,
+                call
+            )
+            .unwrap(),
+        Some(human)
+    );
+    assert!(
+        reopened
+            .store
+            .sample_feedback(&fixture.sample.id, &fixture.human.image_id)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(provider.requests.lock().unwrap().len(), 1);
+    assert_eq!(
+        reopened
+            .conversation_builder_budget(PROJECT, fixture.conversation, fixture.task.id)
+            .unwrap()
+            .used_calls,
+        1
+    );
+    assert_eq!(
+        reopened
+            .store
+            .get_workflow_draft(&fixture.sample.draft_id)
+            .unwrap()
+            .revision,
+        fixture.sample.draft_revision
+    );
+}
+
+#[tokio::test]
+async fn saved_request_replay_survives_cancellation_and_changed_pixels_for_both_decisions() {
+    for clarify in [false, true] {
+        let fixture = fixture(false);
+        let record = feedback_authorization(&fixture);
+        let call = record.consent.call_id;
+        fixture
+            .app
+            .authorize_conversation_feedback(
+                PROJECT,
+                fixture.conversation,
+                fixture.task.id,
+                &record,
+            )
+            .unwrap();
+        let mut provider = provider();
+        if clarify {
+            provider.arguments = json!({"decision":"clarify_scope","question":"Which scope do you mean?","rationale":"TEST ambiguous saved text"});
+        }
+        let execution = ConversationSchemaExecution {
+            call_id: call,
+            ..fixture.execution()
+        };
+        let completed = fixture
+            .app
+            .execute_conversation_feedback(
+                PROJECT,
+                &execution,
+                &fixture.context(),
+                &provider,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        if clarify {
+            let input = scope_input(
+                &record,
+                &json!({"scope":"current_candidate","reason":"wrong_target"}),
+            );
+            fixture
+                .app
+                .answer_conversation_feedback_scope(
+                    PROJECT,
+                    fixture.conversation,
+                    fixture.task.id,
+                    call,
+                    &input,
+                )
+                .unwrap();
+        }
+        let request = fixture
+            .app
+            .prepare_conversation_feedback_request(
+                PROJECT,
+                fixture.conversation,
+                fixture.task.id,
+                call,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(request.status, ConversationHumanRequestStatus::Pending);
+        fixture
+            .app
+            .cancel_conversation_schema(PROJECT, fixture.conversation, fixture.task.id, call)
+            .unwrap();
+        let image = fixture
+            .app
+            .project_image_path(
+                PROJECT,
+                ImageId(Uuid::parse_str(&fixture.human.image_id).unwrap()),
+            )
+            .unwrap();
+        std::fs::write(image, b"TEST changed pixels after a saved request").unwrap();
+        let reopened = LocalApplication::new(fixture.temporary.path()).unwrap();
+        assert_eq!(
+            reopened
+                .prepare_conversation_feedback_request(
+                    PROJECT,
+                    fixture.conversation,
+                    fixture.task.id,
+                    call
+                )
+                .unwrap(),
+            Some(request.clone())
+        );
+        assert_eq!(
+            reopened
+                .conversation_human_requests(PROJECT, fixture.conversation, fixture.task.id)
+                .unwrap(),
+            vec![request]
+        );
+        let result = reopened
+            .read_conversation_feedback(PROJECT, fixture.conversation, fixture.task.id, call)
+            .unwrap()
+            .unwrap();
+        assert!(
+            result.decision.is_err(),
+            "historical request recovery must not reactivate the proposal"
+        );
+        assert_eq!(result.receipt, completed.receipt);
+        assert!(
+            reopened
+                .store
+                .sample_feedback(&fixture.sample.id, &fixture.human.image_id)
+                .unwrap()
+                .is_empty()
+        );
+        let owner = reopened.conversation_project_identity(PROJECT).unwrap();
+        assert!(
+            reopened
+                .store
+                .pending_conversation_resumes(&owner, fixture.conversation, fixture.task.id)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            reopened
+                .conversation_builder_budget(PROJECT, fixture.conversation, fixture.task.id)
+                .unwrap()
+                .used_calls,
+            1
+        );
+        assert_eq!(provider.requests.lock().unwrap().len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn cancelled_clarification_without_saved_scope_does_not_become_a_successful_noop() {
+    let (fixture, provider, record) = scope_fixture().await;
+    let call = record.consent.call_id;
+    assert!(
+        fixture
+            .app
+            .prepare_conversation_feedback_request(
+                PROJECT,
+                fixture.conversation,
+                fixture.task.id,
+                call
+            )
+            .unwrap()
+            .is_none()
+    );
+    fixture
+        .app
+        .cancel_conversation_schema(PROJECT, fixture.conversation, fixture.task.id, call)
+        .unwrap();
+    assert!(
+        fixture
+            .app
+            .prepare_conversation_feedback_request(
+                PROJECT,
+                fixture.conversation,
+                fixture.task.id,
+                call
+            )
+            .is_err()
+    );
+    assert!(
+        fixture
+            .app
+            .conversation_human_requests(PROJECT, fixture.conversation, fixture.task.id)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(provider.requests.lock().unwrap().len(), 1);
 }
 
 #[async_trait::async_trait]

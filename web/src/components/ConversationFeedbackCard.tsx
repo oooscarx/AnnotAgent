@@ -1,18 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiRequestError } from "../api";
-import { feedbackApi, type FeedbackConsent, type FeedbackPreview, type FeedbackStatus } from "../conversation-feedback-api";
+import { feedbackApi, type FeedbackConsent, type FeedbackPreview, type FeedbackStatus, type ScopeAnswerInput, type ScopeAnswerRecord } from "../conversation-feedback-api";
 import { feedbackCancellationMatches, feedbackCanDiscardUnaccepted, feedbackNeedsPolling, feedbackPhase, feedbackWaitingRequest, mergeFeedbackStatus, parsePendingFeedback } from "../conversation-feedback";
 import type { HumanRequest } from "../conversation-human-api";
 import type { ConversationCallCancellation, ConversationMessage } from "../types";
 import { projectBudgetAvailability } from "../projectBudget";
 import { ConversationBudgetNotice } from "./ConversationBudgetNotice";
+import { ConversationFeedbackScope } from "./ConversationFeedbackScope";
+import { sameScopeAnswerInput } from "../conversation-feedback-scope";
 import "./conversation-feedback.css";
 
 /** A saved message is context, not permission. Only explicit buttons authorize or execute. */
-export function ConversationFeedbackCard({ project, message, requests, requestsReady, onOpen, onAssistance, captureCanvasNavigation }: {
+export function ConversationFeedbackCard({ project, message, requests, requestsReady, onOpen, onAssistance, captureCanvasNavigation, onScopeDirtyChange }: {
   project: string; message: ConversationMessage; requests: HumanRequest[]; requestsReady: boolean;
   onOpen: (request: HumanRequest) => void; onAssistance: () => void;
   captureCanvasNavigation: () => (request: HumanRequest) => void;
+  onScopeDirtyChange?: (dirty: boolean) => void;
 }) {
   const conversation = message.conversation_id, task = message.input.reference!.task_id;
   const storageKey = `annotagent.feedback:${project}:${conversation}:${task}:${message.input.id}`;
@@ -28,6 +31,7 @@ export function ConversationFeedbackCard({ project, message, requests, requestsR
   const cancelled = Boolean(saved?.cancelled || feedbackCancellationMatches(cancellation, task, saved?.authorization.consent.call_id ?? frozen.current?.call_id));
   const phase = cancelled ? "cancelled" : feedbackPhase(saved);
   const running = phase === "running";
+  const canCorrect = !cancelled && (phase === "correction" || (phase === "clarify" && saved?.scope_answer?.input.choice.scope === "current_candidate"));
 
   function clearFrozen() {
     frozen.current = undefined;
@@ -160,7 +164,7 @@ export function ConversationFeedbackCard({ project, message, requests, requestsR
     } catch (reason) { if (alive.current && ticket === revision.current) setError(`${acknowledged ? "Cancellation is saved, but the remaining feedback status could not be loaded. " : ""}${(reason as Error).message}`); }
   }
   async function correct() {
-    if (pending.current || !saved || phase !== "correction") return;
+    if (pending.current || !saved || !canCorrect) return;
     pending.current = true; setBusy(true); setError(""); const ticket = ++revision.current;
     const openIfStillCurrent = captureCanvasNavigation();
     try {
@@ -170,6 +174,26 @@ export function ConversationFeedbackCard({ project, message, requests, requestsR
       onAssistance(); openIfStillCurrent(value);
     } catch (reason) { if (alive.current && ticket === revision.current) setError((reason as Error).message); }
     finally { pending.current = false; if (alive.current) setBusy(false); }
+  }
+  async function saveScope(input: ScopeAnswerInput): Promise<ScopeAnswerRecord> {
+    if (pending.current || !saved || phase !== "clarify" || cancelled || saved.scope_answer) throw new Error("This scope question is not currently available for an answer. Reload its saved state before continuing.");
+    const call = saved.authorization.consent.call_id;
+    if (input.expected_context_digest !== saved.scope_context_digest) throw new Error("The scope answer does not match this frozen context. Your original choices were retained.");
+    pending.current = true; setBusy(true); const ticket = ++revision.current;
+    const owned = (answer: ScopeAnswerRecord) => answer.call_id === call && answer.task_id === task && answer.conversation_id === conversation;
+    try {
+      const answer = await feedbackApi.answerScope(project, conversation, task, call, input);
+      if (!owned(answer) || !sameScopeAnswerInput(answer.input, input)) throw new Error("The returned scope answer does not match this task and command. No different choice was substituted.");
+      if (alive.current && ticket === revision.current) { apply({ ...saved, scope_answer: answer }); onAssistance(); }
+      return answer;
+    } catch (reason) {
+      try {
+        const status = await feedbackApi.status(project, conversation, task, call);
+        if (alive.current && ticket === revision.current) { apply(status); onAssistance(); }
+        if (status.scope_answer && owned(status.scope_answer) && sameScopeAnswerInput(status.scope_answer.input, input)) return status.scope_answer;
+      } catch { /* A missing acknowledgement keeps the exact command; it never resubmits. */ }
+      throw reason;
+    } finally { pending.current = false; if (alive.current) setBusy(false); }
   }
 
   const decision = saved?.decision && "Ok" in saved.decision ? saved.decision.Ok : undefined;
@@ -190,10 +214,11 @@ export function ConversationFeedbackCard({ project, message, requests, requestsR
       <div className="conversation-feedback-actions"><button disabled={busy} onClick={() => { setPreview(undefined); setConfirmed(false); }}>Back</button><button className="primary" disabled={!confirmed || busy || !requestsReady || Boolean(waiting) || projectBudgetAvailability(preview.project_call_limit).blocked} onClick={() => void start()}>Interpret saved feedback</button></div>
     </section>}
     {saved && <div className="conversation-feedback-result">
-      <p role="status">{running ? "Interpreting the saved feedback. Leaving this page does not stop an admitted call." : checking ? "Feedback execution submitted. Checking the saved admission and outcome; no automatic retry." : phase === "cancelled" ? "Cancellation saved. No automatic retry will run; in-flight usage may still be billed." : phase === "expired" ? "Authorization expired before execution. Nothing was automatically renewed." : phase === "authorized" ? "Authorization saved; no model call is recorded. Execution requires your explicit action." : phase === "unknown" ? "Provider outcome unknown. A call may have been billed. This request will not be sent again." : phase === "failed" ? "The feedback request did not produce a result. No correction was applied." : phase === "invalid" ? "The model returned no valid feedback proposal. No correction was applied." : phase === "correction" ? "Correction proposed" : "Clarify the intended scope"}</p>
+      <p role="status">{running ? "Interpreting the saved feedback. Leaving this page does not stop an admitted call." : checking ? "Feedback execution submitted. Checking the saved admission and outcome; no automatic retry." : phase === "cancelled" ? "Cancellation saved. No automatic retry will run; in-flight usage may still be billed." : phase === "expired" ? "Authorization expired before execution. Nothing was automatically renewed." : phase === "authorized" ? "Authorization saved; no model call is recorded. Execution requires your explicit action." : phase === "unknown" ? "Provider outcome unknown. A call may have been billed. This request will not be sent again." : phase === "failed" ? "The feedback request did not produce a result. No correction was applied." : phase === "invalid" ? "The model returned no valid feedback proposal. No correction was applied." : phase === "correction" ? "Correction proposed" : saved.scope_answer ? "Feedback scope recorded" : "Clarify the intended scope"}</p>
       {decision && !cancelled && <><p>{decision.question}</p><p>{decision.rationale}</p><small>Text-only interpretation of your saved message and candidate metadata, not a visual accuracy assessment.</small></>}
-      {phase === "correction" && !waiting && <button className="primary" disabled={busy} onClick={() => void correct()}>Correct in canvas</button>}
-      {phase === "clarify" && <p>No scope change or deletion was applied. Add a more specific message with this candidate reference, or use the canvas to correct it directly. Project-wide rule changes are not authorized by this message.</p>}
+      <ConversationFeedbackScope key={saved.authorization.consent.call_id} project={project} value={saved} cancelled={cancelled} busy={busy} onSave={saveScope} onDirtyChange={onScopeDirtyChange} />
+      {canCorrect && !waiting && <button className="primary" disabled={busy} onClick={() => void correct()}>Correct in canvas</button>}
+      {phase === "clarify" && !waiting && (!saved.scope_answer || saved.scope_answer.input.choice.scope === "current_candidate") && <><button disabled={busy || !requestsReady} onClick={() => void stop()}>{saved.scope_answer ? "Cancel feedback action" : "Cancel scope question"}</button><small>Cancels this feedback action only. Saved answers, annotations and any existing correction requests remain unchanged.</small></>}
       {(running || checking || recoverable) && <button onClick={() => void stop()}>{running || checking ? "Stop feedback request" : "Cancel saved feedback request"}</button>}
       {recoverable && <><p>{saved.authorization.summary.model_name} · {saved.authorization.summary.remote_model} · {saved.authorization.summary.destination}</p><p>{saved.authorization.summary.data_scope}</p><small>One text request · Cost unknown · Expires {new Date(saved.authorization.consent.expires_at).toLocaleString()}. The frozen message and candidate have not been replaced.</small><button disabled={busy || !requestsReady || Boolean(waiting)} onClick={() => void start()}>Continue saved feedback request</button></>}
       {invalid && <p role="alert">{invalid}</p>}{(saved.error || saved.receipt?.evidence?.error) && <p role="alert">{saved.error || saved.receipt?.evidence?.error}</p>}

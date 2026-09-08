@@ -1,6 +1,6 @@
 # Conversational Annotation Workspace — execution record
 
-## Current checkpoint (after `18089c8`, with scoped feedback HTTP/chat integration; not a completion declaration)
+## Current checkpoint (structured feedback scope answers; not a completion declaration)
 
 The default Project entry now uses the persisted conversation/image workspace. Explicit goal
 selection survives re-entry, sample candidate references are frozen, and clarification/correction
@@ -26,8 +26,12 @@ receipts after refresh, exposes Stop, and opens the existing correction canvas o
 Pending human work is opened directly instead of silently cancelled or bypassed to spend again.
 Interpretation proposes human work only; it never applies geometry or formal annotations.
 
-Still incomplete: structured answers to feedback scope-clarification questions;
-the other structured visual/setup request kinds; complete scope-change/Schema patch and stop-text
+Scope clarification now has a controlled saved answer and an explicit current-candidate correction
+handoff. Current-image class and future Project rule selections record intent only; they do not yet
+produce or apply a versioned rule patch. Browser and final regression verification is recorded below.
+
+Still incomplete: broader scope-change/Schema patches;
+the other structured visual/setup request kinds; complete stop-text
 semantics; large-history performance and the remaining accessibility/context restoration audit.
 Schema setup and repair phase cards still require explicit intermediate actions. Live model quality, native
 200-percent browser zoom and real-human novice usability are not proven. Full regression results
@@ -3125,3 +3129,119 @@ rewriting the model receipt, treating scope as rejection, or authorizing bulk ed
 answer must not spend budget or modify annotations/Schema. Only an explicit supported correction
 can prepare the existing human request; broader rule changes still need a separate versioned patch.
 Cancellation, concurrent answers and exact historical replay must share the same durable boundaries.
+
+### M3 structured feedback scope answers — current implementation and verification
+
+The previous goal turn made concrete progress and committed `7fcb67f`; this turn continues that
+boundary, without changing the full goal. Added migration 45 and a controlled scope answer tied to
+the original call, task, conversation and canonical persisted-context digest. A human explicitly
+selects current candidate, current-image class or future Project rule scope. A candidate answer
+also requires a correction reason; boundary feedback is valid only for a saved bounding box.
+
+Saving an answer is not an annotation edit, false-positive rejection, model call, new allowance,
+Schema change or continuation event. The immutable answer has one command and one slot per call.
+The original model receipt remains `clarify_scope`; human intent does not masquerade as a model
+`request_correction`. The first save atomically checks the completed source, ownership, cancellation,
+exact saved authorization/message, image hash and feedback sequence. Exact retry reads its original
+answer before current-context/expiry checks and cannot overwrite a different answer.
+
+Only a saved current-candidate answer enables the explicit existing canvas-request action. That
+action reuses terminal selection, live file checks, same-image exclusivity, stable request IDs and
+the existing correction/resume services. Larger scopes remain visibly recorded-but-not-applied;
+the later versioned Schema/rule implementation is still required, not replaced by an intent record.
+
+The chat form has no preselected scope or inferred rejection. Local choices and a pending command
+are kept separately from server-saved answers. An unknown save keeps its exact command; refresh is
+read-only, and a different saved answer cannot silently replace local choices. A late snapshot
+cannot erase an already saved answer. Browser-storage failure uses the existing workspace dirty
+guard. Scope cancellation uses the actual call cancellation receipt; it does not retract an answer
+or an already created human request.
+
+Test-driven findings so far:
+
+- The new interfaces were initially missing; the first targeted compile failed before a scope
+  answer could be saved. Storage tests then found that internally tagged Serde unit variants
+  ignored extra fields despite enum-level `deny_unknown_fields`. A strict intermediate empty
+  struct-variant parser now rejects hidden IDs, geometry and reasons in broader choices.
+- A frontend regression first reproduced a late GET with a null answer erasing a saved answer.
+  The status merge now preserves the immutable saved record.
+- The existing Application TEST consent omitted `remote_model` from its historical summary.
+  The stricter scope-source check correctly rejected all four new tests until the fixture recorded
+  the actual TEST remote identity. The production source check was not relaxed.
+- Review found the pre-existing Application cancellation check ran before exact human-request
+  recovery. The Application now reconstructs only the immutable proposal from the original
+  response and frozen context, then restores an existing request only if its full input matches.
+  Actionability is checked before every new-request path, including unanswered clarification.
+  Regression tests cover create-first / cancel-later / changed pixels / restart / retry for both
+  direct correction proposals and answered scope questions. Neither recovery reactivates the
+  model proposal; fresh work after cancellation still fails closed.
+
+The final Rust command chain passed: `cargo fmt --all --check`,
+`cargo clippy --workspace --all-targets --all-features -- -D warnings`,
+`cargo test --workspace --all-features`, and `cargo build --workspace --all-features`.
+Application has 129 unit tests (27 feedback tests); Storage has 86 unit tests plus 16 integration
+tests. The same five explicitly Live-dependent tests remain ignored, not claimed as verified.
+The first intermediate lint runs caught missing test semicolons, public helper `must_use`/doc
+annotations and an unnecessarily owned test argument; all were fixed without suppressions.
+
+Web typecheck, 152 unit tests and production build passed after an initially failing render test
+caught cancelled answers still telling the user to open a correction. Cancelled answers now retain
+their status without that actionable instruction.
+
+The follow-up integration audit found a distinct local-state bug: cancelling an unanswered scope
+question unmounted its form. Persisted tab choices became invisible, and with browser storage
+unavailable the in-memory selection and its dirty guard were lost. Two failing visibility tests
+preceded a fix that keeps the same scope component alive and shows cancelled local choices
+read-only. Unrelated feedback does not gain a fake scope question. All 154 Web unit tests and
+typecheck passed after this change; actual storage-failure/navigation checks are being added.
+
+The first complete feedback browser suite passed **22/22**, 3.6 minutes in
+`/tmp/annotagent-guided-e2e-53801`. The original 14 cases still pass, along with three scope
+choices, cancellation, bbox-only boundary intent, same-command retry after lost acknowledgement,
+read-only reload, exact candidate handoff, and a cancelled saved answer. API snapshots verify
+scope saving itself did not call a model, create feedback/human work, or change Drafts or Schema.
+The first targeted rerun passed 9/10, including both new unsaved-choice cancellation cases:
+390px tab-storage recovery after reload and in-memory choices plus a rejecting leave guard when
+scope-key storage writes fail. Its lost-acknowledgement test exposed a test timing flaw: the form
+changes to its frozen-command retry label before the first browser POST completes preparation.
+Reloading at that label could abort before the route observed a request, so the test had not
+actually simulated its claimed first send. The test now waits for the original route/POST and an
+enabled retry action before reload, retaining the two-equal-command and no-extra-model assertions.
+This is a test synchronization correction, not a relaxed admission or retry guarantee.
+
+The final scope rerun passed **10/10**, 1.2 minutes in
+`/tmp/annotagent-guided-e2e-54882`, with the current production build. The feedback spec now has
+24 cases in total: the first 22 passed as a complete suite; the later 10-case scope run includes
+both newly added cancellation/storage cases and reruns all eight scope cases. This is scoped
+browser evidence, not a claim that the entire repository browser suite was rerun this turn.
+Final root Web typecheck and all **154/154 unit tests (34 files)** passed; Rust fmt and diff
+checks also passed again. No production API key or user workspace was used.
+
+Screenshots use the same explicit TEST transport and synthetic input, and were visually inspected:
+
+- `conversational-workspace/candidate-scope-answer-form.png`: actual scope/correction-reason
+  form, with explicit choices and its not-submitted status (component capture).
+- `conversational-workspace/candidate-scope-cancelled-390.png`: actual form within a 390×844
+  viewport, not a whole-page screenshot. Disabled checked options and the not-submitted/read-only
+  notice remain visible after cancellation/reload.
+- `conversational-workspace/candidate-scope-answer-canvas.png`: the actual classification
+  candidate, image, label control, evaluation-only scope and Submit correction. The optional
+  feedback form is collapsed using its real UI control. A 1280×1600 viewport is intentionally
+  used to show image and form together; this does not establish that all controls fit within a
+  720px-high viewport or resolve the remaining long-history layout work. The original cropped
+  1200px capture was not treated as proof that its offscreen submit action was visible.
+
+The final candidate-only browser check passed again in
+`/tmp/annotagent-guided-e2e-55133` after tightening the actual filename/viewport assertions.
+The screenshot was captured from that real TEST UI, not rebuilt as a mockup. The test servers
+on 8791/8796 exited afterward; the user's 8787 service was not restarted. This milestone includes
+only its three new screenshots. Previously modified historical screenshots are left untouched
+and outside this commit. Branch remains `main`; both remotes are unchanged, and nothing is pushed.
+
+This checkpoint implements controlled intent and current-candidate handoff, not global label
+editing. Current-image class/future-rule changes still need a separately versioned proposal and
+impact confirmation. Stop-text disambiguation, other visual requests, history performance and
+remaining accessibility/context recovery acceptance are still outstanding. Live model quality,
+native 200% zoom and real-human novice usability were not tested. The overall goal stays active.
+The existing bundle-size warning is not a performance pass. No real workspace, paid Provider,
+old credentials, push or remote edits were used.

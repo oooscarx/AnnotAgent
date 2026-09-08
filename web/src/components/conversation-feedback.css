@@ -17,6 +17,14 @@
 .conversation-feedback-consent > label span { min-width: 0; line-height: 1.5; }
 .conversation-feedback-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .conversation-feedback-card button { max-width: 100%; min-width: 0; white-space: normal; height: auto; }
+.conversation-feedback-scope, .conversation-feedback-scope form, .conversation-feedback-scope-result { display: grid; gap: 12px; min-width: 0; }
+.conversation-feedback-scope { padding-block: 12px; border-block-start: 1px solid var(--aa-border); }
+.conversation-feedback-scope fieldset { display: grid; gap: 10px; min-width: 0; margin: 0; padding: 10px 0; border: 0; }
+.conversation-feedback-scope legend { padding: 0; font-weight: 600; line-height: 1.5; }
+.conversation-feedback-scope label { display: flex; gap: 10px; align-items: start; min-width: 0; padding-block: 4px; }
+.conversation-feedback-scope label input { flex: none; margin-block-start: 4px; }
+.conversation-feedback-scope label span { min-width: 0; line-height: 1.5; }
+.conversation-feedback-scope form > button { justify-self: start; }
 @media (max-width: 420px) {
   .conversation-feedback-consent, .conversation-feedback-waiting { padding-inline-start: 8px; }
   .conversation-feedback-actions { align-items: stretch; }
