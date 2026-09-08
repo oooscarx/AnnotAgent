@@ -10591,30 +10591,49 @@ function ExpertModelSetupWizard({
   const [discovery, setDiscovery] = useState<DetectionWorkerTestResult>();
   const [sample, setSample] = useState<DetectionWorkerSampleTestResult>();
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [nextProjectOffset, setNextProjectOffset] = useState<number | null>(0);
+  const [projectPageLoading, setProjectPageLoading] = useState(false);
+  const [projectPageError, setProjectPageError] = useState<string>();
+  const projectRead = useRef<AbortController | undefined>(undefined);
+  const projectReadPending = useRef(false);
   const [projectId, setProjectId] = useState("");
   const [images, setImages] = useState<ImageItem[]>([]);
   const [imageIndex, setImageIndex] = useState(0);
   const [query, setQuery] = useState("football");
   const [busy, setBusy] = useState("");
 
+  async function loadProjectPage(offset: number) {
+    if (projectReadPending.current) return;
+    projectReadPending.current = true;
+    const controller = new AbortController(); projectRead.current = controller;
+    setProjectPageLoading(true); setProjectPageError(undefined);
+    try {
+      const value = await api.projectPage(offset, controller.signal);
+      if (controller.signal.aborted) return;
+      const available = value.projects.filter(project => project.image_count > 0);
+      setProjects(current => offset === 0 ? available : [...current, ...available.filter(project => !current.some(item => item.id === project.id))]);
+      setNextProjectOffset(value.page?.projects.next_offset ?? null);
+      if (offset === 0) setProjectId(current => current || available[0]?.id || "");
+    } catch (error) { if (!controller.signal.aborted) setProjectPageError((error as Error).message); }
+    finally { projectReadPending.current = false; if (!controller.signal.aborted) setProjectPageLoading(false); }
+  }
+  useEffect(() => () => projectRead.current?.abort(), []);
   useEffect(() => {
-    if (step === 5 && projects.length === 0) {
-      void api.dashboard().then((value) => {
-        const available = value.projects.filter((project) => project.image_count > 0);
-        setProjects(available);
-        if (available[0]) setProjectId(available[0].id);
-      }).catch((error: Error) => onError(error.message));
-    }
+    if (step === 5 && nextProjectOffset === 0) void loadProjectPage(0);
   }, [step]);
   useEffect(() => {
     if (!projectId) {
       setImages([]);
       return;
     }
-    void api.images(projectId).then((value) => {
+    const controller = new AbortController();
+    setImages([]);
+    void api.images(projectId, controller.signal).then((value) => {
+      if (controller.signal.aborted) return;
       setImages(value.images);
       setImageIndex(value.images[0]?.index ?? 0);
-    }).catch((error: Error) => onError(error.message));
+    }).catch((error: Error) => { if (!controller.signal.aborted) onError(error.message); });
+    return () => controller.abort();
   }, [projectId]);
 
   const choosePreset = (value: string) => {
@@ -10725,6 +10744,11 @@ function ExpertModelSetupWizard({
   const title = ["Choose an integration", "Connect the Worker", "Discover live capabilities", "Complete model identity", "Run a selected-image sample", "Register the Expert Model"][step - 1];
   return <div className="modal-backdrop"><div className="modal expert-model-wizard" role="dialog" aria-modal="true" aria-labelledby="expert-model-wizard-title">
     <header><span className="eyebrow">Expert Model · Step {step} of 6</span><h2 id="expert-model-wizard-title">{title}</h2><div className="wizard-progress six" aria-label={`Step ${step} of 6`}>{[1, 2, 3, 4, 5, 6].map((item) => <i key={item} className={item <= step ? "complete" : ""} />)}</div></header>
+    {step === 5 && <div className="button-row" aria-label="Sample Project pages">
+      <span>{projects.length} Projects with images loaded</span>
+      {projectPageError && <p role="alert">{projectPageError}</p>}
+      {nextProjectOffset !== null && <button disabled={projectPageLoading} onClick={() => void loadProjectPage(nextProjectOffset)}>{projectPageLoading ? "Loading Projects…" : projectPageError ? "Retry Project loading" : "Load more Projects"}</button>}
+    </div>}
     {step === 1 && <div className="wizard-step"><div className="choice-grid expert-methods" role="radiogroup" aria-label="Expert Model integration method">{([
       ["preset", "Use preset", "Start with a known capability contract"],
       ["http", "Generic HTTP Worker", "Connect any Vision Protocol v1 service"],

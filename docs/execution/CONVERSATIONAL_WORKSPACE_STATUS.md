@@ -4754,3 +4754,25 @@ verified Project (deduplicated by stable ID, never inferred from a name). This p
 management inventory pagination. Expert setup is global and still needs actual project-page
 navigation; adding a routed owner alone cannot fix that selector. No timeout increase is used
 for these missing-data cases. Fresh targeted browser checks and final combined checks remain.
+
+### 2026-09-09 — Global setup Project paging and exact scoped regressions
+
+Expert setup now reads the existing paginated Project endpoint, exposes Load more Projects,
+deduplicates stable IDs and retains the user's selection while appending. Failed page reads have
+an inline retry. Project-image requests are cancelled/guarded on selection change so a late old
+list cannot replace the new Project's images. No new registry or automatic model invocation.
+The Expert browser case explicitly loads pages and selects its own Project before sample testing;
+it no longer merely asserts the name exists while testing whichever Project happened to be first.
+
+Fresh verification handle 68814 finished **5 passed, 1 failed (48.3s)**. Both repaired human
+Schema cases, journal/large-index cases and journey-ready passed. Preview failed because the test
+incorrectly expected Save message to navigate to a task URL. Saving a note is not selecting a goal;
+the test now explicitly selects the saved message before checking context-query reuse. Trace:
+`/tmp/annotagent-preview-trace-T6nyTi/trace.zip`. PNG dimensions had passed before that assertion.
+
+The Pipeline and Batch tests now intentionally omit their real Project from the dashboard GET
+while keeping exact summary/entity APIs intact, exercising the routed-owner bug even in a small
+isolated workspace. Current-source targeted run is handle 21777, evidence
+`/tmp/annotagent-paging-repairs`: preview, complete guided serial group, journey-ready and Expert
+integration. Results are pending. Web typecheck and 222 unit tests passed before these additional
+browser assertions. No full-suite success or Live/human-quality claim.

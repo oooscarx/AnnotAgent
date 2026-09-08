@@ -579,6 +579,8 @@ export const api = {
     ),
   dashboard: (signal?: AbortSignal) =>
     request<DashboardData>("/api/projects", { signal }),
+  projectPage: (offset: number, signal?: AbortSignal) =>
+    request<DashboardData>(`/api/projects?project_offset=${offset}&project_limit=100&run_limit=1`, { signal }),
   createProject: (id: string, yaml: string) =>
     request<ProjectSummary>("/api/projects", {
       method: "POST",

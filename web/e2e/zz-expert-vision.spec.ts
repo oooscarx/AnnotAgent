@@ -163,7 +163,14 @@ test("guided SAM registration requires discovery, immutable identity, and a type
   await clickSettingsAction("Save identity and test");
 
   const sampleDialog = page.getByRole("dialog", { name: "Run a selected-image sample" });
+  for (let pageNumber = 0; pageNumber < 10; pageNumber++) {
+    await expect(sampleDialog.getByRole("button", { name: "Loading Projects…", exact: true })).toHaveCount(0);
+    if (await sampleDialog.getByRole("option", { name: `Expert Vision E2E ${stamp}`, exact: true }).count()) break;
+    await sampleDialog.getByRole("button", { name: "Load more Projects", exact: true }).click();
+  }
   await expect(sampleDialog).toContainText(`Expert Vision E2E ${stamp}`);
+  await sampleDialog.getByLabel("Project", { exact: true }).selectOption(projectId);
+  await expect(sampleDialog.getByRole("button", { name: "Run sample test", exact: true })).toBeVisible();
   const sampleAttempt = async () => {
     // This action saves settings, re-discovers, then tests. Observe all stages,
     // not only the first successful settings PUT; suite-wide admission can reject discovery.

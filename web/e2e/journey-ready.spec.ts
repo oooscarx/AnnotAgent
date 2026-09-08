@@ -387,6 +387,14 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
     expect((await request.patch(`/api/model-profiles/${model.id}`, { data: { enabled: true } })).ok()).toBeTruthy();
   }
   // Human creation uses the same real completed child Run, not a new inference.
+  // Model an owner outside the dashboard page; exact Project and Batch APIs stay real.
+  await page.route("**/api/projects", async route => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const response = await route.fetch();
+    const body = await response.json();
+    body.projects = body.projects.filter((project: { id: string }) => project.id !== projectId);
+    await route.fulfill({ response, json: body });
+  });
   await page.goto(`/projects/${projectId}/batches/${confirmation.batch_id}`);
   await page.getByRole("button", { name: "Add a missing annotation", exact: true }).click();
   await expect(page.getByRole("region", { name: "Add a missing annotation", exact: true })).toBeVisible();

@@ -419,6 +419,14 @@ test("Build navigation preserves the Project and imports real data", async ({ pa
 });
 
 test("Automation Recipe previews Advisor changes and autosaves Drawer edits", async ({ page }) => {
+  // A dashboard page is not the complete Project registry. Keep the real summary route intact.
+  await page.route("**/api/projects", async route => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const response = await route.fetch();
+    const body = await response.json();
+    body.projects = body.projects.filter((project: { id: string }) => project.id !== projectId);
+    await route.fulfill({ response, json: body });
+  });
   await page.goto(`/projects/${projectId}/build/pipeline`);
   await expect(page.getByRole("heading", { name: "How AnnotAgent will label your data" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Models this automation will call" })).toBeVisible();

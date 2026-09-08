@@ -907,6 +907,7 @@ export interface DashboardData {
   models: ModelBinding[];
   installed_skills: EnabledSkill[];
   review_queue: number;
+  page?: { projects: PageMetadata; runs: PageMetadata };
 }
 
 export interface PageMetadata {
