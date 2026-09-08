@@ -46,5 +46,11 @@ test("browse previews are bounded while the selected canvas keeps original pixel
   await expect(canvas).toHaveAttribute("src", image.url);
   await expect(thumbnail).toHaveAttribute("src", image.thumbnail_url);
   expect(writes).toEqual([]);
+  for (const [width, height] of [[1440, 900], [1280, 720], [1024, 768]]) {
+    await page.setViewportSize({ width, height });
+    await expect(page.getByLabel("Your message", { exact: true })).toBeInViewport({ ratio: 1 });
+    await expect(page.getByRole("button", { name: "Save message", exact: true })).toBeInViewport({ ratio: 1 });
+    await page.screenshot({ path: isolatedEvidencePath(`../docs/execution/conversational-workspace/composer-${width}.png`), animations: "disabled" });
+  }
   await page.screenshot({ path: isolatedEvidencePath("../docs/execution/conversational-workspace/bounded-browse-preview.png"), animations: "disabled" });
 });

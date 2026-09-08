@@ -364,6 +364,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
     </nav>
     <div ref={root} className="conversation-split" data-mobile-view={mobileView} style={{ "--conversation-width": `${width}%` } as CSSProperties}>
       <section className="conversation-panel" aria-label="Project conversation">
+        <div className="conversation-history">
         <h2>What would you like to annotate?</h2>
         <p className="muted">Describe your goal before or after uploading images.</p>
         <p className="conversation-development-note">Samples and corrections are evaluations, not formal annotations. Dataset processing needs your explicit image and budget confirmation. Advanced review and export remain in the saved processing results.</p>
@@ -395,6 +396,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
         {conversation && goalMessage && <ConversationSchemaCard prepareRequested={prepareMessage===goalMessage.input.id} key={`${conversation}:${goalMessage.input.id}`} project={project.id} conversation={conversation} message={goalMessage.input.id} onDirtyChange={schemaDirtyChange} onAssistance={assistanceChanged} onSample={(draft,test,image)=>void openSample(draft,test,image)} onSetup={selectedTask=>onNavigate(conversationSettingsPath(project.id,"providers",projectWorkPath(project.id,{conversationId:conversation,taskId:selectedTask ?? taskId,imageId,draftId,sampleTestId,humanRequestId,referenceMessageId,processingOperationId,results})))} />}
         {conversation && taskId && !goalMessage && <p role="status">{requestsReady ? "The selected annotation task is not available in this conversation. Select a saved message; no other task was substituted." : "Loading the selected annotation task…"}</p>}
         {activeRequest?.status==="applied" && activeRequest.resume_draft_id && <ConversationRepairCard key={activeRequest.input.id} project={project.id} request={activeRequest} editing={repairEditing} onAssistance={assistanceChanged} onSample={(draft,test,image)=>void openSample(draft,test,image)} />}
+        </div>
         <form onSubmit={(event) => { event.preventDefault(); if (!composing.current) void send(!goalMessage&&!pinnedSelection); }} className="conversation-composer">
           <label htmlFor="conversation-message">Your message</label>
           <textarea ref={messageInput} id="conversation-message" value={text} disabled={!ready || busy || Boolean(frozen.current)} rows={3} placeholder="Find cups, but not bottles" onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} onChange={(event) => { unsent.current = event.target.value; setText(event.target.value); }} />

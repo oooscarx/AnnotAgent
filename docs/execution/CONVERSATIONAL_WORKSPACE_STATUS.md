@@ -4790,3 +4790,22 @@ Visual inspection of `/tmp/annotagent-paging-repairs/conversational-workspace/bo
 also shows the desktop composer below the initial viewport as historical cards grow. A viewport
 assertion was added to the preview test; baseline verification is running on handle 79098
 before restructuring the scroll areas.
+
+### 2026-09-09 — Keep the desktop composer visible
+
+Baseline handle 79098 failed with textarea viewport ratio 0. The desktop conversation panel
+now has a separately scrolling history area and a natural-height composer row. At small/short
+viewports the original document-flow layout remains, avoiding fixed-height clipping. Existing
+Human Request spacing follows the new wrapper; no task state or event handling was copied.
+
+Typecheck and 222 unit tests pass. Fresh real-browser run 12566 passed **5/5 (8.6s)** in
+`/tmp/annotagent-guided-e2e-10349`: human bbox/category labels, preview/cache/visible composer,
+journal keyboard/narrow layouts and large image strip. The resulting screenshot was inspected:
+`/tmp/annotagent-composer-repairs/conversational-workspace/bounded-browse-preview.png` visibly
+retains both textarea and send action at the bottom of the left pane. Previous failed trace:
+`/tmp/annotagent-composer-trace-M6OrBQ/trace.zip`.
+
+The stronger full-control visibility checks at 1440×900, 1280×720 and 1024×768 are now running
+on handle 47082 (`/tmp/annotagent-composer-viewports`). These are real viewport checks, not
+native browser zoom, assistive-technology or a human usability study. Broader history pagination
+and the final combined regression remain outstanding.

@@ -3,6 +3,8 @@
 .conversation-panel, .conversation-image-panel { min-width: 0; padding: clamp(12px,2vw,24px); }
 .conversation-panel { display: flex; flex-direction: column; gap: 12px; }
 .conversation-panel > * { flex-shrink: 0; }
+.conversation-history { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.conversation-history > * { flex-shrink: 0; }
 .conversation-panel h2, .conversation-panel p, .conversation-image-tools h2 { margin: 0; }
 .conversation-development-note { font-size: .85rem; border-inline-start: 3px solid var(--aa-primary); padding: 8px 12px; }
 .conversation-messages { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 16px; }
@@ -33,10 +35,10 @@
 .conversation-processing .journey-consent { padding: 12px; display: grid; gap: 12px; }
 .conversation-processing .journey-consent h3 { font-size: 1rem; line-height: 1.4; margin: 0; }
 .conversation-schema-card h3 { margin: 0; }
-.conversation-panel > [aria-label="Human requests"] { display: grid; gap: 14px; min-width: 0; }
-.conversation-panel > [aria-label="Human requests"] h3 { margin: 0; }
-.conversation-panel > [aria-label="Human requests"] > button { justify-self: start; }
-.conversation-panel > [aria-label="Human requests"] article { padding-block: 12px; border-block-start: 1px solid var(--aa-border); }
+.conversation-history > [aria-label="Human requests"] { display: grid; gap: 14px; min-width: 0; }
+.conversation-history > [aria-label="Human requests"] h3 { margin: 0; }
+.conversation-history > [aria-label="Human requests"] > button { justify-self: start; }
+.conversation-history > [aria-label="Human requests"] article { padding-block: 12px; border-block-start: 1px solid var(--aa-border); }
 .conversation-schema-editor, .conversation-schema-editor label { display: grid; gap: 10px; min-width: 0; }
 .conversation-schema-editor { padding-block: 12px; border-block-start: 1px solid var(--aa-border); }
 .conversation-schema-editor textarea { width: 100%; min-width: 0; resize: vertical; }
@@ -80,6 +82,11 @@
 .conversation-thumbnails span { font-size: .75rem; overflow-wrap: anywhere; }
 .conversation-thumbnails [aria-current=true] { outline: 2px solid var(--aa-primary); outline-offset: -2px; }
 .conversation-mobile-tabs { display: none; }
+@media (min-width: 761px) and (min-height: 650px) {
+  .conversation-panel { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; overflow: hidden; }
+  .conversation-history { min-height: 0; overflow-y: auto; padding-inline-end: 4px; }
+  .conversation-composer { margin-top: 0; border-top: 1px solid var(--aa-border); }
+}
 @media (max-width: 760px) {
   .conversation-mobile-tabs { display: flex; gap: 8px; padding: 12px; }
   .conversation-split { display: block; min-height: 0; }
