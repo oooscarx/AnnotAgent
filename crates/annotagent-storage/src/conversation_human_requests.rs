@@ -609,6 +609,22 @@ impl SqliteStore {
         project: &str,
         input: &ConversationHumanRequestInput,
     ) -> Result<ConversationHumanRequest, StorageError> {
+        self.create_conversation_human_request_with_policy(project, input, false)
+    }
+    /// Atomically keep at most one pending task request per sample image.
+    pub fn create_exclusive_conversation_human_request(
+        &self,
+        project: &str,
+        input: &ConversationHumanRequestInput,
+    ) -> Result<ConversationHumanRequest, StorageError> {
+        self.create_conversation_human_request_with_policy(project, input, true)
+    }
+    fn create_conversation_human_request_with_policy(
+        &self,
+        project: &str,
+        input: &ConversationHumanRequestInput,
+        exclusive: bool,
+    ) -> Result<ConversationHumanRequest, StorageError> {
         if input.question.trim().is_empty()
             || input.question.len() > 4000
             || input.reason_code.trim().is_empty()
@@ -643,6 +659,10 @@ impl SqliteStore {
             owned(&tx,project,input.task_id,input.conversation_id)?;
             let exists: bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_human_requests WHERE id=?1)",[input.id.to_string()],|row|row.get(0))?;
             if exists { let saved=read(&tx,project,input.id)?; if saved.input!=*input { return Err(invalid("Human request idempotency conflict")); } return Ok(saved); }
+            if exclusive {
+                let waiting:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_human_requests WHERE task_id=?1 AND status='pending' AND json_extract(request_json,'$.sample_test_id')=?2 AND json_extract(request_json,'$.image_id')=?3)",params![input.task_id.to_string(),input.sample_test_id,input.image_id],|row|row.get(0))?;
+                if waiting {return Err(invalid("An existing request on this sample image must be resolved first"));}
+            }
             let associated: bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM sample_operations WHERE id=?1 AND project_id=?2 AND json_extract(request_json,'$.conversation.task_id')=?3 AND json_extract(request_json,'$.conversation.conversation_id')=?4)",params![input.sample_test_id,sample.project_id,input.task_id.to_string(),input.conversation_id.to_string()],|row|row.get(0))?;
             if !associated { return Err(invalid("Sample Test is not linked to this conversation task")); }
             let sequence: i64=tx.query_row("SELECT COALESCE(MAX(sequence),0) FROM sample_feedback_revisions WHERE sample_test_id=?1 AND image_id=?2",params![input.sample_test_id,input.image_id],|row|row.get(0))?;

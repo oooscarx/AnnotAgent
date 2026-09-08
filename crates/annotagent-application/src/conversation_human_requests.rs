@@ -309,7 +309,7 @@ impl LocalApplication {
             .conversation_human_requests(&owner, conversation, task)?)
     }
 
-    fn validate_conversation_correction_subject(
+    pub(crate) fn validate_conversation_correction_subject(
         &self,
         project: &str,
         input: &ConversationHumanRequestInput,

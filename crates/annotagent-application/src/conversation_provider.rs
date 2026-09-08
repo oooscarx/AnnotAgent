@@ -7,12 +7,14 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub struct ConversationTaskProvider<'a> {
+    application: &'a crate::LocalApplication,
     inner: &'a dyn VisionModelProvider,
     store: &'a SqliteStore,
     project: String,
     task: Uuid,
     scope: String,
     model: String,
+    recorded_call: Option<(Uuid, serde_json::Value)>,
 }
 
 impl crate::LocalApplication {
@@ -43,19 +45,31 @@ impl crate::LocalApplication {
             anyhow::bail!("task authorization scope changed or was revoked");
         }
         Ok(ConversationTaskProvider {
+            application: self,
             inner,
             store: &self.store,
             project: owner,
             task,
             scope: scope.into(),
             model: model.into(),
+            recorded_call: None,
         })
+    }
+}
+
+impl ConversationTaskProvider<'_> {
+    /// Fixed identity and frozen evidence for a single bounded feedback call.
+    /// The same task ledger and pending-human/expiry/Project limits still apply.
+    pub(crate) fn for_feedback_call(mut self, id: Uuid, context: serde_json::Value) -> Self {
+        self.recorded_call = Some((id, context));
+        self
     }
 }
 
 struct PendingCall<'a> {
     provider: &'a ConversationTaskProvider<'a>,
     id: Uuid,
+    settled: bool,
 }
 impl Drop for PendingCall<'_> {
     fn drop(&mut self) {
@@ -64,6 +78,15 @@ impl Drop for PendingCall<'_> {
             self.provider.task,
             self.id,
         );
+        if self.provider.recorded_call.is_some() {
+            if let Ok(mut calls) = self.provider.application.conversation_cancellations.lock() {
+                if let Some(token) = calls.remove(&self.id) {
+                    if !self.settled {
+                        token.cancel();
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -93,7 +116,10 @@ impl VisionModelProvider for ConversationTaskProvider<'_> {
                 "Text-phase model or image scope exceeded; no request sent".into(),
             ));
         }
-        let id = Uuid::new_v4();
+        let id = self
+            .recorded_call
+            .as_ref()
+            .map_or_else(Uuid::new_v4, |(id, _)| *id);
         let hash = annotagent_image_tools::sha256(
             &serde_json::to_vec(&request)
                 .map_err(|_| CoreError::Provider("Cannot freeze model request".into()))?,
@@ -107,18 +133,58 @@ impl VisionModelProvider for ConversationTaskProvider<'_> {
                 "Existing call cannot be executed twice".into(),
             ));
         }
-        let _guard = PendingCall { provider: self, id };
-        let result = self.inner.complete(request, cancellation).await;
-        let (status, evidence) = match &result {
+        let mut guard = PendingCall {
+            provider: self,
+            id,
+            settled: false,
+        };
+        if self.recorded_call.is_some() {
+            self.application
+                .conversation_cancellations
+                .lock()
+                .map_err(|_| CoreError::Provider("Cancellation registry unavailable".into()))?
+                .insert(id, cancellation.clone());
+            if self
+                .store
+                .conversation_call_cancellations(&self.project, self.task)
+                .map_err(|error| CoreError::Provider(error.to_string()))?
+                .iter()
+                .any(|item| item.call_id == id)
+                || !self
+                    .store
+                    .conversation_calls_active(&self.project, self.task)
+                    .map_err(|error| CoreError::Provider(error.to_string()))?
+            {
+                cancellation.cancel();
+            }
+        }
+        let sent = !cancellation.is_cancelled();
+        let result = if sent {
+            self.inner.complete(request, cancellation.clone()).await
+        } else {
+            Err(CoreError::Provider(
+                "Cancelled before sending model request".into(),
+            ))
+        };
+        let (status, mut evidence) = match &result {
             Ok(response) => (
                 ConversationCallStatus::Completed,
                 serde_json::json!({"phase":"builder_text","response":response}),
+            ),
+            Err(_) if !sent => (
+                ConversationCallStatus::Failed,
+                serde_json::json!({"phase":"builder_text","error":"Cancelled before sending model request"}),
             ),
             Err(_) => (
                 ConversationCallStatus::InDoubt,
                 serde_json::json!({"phase":"builder_text","error":"Provider outcome and cost are unknown; this call remains consumed"}),
             ),
         };
+        if let Some((_, context)) = &self.recorded_call {
+            evidence["phase"] = serde_json::json!("feedback_text");
+            evidence["context"] = context.clone();
+            evidence["cancelled"] = serde_json::json!(cancellation.is_cancelled());
+        }
         self.store
             .finish_conversation_call(&self.project, self.task, id, status, evidence)
             .map_err(|_| {
@@ -126,6 +192,7 @@ impl VisionModelProvider for ConversationTaskProvider<'_> {
                     "Could not persist model receipt; do not assume the call was free".into(),
                 )
             })?;
+        guard.settled = true;
         result
     }
 }

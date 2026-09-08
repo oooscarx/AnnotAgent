@@ -1,0 +1,1140 @@
+//! Offline application integration checks; all projects and images live in TempDir.
+use super::*;
+use crate::conversation_feedback_intent::{
+    ConversationFeedbackDecision, ConversationFeedbackReason,
+};
+use annotagent_core::{
+    CoreResult, ModelCapabilities, ModelRequest, ModelToolCall, TokenUsage, UsageSource,
+};
+use annotagent_storage::{
+    BeginConversationTask, ConversationCallGrant, ConversationCallStatus,
+    ConversationHumanRequestInput, ConversationHumanRequestStatus, ConversationImageRef,
+    ConversationMessageInput, SampleFeedbackReason, SampleFeedbackRevision, SampleOperation,
+    WorkflowSampleTest,
+};
+use std::sync::Mutex;
+
+const PROJECT: &str = "feedback-test";
+const PROJECT_YAML: &str = "version: 1\nproject:\n  name: TEST candidate feedback\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n";
+
+struct Fixture {
+    temporary: tempfile::TempDir,
+    app: LocalApplication,
+    conversation: Uuid,
+    task: BeginConversationTask,
+    message: ConversationMessageInput,
+    goal: ConversationMessageInput,
+    sample: WorkflowSampleTest,
+    human: ConversationHumanRequestInput,
+}
+
+fn fixture(duplicate_candidate_id: bool) -> Fixture {
+    let temporary = tempfile::tempdir().unwrap();
+    let app = LocalApplication::new(temporary.path()).unwrap();
+    app.create_project(PROJECT, PROJECT_YAML).unwrap();
+    let staging = temporary.path().join("TEST-import");
+    std::fs::create_dir(&staging).unwrap();
+    std::fs::copy(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/robocup/images/synthetic-robocup.png"),
+        staging.join("TEST.png"),
+    )
+    .unwrap();
+    app.import_images(PROJECT, &staging).unwrap();
+    let image = app.list_project_image_summaries(PROJECT).unwrap().remove(0);
+    let conversation = app.create_project_conversation(PROJECT).unwrap();
+    let goal = ConversationMessageInput {
+        id: Uuid::new_v4(),
+        text: "TEST find the cup".into(),
+        image: None,
+        reference: None,
+    };
+    app.append_project_conversation_message(PROJECT, conversation, &goal)
+        .unwrap();
+    let task = BeginConversationTask {
+        id: Uuid::new_v4(),
+        source_message_id: goal.id,
+        schema_revision: app.project_goal(PROJECT).unwrap()["revision"]
+            .as_str()
+            .unwrap()
+            .into(),
+    };
+    app.begin_conversation_task(PROJECT, conversation, &task)
+        .unwrap();
+    let (mut sample, mut human) = crate::conversation_human_requests::tests::fixture();
+    sample.project_id = PROJECT.into();
+    let baseline: annotagent_core::WorkflowDraft = serde_json::from_value(json!({
+        "id":sample.draft_id,"project_id":PROJECT,"name":"TEST unchanged baseline",
+        "status":"editing","nodes":[],"created_at":chrono::Utc::now(),"updated_at":chrono::Utc::now(),
+    }))
+    .unwrap();
+    app.store.save_workflow_draft(&baseline).unwrap();
+    let baseline = app.store.get_workflow_draft(&sample.draft_id).unwrap();
+    sample.draft_revision = baseline.revision;
+    sample.draft_content_hash = baseline.content_hash;
+    sample.inputs[0].image_id = image.image_id.to_string();
+    sample.inputs[0].content_hash = image.content_hash.clone();
+    let selected = sample.report.samples[0].projection.final_candidates[0].clone();
+    let mut unrelated = selected.clone();
+    unrelated.source_artifact_id = annotagent_core::ArtifactId(Uuid::new_v4());
+    if !duplicate_candidate_id {
+        unrelated.outcome.id = "TEST unrelated first candidate".into();
+    }
+    unrelated.outcome.label = "TEST unrelated label".into();
+    sample.report.samples[0]
+        .projection
+        .final_candidates
+        .insert(0, unrelated.clone());
+    sample.report.samples[0].outcomes = vec![unrelated.outcome, selected.outcome.clone()];
+    app.store.save_workflow_sample_test(&sample).unwrap();
+    app.store
+        .reserve_sample_operation(&SampleOperation {
+            id: sample.id.clone(),
+            project_id: PROJECT.into(),
+            draft_id: sample.draft_id.clone(),
+            authorization_fingerprint: "TEST fixture operation".into(),
+            request: json!({"conversation":{"conversation_id":conversation,"task_id":task.id}}),
+            status: "queued".into(),
+            error: None,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+        })
+        .unwrap();
+    let message = ConversationMessageInput {
+        id: Uuid::new_v4(),
+        text: "this box is too big".into(),
+        image: Some(ConversationImageRef {
+            image_id: image.image_id.to_string(),
+            sha256: image.content_hash.clone(),
+        }),
+        reference: Some(ConversationSelectionRef::SampleCandidate {
+            task_id: task.id,
+            project_schema_revision: task.schema_revision.clone(),
+            draft_id: sample.draft_id.clone(),
+            draft_revision: sample.draft_revision,
+            sample_test_id: sample.id.clone(),
+            candidate_id: selected.outcome.id.clone(),
+            source_artifact_id: selected.source_artifact_id.0,
+        }),
+    };
+    app.append_project_conversation_message(PROJECT, conversation, &message)
+        .unwrap();
+    human.conversation_id = conversation;
+    human.task_id = task.id;
+    human.image_id = image.image_id.to_string();
+    human.content_hash = image.content_hash;
+    human.outcome_id = selected.outcome.id;
+    Fixture {
+        temporary,
+        app,
+        conversation,
+        task,
+        message,
+        goal,
+        sample,
+        human,
+    }
+}
+
+impl Fixture {
+    fn context(&self) -> ConversationFeedbackContext {
+        self.app
+            .conversation_feedback_context(
+                PROJECT,
+                self.conversation,
+                self.task.id,
+                self.message.id,
+            )
+            .unwrap()
+    }
+
+    fn execution(&self) -> ConversationSchemaExecution {
+        ConversationSchemaExecution {
+            conversation_id: self.conversation,
+            task_id: self.task.id,
+            call_id: Uuid::new_v4(),
+            remote_model: "TEST offline text model".into(),
+            scope_hash: "f".repeat(64),
+        }
+    }
+
+    fn authorize(&self, execution: &ConversationSchemaExecution) {
+        self.app
+            .store
+            .authorize_conversation_calls(
+                &self.app.conversation_project_identity(PROJECT).unwrap(),
+                &ConversationCallGrant {
+                    id: Uuid::new_v4(),
+                    task_id: self.task.id,
+                    scope_hash: execution.scope_hash.clone(),
+                    maximum_calls: 2,
+                    expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+                },
+            )
+            .unwrap();
+    }
+
+    fn assert_no_inference_or_feedback(&self, provider: &TestProvider) {
+        assert!(provider.requests.lock().unwrap().is_empty());
+        let owner = self.app.conversation_project_identity(PROJECT).unwrap();
+        assert!(
+            self.app
+                .store
+                .conversation_call_history(&owner, self.task.id)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            self.app
+                .store
+                .sample_feedback(&self.sample.id, &self.human.image_id)
+                .unwrap()
+                .is_empty()
+        );
+    }
+}
+
+struct TestProvider {
+    requests: Mutex<Vec<ModelRequest>>,
+    cancel_after_response: bool,
+    arguments: serde_json::Value,
+}
+
+#[async_trait::async_trait]
+impl VisionModelProvider for TestProvider {
+    fn name(&self) -> &str {
+        "TEST offline candidate feedback"
+    }
+
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities {
+            vision: false,
+            tool_calls: true,
+            json_schema: true,
+            usage_reporting: true,
+            multi_image: false,
+        }
+    }
+
+    async fn complete(
+        &self,
+        request: ModelRequest,
+        cancellation: CancellationToken,
+    ) -> CoreResult<ModelResponse> {
+        self.requests.lock().unwrap().push(request);
+        if self.cancel_after_response {
+            cancellation.cancel();
+        }
+        Ok(ModelResponse {
+            content: None,
+            tool_calls: vec![ModelToolCall {
+                id: "TEST one proposal".into(),
+                name: "propose_candidate_feedback".into(),
+                arguments: self.arguments.clone(),
+            }],
+            usage: TokenUsage::known(120, 80, UsageSource::Mock),
+            request_id: Some("TEST feedback usage receipt".into()),
+            provider_metadata: Default::default(),
+        })
+    }
+}
+
+fn provider() -> TestProvider {
+    TestProvider {
+        requests: Mutex::new(Vec::new()),
+        cancel_after_response: false,
+        arguments: json!({
+            "decision":"request_correction","reason":"poor_boundary",
+            "question":"Please correct the selected box boundary.",
+            "rationale":"The saved message says the box is too big; its pixels were not inspected.",
+        }),
+    }
+}
+
+#[test]
+fn frozen_message_resolves_exact_candidate_and_never_guesses_from_current_context() {
+    let fixture = fixture(false);
+    let expected = fixture.sample.report.samples[0].projection.final_candidates[1].clone();
+    let context = fixture.context();
+    assert_eq!(context.message.input, fixture.message);
+    assert_eq!(context.candidate, expected);
+    assert_ne!(context.candidate.outcome.label, "TEST unrelated label");
+    assert!(!context.pixels_supplied);
+    assert_eq!(context.expected_feedback_sequence, 0);
+    let digest = context.digest().unwrap();
+    let latest = ConversationMessageInput {
+        id: Uuid::new_v4(),
+        text: "TEST remove this other thing".into(),
+        image: fixture.message.image.clone(),
+        reference: None,
+    };
+    fixture
+        .app
+        .append_project_conversation_message(PROJECT, fixture.conversation, &latest)
+        .unwrap();
+    assert_eq!(fixture.context(), context);
+    assert_eq!(fixture.context().digest().unwrap(), digest);
+    for message in [fixture.goal.id, latest.id, Uuid::new_v4()] {
+        assert!(
+            fixture
+                .app
+                .conversation_feedback_context(
+                    PROJECT,
+                    fixture.conversation,
+                    fixture.task.id,
+                    message
+                )
+                .is_err()
+        );
+    }
+}
+
+#[test]
+fn artifact_identity_disambiguates_identical_outcome_ids() {
+    let fixture = fixture(true);
+    let selected = &fixture.sample.report.samples[0].projection.final_candidates[1];
+    let context = fixture.context();
+    assert_eq!(
+        context.candidate.source_artifact_id,
+        selected.source_artifact_id
+    );
+    assert_eq!(&context.candidate, selected);
+}
+
+#[tokio::test]
+async fn foreign_wrong_task_and_changed_pixels_fail_before_inference() {
+    let fixture = fixture(false);
+    let provider = provider();
+    let context = fixture.context();
+    let execution = fixture.execution();
+    fixture.authorize(&execution);
+    fixture
+        .app
+        .create_project("foreign-test", PROJECT_YAML)
+        .unwrap();
+    for (project, task) in [("foreign-test", fixture.task.id), (PROJECT, Uuid::new_v4())] {
+        assert!(
+            fixture
+                .app
+                .conversation_feedback_context(
+                    project,
+                    fixture.conversation,
+                    task,
+                    fixture.message.id
+                )
+                .is_err()
+        );
+        let mut wrong = execution.clone();
+        wrong.task_id = task;
+        assert!(
+            fixture
+                .app
+                .execute_conversation_feedback(
+                    project,
+                    &wrong,
+                    &context,
+                    &provider,
+                    CancellationToken::new()
+                )
+                .await
+                .is_err()
+        );
+    }
+    let image = fixture
+        .app
+        .project_image_path(
+            PROJECT,
+            ImageId(Uuid::parse_str(&fixture.human.image_id).unwrap()),
+        )
+        .unwrap();
+    std::fs::write(image, b"TEST changed image bytes").unwrap();
+    assert!(
+        fixture
+            .app
+            .conversation_feedback_context(
+                PROJECT,
+                fixture.conversation,
+                fixture.task.id,
+                fixture.message.id
+            )
+            .is_err()
+    );
+    assert!(
+        fixture
+            .app
+            .execute_conversation_feedback(
+                PROJECT,
+                &execution,
+                &context,
+                &provider,
+                CancellationToken::new()
+            )
+            .await
+            .is_err()
+    );
+    fixture.assert_no_inference_or_feedback(&provider);
+}
+
+#[tokio::test]
+async fn changed_feedback_sequence_invalidates_frozen_context_without_spending() {
+    let fixture = fixture(false);
+    let provider = provider();
+    let before = fixture.context();
+    let execution = fixture.execution();
+    fixture.authorize(&execution);
+    let feedback = SampleFeedbackRevision {
+        revision_id: Uuid::new_v4().to_string(),
+        sample_test_id: fixture.sample.id.clone(),
+        image_id: fixture.human.image_id.clone(),
+        sequence: 1,
+        reason: SampleFeedbackReason::CannotJudge,
+        outcome_id: Some(fixture.human.outcome_id.clone()),
+        corrected_value: None,
+        corrected_label: None,
+        addition_id: None,
+        note: "TEST another window added feedback".into(),
+        created_at: chrono::Utc::now(),
+    };
+    fixture.app.store.save_sample_feedback(&feedback).unwrap();
+    let after = fixture.context();
+    assert_eq!(after.expected_feedback_sequence, 1);
+    assert_ne!(after.digest().unwrap(), before.digest().unwrap());
+    assert!(
+        fixture
+            .app
+            .execute_conversation_feedback(
+                PROJECT,
+                &execution,
+                &before,
+                &provider,
+                CancellationToken::new()
+            )
+            .await
+            .is_err()
+    );
+    assert!(provider.requests.lock().unwrap().is_empty());
+    assert_eq!(
+        fixture
+            .app
+            .conversation_builder_budget(PROJECT, fixture.conversation, fixture.task.id)
+            .unwrap()
+            .used_calls,
+        0
+    );
+    assert_eq!(
+        fixture
+            .app
+            .store
+            .sample_feedback(&fixture.sample.id, &fixture.human.image_id)
+            .unwrap(),
+        vec![feedback]
+    );
+}
+
+#[tokio::test]
+async fn authorized_interpretation_records_one_call_and_replays_after_image_change_and_restart() {
+    let mut fixture = fixture(false);
+    let provider = provider();
+    let context = fixture.context();
+    let execution = fixture.execution();
+    assert!(
+        fixture
+            .app
+            .execute_conversation_feedback(
+                PROJECT,
+                &execution,
+                &context,
+                &provider,
+                CancellationToken::new()
+            )
+            .await
+            .is_err()
+    );
+    fixture.assert_no_inference_or_feedback(&provider);
+    fixture.authorize(&execution);
+    let baseline = fixture
+        .app
+        .store
+        .get_workflow_draft(&fixture.sample.draft_id)
+        .unwrap();
+    let project_before = std::fs::read(fixture.app.project_path(PROJECT).unwrap()).unwrap();
+    let cancellation = CancellationToken::new();
+    let result = fixture
+        .app
+        .execute_conversation_feedback(
+            PROJECT,
+            &execution,
+            &context,
+            &provider,
+            cancellation.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        !cancellation.is_cancelled(),
+        "Settling a successful call must not cancel the caller's token"
+    );
+    assert_eq!(result.receipt.status, ConversationCallStatus::Completed);
+    assert!(matches!(
+        &result.decision,
+        Ok(ConversationFeedbackDecision::RequestCorrection {
+            reason: ConversationFeedbackReason::PoorBoundary,
+            ..
+        })
+    ));
+    assert_eq!(provider.requests.lock().unwrap().len(), 1);
+    let requests = provider.requests.lock().unwrap();
+    assert!(requests[0].images.is_empty());
+    let sent: serde_json::Value = serde_json::from_str(&requests[0].messages[1].content).unwrap();
+    assert_eq!(
+        sent["saved_candidate_context"],
+        serde_json::to_value(&context).unwrap()
+    );
+    drop(requests);
+    let evidence = result.receipt.evidence.as_ref().unwrap();
+    assert_eq!(evidence["phase"], "feedback_text");
+    assert_eq!(
+        evidence["response"]["request_id"],
+        "TEST feedback usage receipt"
+    );
+    assert_eq!(evidence["response"]["usage"]["total_tokens"], 200);
+    assert_eq!(
+        evidence["context"]["subject"],
+        serde_json::to_value(&context).unwrap()
+    );
+    let image = fixture
+        .app
+        .project_image_path(
+            PROJECT,
+            ImageId(Uuid::parse_str(&fixture.human.image_id).unwrap()),
+        )
+        .unwrap();
+    std::fs::write(image, b"TEST changed pixels after completion").unwrap();
+    drop(fixture.app);
+    fixture.app = LocalApplication::new(fixture.temporary.path()).unwrap();
+    assert!(
+        fixture
+            .app
+            .conversation_feedback_context(
+                PROJECT,
+                fixture.conversation,
+                fixture.task.id,
+                fixture.message.id
+            )
+            .is_err()
+    );
+    let replay = fixture
+        .app
+        .execute_conversation_feedback(
+            PROJECT,
+            &execution,
+            &context,
+            &provider,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&replay).unwrap(),
+        serde_json::to_value(&result).unwrap()
+    );
+    let reread = fixture
+        .app
+        .read_conversation_feedback(
+            PROJECT,
+            fixture.conversation,
+            fixture.task.id,
+            execution.call_id,
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(reread).unwrap(),
+        serde_json::to_value(result).unwrap()
+    );
+    assert_eq!(provider.requests.lock().unwrap().len(), 1);
+    assert_eq!(
+        fixture
+            .app
+            .conversation_builder_budget(PROJECT, fixture.conversation, fixture.task.id)
+            .unwrap()
+            .used_calls,
+        1
+    );
+    assert_eq!(
+        fixture
+            .app
+            .store
+            .get_workflow_sample_test_by_id(&fixture.sample.id)
+            .unwrap()
+            .unwrap(),
+        fixture.sample
+    );
+    assert_eq!(
+        fixture.app.store.get_workflow_draft(&baseline.id).unwrap(),
+        baseline
+    );
+    assert!(
+        fixture
+            .app
+            .store
+            .sample_feedback(&fixture.sample.id, &fixture.human.image_id)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        fixture
+            .app
+            .conversation_human_requests(PROJECT, fixture.conversation, fixture.task.id)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        std::fs::read(fixture.app.project_path(PROJECT).unwrap()).unwrap(),
+        project_before
+    );
+}
+
+#[tokio::test]
+async fn explicit_request_preparation_is_idempotent_and_never_submits_feedback_or_repairs() {
+    let fixture = fixture(false);
+    let provider = provider();
+    let context = fixture.context();
+    let execution = fixture.execution();
+    fixture.authorize(&execution);
+    let baseline = fixture
+        .app
+        .store
+        .get_workflow_draft(&fixture.sample.draft_id)
+        .unwrap();
+    fixture
+        .app
+        .execute_conversation_feedback(
+            PROJECT,
+            &execution,
+            &context,
+            &provider,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let first = fixture
+        .app
+        .prepare_conversation_feedback_request(
+            PROJECT,
+            fixture.conversation,
+            fixture.task.id,
+            execution.call_id,
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.status, ConversationHumanRequestStatus::Pending);
+    assert_eq!(first.input.outcome_id, fixture.human.outcome_id);
+    assert_eq!(first.input.content_hash, fixture.human.content_hash);
+    assert_eq!(first.input.expected_feedback_sequence, 0);
+    assert_eq!(first.input.reason_code, "poor_boundary");
+    assert!(first.answer.is_none());
+    assert!(first.resume_draft_id.is_none());
+    let repeated = fixture
+        .app
+        .prepare_conversation_feedback_request(
+            PROJECT,
+            fixture.conversation,
+            fixture.task.id,
+            execution.call_id,
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(repeated, first);
+    assert_eq!(
+        fixture
+            .app
+            .conversation_human_requests(PROJECT, fixture.conversation, fixture.task.id)
+            .unwrap(),
+        vec![first.clone()]
+    );
+    assert!(
+        fixture
+            .app
+            .store
+            .sample_feedback(&fixture.sample.id, &fixture.human.image_id)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        fixture
+            .app
+            .store
+            .sample_plan_evidence(&first.input.resume_checkpoint_ref.to_string())
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        fixture.app.store.get_workflow_draft(&baseline.id).unwrap(),
+        baseline
+    );
+    assert_eq!(
+        fixture
+            .app
+            .store
+            .get_workflow_sample_test_by_id(&fixture.sample.id)
+            .unwrap()
+            .unwrap(),
+        fixture.sample
+    );
+    assert_eq!(provider.requests.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn ambiguous_removal_creates_no_human_correction_and_cancellation_cannot_reactivate_proposal()
+{
+    let fixture = fixture(false);
+    let mut provider = provider();
+    provider.arguments = json!({"decision":"clarify_scope","question":"What do you mean by remove this?","rationale":"The saved message does not establish a false positive or deletion scope."});
+    let mut message = fixture.message.clone();
+    message.id = Uuid::new_v4();
+    message.text = "remove this".into();
+    fixture
+        .app
+        .append_project_conversation_message(PROJECT, fixture.conversation, &message)
+        .unwrap();
+    let context = fixture
+        .app
+        .conversation_feedback_context(PROJECT, fixture.conversation, fixture.task.id, message.id)
+        .unwrap();
+    let execution = fixture.execution();
+    fixture.authorize(&execution);
+    let result = fixture
+        .app
+        .execute_conversation_feedback(
+            PROJECT,
+            &execution,
+            &context,
+            &provider,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        result.decision,
+        Ok(ConversationFeedbackDecision::ClarifyScope { .. })
+    ));
+    assert!(
+        fixture
+            .app
+            .prepare_conversation_feedback_request(
+                PROJECT,
+                fixture.conversation,
+                fixture.task.id,
+                execution.call_id
+            )
+            .unwrap()
+            .is_none()
+    );
+
+    provider.cancel_after_response = true;
+    provider.arguments = json!({"decision":"request_correction","reason":"poor_boundary","question":"Please correct the selected boundary.","rationale":"The message says the selected box is too big."});
+    let context = fixture.context();
+    let cancelled_execution = fixture.execution();
+    let result = fixture
+        .app
+        .execute_conversation_feedback(
+            PROJECT,
+            &cancelled_execution,
+            &context,
+            &provider,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert!(result.decision.as_ref().unwrap_err().contains("cancelled"));
+    let evidence = result.receipt.evidence.as_ref().unwrap();
+    assert_eq!(evidence["cancelled"], true);
+    assert_eq!(evidence["response"]["usage"]["total_tokens"], 200);
+    assert!(
+        fixture
+            .app
+            .prepare_conversation_feedback_request(
+                PROJECT,
+                fixture.conversation,
+                fixture.task.id,
+                cancelled_execution.call_id
+            )
+            .is_err()
+    );
+    let replay = fixture
+        .app
+        .execute_conversation_feedback(
+            PROJECT,
+            &cancelled_execution,
+            &context,
+            &provider,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert!(replay.decision.unwrap_err().contains("cancelled"));
+    assert_eq!(provider.requests.lock().unwrap().len(), 2);
+    assert!(
+        fixture
+            .app
+            .conversation_human_requests(PROJECT, fixture.conversation, fixture.task.id)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        fixture
+            .app
+            .store
+            .sample_feedback(&fixture.sample.id, &fixture.human.image_id)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn pending_and_deferred_human_work_blocks_interpretation_without_changing_request() {
+    let fixture = fixture(false);
+    let provider = provider();
+    let context = fixture.context();
+    let execution = fixture.execution();
+    fixture.authorize(&execution);
+    let saved = fixture
+        .app
+        .create_conversation_human_request(PROJECT, &fixture.human)
+        .unwrap();
+    assert_eq!(saved.status, ConversationHumanRequestStatus::Pending);
+    for deferred in [false, true] {
+        let expected = if deferred {
+            fixture
+                .app
+                .set_conversation_human_deferral(
+                    PROJECT,
+                    fixture.conversation,
+                    fixture.task.id,
+                    fixture.human.id,
+                    &annotagent_storage::ConversationHumanDeferral {
+                        command_id: Uuid::new_v4(),
+                        expected_revision: 0,
+                        deferred: true,
+                    },
+                )
+                .unwrap()
+        } else {
+            saved.clone()
+        };
+        let error = fixture
+            .app
+            .execute_conversation_feedback(
+                PROJECT,
+                &execution,
+                &context,
+                &provider,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("waiting for human input"),
+            "{error}"
+        );
+        assert_eq!(
+            fixture
+                .app
+                .conversation_human_requests(PROJECT, fixture.conversation, fixture.task.id)
+                .unwrap(),
+            vec![expected]
+        );
+        fixture.assert_no_inference_or_feedback(&provider);
+    }
+    assert_eq!(
+        fixture
+            .app
+            .conversation_builder_budget(PROJECT, fixture.conversation, fixture.task.id)
+            .unwrap()
+            .used_calls,
+        0
+    );
+}
+
+#[tokio::test]
+async fn predictable_request_identity_cannot_restore_a_conflicting_question_or_subject() {
+    for change_subject in [false, true] {
+        let fixture = fixture(false);
+        let provider = provider();
+        let context = fixture.context();
+        let execution = fixture.execution();
+        fixture.authorize(&execution);
+        fixture
+            .app
+            .execute_conversation_feedback(
+                PROJECT,
+                &execution,
+                &context,
+                &provider,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        let mut conflicting = fixture.human.clone();
+        conflicting.id = Uuid::new_v5(&execution.call_id, b"feedback-human-request-v1");
+        conflicting.resume_checkpoint_ref = Uuid::new_v5(&conflicting.id, b"prepared-repair-draft");
+        conflicting.reason_code = "poor_boundary".into();
+        conflicting.question = "Please correct the selected box boundary.".into();
+        if change_subject {
+            conflicting.outcome_id = fixture.sample.report.samples[0].projection.final_candidates
+                [0]
+            .outcome
+            .id
+            .clone();
+        } else {
+            conflicting.question = "TEST conflicting question under a predictable ID".into();
+        }
+        let saved = fixture
+            .app
+            .create_conversation_human_request(PROJECT, &conflicting)
+            .unwrap();
+        assert!(
+            fixture
+                .app
+                .prepare_conversation_feedback_request(
+                    PROJECT,
+                    fixture.conversation,
+                    fixture.task.id,
+                    execution.call_id,
+                )
+                .is_err(),
+            "A reused request ID with changed frozen input must conflict"
+        );
+        assert_eq!(
+            fixture
+                .app
+                .conversation_human_requests(PROJECT, fixture.conversation, fixture.task.id)
+                .unwrap(),
+            vec![saved]
+        );
+        assert_eq!(provider.requests.lock().unwrap().len(), 1);
+        assert!(
+            fixture
+                .app
+                .store
+                .sample_feedback(&fixture.sample.id, &fixture.human.image_id)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            fixture
+                .app
+                .store
+                .sample_plan_evidence(&conflicting.resume_checkpoint_ref.to_string())
+                .unwrap()
+                .is_none()
+        );
+    }
+}
+
+#[tokio::test]
+async fn concurrent_preparation_admits_at_most_one_pending_request_per_sample_image() {
+    let fixture = fixture(false);
+    let provider = provider();
+    let first_context = fixture.context();
+    let first = fixture.execution();
+    fixture.authorize(&first);
+    fixture
+        .app
+        .execute_conversation_feedback(
+            PROJECT,
+            &first,
+            &first_context,
+            &provider,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let mut second_message = fixture.message.clone();
+    second_message.id = Uuid::new_v4();
+    second_message.text = "this selected box extends too far beyond the cup".into();
+    fixture
+        .app
+        .append_project_conversation_message(PROJECT, fixture.conversation, &second_message)
+        .unwrap();
+    let second_context = fixture
+        .app
+        .conversation_feedback_context(
+            PROJECT,
+            fixture.conversation,
+            fixture.task.id,
+            second_message.id,
+        )
+        .unwrap();
+    let second = fixture.execution();
+    fixture
+        .app
+        .execute_conversation_feedback(
+            PROJECT,
+            &second,
+            &second_context,
+            &provider,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let barrier = std::sync::Barrier::new(3);
+    let results = std::thread::scope(|threads| {
+        let left = threads.spawn(|| {
+            barrier.wait();
+            fixture.app.prepare_conversation_feedback_request(
+                PROJECT,
+                fixture.conversation,
+                fixture.task.id,
+                first.call_id,
+            )
+        });
+        let right = threads.spawn(|| {
+            barrier.wait();
+            fixture.app.prepare_conversation_feedback_request(
+                PROJECT,
+                fixture.conversation,
+                fixture.task.id,
+                second.call_id,
+            )
+        });
+        barrier.wait();
+        [left.join().unwrap(), right.join().unwrap()]
+    });
+    let saved = fixture
+        .app
+        .conversation_human_requests(PROJECT, fixture.conversation, fixture.task.id)
+        .unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].status, ConversationHumanRequestStatus::Pending);
+    assert_eq!(saved[0].input.image_id, fixture.human.image_id);
+    assert_eq!(saved[0].input.expected_feedback_sequence, 0);
+    assert!(results.iter().any(|result| matches!(result, Ok(Some(_)))));
+    for result in results {
+        if let Ok(Some(request)) = result {
+            assert_eq!(request, saved[0]);
+        }
+    }
+    assert_eq!(provider.requests.lock().unwrap().len(), 2);
+    assert!(
+        fixture
+            .app
+            .store
+            .sample_feedback(&fixture.sample.id, &fixture.human.image_id)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+struct GateProvider {
+    inner: TestProvider,
+    started: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+#[async_trait::async_trait]
+impl VisionModelProvider for GateProvider {
+    fn name(&self) -> &str {
+        "TEST gated offline feedback"
+    }
+
+    fn capabilities(&self) -> ModelCapabilities {
+        self.inner.capabilities()
+    }
+
+    async fn complete(
+        &self,
+        request: ModelRequest,
+        cancellation: CancellationToken,
+    ) -> CoreResult<ModelResponse> {
+        let response = self.inner.complete(request, cancellation).await?;
+        self.started.notify_one();
+        self.release.notified().await;
+        Ok(response)
+    }
+}
+
+#[tokio::test]
+async fn overlapping_replay_does_not_cancel_or_abandon_the_single_admitted_call() {
+    let fixture = fixture(false);
+    let provider = GateProvider {
+        inner: provider(),
+        started: tokio::sync::Notify::new(),
+        release: tokio::sync::Notify::new(),
+    };
+    let context = fixture.context();
+    let execution = fixture.execution();
+    fixture.authorize(&execution);
+    let first_token = CancellationToken::new();
+    let first = fixture.app.execute_conversation_feedback(
+        PROJECT,
+        &execution,
+        &context,
+        &provider,
+        first_token.clone(),
+    );
+    let duplicate = async {
+        provider.started.notified().await;
+        let result = fixture
+            .app
+            .execute_conversation_feedback(
+                PROJECT,
+                &execution,
+                &context,
+                &provider,
+                CancellationToken::new(),
+            )
+            .await;
+        assert!(
+            result.is_err(),
+            "An overlapping request must not dispatch again"
+        );
+        assert!(!first_token.is_cancelled());
+        let receipt = fixture
+            .app
+            .conversation_call_receipt(
+                PROJECT,
+                fixture.conversation,
+                fixture.task.id,
+                execution.call_id,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.status, ConversationCallStatus::Reserved);
+        provider.release.notify_one();
+    };
+    let (completed, ()) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        tokio::join!(first, duplicate)
+    })
+    .await
+    .expect("Offline replay coordination did not finish");
+    let completed = completed.unwrap();
+    assert_eq!(completed.receipt.status, ConversationCallStatus::Completed);
+    assert!(completed.decision.is_ok());
+    assert!(!first_token.is_cancelled());
+    let replay = fixture
+        .app
+        .execute_conversation_feedback(
+            PROJECT,
+            &execution,
+            &context,
+            &provider,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&replay).unwrap(),
+        serde_json::to_value(&completed).unwrap()
+    );
+    assert_eq!(provider.inner.requests.lock().unwrap().len(), 1);
+    assert_eq!(
+        fixture
+            .app
+            .conversation_builder_budget(PROJECT, fixture.conversation, fixture.task.id)
+            .unwrap()
+            .used_calls,
+        1
+    );
+}

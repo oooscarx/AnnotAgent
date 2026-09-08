@@ -1,6 +1,6 @@
 # Conversational Annotation Workspace — execution record
 
-## Current checkpoint (after `ee18c33`, with bounded clarification continuation; not a completion declaration)
+## Current checkpoint (after `cb0e3ad`, with scoped-feedback service groundwork; not a completion declaration)
 
 The default Project entry now uses the persisted conversation/image workspace. Explicit goal
 selection survives re-entry, sample candidate references are frozen, and clarification/correction
@@ -20,7 +20,11 @@ New initial-goal consent explicitly allows continuing after its linked human cla
 answer within the original scope. Older consent does not acquire that permission. Answers save
 before continuation admission; model/scope changes stop inference without discarding the answer.
 
-Still incomplete: automatic interpretation of scoped conversational feedback;
+The Rust feedback service can now interpret a frozen candidate message under an explicit task
+grant and prepare an existing human correction request. This service is not yet exposed through
+HTTP/UI authorization and restoration, so default chat feedback is still incomplete.
+
+Still incomplete: user-facing automatic interpretation of scoped conversational feedback;
 the other structured visual/setup request kinds; complete scope-change/Schema patch and stop-text
 semantics; large-history performance and the remaining accessibility/context restoration audit.
 Schema setup and repair phase cards still require explicit intermediate actions. Live model quality, native
@@ -2918,3 +2922,70 @@ Only isolated TEST HTTP models and synthetic data were used. No user data change
 real inference, real Workspace restart/migration, push or remote edits. No claim of Live model
 quality or human usability. Scoped conversational-feedback interpretation and the remaining
 objective items are still incomplete; goal stays active.
+
+### M3 candidate-message interpretation — bounded Rust contract and existing human requests
+
+Re-read the active attachment and current code; previous goal turn was progress (`cb0e3ad`).
+Read-only parallel audit confirmed exact message references and Sandbox correction/repair
+services, and identified the existing pending-human spending block. This stage deliberately
+preserves that block, including Deferred requests; an interpreter may not cancel or answer a
+pending request to obtain another model call.
+
+Added a single-call, text-only feedback proposal contract. It accepts only a correction question
+(`poor_boundary`, `wrong_label`, `wrong_target`) or a scope-clarification question. No arbitrary
+tools, coordinates, IDs, label patches or human-verification flags are accepted. Boundary intent
+requires a bbox subject; unsupported types require clarification. Ambiguous removal is instructed
+to ask about scope, not delete a candidate or project class. Prompt and strict JSON validation
+are complementary: tests prove protocol/scope behavior, not a real model's semantic reliability.
+
+The Application resolves the exact persisted message, task, sample revision, image hash,
+candidate plus Artifact pair and image-level feedback sequence. It sends bounded structured
+terminal evidence, not image pixels. It rejects missing references, foreign owners, changed
+pixels or a changed feedback sequence before spending. Historical receipt reads can succeed
+after pixels change, but new human work revalidates the live subject. Two identical outcome IDs
+on different Artifacts cannot select the wrong input; request creation rejects that ambiguous
+outcome ID because the existing human-answer API addresses outcomes rather than Artifact pairs.
+
+Reuse of `ConversationTaskProvider` adds a fixed feedback call ID and frozen context evidence.
+The existing task/Project grant, expiry, cancellation, pending-human and call accounting checks
+remain authoritative. Raw response/usage and invalid output are saved; transport uncertainty
+stays consumed and is never automatically retried. Duplicate admission cannot dispatch again.
+Both initial and post-admission receipt recovery compare frozen contexts, including concurrent
+conflicts. Cancellation registration belongs only to the admitted call. Successful cleanup
+unregisters without cancelling the caller token; abandoned work cancels and stays indeterminate.
+
+An explicit Application command prepares/reuses the existing human correction request; it never
+submits feedback, creates a repair Draft, accepts annotations or starts inference. Predictable
+request IDs require exact frozen-input equality on retry. A new exclusive storage admission
+checks pending work and the feedback sequence in the same transaction, so concurrent proposals
+cannot leave two pending requests at the same image revision. The legacy general creation API
+keeps its behavior; this new path uses the explicit exclusive policy and shared subject validator.
+
+Review-driven fixes before commit included cancellation being accidentally converted back into
+a valid proposal, duplicate candidate IDs selecting the wrong Artifact, a concurrent loser
+reading another request's receipt, predictable-ID conflicts, normal cleanup cancelling a caller
+token, and the pending-request creation race. Regression tests cover these cases rather than
+only the successful message path. Initial Clippy failures were documentation formatting and a
+single-match branch; corrected before final verification.
+
+Verification:
+
+- `cargo test -p annotagent-application conversation_feedback --all-features`: 18/18 passed,
+  including pure proposal validation and temp-workspace Application/SQLite tests. They exercise
+  explicit grants, no-authority/no-reference rejection, changed feedback/pixels, exact replay
+  after restart, overlapping execution, pending/deferred work, request identity conflicts,
+  concurrent request creation, cancellation and preservation of the original sample/feedback.
+- `cargo test -p annotagent-application -p annotagent-storage -p annotagent-server --all-features`:
+  passed, including existing correction, authorization, geometry, management, export and
+  transport tests. The pre-existing paid Provider smoke remains ignored. Storage had 69 unit
+  and 16 integration tests; Server had 41 tests.
+- Server all-target/all-feature Clippy passed; final format/diff checks passed.
+- No frontend changes or browser screenshot claim in this service-only stage. No Web check
+  rerun is represented as evidence for a new UI. All new model calls are explicit in-process
+  TEST Providers against disposable data, not Live or human-usability evidence.
+
+Next required integration: owned HTTP authorization and durable pending-call context, background
+execution/recovery, a message-linked UI card and structured scope-answer handling. Existing
+pending human work needs a clear direct route in that UI, not an unannounced spending exemption.
+No user Workspace access/restart/migration, old credentials, push or remote edits. Unrelated
+generated screenshots remain unstaged. Full goal remains active.
