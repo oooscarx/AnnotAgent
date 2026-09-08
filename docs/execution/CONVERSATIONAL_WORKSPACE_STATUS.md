@@ -4346,3 +4346,21 @@ contracts; this audit does not remove them or alter persisted requests.
 The same full E2E command (handle 79494) is still live, with the first 43 tests passing, including
 future-rule lost ACK, stop, independent manual draft and cross-tab cancellation scenarios. No
 restart or source/product change was made to the active test run. Its terminal result is pending.
+
+### 2026-09-09 — Full-suite failure: unbounded default model selection
+
+The ongoing full run reached test 56 with two failures (future classification/bbox Schema UI,
+tests 46/47). Trace response evidence, not just the test's TypeError, identifies the cause:
+Journey preview returns HTTP 400, `Choose 1–32 distinct registered image model bindings`.
+`ConversationJourneyCard.prepare` defaults to every available image profile/native selection,
+while Application correctly enforces 1–32 distinct bindings. The shared TEST registry has now
+accumulated more than 32 available choices. This is also a real UI edge case for a populated
+registry, not grounds for increasing the authorization bound or treating the error as consent.
+
+Required follow-up: bound/explicitly resolve the default selection before preview, expose an
+actionable model choice state and keep the server cap. Tests must assert preview status before
+dereferencing consent and cover a >32-model registry deliberately. Do not merely remove models
+from the fixture to hide the product edge case. Failure traces currently remain at
+`web/test-results/conversation-future-schema-{c281f,966bc}-on-one-plan-for-the-new-one-chromium/trace.zip`.
+The current 166-test run remains active on handle 79494; no product rebuild or second suite was
+started against its server. Full terminal totals and subsequent regressions are still pending.
