@@ -97,6 +97,18 @@ pub(crate) fn package(root: &Path, id: Uuid, report: &ExportReport) -> Result<Ex
 }
 
 impl LocalApplication {
+    pub fn conversation_export_events(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        after: i64,
+    ) -> Result<(i64, Vec<annotagent_storage::ConversationExportEvent>)> {
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self
+            .store
+            .conversation_export_events(&owner, conversation, task, after)?)
+    }
     pub fn admit_conversation_export(
         &self,
         project: &str,

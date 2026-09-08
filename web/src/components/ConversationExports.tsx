@@ -7,6 +7,18 @@ export function ConversationExports({project,conversation,task}:{project:string;
   const [cursors,setCursors]=useState<string[]>([]);
   const before=cursors.at(-1);
   const query=useRouteQuery(`conversation-exports:${project}:${conversation}:${task}:${before ?? "first"}`,signal=>api.conversationExports(project,conversation,task,signal,before,20));
+  const refresh=useRef(query.retry);refresh.current=query.retry;
+  useEffect(()=>{
+    const events=new EventSource(`/api/projects/${encodeURIComponent(project)}/conversations/${conversation}/tasks/${task}/exports/events`);
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    let last=0;
+    const update=()=>{if(timer===undefined)timer=setTimeout(()=>{timer=undefined;void refresh.current().catch(()=>undefined);},50);};
+    const changed=(event:MessageEvent)=>{const sequence=Number(event.lastEventId);if(Number.isSafeInteger(sequence)&&sequence>last){last=sequence;update();}};
+    const snapshot=(event:MessageEvent)=>{last=Number(event.lastEventId)||0;update();};
+    events.addEventListener("export_changed",changed as EventListener);
+    events.addEventListener("export_snapshot",snapshot as EventListener);
+    return ()=>{events.close();if(timer!==undefined)clearTimeout(timer);};
+  },[project,conversation,task]);
   if(!before && !query.error && !query.data?.length)return null;
   return <section className="conversation-consent conversation-exports" aria-label="Saved export deliveries">
     <h3>Export deliveries</h3>

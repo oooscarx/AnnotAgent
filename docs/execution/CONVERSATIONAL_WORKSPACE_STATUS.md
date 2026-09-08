@@ -4134,3 +4134,33 @@ All model data in these tests is explicit TEST fixture data, not Live quality ev
 No real workspace, service 8787, credential, historical PNG edit or remote changed; no push.
 Overall M4/goal remains incomplete (persistent events, interruption end-to-end evidence,
 history-view restoration and broader accessibility/performance acceptance remain).
+
+### 2026-09-09 — Transactional export events and resumable SSE
+
+The global Run event type requires a real Run ID, so it is not reused with a fabricated ID.
+A small owned export-event journal now records requested/completed/failed in the same SQLite
+transaction as its existing receipt transition. Failed event insertion rolls back admission
+or completion; duplicate terminal calls do not emit another event. Old receipts are still
+readable without inventing historical events. The stream reuses the existing SSE capacity
+guard and keep-alive pattern and sends only operation ID/kind/sequence, not another result copy.
+
+The owned task stream supports Last-Event-ID replay. Initial connection (or a cursor beyond
+the current head) sends a snapshot refresh marker at a saved sequence boundary; subsequent
+events come from the durable journal in bounded pages. Conversation UI coalesces notifications
+and refreshes only its current export page. New events do not change the image or history page.
+Per-Job read-only observation remains for actual worker liveness/unknown outcomes; it is not
+an Agent loop or node-by-node inference polling.
+
+Evidence: SQLite reopen test verifies requested/completed persist once and replay begins
+strictly after the given cursor. Injected admission/completion event-write failures roll back
+their receipt writes. Server stream-body test checks resumed failed event and initial snapshot.
+Both full browser paths additionally use real streaming HTTP, close after requested, reconnect
+with that event ID, and receive completed for the exact archive without executing export again.
+They pass (11.8s/12.1s; 44.4s harness), isolated workspace
+`/tmp/annotagent-guided-e2e-92791`, evidence `/tmp/annotagent-export-events-evidence`.
+Full changed-package all-feature tests pass (146 Storage, 144 Application/one billable ignored,
+46 Server plus associated integration suites); Web 202 unit tests/typecheck pass. Production
+build retains the existing size warning. Strict Clippy was rerun after correcting test import
+placement. No real workspace/service8787, credentials, remote or previous PNG edits changed.
+No push; no Live or human usability validation is claimed. Hard process-kill evidence and
+the remaining view restoration / accessibility / performance acceptance still remain open.

@@ -2,6 +2,103 @@
 use super::{
     ApiError, ApiResult, AxumPath, ExportConversation, Json, ServerState, State, Value, json,
 };
+use axum::{
+    http::HeaderMap,
+    response::{
+        Sse,
+        sse::{Event, KeepAlive},
+    },
+};
+use futures::{Stream, stream};
+use std::{collections::VecDeque, convert::Infallible, time::Duration};
+
+pub(super) async fn events(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+    headers: HeaderMap,
+) -> ApiResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
+    let after = headers
+        .get("last-event-id")
+        .map(|value| {
+            value
+                .to_str()
+                .ok()
+                .and_then(|text| text.parse::<i64>().ok())
+                .filter(|id| *id >= 0)
+                .ok_or_else(|| {
+                    ApiError::bad_request(anyhow::anyhow!("Invalid export event cursor"))
+                })
+        })
+        .transpose()?;
+    let (head, _) = state
+        .application
+        .conversation_export_events(&project, conversation, task, after.unwrap_or(0))
+        .map_err(ApiError::bad_request)?;
+    let permit = state.security.try_acquire_sse().ok_or_else(|| {
+        ApiError::too_many_requests("the local SSE client limit has been reached")
+    })?;
+    let snapshot = after.is_none_or(|cursor| cursor > head);
+    let cursor = if snapshot { head } else { after.unwrap_or(0) };
+    let mut queue = VecDeque::new();
+    if snapshot {
+        queue.push_back(
+            Event::default()
+                .event("export_snapshot")
+                .id(head.to_string())
+                .data("{}"),
+        );
+    }
+    let stream = stream::unfold(
+        (
+            state.application,
+            project,
+            conversation,
+            task,
+            cursor,
+            queue,
+            permit,
+        ),
+        |(application, project, conversation, task, mut cursor, mut queue, permit)| async move {
+            loop {
+                if let Some(event) = queue.pop_front() {
+                    return Some((
+                        Ok(event),
+                        (
+                            application,
+                            project,
+                            conversation,
+                            task,
+                            cursor,
+                            queue,
+                            permit,
+                        ),
+                    ));
+                }
+                let (_, events) = application
+                    .conversation_export_events(&project, conversation, task, cursor)
+                    .ok()?;
+                for event in events {
+                    cursor = event.sequence;
+                    queue.push_back(
+                        Event::default()
+                            .event("export_changed")
+                            .id(cursor.to_string())
+                            .json_data(&event)
+                            .ok()?,
+                    );
+                }
+                if queue.is_empty() {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+        },
+    );
+    Ok(Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(10))
+            .text("keep-alive"),
+    ))
+}
 
 pub(super) async fn status(
     State(state): State<ServerState>,
@@ -108,6 +205,8 @@ pub(super) async fn start(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::response::IntoResponse as _;
+    use futures::StreamExt as _;
     #[tokio::test]
     async fn background_export_capacity_and_detached_failure_are_persisted() {
         let temp = tempfile::tempdir().unwrap();
@@ -211,11 +310,55 @@ mod tests {
         );
         assert!(
             status(
-                State(state),
+                State(state.clone()),
                 AxumPath(("test-export".into(), conversation, uuid::Uuid::new_v4(), id))
             )
             .await
             .is_err()
+        );
+        let (_, saved) = application
+            .conversation_export_events("test-export", conversation, task, 0)
+            .unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "last-event-id",
+            saved[0].sequence.to_string().parse().unwrap(),
+        );
+        let replay = events(
+            State(state.clone()),
+            AxumPath(("test-export".into(), conversation, task)),
+            headers,
+        )
+        .await
+        .unwrap();
+        let mut body = replay.into_response().into_body().into_data_stream();
+        let frame = tokio::time::timeout(Duration::from_secs(2), body.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let text = std::str::from_utf8(&frame).unwrap();
+        assert!(text.contains("export_changed") && text.contains("failed"));
+        assert!(!text.contains("requested"));
+        assert!(text.contains(&format!("id: {}", saved[1].sequence)));
+        drop(body);
+        let snapshot = events(
+            State(state),
+            AxumPath(("test-export".into(), conversation, task)),
+            HeaderMap::new(),
+        )
+        .await
+        .unwrap();
+        let mut body = snapshot.into_response().into_body().into_data_stream();
+        let frame = tokio::time::timeout(Duration::from_secs(2), body.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(
+            std::str::from_utf8(&frame)
+                .unwrap()
+                .contains("export_snapshot")
         );
     }
 }

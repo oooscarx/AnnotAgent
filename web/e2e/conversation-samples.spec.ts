@@ -734,6 +734,22 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
       expect(duplicateExport.ok(),await duplicateExport.text()).toBe(true);
       expect((await duplicateExport.json()).job.result.delivery.id).toBe(delivered.delivery.id);
       expect(await (await request.get(exportHistoryPath)).json()).toHaveLength(1);
+      const readExportEvent=async(after:string)=>page.evaluate(async({url,after})=>{
+        const controller=new AbortController();
+        try{
+          const response=await fetch(url,{headers:{"last-event-id":after},signal:controller.signal});
+          if(!response.ok)throw new Error(`SSE ${response.status}`);
+          const reader=response.body!.getReader();let text="";
+          while(!text.includes("\n\n")){const chunk=await reader.read();if(chunk.done)break;text+=new TextDecoder().decode(chunk.value);}
+          return text.split("\n\n")[0];
+        }finally{controller.abort();}
+      },{url:`${exportHistoryPath}/events`,after});
+      const requestedEvent=await readExportEvent("0");
+      expect(requestedEvent).toContain('"kind":"requested"');
+      const requestedSequence=requestedEvent.match(/(?:^|\n)id: (\d+)/)![1];
+      const completedEvent=await readExportEvent(requestedSequence);
+      expect(completedEvent).toContain('"kind":"completed"');
+      expect(completedEvent).toContain(delivered.delivery.id);
       expect(await (await request.get(`${exportHistoryPath}?limit=1&before=${delivered.delivery.id}`)).json()).toEqual([]);
       expect((await request.get(`${exportHistoryPath}?before=${randomUUID()}`)).ok()).toBe(false);
       const foreignExport=await request.post(`/api/projects/${project}/export`,{data:{...exportInput,conversation:{...exportInput.conversation,id:randomUUID(),task_id:randomUUID()}}});

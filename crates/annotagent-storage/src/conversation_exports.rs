@@ -13,6 +13,18 @@ pub struct ConversationExport {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationExportEvent {
+    pub sequence: i64,
+    pub export_id: Uuid,
+    pub kind: String,
+}
+
+fn export_event(db: &rusqlite::Connection, id: Uuid, kind: &str) -> Result<(), StorageError> {
+    db.execute("INSERT INTO conversation_export_events(project_id,conversation_id,task_id,export_id,kind) SELECT project_id,conversation_id,task_id,id,?2 FROM conversation_exports WHERE id=?1",params![id.to_string(),kind])?;
+    Ok(())
+}
+
 impl SqliteStore {
     pub fn conversation_export(
         &self,
@@ -63,6 +75,7 @@ impl SqliteStore {
                 return Ok(false);
             }
             tx.execute("INSERT INTO conversation_exports(id,project_id,conversation_id,task_id,format,created_at) VALUES(?1,?2,?3,?4,?5,?6)",params![id.to_string(),project,conversation.to_string(),task.to_string(),format,chrono::Utc::now().to_rfc3339()])?;
+            export_event(&tx,id,"requested")?;
             tx.commit()?;
             Ok(true)
         })
@@ -73,7 +86,39 @@ impl SqliteStore {
         result: Option<&serde_json::Value>,
         error: Option<&str>,
     ) -> Result<(), StorageError> {
-        self.with_connection(|db| {db.execute("UPDATE conversation_exports SET result_json=?2,error=?3 WHERE id=?1 AND result_json IS NULL AND error IS NULL",params![id.to_string(),result.map(serde_json::to_string).transpose()?,error])?;Ok(())})
+        if result.is_some() == error.is_some() {
+            return Err(StorageError::InvalidConversation(
+                "Export completion requires exactly one result or error".into(),
+            ));
+        }
+        self.with_connection(|db| {
+            let tx=db.unchecked_transaction()?;
+            let changed=tx.execute("UPDATE conversation_exports SET result_json=?2,error=?3 WHERE id=?1 AND result_json IS NULL AND error IS NULL",params![id.to_string(),result.map(serde_json::to_string).transpose()?,error])?;
+            if changed==1{export_event(&tx,id,if result.is_some(){"completed"}else{"failed"})?;}
+            tx.commit()?;Ok(())
+        })
+    }
+    pub fn conversation_export_events(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        after: i64,
+    ) -> Result<(i64, Vec<ConversationExportEvent>), StorageError> {
+        if after < 0 {
+            return Err(StorageError::InvalidConversation(
+                "Export event cursor must be nonnegative".into(),
+            ));
+        }
+        self.with_connection(|db|{
+            let owned:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM conversation_tasks t JOIN project_conversations c ON c.id=t.conversation_id WHERE c.project_id=?1 AND c.id=?2 AND t.id=?3)",params![project,conversation.to_string(),task.to_string()],|row|row.get(0))?;
+            if !owned{return Err(StorageError::InvalidConversation("Export task is unavailable".into()));}
+            let head=db.query_row("SELECT COALESCE(MAX(sequence),0) FROM conversation_export_events WHERE project_id=?1 AND conversation_id=?2 AND task_id=?3",params![project,conversation.to_string(),task.to_string()],|row|row.get(0))?;
+            let mut query=db.prepare("SELECT sequence,export_id,kind FROM conversation_export_events WHERE project_id=?1 AND conversation_id=?2 AND task_id=?3 AND sequence>?4 ORDER BY sequence LIMIT 100")?;
+            let rows=query.query_map(params![project,conversation.to_string(),task.to_string(),after],|row|Ok((row.get(0)?,row.get::<_,String>(1)?,row.get(2)?)))?;
+            let events=rows.map(|row|{let(sequence,id,kind)=row?;Ok(ConversationExportEvent{sequence,export_id:Uuid::parse_str(&id).map_err(|_|StorageError::InvalidConversation("Invalid export event ID".into()))?,kind})}).collect::<Result<Vec<_>,StorageError>>()?;
+            Ok((head,events))
+        })
     }
     pub fn conversation_exports(
         &self,
@@ -135,6 +180,24 @@ mod tests {
             )
             .unwrap();
         let id = Uuid::new_v4();
+        store.with_connection(|db|{db.execute_batch("CREATE TRIGGER fail_export_admission_event BEFORE INSERT ON conversation_export_events WHEN NEW.kind='requested' BEGIN SELECT RAISE(ABORT,'TEST admission event unavailable'); END;")?;Ok(())}).unwrap();
+        assert!(
+            store
+                .begin_conversation_export(&project, conversation, task, id, "native")
+                .is_err()
+        );
+        assert!(
+            store
+                .conversation_export(&project, conversation, task, id)
+                .is_err(),
+            "admission rolls back with its event"
+        );
+        store
+            .with_connection(|db| {
+                db.execute_batch("DROP TRIGGER fail_export_admission_event;")?;
+                Ok(())
+            })
+            .unwrap();
         assert!(
             store
                 .begin_conversation_export(&project, conversation, task, id, "native")
@@ -161,6 +224,22 @@ mod tests {
                 .is_err()
         );
         let result = serde_json::json!({"TEST":"immutable result"});
+        store.with_connection(|db|{db.execute_batch("CREATE TRIGGER fail_export_event BEFORE INSERT ON conversation_export_events WHEN NEW.kind='completed' BEGIN SELECT RAISE(ABORT,'TEST event unavailable'); END;")?;Ok(())}).unwrap();
+        assert!(
+            store
+                .finish_conversation_export(id, Some(&result), None)
+                .is_err()
+        );
+        assert!(
+            store.completed_conversation_export(id).unwrap().is_none(),
+            "completion rolls back with its event"
+        );
+        store
+            .with_connection(|db| {
+                db.execute_batch("DROP TRIGGER fail_export_event;")?;
+                Ok(())
+            })
+            .unwrap();
         store
             .finish_conversation_export(id, Some(&result), None)
             .unwrap();
@@ -178,6 +257,31 @@ mod tests {
             .unwrap();
         assert_eq!(history.len(), 1);
         assert!(history[0].error.is_none());
+        let (head, events) = store
+            .conversation_export_events(&project, conversation, task, 0)
+            .unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.kind.as_str())
+                .collect::<Vec<_>>(),
+            vec!["requested", "completed"]
+        );
+        assert_eq!(events[1].sequence, head);
+        assert_eq!(
+            store
+                .conversation_export_events(&project, conversation, task, events[0].sequence)
+                .unwrap()
+                .1
+                .len(),
+            1,
+            "reconnect replays only events after the cursor"
+        );
+        assert!(
+            store
+                .conversation_export_events(&project, conversation, Uuid::new_v4(), 0)
+                .is_err()
+        );
         for _ in 0..124 {
             store
                 .begin_conversation_export(&project, conversation, task, Uuid::new_v4(), "native")
