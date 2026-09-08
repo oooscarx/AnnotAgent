@@ -29,6 +29,51 @@ pub struct ConversationJourneyDataScope {
 }
 
 impl LocalApplication {
+    pub fn conversation_journey_execution_status(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+    ) -> Result<serde_json::Value> {
+        let record = self
+            .conversation_journey_consent(project, conversation, task, id)?
+            .ok_or_else(|| anyhow!("Journey consent not found"))?;
+        let owner = self.conversation_project_identity(project)?;
+        let builder = self.store.conversation_builder_operation(
+            &owner,
+            task,
+            record.consent.builder_operation_id,
+        )?;
+        let sample = self
+            .store
+            .sample_operation(&record.consent.sample_operation_id.to_string())?;
+        if sample.as_ref().is_some_and(|sample| {
+            sample.project_id != project
+                || sample.request["conversation"]["task_id"] != task.to_string()
+                || sample.request["conversation"]["conversation_id"] != conversation.to_string()
+        }) {
+            bail!("Journey sample identity belongs to another task");
+        }
+        Ok(serde_json::json!({"record":record,"builder":builder,"sample":sample}))
+    }
+
+    pub fn require_active_conversation_journey(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+    ) -> Result<ConversationJourneyRecord> {
+        let record = self
+            .conversation_journey_consent(project, conversation, task, id)?
+            .ok_or_else(|| anyhow!("Journey consent not found"))?;
+        if record.revoked || record.consent.expires_at <= chrono::Utc::now() {
+            bail!("Journey consent is revoked or expired");
+        }
+        Ok(record)
+    }
+
     /// Historical consent reads never resolve models or trigger continuation.
     pub fn conversation_journey_consent(
         &self,

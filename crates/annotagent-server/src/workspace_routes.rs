@@ -44,6 +44,7 @@ pub(super) fn routes() -> Router<ServerState> {
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/journey-preview", get(super::conversation_journey::preview))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/journey-consents", post(super::conversation_journey::save))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/journey-consents/{consent_id}", get(super::conversation_journey::get))
+        .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/journey-consents/{consent_id}/execution", get(super::conversation_journey::status).post(super::conversation_journey::execute))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/journey-consents/{consent_id}/revoke", post(super::conversation_journey::revoke))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/builder-operations", get(super::conversation_builder::history).post(super::conversation_builder::launch))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/cancellations", get(super::conversation_schema::cancellations))

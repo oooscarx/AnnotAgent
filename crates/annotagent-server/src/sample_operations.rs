@@ -26,6 +26,8 @@ pub(super) struct ConversationSampleConsent {
     allow_unknown_cost: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     human_review: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    journey_consent_id: Option<uuid::Uuid>,
 }
 
 #[derive(Deserialize)]
@@ -35,7 +37,7 @@ pub(super) struct ConversationSampleSelection {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn conversation_scope(
+pub(super) fn conversation_scope(
     state: &ServerState,
     project: &str,
     conversation: uuid::Uuid,
@@ -279,6 +281,40 @@ pub(super) async fn start_operation(
         ));
     }
     validate_scope(&state, &draft, &models, &execution)?;
+    if let Some(consent) = &input.conversation {
+        if let Some(journey) = consent.journey_consent_id {
+            let saved = state
+                .application
+                .require_active_conversation_journey(
+                    &project_id,
+                    consent.conversation_id,
+                    consent.task_id,
+                    journey,
+                )
+                .map_err(ApiError::bad_request)?;
+            if saved.consent.sample_operation_id.to_string() != operation.id
+                || saved.consent.builder_operation_id != consent.previous_grant_id
+                || saved.consent.expires_at != consent.expires_at
+                || !consent.human_review
+            {
+                return Err(ApiError::bad_request(
+                    "Sample request differs from its original joint authorization",
+                ));
+            }
+            state
+                .application
+                .seal_conversation_journey_draft(
+                    &project_id,
+                    consent.conversation_id,
+                    consent.task_id,
+                    journey,
+                    &operation.draft_id,
+                    &operation.authorization_fingerprint,
+                    12,
+                )
+                .map_err(ApiError::bad_request)?;
+        }
+    }
     let mut settings = state.settings.read().await.clone();
     settings.budget.max_requests = Some(12);
     let (provider, credential) =
@@ -354,6 +390,11 @@ pub(super) async fn start_operation(
         ));
     }
     let cancellation = CancellationToken::new();
+    let journey = input.conversation.as_ref().and_then(|consent| {
+        consent
+            .journey_consent_id
+            .map(|id| (consent.conversation_id, consent.task_id, id))
+    });
     state
         .sample_cancellations
         .write()
@@ -381,6 +422,16 @@ pub(super) async fn start_operation(
                 cancellation,
                 conversation_calls,
                 check_scope: Some(Arc::new(move || {
+                    if let Some((conversation, task, journey)) = journey {
+                        scope_state
+                            .application
+                            .require_active_conversation_journey(
+                                &baseline.project_id,
+                                conversation,
+                                task,
+                                journey,
+                            )?;
+                    }
                     let (draft, models) = scope_state
                         .application
                         .resolved_workflow_draft_model_profiles(&scope_draft_id)?;

@@ -45,6 +45,9 @@ mod control_tests {
                 "/api/projects/test/conversations/{id}/tasks/{id}/calls/{id}/clarification/cancel"
             ),
             format!("/api/projects/test/conversations/{id}/tasks/{id}/human-requests/{id}/cancel"),
+            format!(
+                "/api/projects/test/conversations/{id}/tasks/{id}/journey-consents/{id}/revoke"
+            ),
         ] {
             assert!(is_execution_control(&Method::POST, &path), "{path}");
             assert!(!is_execution_control(&Method::DELETE, &path));
@@ -339,6 +342,19 @@ fn is_execution_control(method: &Method, path: &str) -> bool {
             conversation,
             "tasks",
             task,
+            "journey-consents",
+            id,
+            "revoke",
+        ]
+        | [
+            "",
+            "api",
+            "projects",
+            project,
+            "conversations",
+            conversation,
+            "tasks",
+            task,
             "calls",
             id,
             "clarification",
@@ -401,7 +417,8 @@ fn is_mutation(method: &Method) -> bool {
 }
 
 fn is_expensive_action(path: &str) -> bool {
-    path.ends_with("/active-probe")
+    (path.contains("/journey-consents/") && path.ends_with("/execution"))
+        || path.ends_with("/active-probe")
         || path.ends_with("/schema-proposals")
         || path.ends_with("/builder-operations")
         || path.ends_with("/sample-operations")

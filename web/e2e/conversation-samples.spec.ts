@@ -8,9 +8,9 @@ import { expect as baseExpect, test, fetchWithinMutationLimit } from "./fixtures
 // UI observations must not fail while that bounded transport pacing is still active.
 const expect=baseExpect.configure({timeout:75_000});
 
-for(const scenario of ["classification","bbox","classification-review","human-classification","human-bbox"] as const){
+for(const scenario of ["joint-classification","classification","bbox","classification-review","human-classification","human-bbox"] as const){
 const humanSchema = scenario.startsWith("human-");
-const transport = humanSchema ? scenario.slice(6) : scenario;
+const transport = humanSchema ? scenario.slice(6) : scenario.replace(/^joint-/, "");
 const kind = transport === "bbox" ? "bbox" : "classification";
 const requiresReview = transport !== "classification";
 test(`conversation ${scenario} authorizes HTTP fixture samples and restores editable terminal canvas`,async({page,request})=>{
@@ -73,6 +73,34 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
   await page.getByRole("button",{name:"Review Builder authorization",exact:true}).click();
   const builderPreviewResponse=await builderPreviewPromise;
   const builderPreview=await builderPreviewResponse.json();
+  if(scenario==="joint-classification"){
+    const root=new URL(builderPreviewResponse.url()).pathname.replace(/\/builder-preview$/, "");
+    const query=new URLSearchParams({consent_id:randomUUID(),builder_operation_id:randomUUID(),sample_operation_id:randomUUID(),schema_id:builderPreview.selection.schema_id,schema_revision:String(builderPreview.selection.schema_revision),planner_model_id:model.id,allowed_models:JSON.stringify([`model-profile:${model.id}`])});
+    const preview=await request.get(`${root}/journey-preview?${query}`);expect(preview.ok(),await preview.text()).toBe(true);
+    const consent={...(await preview.json()).consent,allow_unknown_cost:true};
+    const saved=await request.post(`${root}/journey-consents`,{data:consent});expect(saved.ok(),await saved.text()).toBe(true);
+    const path=`${root}/journey-consents/${consent.id}/execution`;
+    const before=await (await request.get(`${root}/calls`)).json();
+    expect((await (await request.get(path)).json()).sample).toBeNull();
+    expect(await (await request.get(`${root}/calls`)).json()).toEqual(before);
+    expect((await page.request.post(path,{data:{}})).status()).toBe(403);
+    expect((await request.post(path,{data:{auto_publish:true}})).status()).toBe(422);
+    const starts=await Promise.all([request.post(path,{data:{},timeout:90_000}),request.post(path,{data:{},timeout:90_000})]);
+    for(const started of starts)expect(started.ok(),await started.text()).toBe(true);
+    await expect.poll(async()=> (await (await request.get(path)).json()).sample.status).toBe("succeeded");
+    const completed=await (await request.get(path)).json();
+    expect(completed.builder.status).toBe("completed");expect(completed.sample.id).toBe(consent.sample_operation_id);
+    expect(completed.record.sample.operation_id).toBe(consent.sample_operation_id);
+    const calls=await (await request.get(`${root}/calls`)).json();
+    const replay=await request.post(path,{data:{}});expect(replay.ok(),await replay.text()).toBe(true);
+    expect(await replay.json()).toEqual(completed);
+    expect(await (await request.get(`${root}/calls`)).json()).toEqual(calls);
+    expect((await (await request.get(`${root}/builder-operations`)).json()).items).toHaveLength(1);
+    const stopped=await request.post(path.replace(/\/execution$/, "/revoke"),{data:{}});expect(stopped.ok(),await stopped.text()).toBe(true);
+    expect((await (await request.get(path)).json()).sample.status).toBe("succeeded");
+    expect(await (await request.get(`${root}/calls`)).json()).toEqual(calls);
+    return;
+  }
   if(scenario==="bbox"){
     const jointRoot=new URL(builderPreviewResponse.url()).pathname.replace(/\/builder-preview$/, "");
     const before=await (await request.get(`${jointRoot}/calls`)).json();
@@ -95,6 +123,7 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
     expect((await request.post(`${jointRoot}/journey-consents`,{data:{...accepted,expires_at:new Date(Date.now()+30*60*1000).toISOString()}})).status()).toBe(400);
     expect((await request.get(`${jointRoot.replace(/\/tasks\/[^/]+$/,`/tasks/${randomUUID()}`)}/journey-consents/${accepted.id}`)).ok()).toBe(false);
     const revoked=await (await request.post(`${savedPath}/revoke`,{data:{}})).json();expect(revoked.revoked).toBe(true);
+    expect((await request.post(`${savedPath}/execution`,{data:{}})).status()).toBe(400);
     expect(await (await request.post(`${jointRoot}/journey-consents`,{data:accepted})).json()).toEqual(revoked);
     expect(await (await request.get(`${jointRoot}/calls`)).json()).toEqual(before);
     expect((await (await request.get(`${jointRoot}/builder-operations`)).json()).items).toHaveLength(0);

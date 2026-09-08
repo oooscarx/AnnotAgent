@@ -1,4 +1,4 @@
-//! Joint authorization HTTP boundary. These routes never invoke a Provider.
+//! Joint authorization boundary. Only the explicit execution POST invokes models.
 use super::*;
 use annotagent_storage::{ConversationJourneyConsent, ConversationJourneyRecord};
 use conversation_builder::{AuthorizationBase, BuilderSelection};
@@ -178,9 +178,178 @@ pub(super) async fn revoke(
         uuid::Uuid,
     )>,
 ) -> ApiResult<Json<ConversationJourneyRecord>> {
-    state
+    let execution = state
+        .application
+        .conversation_journey_execution_status(&project, conversation, task, id)
+        .map_err(ApiError::bad_request)?;
+    let saved = state
         .application
         .revoke_conversation_journey_consent(&project, conversation, task, id)
+        .map_err(ApiError::bad_request)?;
+    state
+        .application
+        .cancel_conversation_schema(
+            &project,
+            conversation,
+            task,
+            saved.consent.builder_operation_id,
+        )
+        .map_err(ApiError::bad_request)?;
+    if !execution["sample"].is_null() {
+        let _ = sample_operations::cancel_operation(
+            State(state),
+            AxumPath((project, saved.consent.sample_operation_id.to_string())),
+        )
+        .await?;
+    }
+    Ok(Json(saved))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ExecuteJourney {}
+
+pub(super) async fn status(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task, id)): AxumPath<(
+        String,
+        uuid::Uuid,
+        uuid::Uuid,
+        uuid::Uuid,
+    )>,
+) -> ApiResult<Json<Value>> {
+    state
+        .application
+        .conversation_journey_execution_status(&project, conversation, task, id)
         .map(Json)
         .map_err(ApiError::bad_request)
+}
+
+/// Explicit POST advances the saved bounded journey; GET/mount never does. Each
+/// child service still owns its receipt, call accounting, permissions and execution.
+pub(super) async fn execute(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task, id)): AxumPath<(
+        String,
+        uuid::Uuid,
+        uuid::Uuid,
+        uuid::Uuid,
+    )>,
+    Json(_input): Json<ExecuteJourney>,
+) -> ApiResult<Json<Value>> {
+    let current = state
+        .application
+        .conversation_journey_execution_status(&project, conversation, task, id)
+        .map_err(ApiError::bad_request)?;
+    if !current["sample"].is_null() {
+        return Ok(Json(current));
+    }
+    let saved = state
+        .application
+        .require_active_conversation_journey(&project, conversation, task, id)
+        .map_err(ApiError::bad_request)?;
+    let consent = &saved.consent;
+    if current["builder"].is_null() {
+        state
+            .application
+            .validate_conversation_journey_data(&project, conversation, consent)
+            .map_err(ApiError::bad_request)?;
+        let builder: conversation_builder::BuilderConsent = serde_json::from_value(json!({
+            "selection": {
+                "operation_id": consent.builder_operation_id,
+                "schema_id": consent.schema_id,
+                "schema_revision": consent.schema_revision,
+                "model_id": consent.builder_model_id
+            },
+            "previous_grant_id": consent.previous_grant_id,
+            "scope_hash": consent.builder_scope_hash,
+            "expires_at": consent.expires_at,
+            "allow_unknown_cost": consent.allow_unknown_cost
+        }))
+        .map_err(ApiError::internal)?;
+        let _ = Box::pin(conversation_builder::launch(
+            State(state.clone()),
+            AxumPath((project.clone(), conversation, task)),
+            Json(builder),
+        ))
+        .await?;
+    }
+    let current = state
+        .application
+        .conversation_journey_execution_status(&project, conversation, task, id)
+        .map_err(ApiError::bad_request)?;
+    if !current["sample"].is_null()
+        || current["builder"]["status"] != "completed"
+        || current["builder"]["evidence"]["outcome"] != "draft_ready_for_human_review"
+    {
+        // Running/unknown/interrupted planning is never silently restarted.
+        return Ok(Json(current));
+    }
+    state
+        .application
+        .require_active_conversation_journey(&project, conversation, task, id)
+        .map_err(ApiError::bad_request)?;
+    let draft_id = current["builder"]["evidence"]["draft_id"]
+        .as_str()
+        .ok_or_else(|| ApiError::bad_request("Builder did not save an executable Draft"))?;
+    let (draft, models) = state
+        .application
+        .resolved_workflow_draft_model_profiles(draft_id)
+        .map_err(ApiError::bad_request)?;
+    let fingerprint = guided_sample_fingerprint(&state, &draft, &models)?;
+    let execution = DryRunWorkflowRequest {
+        image_indices: (0..consent.images.len()).collect(),
+        expected_revision: Some(draft.revision),
+        authorization_fingerprint: Some(fingerprint.clone()),
+    };
+    sample_operations::validate_scope(&state, &draft, &models, &execution)?;
+    state
+        .application
+        .seal_conversation_journey_draft(
+            &project,
+            conversation,
+            task,
+            id,
+            draft_id,
+            &fingerprint,
+            consent.maximum_sample_calls,
+        )
+        .map_err(ApiError::bad_request)?;
+    // Use the original Builder grant even if a previous sample admission saved its
+    // grant and lost the following operation write. Never compute a fresh allowance.
+    let budget = sample_operations::conversation_scope(
+        &state,
+        &project,
+        conversation,
+        task,
+        &draft,
+        &fingerprint,
+        consent.sample_operation_id,
+        Some(consent.builder_operation_id),
+    )?;
+    let sample: sample_operations::StartSampleRequest = serde_json::from_value(json!({
+        "request_id": consent.sample_operation_id,
+        "draft_id": draft_id,
+        "image_indices": execution.image_indices,
+        "expected_revision": draft.revision,
+        "authorization_fingerprint": fingerprint,
+        "conversation": {
+            "conversation_id": conversation,
+            "task_id": task,
+            "previous_grant_id": consent.builder_operation_id,
+            "scope_hash": budget["scope_hash"],
+            "expires_at": consent.expires_at,
+            "allow_unknown_cost": consent.allow_unknown_cost,
+            "human_review": true,
+            "journey_consent_id": id
+        }
+    }))
+    .map_err(ApiError::internal)?;
+    let _ = sample_operations::start_operation(
+        State(state.clone()),
+        AxumPath(project.clone()),
+        Json(sample),
+    )
+    .await?;
+    status(State(state), AxumPath((project, conversation, task, id))).await
 }

@@ -2600,3 +2600,41 @@ test, all-target/all-feature Server Clippy and format/diff checks passed. Browse
 retains the known chunk warning. Cargo lock waits completed normally; no service was restarted
 because of a lock/observation timeout. No real workspace migration, old keys, Live/human tests,
 push or remote changes. No new UI screenshot claim for this API-only stage.
+
+### M2 coordinator integration — explicit bounded Builder-to-sample execution
+
+Added GET/POST journey execution on the existing task-scoped consent resource. GET only
+reads the owned consent and child receipts. Explicit POST uses the original Builder grant,
+Schema revision and model selection, then seals the actual completed Builder Draft revision/hash
+and reuses the existing Sample Operation service. Images and actual model bindings must fit the
+saved joint scope; no fresh allowance is inferred from a retry. Unknown/interrupted Builder
+receipts are returned rather than silently restarting inference. No publication or formal
+annotation acceptance is included.
+
+Sample requests optionally carry the joint consent identity. Admission verifies original grant,
+expiry, sample ID and sealed Draft; sample scope checks reject revoked/expired joint consent.
+Revocation uses the existing durable Builder cancellation and Sample Operation cancellation
+paths, with sample task/conversation ownership verified before cancellation. It is admitted
+through the bounded stop lane, not the inference lane. In-flight remote requests may still bill.
+Already-completed samples remain saved and repeat execution reads their receipt without work.
+
+Evidence: isolated `/tmp/annotagent-guided-e2e-32939` passed the new joint classification
+scenario (1/1, 19.3 s including build). Final `/tmp/annotagent-guided-e2e-33299` passed 1/1
+in 5.5 s with simultaneous execution POSTs, one Builder receipt, one fixed sample ID, successful
+sample completion, stable call history on replay, GET without calls, CSRF/extra-field rejection,
+and preservation of successful results after revoke. `/tmp/annotagent-guided-e2e-33085` passed
+the original bbox workflow (1/1, 40.8 s), including rejection of execution after consent revoke
+and the existing lost-response recovery/edit/review/export path. All use explicit TEST HTTP
+transports and synthetic input; no Live quality or real-user usability evidence is implied.
+
+Server 40 tests, focused Application scope test (1), Storage journey tests (4), Server
+all-target/all-feature Clippy passed. Initial Clippy caught an oversized inline Builder future;
+boxing the reused handler future resolved it without suppressing the lint. Production Web
+build passed with the existing chunk-size warning. This layer has no new visual UI to screenshot.
+Unrelated regenerated screenshots remain unstaged.
+
+Remaining: POST currently awaits the existing Builder handler before background sample dispatch.
+This is NOT yet a durable background coordinator: a lost Builder handler can leave an interrupted
+receipt, and there is no automatic restart after process loss. The default GUI still uses phase
+cards; unified consent presentation and background dispatch/recovery are subsequent work.
+No real workspace migration/restart, old keys, push or remote changes. Goal remains incomplete.
