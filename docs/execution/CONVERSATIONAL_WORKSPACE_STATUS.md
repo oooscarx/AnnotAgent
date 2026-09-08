@@ -4836,3 +4836,32 @@ selected task's source message, frozen candidate references and stop-task contex
 when those messages are outside the visible history page. No pagination button or
 performance claim has been added ahead of that integration. Real workspace data,
 historical screenshot modifications and remotes remain untouched.
+
+### 2026-09-09 — Frontend history window and exact task context
+
+React now opens the latest 100 journal messages, with an explicit earlier-message
+read. Selected task sources and frozen message references are fetched by exact ID
+when outside that page and kept separately from the visible journal. Loading older
+messages does not choose a goal or change the URL. Source read failure is surfaced,
+not replaced with a newer message. Cancellation prevents old reads from committing.
+
+The historical no-selected-task fallback remains the oldest unscoped message, not
+the newest visible goal. It reads from the beginning until that first goal is found;
+this normally adds one bounded read, but a journal containing only reference/stop
+notes can still require scanning. This remaining exceptional scan is not described
+as fully bounded. Historical task auxiliary reads also remain concurrency-bounded,
+not fully paginated. Explicitly loading all earlier pages can grow the DOM; the
+initial page no longer does so automatically.
+
+Typecheck and all 226 Web unit tests pass. Browser run 51536 passed all four tests
+in isolated `/tmp/annotagent-guided-e2e-11428`: a 250-message metadata fixture opens
+100 notes, reads older pages only on click, restores the tail on reload and emits no
+API writes; the existing journal/image recovery, bounded previews and large image
+index regressions also pass. Run 31614 passed both real HTTP/Fixture human-reference
+flows (bbox and classification). A stronger rerun additionally hides the selected
+source behind 100 later metadata notes and checks exact source reads across reload.
+That stronger run 80538 passed **2/2 (6.5s)** in
+`/tmp/annotagent-guided-e2e-11710`; screenshots are isolated under
+`/tmp/annotagent-history-reference-exact`. Production build succeeded during these
+runs, with the existing large-chunk warning. These tests do not claim Live model
+quality or real human usability. Full combined regression remains outstanding.

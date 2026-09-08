@@ -18,6 +18,13 @@ for(const bbox of [true,false])test(`reference ${bbox?"box":"category"} submits 
   const created=await request.post(path,{data:input});expect(created.ok(),await created.text()).toBe(true);
   const calls=await (await request.get(`${state.taskRoot}/calls`)).json();
   const url=`${state.url}&request=${input.id}`;
+  const exactReads:string[]=[];
+  if(bbox){
+    // Browser-only long-history metadata; the selected source stays in real
+    // SQLite and must be read by exact ID, not replaced by these newer notes.
+    await page.route(`**/conversations/${state.conversation}/messages?latest=true*`,route=>route.fulfill({json:Array.from({length:100},(_,index)=>({conversation_id:state.conversation,sequence:201+index,input:{id:randomUUID(),text:`TEST later note ${index}`,image:null}}))}));
+    page.on("request",req=>{if(req.method()==="GET"&&req.url().includes(`/conversations/${state.conversation}/messages/`))exactReads.push(req.url());});
+  }
   await page.goto(url);
   const canvas=page.getByRole("region",{name:"Saved sample results",exact:true});
   const submit=canvas.getByRole("button",{name:"Submit reference target",exact:true});
@@ -45,5 +52,6 @@ for(const bbox of [true,false])test(`reference ${bbox?"box":"category"} submits 
   const feedback=await feedbackResponse.json();
   expect(feedback.revisions).toHaveLength(1);
   expect(await (await request.get(`${state.taskRoot}/calls`)).json()).toEqual(calls);
+  if(bbox){expect(exactReads.length).toBeGreaterThanOrEqual(2);expect(new Set(exactReads).size).toBe(1);}
   await page.screenshot({path:isolatedEvidencePath(`../docs/execution/conversational-workspace/reference-target-${bbox?"bbox":"classification"}.png`),fullPage:true});
 });

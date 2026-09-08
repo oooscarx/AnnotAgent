@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from "re
 import { api, type ProcessingReceipt } from "../api";
 import { queryKeys, workspaceQueries } from "../queryCache";
 import { boundedReads } from "../boundedReads";
+import { loadConversationHistory } from "../conversation-history";
 import { projectWorkPath, projectBuildPath, projectBatchPath, parseWorkspaceRoute, conversationSettingsPath, type ConversationResultsContext } from "../navigation";
 import type { ConversationMessage, ConversationMessageInput, ConversationTask, ImageItem, ProjectSummary } from "../types";
 import "./conversation-workspace.css";
@@ -37,6 +38,10 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
 }) {
   const [conversation, setConversation] = useState<string>();
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [messageContext, setMessageContext] = useState<ConversationMessage[]>([]);
+  const [defaultGoal, setDefaultGoal] = useState<ConversationMessage>();
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const historyRequest = useRef<AbortController | undefined>(undefined);
   const [stopRecords, setStopRecords] = useState<Record<string, StopRequestRecord>>({});
   const [tasks, setTasks] = useState<ConversationTask[]>([]);
   const [classReview, setClassReview] = useState<ImageClassReview>();
@@ -160,11 +165,12 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   const stopStorageKey = `annotagent.stop-send:${project.id}`;
   const alive = useRef(true);
   const selected = images.find((image) => image.image_id === imageId) ?? (!imageId ? images[0] : undefined);
-  const goalMessage = taskId ? messages.find(message=>isAnnotationGoalMessage(message) && message.input.id===tasks.find(task=>task.input.id===taskId)?.input.source_message_id) : messages.find(isAnnotationGoalMessage);
-  const stopTaskNames = Object.fromEntries(tasks.map(task => [task.input.id, messages.find(message => message.input.id === task.input.source_message_id)?.input.text ?? task.input.id]));
+  const availableMessages = [...messages, ...messageContext];
+  const goalMessage = taskId ? availableMessages.find(message=>isAnnotationGoalMessage(message) && message.input.id===tasks.find(task=>task.input.id===taskId)?.input.source_message_id) : defaultGoal ?? messages.find(isAnnotationGoalMessage);
+  const stopTaskNames = Object.fromEntries(tasks.map(task => [task.input.id, availableMessages.find(message => message.input.id === task.input.source_message_id)?.input.text ?? task.input.id]));
   const stopComposer = frozen.current ? isStopMessage(frozen.current) : isStopCommand(text);
   const referenceTask=tasks.find(task=>taskId ? task.input.id===taskId : task.input.source_message_id===goalMessage?.input.id)?.input;
-  const referencedMessage=messages.find(message=>message.input.id===referenceMessageId);
+  const referencedMessage=availableMessages.find(message=>message.input.id===referenceMessageId);
   const frozenReference=referencedMessage?.input.reference?.scope === "sample_candidate" ? referencedMessage.input.reference : undefined;
   const referenceMatches=Boolean(frozenReference && referencedMessage?.conversation_id===conversation && frozenReference.task_id===taskId && frozenReference.draft_id===draftId && frozenReference.sample_test_id===sampleTestId && referencedMessage?.input.image?.image_id===imageId && !humanRequestId && !results);
   function openMessageReference(message:ConversationMessage){
@@ -184,6 +190,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   }, [onNavigationGuardChange]);
   useEffect(() => {
     const controller = new AbortController();
+    historyRequest.current?.abort(); setHistoryBusy(false);
     setReady(false); setError("");
     void (async () => {
       const [current, dataset] = await Promise.all([
@@ -191,15 +198,22 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
         workspaceQueries.load(queryKeys.projectImages(project.id), signal => api.images(project.id, signal), { staleTime: 30_000 }),
       ]);
       if (conversationId && conversationId !== current.conversation_id) throw new Error("This conversation does not belong to this Project or is no longer available.");
-      const saved: ConversationMessage[] = [];
+      let saved: ConversationMessage[] = [];
+      let context: ConversationMessage[] = [];
+      let initialGoal: ConversationMessage | undefined;
       if (current.conversation_id) {
-        let page: ConversationMessage[];
-        do {
-          page = await api.conversationMessages(project.id, current.conversation_id, saved.at(-1)?.sequence ?? 0, controller.signal);
-          saved.push(...page);
-        } while (page.length === 100);
+        const id = current.conversation_id;
+        const ownedTasks = taskId ? await api.conversationTasks(project.id, id, controller.signal) : [];
+        const source = ownedTasks.find(task => task.input.id === taskId)?.input.source_message_id;
+        const history = await loadConversationHistory({
+          latest: () => api.conversationHistory(project.id, id, undefined, controller.signal),
+          forward: after => api.conversationMessages(project.id, id, after, controller.signal),
+          exact: message => api.conversationMessage(project.id, id, message, controller.signal),
+        }, source, referenceMessageId, controller.signal);
+        saved = history.messages; context = history.context; initialGoal = history.defaultGoal;
       }
       if (controller.signal.aborted) return;
+      setMessageContext(context); setDefaultGoal(initialGoal);
       setConversation(current.conversation_id ?? undefined); setImages(dataset.images); setMessages(previous => current.conversation_id ? mergeConversationMessages(previous, saved, current.conversation_id) : []);
       try {
         const previous = parsePendingStop(sessionStorage.getItem(stopStorageKey));
@@ -234,8 +248,20 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
       }
       setReady(true);
     })().catch((error: Error) => { if (!controller.signal.aborted) setError(error.message); });
-    return () => controller.abort();
+    return () => { controller.abort(); historyRequest.current?.abort(); };
   }, [project.id, conversationId, taskId, draftId, sampleTestId, humanRequestId, referenceMessageId, processingOperationId, Boolean(results)]);
+  async function loadOlderMessages() {
+    if (!conversation || historyBusy || historyRequest.current && !historyRequest.current.signal.aborted) return;
+    const before = messages[0]?.sequence;
+    if (!before || before <= 1) return;
+    const controller = new AbortController(); historyRequest.current = controller;
+    setHistoryBusy(true); setError("");
+    try {
+      const older = await api.conversationHistory(project.id, conversation, before, controller.signal);
+      if (!controller.signal.aborted) setMessages(items => mergeConversationMessages(items, older, conversation));
+    } catch (reason) { if (!controller.signal.aborted) setError((reason as Error).message); }
+    finally { if (historyRequest.current === controller) { historyRequest.current = undefined; setHistoryBusy(false); } }
+  }
   async function send(prepareGoal=false) {
     if (pending.current || !ready || !text.trim() || composing.current) return;
     if(!frozen.current) {
@@ -369,6 +395,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
         <p className="muted">Describe your goal before or after uploading images.</p>
         <p className="conversation-development-note">Samples and corrections are evaluations, not formal annotations. Dataset processing needs your explicit image and budget confirmation. Advanced review and export remain in the saved processing results.</p>
         <ConversationProjectBudget key={project.id} project={project.id} onDirtyChange={budgetDirtyChange}/>
+        {messages[0]?.sequence > 1 && <button disabled={!ready || historyBusy} onClick={() => void loadOlderMessages()}>{historyBusy ? "Loading earlier messages…" : "Load earlier messages"}</button>}
         <ol className="conversation-messages" aria-label="Saved messages">
           {messages.map((message) => <li key={message.input.id}><p>{message.input.text}</p>{message.input.image && <button onClick={() => {
             const reference = message.input.image;
