@@ -21,6 +21,8 @@ pub struct ConversationBuilderExecution {
     pub scope_hash: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repair: Option<ConversationBuilderRepair>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_class_repair: Option<crate::ConversationImageClassBuilderRepair>,
 }
 
 /// Exact editable copy approved for repair, never a mutable pointer to the latest plan.
@@ -50,6 +52,20 @@ impl Drop for BuilderGuard<'_> {
     }
 }
 impl LocalApplication {
+    pub fn conversation_builder_operation(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+    ) -> Result<Option<ConversationBuilderOperation>> {
+        self.optional_conversation_builder_budget(project, conversation, task)?;
+        Ok(self.store.conversation_builder_operation(
+            &self.conversation_project_identity(project)?,
+            task,
+            id,
+        )?)
+    }
     /// Read-only preview of a delivered correction's existing repair copy.
     pub fn conversation_builder_repair(
         &self,
@@ -168,6 +184,19 @@ impl LocalApplication {
         conversation: Uuid,
         task: Uuid,
     ) -> Result<serde_json::Value> {
+        self.conversation_builder_history_scoped(project, conversation, task, None, None)
+    }
+    pub fn conversation_builder_history_scoped(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        operation: Option<Uuid>,
+        image_class_review: Option<Uuid>,
+    ) -> Result<serde_json::Value> {
+        if operation.is_some() && image_class_review.is_some() {
+            bail!("Choose an exact operation or a repair source, not both");
+        }
         if !self
             .conversation_tasks(project, conversation)?
             .iter()
@@ -176,7 +205,21 @@ impl LocalApplication {
             bail!("Task belongs to another conversation");
         }
         let owner = self.conversation_project_identity(project)?;
-        let operations = self.store.conversation_builder_history(&owner, task)?;
+        let operations = if let Some(operation) = operation {
+            self.store
+                .conversation_builder_operation(&owner, task, operation)?
+                .into_iter()
+                .collect()
+        } else if let Some(review) = image_class_review {
+            self.conversation_image_class_review(project, conversation, task, review)?
+                .ok_or_else(|| {
+                    anyhow!("Image-class review belongs to another task or is unavailable")
+                })?;
+            self.store
+                .conversation_image_class_builder_history(&owner, task, review)?
+        } else {
+            self.store.conversation_builder_history(&owner, task)?
+        };
         let items = operations
             .into_iter()
             .map(|operation| {
@@ -212,6 +255,9 @@ impl LocalApplication {
         provider: &dyn VisionModelProvider,
         cancellation: CancellationToken,
     ) -> Result<ConversationBuilderOperation> {
+        if execution.repair.is_some() && execution.image_class_repair.is_some() {
+            bail!("A Builder operation must have one exact repair source, not two");
+        }
         let schema = self.conversation_schema_draft(
             project,
             execution.schema_id,
@@ -231,13 +277,20 @@ impl LocalApplication {
         let hash = annotagent_image_tools::sha256(&serde_json::to_vec(
             &serde_json::json!({"execution":execution,"model":selected.safe_selection(),"settings":settings}),
         )?);
-        if let Some(saved) = self.store.reserve_conversation_builder_with_schema(
+        let source = if let Some(repair) = &execution.image_class_repair {
+            serde_json::json!({"kind":"image_class_review","reference":repair})
+        } else if let Some(repair) = &execution.repair {
+            serde_json::json!({"kind":"human_request","reference":repair})
+        } else {
+            serde_json::Value::Null
+        };
+        if let Some(saved) = self.store.reserve_conversation_builder_with_source(
             &owner,
             execution.task_id,
             execution.operation_id,
             &hash,
-            execution.schema_id,
-            execution.schema_revision,
+            (execution.schema_id, execution.schema_revision),
+            &source,
         )? {
             return Ok(saved);
         }
@@ -285,6 +338,26 @@ impl LocalApplication {
             let draft = self.store.get_workflow_draft(&actual.draft_id)?;
             if draft.revision != expected.revision || draft.content_hash != expected.content_hash {
                 bail!("Repair Draft changed while loading the authorized revision");
+            }
+            Some(draft)
+        } else if let Some(expected) = &execution.image_class_repair {
+            let actual = self.conversation_image_class_builder_repair(
+                project,
+                execution.conversation_id,
+                execution.task_id,
+                expected.review_id,
+            )?;
+            if actual != *expected
+                || expected.schema_id != execution.schema_id
+                || expected.schema_revision != execution.schema_revision
+            {
+                bail!("Image-class repair source or Schema changed; review a fresh authorization");
+            }
+            let draft = self
+                .store
+                .available_image_class_repair_draft(project, &expected.draft_id)?;
+            if draft.revision != expected.revision || draft.content_hash != expected.content_hash {
+                bail!("Image-class repair Draft changed while loading the authorized revision");
             }
             Some(draft)
         } else {

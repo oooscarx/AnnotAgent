@@ -73,6 +73,57 @@ fn fixture(
 }
 
 #[test]
+fn repair_lookup_rejects_foreign_deleted_archived_and_published_drafts() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    fixture(&store, "bounding_box", 1);
+    let sample = store
+        .get_workflow_sample_test_by_id("TEST-scoped-sample")
+        .unwrap()
+        .unwrap();
+    assert!(
+        store
+            .available_image_class_repair_draft(&sample.project_id, &sample.draft_id)
+            .is_ok()
+    );
+    assert!(
+        store
+            .available_image_class_repair_draft("TEST-other-project", &sample.draft_id)
+            .is_err()
+    );
+    for mutation in [
+        "deleted_at='TEST-deleted'",
+        "archived_at='TEST-archived'",
+        "status='published'",
+        "status='archived'",
+    ] {
+        store
+            .with_connection(|db| {
+                db.execute(
+                    &format!("UPDATE workflow_drafts SET {mutation} WHERE id=?1"),
+                    [&sample.draft_id],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(
+            store
+                .available_image_class_repair_draft(&sample.project_id, &sample.draft_id)
+                .is_err(),
+            "{mutation}"
+        );
+        store.with_connection(|db| {
+            db.execute("UPDATE workflow_drafts SET deleted_at=NULL,archived_at=NULL,status='editing' WHERE id=?1",[&sample.draft_id])?;
+            Ok(())
+        }).unwrap();
+    }
+    assert!(
+        store
+            .available_image_class_repair_draft(&sample.project_id, &sample.draft_id)
+            .is_ok()
+    );
+}
+
+#[test]
 fn class_review_freezes_members_and_saves_one_atomic_human_answer() {
     let store = SqliteStore::open_in_memory().unwrap();
     let f = fixture(&store, "bounding_box", 1);

@@ -611,6 +611,20 @@ fn member_baseline(review: &ConversationImageClassReview) -> Vec<&SampleFeedback
 }
 
 impl SqliteStore {
+    /// Point lookup for a prepared repair: historical read APIs intentionally include trash.
+    pub fn available_image_class_repair_draft(
+        &self,
+        project: &str,
+        id: &str,
+    ) -> Result<annotagent_core::WorkflowDraft, StorageError> {
+        self.with_connection(|db| {
+            let row = db.query_row(
+                "SELECT draft_json,revision,content_hash FROM workflow_drafts d WHERE id=?1 AND project_id=?2 AND deleted_at IS NULL AND archived_at IS NULL AND status NOT IN ('published','archived') AND NOT EXISTS(SELECT 1 FROM workflow_pipelines p WHERE p.workflow_id=d.id AND (p.project_id<>?2 OR p.deleted_at IS NOT NULL OR p.archived_at IS NOT NULL))",
+                params![id, project], super::workflow_draft_row,
+            ).optional()?.ok_or_else(|| invalid("Prepared class repair Draft is unavailable, archived or deleted"))?;
+            super::workflow_draft_from_columns(row)
+        })
+    }
     pub fn conversation_image_class_scope(
         &self,
         owner: &str,

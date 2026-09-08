@@ -69,6 +69,17 @@ fn merge_evidence(
     saved: Option<&serde_json::Value>,
     incoming: &serde_json::Value,
 ) -> Result<serde_json::Value, StorageError> {
+    if let Some(source) = saved.and_then(|value| value.get("repair_source")) {
+        if !incoming.is_object()
+            || incoming
+                .get("repair_source")
+                .is_some_and(|value| value != source)
+        {
+            return Err(StorageError::InvalidConversation(
+                "Builder settlement cannot replace its admitted repair source".into(),
+            ));
+        }
+    }
     let original = schema_pair(saved)?;
     let proposed = schema_pair(Some(incoming))?;
     if original.is_some() && (proposed.is_some() && proposed != original || !incoming.is_object()) {
@@ -90,6 +101,35 @@ fn merge_evidence(
 }
 
 impl SqliteStore {
+    /// Preserve the admitted source before a session/working Draft exists.
+    pub fn reserve_conversation_builder_with_source(
+        &self,
+        project: &str,
+        task: Uuid,
+        id: Uuid,
+        hash: &str,
+        schema: (Uuid, u64),
+        source: &serde_json::Value,
+    ) -> Result<Option<ConversationBuilderOperation>, StorageError> {
+        if id.is_nil()
+            || schema.0.is_nil()
+            || schema.1 == 0
+            || (!source.is_null()
+                && (!source.is_object() || serde_json::to_vec(source)?.len() > 8192))
+        {
+            return Err(StorageError::InvalidConversation(
+                "Invalid bounded Builder source".into(),
+            ));
+        }
+        self.reserve_conversation_builder_scoped(
+            project,
+            task,
+            id,
+            hash,
+            Some(schema),
+            Some(source),
+        )
+    }
     /// Freeze the exact owned Schema in the same transaction that admits the Builder.
     /// Its identity is readable even before an Agent session or seed Draft exists.
     pub fn reserve_conversation_builder_with_schema(
@@ -112,6 +152,7 @@ impl SqliteStore {
             id,
             hash,
             Some((schema_id, schema_revision)),
+            None,
         )
     }
     /// Only `None` admits new execution. A saved receipt must never be dispatched again.
@@ -122,7 +163,7 @@ impl SqliteStore {
         id: Uuid,
         hash: &str,
     ) -> Result<Option<ConversationBuilderOperation>, StorageError> {
-        self.reserve_conversation_builder_scoped(project, task, id, hash, None)
+        self.reserve_conversation_builder_scoped(project, task, id, hash, None, None)
     }
     fn reserve_conversation_builder_scoped(
         &self,
@@ -131,6 +172,7 @@ impl SqliteStore {
         id: Uuid,
         hash: &str,
         schema: Option<(Uuid, u64)>,
+        source: Option<&serde_json::Value>,
     ) -> Result<Option<ConversationBuilderOperation>, StorageError> {
         if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err(StorageError::InvalidConversation(
@@ -142,6 +184,9 @@ impl SqliteStore {
             if let Some(saved) = read(&tx,id)? {
                 if saved.task_id != task || saved.request_hash != hash { return Err(StorageError::InvalidConversation("Builder request key conflicts".into())); }
                 if schema.is_some() && schema_pair(saved.evidence.as_ref())?!=schema {return Err(StorageError::InvalidConversation("Builder request changed its admitted Schema identity".into()));}
+                if let (Some(expected), Some(original)) = (source, saved.evidence.as_ref().and_then(|value|value.get("repair_source"))) {
+                    if expected != original {return Err(StorageError::InvalidConversation("Builder retry changed its admitted repair source".into()));}
+                }
                 return Ok(Some(saved));
             }
             crate::conversation_stop::require_admission_clear(&tx,task,&id.to_string(),true)?;
@@ -151,7 +196,11 @@ impl SqliteStore {
             }
             let collision: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM workflow_drafts WHERE id=?1 UNION ALL SELECT 1 FROM agent_sessions WHERE id=?1 UNION ALL SELECT 1 FROM conversation_model_calls WHERE id=?1)",[id.to_string()],|row|row.get(0))?;
             if collision { return Err(StorageError::InvalidConversation("Builder operation ID is already used by another object".into())); }
-            let evidence=schema.map(|(schema_id,revision)|serde_json::json!({"schema_id":schema_id,"schema_revision":revision}).to_string());
+            let evidence=schema.map(|(schema_id,revision)| {
+                let mut evidence=serde_json::json!({"schema_id":schema_id,"schema_revision":revision});
+                if let Some(source)=source {evidence["repair_source"]=source.clone();}
+                evidence.to_string()
+            });
             tx.execute("INSERT INTO conversation_builder_operations(id,task_id,request_hash,status,evidence_json) VALUES(?1,?2,?3,'reserved',?4)",params![id.to_string(),task.to_string(),hash,evidence])?;
             tx.commit()?; Ok(None)
         })
@@ -183,6 +232,20 @@ impl SqliteStore {
                 ));
             }
             Ok(saved)
+        })
+    }
+    /// Filter by the admitted source before applying the history window.
+    pub fn conversation_image_class_builder_history(
+        &self,
+        project: &str,
+        task: Uuid,
+        review: Uuid,
+    ) -> Result<Vec<ConversationBuilderOperation>, StorageError> {
+        self.with_connection(|db| {
+            owned(db, project, task)?;
+            let mut statement = db.prepare("SELECT id FROM conversation_builder_operations WHERE task_id=?1 AND json_extract(evidence_json,'$.repair_source.kind')='image_class_review' AND json_extract(evidence_json,'$.repair_source.reference.review_id')=?2 ORDER BY rowid DESC LIMIT 32")?;
+            let ids = statement.query_map(params![task.to_string(),review.to_string()], |row|row.get::<_,String>(0))?.collect::<Result<Vec<_>,_>>()?;
+            ids.into_iter().map(|id| read(db,Uuid::parse_str(&id).map_err(|_|StorageError::InvalidConversation("Invalid operation ID".into()))?)?.ok_or_else(||StorageError::InvalidConversation("Operation missing".into()))).collect()
         })
     }
     pub fn settle_conversation_builder(
@@ -239,6 +302,218 @@ mod tests {
             .unwrap();
         let schema=store.create_human_conversation_schema_draft(&project,task,Uuid::new_v4(),&crate::ConversationSchemaDefinition{goal:message.text,task:serde_json::from_value(json!({"id":format!("annotation_{}",task.simple()),"kind":"bounding_box","labels":["cup"],"required":true})).unwrap(),boundary_rules:vec![]}).unwrap();
         (project, task, schema)
+    }
+
+    #[test]
+    fn repair_source_is_durable_before_seed_and_cannot_change_on_retry_or_settlement() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("TEST-builder-source.db");
+        let store = SqliteStore::open(&path).unwrap();
+        let (project, task, schema) = schema(&store);
+        let id = Uuid::new_v4();
+        let hash = "b".repeat(64);
+        let source = json!({"kind":"image_class_review","reference":{
+            "review_id":Uuid::new_v4(),"draft_id":"TEST-repair","revision":2,
+            "content_hash":"c".repeat(64),"schema_id":schema.id,"schema_revision":1,
+            "scope_digest":"d".repeat(64),"feedback_digest":"e".repeat(64)}});
+        assert!(
+            store
+                .reserve_conversation_builder_with_source(
+                    &project,
+                    task,
+                    id,
+                    &hash,
+                    (schema.id, 1),
+                    &source
+                )
+                .unwrap()
+                .is_none()
+        );
+        let receipt = store
+            .conversation_builder_operation(&project, task, id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.status, "reserved");
+        assert_eq!(receipt.evidence.as_ref().unwrap()["repair_source"], source);
+        assert!(
+            store
+                .reserve_conversation_builder_with_source(
+                    &project,
+                    task,
+                    id,
+                    &hash,
+                    (schema.id, 1),
+                    &source
+                )
+                .unwrap()
+                .is_some()
+        );
+        for changed in [
+            json!(null),
+            json!({"kind":"human_request","reference":source["reference"]}),
+            {
+                let mut changed = source.clone();
+                changed["reference"]["revision"] = json!(3);
+                changed
+            },
+        ] {
+            assert!(
+                store
+                    .reserve_conversation_builder_with_source(
+                        &project,
+                        task,
+                        id,
+                        &hash,
+                        (schema.id, 1),
+                        &changed
+                    )
+                    .is_err()
+            );
+            assert!(
+                store
+                    .settle_conversation_builder(
+                        &project,
+                        task,
+                        id,
+                        true,
+                        &json!({"repair_source":changed})
+                    )
+                    .is_err()
+            );
+        }
+        drop(store);
+        let store = SqliteStore::open(&path).unwrap();
+        store.recover_conversation_builders().unwrap();
+        let recovered = store
+            .conversation_builder_operation(&project, task, id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(recovered.status, "interrupted");
+        assert_eq!(recovered.evidence.unwrap()["repair_source"], source);
+        assert!(
+            store
+                .reserve_conversation_builder_with_source(
+                    &project,
+                    task,
+                    id,
+                    &hash,
+                    (schema.id, 1),
+                    &source
+                )
+                .unwrap()
+                .is_some(),
+            "Recovery must not admit another execution"
+        );
+
+        let completed = Uuid::new_v4();
+        store
+            .reserve_conversation_builder_with_source(
+                &project,
+                task,
+                completed,
+                &hash,
+                (schema.id, 1),
+                &source,
+            )
+            .unwrap();
+        store
+            .settle_conversation_builder(
+                &project,
+                task,
+                completed,
+                true,
+                &json!({"draft_id":"TEST-repair"}),
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .conversation_builder_operation(&project, task, completed)
+                .unwrap()
+                .unwrap()
+                .evidence
+                .unwrap()["repair_source"],
+            source
+        );
+    }
+
+    #[test]
+    fn exact_operation_recovery_is_not_limited_to_recent_history() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let (project, task, schema) = schema(&store);
+        let review = Uuid::new_v4();
+        let source = json!({"kind":"image_class_review","reference":{"review_id":review}});
+        let first = Uuid::new_v4();
+        let hash = "a".repeat(64);
+        store
+            .reserve_conversation_builder_with_source(
+                &project,
+                task,
+                first,
+                &hash,
+                (schema.id, 1),
+                &source,
+            )
+            .unwrap();
+        store
+            .settle_conversation_builder(&project, task, first, true, &json!({}))
+            .unwrap();
+        for _ in 0..33 {
+            let id = Uuid::new_v4();
+            store
+                .reserve_conversation_builder_with_source(
+                    &project,
+                    task,
+                    id,
+                    &hash,
+                    (schema.id, 1),
+                    &json!(null),
+                )
+                .unwrap();
+            store
+                .settle_conversation_builder(&project, task, id, true, &json!({}))
+                .unwrap();
+        }
+        let history = store.conversation_builder_history(&project, task).unwrap();
+        assert_eq!(history.len(), 32);
+        assert!(!history.iter().any(|entry| entry.id == first));
+        let scoped = store
+            .conversation_image_class_builder_history(&project, task, review)
+            .unwrap();
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0].id, first);
+        assert!(
+            store
+                .conversation_image_class_builder_history(&project, task, Uuid::new_v4())
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            store
+                .conversation_builder_operation(&project, task, first)
+                .unwrap()
+                .unwrap()
+                .status,
+            "completed"
+        );
+        assert!(
+            store
+                .reserve_conversation_builder_with_source(
+                    &project,
+                    task,
+                    first,
+                    &hash,
+                    (schema.id, 1),
+                    &source
+                )
+                .unwrap()
+                .is_some()
+        );
+        let (other_project, other_task, _) = self::schema(&store);
+        assert!(
+            store
+                .conversation_builder_operation(&other_project, other_task, first)
+                .is_err()
+        );
     }
 
     #[test]

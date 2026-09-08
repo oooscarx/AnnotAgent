@@ -3728,3 +3728,52 @@ This checkpoint includes only its source/tests, migration, this log and two new 
 Pre-existing historical PNG modifications remain excluded. Branch is `main`; both existing
 remotes are unchanged, with no push. The user's service on 8787 and real workspace were not
 restarted or altered. The overall goal remains active, not complete.
+
+### Continued slice: exact image-class Builder source and durable recovery
+
+The previous atomic class-review checkpoint was committed as `1b18ddb`. This continuation
+implements the backend boundary for a **separately authorized** repair of its prepared Draft.
+It does not yet claim that the same-chat group Builder/Sample controls are complete.
+
+- A distinct typed image-class repair source binds the applied review, frozen membership
+  digest, exact feedback digest, editable Draft ID/revision/hash and original sealed Schema
+  ID/revision. It is not represented as a single-candidate HumanRequest.
+- Pending or merely Answered reviews cannot become Builder sources. The resolver compares
+  the original Sandbox sample and sealed Schema, and verifies the prepared evidence against
+  exactly the frozen member baseline plus saved group decisions. It makes no Provider call.
+- The existing Builder repair mode and bounded authorization are reused. Both Server scope
+  and Application execution check the exact source; the load checks revision/hash again.
+  New optional source fields are omitted when absent from request serialization, retaining
+  existing authorization/request-hash shape. No automatic Sample Test or publication is added.
+- Admission stores source evidence before a session/working Draft exists. Retries and
+  settlement cannot replace it; restart and settlement preserve it. Server POST receipt
+  recovery now uses an owned operation-ID lookup rather than scanning the newest 32 records.
+- The existing history GET additionally accepts either an exact operation ID or an owned
+  image-class review ID. Source filtering happens **before** LIMIT 32, not in the client after
+  an unrelated recent-history window. Read paths do not admit execution or increase budget.
+- Prepared repair lookup excludes foreign, deleted, archived and published Drafts, including
+  unavailable parent Pipeline records. This leaves historical objects intact.
+
+New isolated tests cover source persistence before seed, altered retry/settlement rejection,
+restart recovery, exact lookup and source-filtered history after 33 newer operations, task
+ownership, unavailable Draft states, Applied-only sources, modified revision detection,
+sealed-Schema substitution rejection and unchanged original sample data. The resolver started
+with an explicit failing implementation test, then passed after implementation. Both Application
+source tests now pass; six Builder Storage tests and the unavailable-Draft test pass. Full
+workspace regression and final lint/build results are recorded below when completed.
+
+Remaining in this slice: wire the distinct group source into the existing chat Builder card;
+persist its bounded consent across unknown acknowledgements; use exact operation/source GETs
+for refresh recovery; then explicitly authorize samples and verify the complete browser loop.
+No new browser screenshots or Live inference evidence is claimed for this backend checkpoint.
+Historical screenshot changes remain untouched and excluded from the local commit. The real
+workspace, service 8787, credentials and remotes remain unmodified; no push is authorized.
+
+Backend checkpoint results: `cargo test --workspace --all-features -q` exited successfully
+(142 Application tests passed/1 ignored, 144 Storage tests passed, 45 Server tests passed,
+other workspace/integration/doc suites passed; five explicit environment-dependent tests
+ignored overall). The final additional changed-Draft/Schema regression was then run with both
+Application source tests, 2/2 passing. `cargo fmt --all --check`, full-workspace/all-target/
+all-feature Clippy with warnings denied, and `cargo build --workspace --all-features` passed.
+Web source was unchanged in this checkpoint; Web/browser tests were not rerun and are not
+claimed as evidence for the new group continuation. Overall goal remains active.

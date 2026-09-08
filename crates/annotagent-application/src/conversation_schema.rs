@@ -1481,6 +1481,7 @@ mod tests {
             operation_id: Uuid::new_v4(),
             scope_hash: builder_grant.scope_hash.clone(),
             repair: None,
+            image_class_repair: None,
         };
         let result = reopened
             .build_conversation_pipeline(

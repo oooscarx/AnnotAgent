@@ -14,6 +14,8 @@ pub(super) struct BuilderSelection {
     pub(super) model_id: Option<ModelProfileId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) repair_request_id: Option<uuid::Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) image_class_review_id: Option<uuid::Uuid>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -25,6 +27,8 @@ pub(super) struct BuilderConsent {
     allow_unknown_cost: bool,
     #[serde(default)]
     repair: Option<ConversationBuilderRepair>,
+    #[serde(default)]
+    image_class_repair: Option<annotagent_application::ConversationImageClassBuilderRepair>,
 }
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum AuthorizationBase {
@@ -40,6 +44,9 @@ pub(super) fn scope(
     selection: &BuilderSelection,
     previous: AuthorizationBase,
 ) -> ApiResult<(PipelineBuilderModelRuntime, Value)> {
+    if selection.repair_request_id.is_some() && selection.image_class_review_id.is_some() {
+        return Err(ApiError::bad_request("Choose one exact repair source"));
+    }
     let mut budget = state
         .application
         .optional_conversation_builder_budget(project, conversation, task)
@@ -120,10 +127,35 @@ pub(super) fn scope(
         })
         .transpose()
         .map_err(ApiError::bad_request)?;
-    let hash=annotagent_image_tools::sha256(&serde_json::to_vec(&json!({"contract":"conversation-builder-v1","selection":canonical_selection,"repair":repair,"schema":schema,"model":selected.model,"provider":selected.provider,"config":config,"previous":previous_id,"maximum_calls":maximum_calls,"images":0,"dry_runs":0})).map_err(ApiError::internal)?);
+    let image_class_repair = selection
+        .image_class_review_id
+        .map(|id| {
+            state.application.conversation_image_class_builder_repair(
+                project,
+                conversation,
+                task,
+                id,
+            )
+        })
+        .transpose()
+        .map_err(ApiError::bad_request)?;
+    if image_class_repair.as_ref().is_some_and(|source| {
+        source.schema_id != selection.schema_id
+            || source.schema_revision != selection.schema_revision
+    }) {
+        return Err(ApiError::bad_request(
+            "Class repair must use the exact sealed sample Schema",
+        ));
+    }
+    let mut context = json!({"contract":"conversation-builder-v1","selection":canonical_selection,"repair":repair,"schema":schema,"model":selected.model,"provider":selected.provider,"config":config,"previous":previous_id,"maximum_calls":maximum_calls,"images":0,"dry_runs":0});
+    if image_class_repair.is_some() {
+        context["image_class_repair"] = json!(image_class_repair);
+    }
+    let hash =
+        annotagent_image_tools::sha256(&serde_json::to_vec(&context).map_err(ApiError::internal)?);
     Ok((
         selected.clone(),
-        json!({"selection":BuilderSelection { model_id:Some(selected.model.id),..selection.clone() },"repair":repair,"previous_grant_id":previous_id,"scope_hash":hash,"model_name":selected.model.display_name,"remote_model":selected.model.remote_model_id,"destination":selected.provider.endpoint_summary(),"used_calls":used_calls,"maximum_calls":maximum_calls,"maximum_builder_calls":maximum_calls.saturating_sub(used_calls).min(16),"image_count":0,"estimated_cost":null,"expires_at":Utc::now()+Duration::minutes(30),"data_scope":if repair.is_some() {"Saved goal, Schema, preserved Draft, scoped human feedback and terminal result metadata, and Registry descriptions. No image pixels."} else {"Saved goal, Schema and registered model/skill descriptions. No image pixels."},"operation":if repair.is_some() {"Repair this exact editable Draft only. No sample inference, publication or dataset Run."} else {"Build an editable Pipeline Draft only. No sample inference, publication or dataset Run."}}),
+        json!({"selection":BuilderSelection { model_id:Some(selected.model.id),..selection.clone() },"repair":repair,"image_class_repair":image_class_repair,"previous_grant_id":previous_id,"scope_hash":hash,"model_name":selected.model.display_name,"remote_model":selected.model.remote_model_id,"destination":selected.provider.endpoint_summary(),"used_calls":used_calls,"maximum_calls":maximum_calls,"maximum_builder_calls":maximum_calls.saturating_sub(used_calls).min(16),"image_count":0,"estimated_cost":null,"expires_at":Utc::now()+Duration::minutes(30),"data_scope":if repair.is_some() || image_class_repair.is_some() {"Saved goal, Schema, preserved Draft, scoped human feedback and terminal result metadata, and Registry descriptions. No image pixels."} else {"Saved goal, Schema and registered model/skill descriptions. No image pixels."},"operation":if repair.is_some() || image_class_repair.is_some() {"Repair this exact editable Draft only. No sample inference, publication or dataset Run."} else {"Build an editable Pipeline Draft only. No sample inference, publication or dataset Run."}}),
     ))
 }
 pub(super) async fn preview(
@@ -149,13 +181,26 @@ pub(super) async fn preview(
         Ok(Json(preview))
     })
 }
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct BuilderHistoryQuery {
+    operation_id: Option<uuid::Uuid>,
+    image_class_review_id: Option<uuid::Uuid>,
+}
 pub(super) async fn history(
     State(state): State<ServerState>,
     AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+    Query(query): Query<BuilderHistoryQuery>,
 ) -> ApiResult<Json<Value>> {
     state
         .application
-        .conversation_builder_history(&project, conversation, task)
+        .conversation_builder_history_scoped(
+            &project,
+            conversation,
+            task,
+            query.operation_id,
+            query.image_class_review_id,
+        )
         .map(Json)
         .map_err(ApiError::bad_request)
 }
@@ -166,9 +211,15 @@ pub(super) async fn launch(
 ) -> ApiResult<Json<annotagent_storage::ConversationBuilderOperation>> {
     if consent.selection.repair_request_id
         != consent.repair.as_ref().map(|repair| repair.request_id)
+        || consent.selection.image_class_review_id
+            != consent
+                .image_class_repair
+                .as_ref()
+                .map(|repair| repair.review_id)
+        || (consent.repair.is_some() && consent.image_class_repair.is_some())
     {
         return Err(ApiError::bad_request(
-            "Repair consent must identify the previewed human request and Draft revision",
+            "Repair consent must identify exactly one previewed correction source and Draft revision",
         ));
     }
     if !consent.allow_unknown_cost
@@ -180,15 +231,16 @@ pub(super) async fn launch(
         ));
     }
     // A repeated POST reads its own persisted operation, never advances the allowance again.
-    let history = state
+    let saved = state
         .application
-        .conversation_builder_history(&project, conversation, task)
+        .conversation_builder_operation(
+            &project,
+            conversation,
+            task,
+            consent.selection.operation_id,
+        )
         .map_err(ApiError::bad_request)?;
-    if let Some(saved) = history["items"].as_array().and_then(|items| {
-        items
-            .iter()
-            .find(|item| item["operation"]["id"] == consent.selection.operation_id.to_string())
-    }) {
+    if let Some(saved) = saved {
         let selected = state
             .application
             .resolve_pipeline_builder_model(&project, consent.selection.model_id)
@@ -202,16 +254,15 @@ pub(super) async fn launch(
             operation_id: consent.selection.operation_id,
             scope_hash: consent.scope_hash.clone(),
             repair: consent.repair.clone(),
+            image_class_repair: consent.image_class_repair.clone(),
         };
         let hash=annotagent_image_tools::sha256(&serde_json::to_vec(&json!({"execution":execution,"model":selected.safe_selection(),"settings":settings})).map_err(ApiError::internal)?);
-        if saved["operation"]["request_hash"] != hash {
+        if saved.request_hash != hash {
             return Err(ApiError::bad_request(
                 "Builder operation request key conflicts",
             ));
         }
-        return serde_json::from_value(saved["operation"].clone())
-            .map(Json)
-            .map_err(ApiError::internal);
+        return Ok(Json(saved));
     }
     let (selected, preview) = scope(
         &state,
@@ -227,6 +278,8 @@ pub(super) async fn launch(
         || preview["previous_grant_id"]
             != serde_json::to_value(consent.previous_grant_id).map_err(ApiError::internal)?
         || preview["repair"] != serde_json::to_value(&consent.repair).map_err(ApiError::internal)?
+        || preview["image_class_repair"]
+            != serde_json::to_value(&consent.image_class_repair).map_err(ApiError::internal)?
     {
         return Err(ApiError::bad_request(
             "Builder authorization changed. Reload saved operation state before retrying.",
@@ -275,6 +328,7 @@ pub(super) async fn launch(
         operation_id: consent.selection.operation_id,
         scope_hash: consent.scope_hash,
         repair: consent.repair,
+        image_class_repair: consent.image_class_repair,
     };
     state
         .application

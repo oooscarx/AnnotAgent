@@ -27,6 +27,147 @@ async fn class_fixture() -> (Fixture, TestProvider, Uuid) {
 }
 
 #[tokio::test]
+async fn image_class_builder_source_requires_applied_group_and_freezes_exact_schema_and_feedback() {
+    let (f, provider, call) = class_fixture().await;
+    let create = create_input(&f, call);
+    let review = f
+        .app
+        .create_conversation_image_class_review(PROJECT, f.conversation, f.task.id, &create)
+        .unwrap();
+    assert!(
+        f.app
+            .conversation_image_class_builder_repair(PROJECT, f.conversation, f.task.id, review.id)
+            .is_err()
+    );
+    f.app
+        .answer_conversation_image_class_review(
+            PROJECT,
+            f.conversation,
+            f.task.id,
+            review.id,
+            &answer_input(&review),
+        )
+        .unwrap();
+    assert!(
+        f.app
+            .conversation_image_class_builder_repair(PROJECT, f.conversation, f.task.id, review.id)
+            .is_err()
+    );
+    let applied = f
+        .app
+        .continue_conversation_image_class_review(PROJECT, f.conversation, f.task.id, review.id)
+        .unwrap();
+    let source = f
+        .app
+        .conversation_image_class_builder_repair(PROJECT, f.conversation, f.task.id, review.id)
+        .unwrap();
+    let draft = f
+        .app
+        .store
+        .get_workflow_draft(applied.repair_draft_id.as_ref().unwrap())
+        .unwrap();
+    let binding = draft.annotation_schema.as_ref().unwrap();
+    assert_eq!(source.review_id, review.id);
+    assert_eq!(source.draft_id, draft.id);
+    assert_eq!(source.revision, draft.revision);
+    assert_eq!(source.content_hash, draft.content_hash);
+    assert_eq!(source.schema_id.to_string(), binding.schema_draft_id);
+    assert_eq!(source.schema_revision, binding.revision);
+    assert_eq!(source.scope_digest, review.scope_digest);
+    assert_eq!(source.feedback_digest.len(), 64);
+    assert_eq!(
+        source,
+        f.app
+            .conversation_image_class_builder_repair(PROJECT, f.conversation, f.task.id, review.id)
+            .unwrap()
+    );
+    assert!(
+        f.app
+            .conversation_image_class_builder_repair(PROJECT, Uuid::new_v4(), f.task.id, review.id)
+            .is_err()
+    );
+    assert!(
+        f.app
+            .conversation_builder_repair(PROJECT, f.conversation, f.task.id, review.id)
+            .is_err()
+    );
+    assert_eq!(
+        provider.requests.lock().unwrap().len(),
+        1,
+        "Resolving a repair source never runs a model"
+    );
+}
+
+#[tokio::test]
+async fn image_class_builder_source_detects_edited_revision_and_rejects_changed_schema() {
+    let (f, provider, call) = class_fixture().await;
+    let review = f
+        .app
+        .create_conversation_image_class_review(
+            PROJECT,
+            f.conversation,
+            f.task.id,
+            &create_input(&f, call),
+        )
+        .unwrap();
+    f.app
+        .answer_conversation_image_class_review(
+            PROJECT,
+            f.conversation,
+            f.task.id,
+            review.id,
+            &answer_input(&review),
+        )
+        .unwrap();
+    f.app
+        .continue_conversation_image_class_review(PROJECT, f.conversation, f.task.id, review.id)
+        .unwrap();
+    let before = f
+        .app
+        .conversation_image_class_builder_repair(PROJECT, f.conversation, f.task.id, review.id)
+        .unwrap();
+    let original_sample = serde_json::to_value(
+        f.app
+            .store
+            .get_workflow_sample_test_by_id(&f.sample.id)
+            .unwrap(),
+    )
+    .unwrap();
+    let mut draft = f.app.store.get_workflow_draft(&before.draft_id).unwrap();
+    draft.name = "TEST human-edited repair name".into();
+    f.app.store.save_workflow_draft(&draft).unwrap();
+    let after = f
+        .app
+        .conversation_image_class_builder_repair(PROJECT, f.conversation, f.task.id, review.id)
+        .unwrap();
+    assert_ne!(after.revision, before.revision);
+    assert_ne!(after.content_hash, before.content_hash);
+    assert_eq!(after.feedback_digest, before.feedback_digest);
+    assert_eq!(after.schema_id, before.schema_id);
+    let mut draft = f.app.store.get_workflow_draft(&before.draft_id).unwrap();
+    draft.annotation_schema.as_mut().unwrap().goal = "TEST substituted goal".into();
+    f.app.store.save_workflow_draft(&draft).unwrap();
+    assert!(
+        f.app
+            .conversation_image_class_builder_repair(PROJECT, f.conversation, f.task.id, review.id)
+            .unwrap_err()
+            .to_string()
+            .contains("sealed Schema")
+    );
+    assert_eq!(
+        serde_json::to_value(
+            f.app
+                .store
+                .get_workflow_sample_test_by_id(&f.sample.id)
+                .unwrap()
+        )
+        .unwrap(),
+        original_sample
+    );
+    assert_eq!(provider.requests.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn decimal_candidate_feedback_restores_and_opens_class_review_without_scope_drift() {
     // These are the original decimals from the browser regression, not rounded fixtures.
     let f = fixture_with_schema_class_and_box(false, true, true, Some([0.12, 0.2, 0.16, 0.22]));

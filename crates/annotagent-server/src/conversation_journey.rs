@@ -121,6 +121,7 @@ pub(super) async fn preview(
         schema_revision: selection.schema_revision,
         model_id: selection.planner_model_id,
         repair_request_id: None,
+        image_class_review_id: None,
     };
     let (model, builder) = conversation_builder::scope(
         &state,
@@ -229,6 +230,7 @@ pub(super) async fn save(
         schema_revision: consent.schema_revision,
         model_id: consent.builder_model_id,
         repair_request_id: None,
+        image_class_review_id: None,
     };
     let (_, builder) = conversation_builder::scope(
         &state,
@@ -508,6 +510,7 @@ async fn advance(
                     schema_revision: schema.revision,
                     model_id: saved.consent.builder_model_id,
                     repair_request_id: None,
+                    image_class_review_id: None,
                 },
                 AuthorizationBase::Existing(proposal.call_id),
             )?;

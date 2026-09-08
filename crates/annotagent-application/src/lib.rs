@@ -20,6 +20,7 @@ mod conversation_image_class;
 pub use conversation_future_schema::{
     ConversationFutureSchemaRequest, ConversationFutureSchemaView,
 };
+pub use conversation_image_class::ConversationImageClassBuilderRepair;
 mod conversation_references;
 pub use conversation_feedback::{ConversationFeedbackContext, ConversationFeedbackResult};
 pub use conversation_feedback_intent::{ConversationFeedbackDecision, ConversationFeedbackReason};
