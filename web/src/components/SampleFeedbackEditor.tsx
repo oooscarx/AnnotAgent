@@ -7,6 +7,7 @@ import { useSampleFreshness } from "../useSampleFreshness";
 import { terminalSampleAnnotations } from "../sampleAnnotations";
 import { sampleFeedbackOverlay, type ExcludedSampleCandidate } from "../sampleFeedbackOverlay";
 import { SampleExcludedCandidates } from "./SampleExcludedCandidates";
+import { humanReferenceReady } from "../humanReference";
 
 const reasons: [SampleFeedbackRevision["reason"], string][] = [
   ["correct", "Target and boundary are correct"], ["wrong_target", "Wrong target"],
@@ -27,7 +28,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
   onImprove?: (draftId: string, testId: string, imageId?: string) => void;
   navigation?: ReactNode;
   goalOverride?: {kind:string;labels:string[]};
-  humanSubmission?: {outcomeId:string;save:(revision:SampleFeedbackRevision)=>Promise<SampleFeedbackRevision>};
+  humanSubmission?: ({outcomeId:string;additionId?:never}|{additionId:string;outcomeId?:never}) & {save:(revision:SampleFeedbackRevision)=>Promise<SampleFeedbackRevision>};
   initialOutcomeId?: string;
 }) {
   const freshness = useSampleFreshness(projectId, draftId, testId);
@@ -54,6 +55,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
   const copying = useRef(false);
   const saving = useRef(false);
   const pendingFeedback = useRef<SampleFeedbackRevision | undefined>(undefined);
+  const referenceSeed = useRef<Annotation | undefined>(undefined);
   useEffect(() => {
     let current = true; mounted.current = true;
     if(!goalOverride)void api.projectGoal(projectId).then((value) => { if (current) setGoal(value); }).catch((error: Error) => { if (current) setError(error.message); });
@@ -71,6 +73,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
   const [hint, setHint] = useState(true);
   const [attentionOpen, setAttentionOpen] = useState(Boolean(humanSubmission));
   const selectedAnnotation = annotations.find((item) => item.id === selected);
+  const referenceReady = !humanSubmission?.additionId || humanReferenceReady(selectedAnnotation,humanSubmission.additionId,referenceSeed.current);
   const selectedMaskIsRaster = selectedAnnotation && (selectedAnnotation.value.kind === "semantic_mask" || selectedAnnotation.value.kind === "instance_mask") && selectedAnnotation.value.mask.encoding !== "polygon";
   useEffect(() => {
     let current = true;
@@ -86,7 +89,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
       const requestedOutcome=humanSubmission?.outcomeId ?? initialOutcomeId;
       if(requestedOutcome && restored.some(value=>value.id===requestedOutcome)){
         setSelected(requestedOutcome);
-        const prior=values.filter(value=>value.outcome_id===requestedOutcome).at(-1);
+        const prior=values.filter(value=>value.outcome_id===requestedOutcome || (value.addition_id && `human-sample:${value.addition_id}`===requestedOutcome)).at(-1);
         setSaved(!humanSubmission && Boolean(prior));
         setReason(prior && prior.reason!=="missing_target" ? prior.reason : "cannot_judge");
         setNote(prior?.note ?? "");
@@ -108,7 +111,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
     setDirty(true); setSaved(false); setReason("poor_boundary"); setAttentionOpen(true);
   };
   const save = async (confirm = false) => {
-    if (busy || saving.current || !loaded || showBefore) return;
+    if (busy || saving.current || !loaded || showBefore || !referenceReady) return;
     saving.current = true;
     setBusy(true); setError("");
     const additionId = typeof selectedAnnotation?.provenance.addition_id === "string" ? selectedAnnotation.provenance.addition_id : undefined;
@@ -135,15 +138,16 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
     finally { saving.current = false; if (mounted.current) setBusy(false); }
   };
   const addMissing = () => {
-    if (!loaded || busy || dirty || !goal || humanSubmission) return;
-    const label = goal.labels?.[0] ?? "";
+    if (!loaded || busy || dirty || !goal || humanSubmission?.outcomeId || (humanSubmission?.additionId && annotations.some(value=>value.provenance.addition_id===humanSubmission.additionId))) return;
+    const label = humanSubmission?.additionId && goal.kind==="classification" ? "" : goal.labels?.[0] ?? "";
     const value: Annotation["value"] | undefined = goal.kind === "classification" ? { kind: "classification", labels: label ? [label] : [] }
       : goal.kind === "bounding_box" ? { kind: "bounding_box", rect: [0.4, 0.4, 0.2, 0.2] }
       : goal.kind === "semantic_mask" || goal.kind === "instance_mask" ? { kind: goal.kind, mask: { encoding: "polygon", rings: [[[0.4, 0.4], [0.6, 0.4], [0.6, 0.6], [0.4, 0.6]]] } }
       : goal.kind === "polygon" ? { kind: "polygon", rings: [[[0.4, 0.4], [0.6, 0.4], [0.6, 0.6], [0.4, 0.6]]] } : undefined;
     if (!value) return;
-    const additionId = crypto.randomUUID();
+    const additionId = humanSubmission?.additionId ?? crypto.randomUUID();
     const added: Annotation = { id: `human-sample:${additionId}`, image_id: image.image_id, task_id: "sample", label, value, attributes: {}, source: "human sample feedback", review_status: "needs_review", provenance: { addition_id: additionId, sample_test_id: testId }, created_at: "" };
+    if(humanSubmission?.additionId)referenceSeed.current=added;
     setHistory((items) => [...items, annotations]); setAnnotations((items) => [...items, added]); setSelected(added.id);
     setDirty(true); setSaved(false); setReason("missing_target"); setAttentionOpen(true); setShowBefore(false); setShowOriginal(false);
   };
@@ -158,12 +162,12 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
       <AnnotationCanvas compactList imageUrl={image.url} annotations={showOriginal ? [] : showBefore ? before?.annotations ?? [] : annotations} selectedId={showBefore ? undefined : selected} readOnly={!loaded || busy || showOriginal || showBefore || Boolean(selectedMaskIsRaster)} onSelect={(id) => {
         if (showBefore) return;
         if (dirty && selected !== id) { setError(t("Save or undo this correction before selecting another result.")); return; }
-        if(!humanSubmission || id===humanSubmission.outcomeId)setSelected(id);
+        if(!humanSubmission || id===(humanSubmission.additionId ? `human-sample:${humanSubmission.additionId}` : humanSubmission.outcomeId))setSelected(id);
       }} onEditStart={() => setHistory((items) => [...items, annotations])} onChange={edit} />
     </section>
     <SampleExcludedCandidates excluded={excluded} imageUrl={image.url}/>
     {onReferenceOutcome && <div className="conversation-candidate-reference"><button disabled={!loaded||busy||dirty||showOriginal||showBefore||!selected||!sample.outcomes.some(outcome=>outcome.id===selected)} onClick={()=>{if(selected)onReferenceOutcome(selected);}}>Reference saved candidate in message</button><small>References the original saved prediction, not later corrections or unsaved edits.</small></div>}
-    {!humanSubmission && goal && ["classification", "bounding_box", "polygon", "semantic_mask", "instance_mask"].includes(goal.kind ?? "") && <button className="sample-add-missing" disabled={!loaded || busy || dirty || showBefore} onClick={addMissing}>{t("Add missing target")}</button>}
+    {(!humanSubmission || humanSubmission.additionId) && goal && (humanSubmission ? ["classification","bounding_box"] : ["classification", "bounding_box", "polygon", "semantic_mask", "instance_mask"]).includes(goal.kind ?? "") && <button className="sample-add-missing" disabled={!loaded || busy || dirty || showBefore || Boolean(humanSubmission?.additionId && annotations.some(value=>value.provenance.addition_id===humanSubmission.additionId))} onClick={addMissing}>{humanSubmission ? "Add reference target" : t("Add missing target")}</button>}
     {typeof selectedAnnotation?.provenance.addition_id === "string" && <p className="sample-risk-notice">{t("Human sample example, not a model prediction. Adjust its label and boundary before saving. It never becomes a formal annotation automatically.")}</p>}
     {selectedAnnotation && !showOriginal && !showBefore && <label className="sample-feedback-label">{t("Correct label")}<input aria-label={t("Correct label")} value={selectedAnnotation.label} disabled={!loaded || busy} maxLength={256} onChange={(event) => {
       const label = event.target.value;
@@ -184,9 +188,9 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
         const rect = [...selectedAnnotation.value.rect] as [number, number, number, number]; rect[index] = Number(event.target.value);
         setHistory((items) => [...items, annotations]); edit({ ...selectedAnnotation, value: { kind: "bounding_box", rect } });
       }} /></label>)}</div>}
-      <label>{t("What needs attention?")}<select aria-label={t("What needs attention?")} value={reason} disabled={!loaded || busy} onChange={(event) => { setReason(event.target.value as SampleFeedbackRevision["reason"]); setDirty(true); setSaved(false); }}>{reasons.filter(([value])=>!humanSubmission || value!=="missing_target").map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}</select></label>
+      <label>{t("What needs attention?")}<select aria-label={t("What needs attention?")} value={reason} disabled={!loaded || busy || Boolean(humanSubmission?.additionId)} onChange={(event) => { setReason(event.target.value as SampleFeedbackRevision["reason"]); setDirty(true); setSaved(false); }}>{reasons.filter(([value])=>!humanSubmission || humanSubmission.additionId || value!=="missing_target").map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}</select></label>
       <label>{t("Feedback note")}<textarea aria-label={t("Feedback note")} maxLength={4000} disabled={!loaded || busy} value={note} onChange={(event) => { setNote(event.target.value); setDirty(true); setSaved(false); }} /></label>
-      <div className="button-row">{!humanSubmission && <button disabled={!loaded || busy} onClick={() => void save()}>{t("Save sample feedback")}</button>}<button disabled={!history.length || busy} onClick={() => { setAnnotations(history.at(-1)!); setHistory((items) => items.slice(0, -1)); setDirty(true); }}>{t("Undo edit")}</button></div>
+      <div className="button-row">{!humanSubmission && <button disabled={!loaded || busy} onClick={() => void save()}>{t("Save sample feedback")}</button>}<button disabled={!history.length || busy} onClick={() => { const previous=history.at(-1)!;setAnnotations(previous); setHistory((items) => items.slice(0, -1)); setDirty(!humanSubmission?.additionId || previous.some(value=>value.provenance.addition_id===humanSubmission.additionId)); }}>{t("Undo edit")}</button></div>
       {reason !== "correct" && <p>{t("This records a quality issue, not a promised improvement. Review the existing Pipeline or correct the result manually; a new model test requires separate authorization.")}</p>}
       {onImprove && <button disabled={!loaded || busy || dirty || !revisions.length || freshness.status !== "current"} onClick={() => {
         if (copying.current) return;
@@ -201,7 +205,8 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
       {before && <button disabled={busy || dirty} onClick={() => onKeepOriginal(before.draftId, before.testId, image.image_id)}>{t("Keep original plan")}</button>}
       <span>{t(selected ? "This decision applies only to the selected result." : "This decision applies to this sample image only.")}</span>
       {humanSubmission && <p>Submitting saves this Sandbox correction and prepares a separate revision Draft. It does not call a model or change the tested plan.</p>}
-      <button className={onAdopt ? undefined : "primary"} disabled={!loaded || busy || showBefore || !sample.projection} onClick={() => void save(!humanSubmission)}>{humanSubmission ? "Submit correction" : t(selected ? "Confirm selected result" : onConfirmed ? "Confirm sample and next" : "Confirm this sample")}</button>
+      {humanSubmission?.additionId && !referenceReady && <p role="status">Add a reference target, then adjust its box or enter its category. The initial editing placeholder cannot be submitted.</p>}
+      <button className={onAdopt ? undefined : "primary"} disabled={!loaded || busy || showBefore || !sample.projection || !referenceReady} onClick={() => void save(!humanSubmission)}>{humanSubmission?.additionId ? "Submit reference target" : humanSubmission ? "Submit correction" : t(selected ? "Confirm selected result" : onConfirmed ? "Confirm sample and next" : "Confirm this sample")}</button>
       {onAdopt && <button className="primary" disabled={!loaded || busy || dirty || showBefore || !sample.projection || freshness.status !== "current"} onClick={onAdopt}>{t("Continue with this plan")}</button>}
       {saved && <span role="status">{t("Sample feedback saved")}</span>}
       {error && <p role="alert">{error}</p>}

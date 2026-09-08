@@ -4548,3 +4548,20 @@ has been launched into the running full-browser baseline, so it does not verify 
 Full browser handle 21905 is still live, observed through test 74 with failures at 49
 (independent goal selection) and 67 (multi-label class canvas). Causes still need inspection;
 do not call the suite green or silently restart it. No push or real workspace modification.
+
+### 2026-09-09 — Reference-target canvas integration (verification pending)
+
+The existing SampleFeedbackEditor now accepts either an exact candidate or reference target.
+Reference editing reuses the same annotation canvas, label field, feedback payload, idempotent
+answer API and continuation callback. The user explicitly adds a reference and must change its
+box geometry or enter its category before submission; an untouched seed cannot be submitted.
+Only box/category reference editing is exposed. Existing terminal predictions remain separate.
+Undo can remove the seed and allow a new attempt; restored feedback selects the saved addition
+identity instead of another candidate. Saved/deferred requests retain their owned sample context.
+
+Two pure readiness tests plus the existing suite pass: **209 tests / 43 files**, typecheck and
+diff check pass. Added actual-service E2E cases for box/category request creation, seed blocking,
+submission, duplicate answer, reload/checkpoint and unchanged inference history. These are not
+yet run: the old full-browser server remains active on 21905 (observed through test 94), and
+must finish before the new build is tested. Automatic request generation for no-target evidence
+is still pending; these explicit API-created TEST requests do not prove that Agent behavior.
