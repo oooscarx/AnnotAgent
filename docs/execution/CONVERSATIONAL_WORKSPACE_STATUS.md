@@ -4593,3 +4593,25 @@ repair. The multi-label class canvas failure did not reproduce; no product race 
 Saved screenshots are under `/tmp/annotagent-reference-verification/conversational-workspace`.
 Still required: automatic evidence-driven reference requests, guided full-group verification,
 journey-ready investigation, and a final combined regression. No Live/accuracy/human-test claim.
+
+### 2026-09-09 — Evidence-driven reference assistance
+
+Existing post-sample assistance now prepares a stable reference request when no terminal
+candidate survives and semantic/geometry failure evidence exists, provided the saved scope
+contains a supported box/category Schema. Normal no-target results, missing scores alone, and
+infrastructure/Provider/budget/invalid-artifact failures do not trigger reference work. The
+question describes the evidence limit, invites a reference only if the user can identify it,
+and offers deferral otherwise. It does not infer a hidden target or accept a dataset annotation.
+
+Application regressions (6) pass. The end-to-end application scenario saves a candidate-free
+quality-failure report in a temporary workspace, restarts through assistance recovery, obtains
+one request, saves the answer, and verifies copy/outbox crash recovery without inference. This
+uses explicit TEST report evidence, not a Live model-quality demonstration. Browser automatic
+trigger validation remains pending; the explicit reference canvas paths passed previously.
+
+Management verification handle 2585 terminated: **36 passed, 1 failed (1.3m)**, workspace
+`/tmp/annotagent-guided-e2e-5194`, screenshots `/tmp/annotagent-management-round3`. Guided serial
+management tests all ran/passed. Journey-ready reached shape editing but its four handles
+disappeared: the retained detail response contains the TEST polygon, while the rendered UI
+returns to the original classification. Review's queue refresh can overwrite a later detail
+response. Preserve the trace before another run and fix this read-order race, not the assertion.

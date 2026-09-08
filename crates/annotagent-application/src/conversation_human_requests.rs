@@ -28,6 +28,25 @@ fn first_review_subject(
         })
 }
 
+fn needs_reference_target(result: &annotagent_core::WorkflowDryRunSampleResult) -> bool {
+    use annotagent_core::AnnotationFailureClass as Failure;
+    result.projection.final_candidates.is_empty()
+        && result.projection.review_candidates.is_empty()
+        && result
+            .failure_classes
+            .iter()
+            .any(|class| matches!(class, Failure::SemanticError | Failure::GeometryError))
+        && !result.failure_classes.iter().any(|class| {
+            matches!(
+                class,
+                Failure::InfrastructureFailure
+                    | Failure::ProviderFailure
+                    | Failure::BudgetLimit
+                    | Failure::InvalidArtifact
+            )
+        })
+}
+
 fn validate_subject(
     project: &str,
     test: &WorkflowSampleTest,
@@ -142,6 +161,15 @@ impl LocalApplication {
         {
             bail!("Human assistance requires consistent owned Sandbox evidence");
         }
+        let reference_supported = self
+            .store
+            .sample_scope_seal(sample_id)?
+            .is_some_and(|seal| {
+                matches!(
+                    seal["annotation_schema"]["task"]["kind"].as_str(),
+                    Some("bounding_box" | "classification")
+                )
+            });
         let mut requests = Vec::new();
         // One request per image avoids conflicting optimistic feedback sequences on that image.
         // Further questions require a separately evaluated continuation, not an unbounded queue.
@@ -153,9 +181,12 @@ impl LocalApplication {
                 requests.push(saved.clone());
                 continue;
             }
-            let Some(candidate) = first_review_subject(result) else {
+            let candidate = first_review_subject(result);
+            let reference =
+                candidate.is_none() && reference_supported && needs_reference_target(result);
+            if candidate.is_none() && !reference {
                 continue;
-            };
+            }
             let key = format!(
                 "conversation-sample-human-v1:{conversation}:{task}:{sample_id}:{}",
                 image.image_id
@@ -165,10 +196,11 @@ impl LocalApplication {
             let input = ConversationHumanRequestInput {
                 id, task_id:task, conversation_id:conversation, sample_test_id:sample_id.to_owned(),
                 image_id:image.image_id.clone(), content_hash:image.content_hash.clone(),
-                outcome_id:Some(candidate.outcome.id.clone()), addition_id:None,
+                outcome_id:candidate.map(|value|value.outcome.id.clone()),
+                addition_id:reference.then(||Uuid::new_v5(&id,b"reference-target").to_string()),
                 expected_feedback_sequence:prior.last().map_or(0, |revision| revision.sequence),
-                reason_code:"terminal_result_requires_review".into(),
-                question:"This saved sample result requires human review. Check the selected object or class and correct it if needed; this does not accept dataset annotations.".into(),
+                reason_code:if reference {"identify_target"} else {"terminal_result_requires_review"}.into(),
+                question:if reference {"No usable terminal candidate remained after semantic or geometry checks. If you can identify the target, add a reference box or category. Otherwise defer this request; no target has been inferred and no dataset annotation will be accepted."} else {"This saved sample result requires human review. Check the selected object or class and correct it if needed; this does not accept dataset annotations."}.into(),
                 resume_checkpoint_ref:Uuid::new_v5(&id,b"prepared-repair-draft"),
             };
             requests.push(self.create_conversation_human_request(project, &input)?);
@@ -458,6 +490,33 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn reference_trigger_requires_quality_evidence_not_normal_empty_or_transport_failure() {
+        use annotagent_core::AnnotationFailureClass as Failure;
+        let (test, _) = fixture();
+        let mut result = test.report.samples[0].clone();
+        result.failure_classes = vec![Failure::GeometryError];
+        assert!(!needs_reference_target(&result));
+        result.projection.final_candidates.clear();
+        result.projection.no_target = true;
+        assert!(needs_reference_target(&result));
+        for failure in [
+            Failure::NoCandidate,
+            Failure::MissingScore,
+            Failure::InsufficientEvidence,
+            Failure::ProviderFailure,
+            Failure::InfrastructureFailure,
+            Failure::BudgetLimit,
+        ] {
+            result.failure_classes = vec![failure];
+            assert!(!needs_reference_target(&result));
+        }
+        result.failure_classes = vec![Failure::SemanticError];
+        assert!(needs_reference_target(&result));
+        result.failure_classes.push(Failure::ProviderFailure);
+        assert!(!needs_reference_target(&result));
+    }
+
+    #[test]
     fn reference_subject_does_not_require_or_fabricate_a_terminal_outcome() {
         let (mut test, mut input) = fixture();
         test.report.samples[0].projection = annotagent_core::ResultProjection::default();
@@ -477,6 +536,15 @@ pub(crate) mod tests {
 
     #[test]
     fn correction_commands_validate_live_pixels_and_restore_saved_answers_without_inference() {
+        correction_command_scenario(false);
+    }
+
+    #[test]
+    fn reference_assistance_recovers_after_restart_and_resumes_once_without_inference() {
+        correction_command_scenario(true);
+    }
+
+    fn correction_command_scenario(reference: bool) {
         let temporary = tempfile::tempdir().unwrap();
         let app = LocalApplication::new(temporary.path()).unwrap();
         let project = "human-test";
@@ -524,6 +592,19 @@ pub(crate) mod tests {
             .outcome
             .clone();
         sample.report.samples[0].outcomes.push(outcome.clone());
+        if reference {
+            sample.report.samples[0].outcomes.clear();
+            sample.report.samples[0].projection.final_candidates.clear();
+            sample.report.samples[0].projection.no_target = true;
+            sample.report.samples[0].failure_classes =
+                vec![annotagent_core::AnnotationFailureClass::GeometryError];
+            app.store
+                .save_sample_scope_seal(
+                    &sample.id,
+                    &serde_json::json!({"annotation_schema":{"task":{"kind":"bounding_box"}}}),
+                )
+                .unwrap();
+        }
         app.store.save_workflow_sample_test(&sample).unwrap();
         app.store.reserve_sample_operation(&annotagent_storage::SampleOperation { id:sample.id.clone(),project_id:project.into(),draft_id:sample.draft_id.clone(),authorization_fingerprint:"TEST".into(),request:serde_json::json!({"conversation":{"conversation_id":conversation,"task_id":task.id,"human_review":true}}),status:"queued".into(),error:None,created_at:chrono::Utc::now().to_rfc3339(),updated_at:chrono::Utc::now().to_rfc3339() }).unwrap();
         input.conversation_id = conversation;
@@ -548,7 +629,13 @@ pub(crate) mod tests {
             .prepare_conversation_sample_requests(project, conversation, task.id, &sample.id)
             .unwrap();
         assert_eq!(prepared.len(), 1);
-        assert_eq!(prepared[0].input.outcome_id, input.outcome_id);
+        if reference {
+            assert!(prepared[0].input.outcome_id.is_none());
+            assert!(prepared[0].input.addition_id.is_some());
+            assert_eq!(prepared[0].input.reason_code, "identify_target");
+        } else {
+            assert_eq!(prepared[0].input.outcome_id, input.outcome_id);
+        }
         input = prepared[0].input.clone();
         assert_eq!(
             app.prepare_conversation_sample_requests(project, conversation, task.id, &sample.id)
@@ -571,11 +658,15 @@ pub(crate) mod tests {
             sample_test_id: sample.id,
             image_id: input.image_id.clone(),
             sequence: 1,
-            reason: annotagent_storage::SampleFeedbackReason::Correct,
+            reason: if reference {
+                annotagent_storage::SampleFeedbackReason::MissingTarget
+            } else {
+                annotagent_storage::SampleFeedbackReason::Correct
+            },
             outcome_id: input.outcome_id.clone(),
             corrected_value: outcome.value,
-            corrected_label: None,
-            addition_id: None,
+            corrected_label: reference.then(|| outcome.label.clone()),
+            addition_id: input.addition_id.clone(),
             note: "TEST".into(),
             created_at: chrono::Utc::now(),
         };
@@ -726,11 +817,15 @@ pub(crate) mod tests {
         next.id = Uuid::new_v4();
         next.resume_checkpoint_ref = Uuid::new_v4();
         next.expected_feedback_sequence = later.sequence;
+        if reference {
+            next.addition_id = Some(Uuid::new_v4().to_string());
+        }
         app.create_conversation_human_request(project, &next)
             .unwrap();
         let mut next_answer = later.clone();
         next_answer.revision_id = Uuid::new_v4().to_string();
         next_answer.sequence += 1;
+        next_answer.addition_id = next.addition_id.clone();
         app.answer_conversation_human_request(
             project,
             conversation,
