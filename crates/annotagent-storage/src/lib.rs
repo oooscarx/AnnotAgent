@@ -10,6 +10,11 @@ pub use conversation_builder::ConversationBuilderOperation;
 pub use conversation_calls::ConversationCallCancellation;
 pub use conversation_project_budget::{ProjectCallLimit, ProjectCallLimitInput};
 mod conversation_human_requests;
+mod conversation_journey;
+pub use conversation_journey::{
+    ConversationJourneyConsent, ConversationJourneyRecord, JourneyImageScope, JourneyModelScope,
+    JourneySampleScope,
+};
 mod conversation_schema;
 mod conversation_task_selection;
 mod conversation_tasks;
@@ -617,6 +622,8 @@ impl SqliteStore {
             transaction.execute_batch(include_str!("../../../migrations/0037_conversation_schema_clarifications.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0038_conversation_task_selection.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0039_conversation_human_deferrals.sql"))?;
+            transaction.execute_batch(include_str!("../../../migrations/0040_conversation_journey_consents.sql"))?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(40,'conversation_journey_consents',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(39,'conversation_human_deferrals',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(38,'conversation_task_selection',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(37,'conversation_schema_clarifications',?1)",[Utc::now().to_rfc3339()])?;

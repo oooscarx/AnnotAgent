@@ -2490,3 +2490,42 @@ Narrowed this asset to the complete unknown-outcome notice itself; the disabled 
 is proven by the browser assertion, not by that cropped notice. No UI behavior changed.
 Final capture rerun `/tmp/annotagent-guided-e2e-29840` passed 1/1 in 14.0 seconds; the
 notice is fully visible without the fixed-header occlusion.
+
+### M2 coordinator foundation — immutable combined consent and concrete sample sealing
+
+Started the missing Builder→sample authorization mechanism, not another presentation cleanup.
+Migration 40 introduces a task-owned immutable consent envelope: exact Builder scope/operation,
+Schema identity/revision/digest, ordered image IDs/content hashes, allowed model binding digests,
+bounded phase call ceilings, explicit unknown-price acceptance, expiry and fixed sample operation.
+The eventual Application adapter must derive these hashes from actual Registry/destination and
+permission snapshots, not trust LLM or client assertions. That adapter and HTTP/UI execution
+integration are NOT implemented by this foundation and remain required work.
+
+The stored sample seal fixes the actually generated Draft/revision/fingerprint only if it matches
+the original Schema and image selection and uses a subset of permitted exact model bindings within
+the sample call bound. One consent seals at most one such continuation. Changing a destination's
+binding digest, image bytes, Schema, operation identity, call bound or sealed Draft is rejected.
+Explicit revocation is durable and idempotent; replaying the original save does not un-revoke it
+or extend its lifetime. Read/retry preserves receipts after expiry but is not permission to execute.
+All reads/writes check stable Project→Conversation→Task ownership. No keys are stored in the new
+record. No model/annotation/Project YAML mutations or independent inference ledger are introduced.
+Existing task and Project call admission, pending HumanRequest gates, current Registry/data
+validation, cancellation and immutable Sample Operation admission remain mandatory at execution.
+
+Tests cover fresh/invalid/duplicate/changed envelopes, expiry/unknown-cost/limit validation,
+restart preservation, exact sample retry, out-of-scope rejection, ownership and revocation. The
+initial 3 tests passed; all 65 storage unit + 16 integration tests and all-target/all-feature
+Clippy passed. A separate-connection concurrent conflicting-Draft seal test was then added.
+This is not yet an executable combined journey, nor an authorization UI/product claim. It is
+deliberately not exposed as a fake ready action. No new browser screenshot is relevant until
+integration; existing actual-page evidence remains scoped to its prior commits.
+
+Hardened the foundation before commit: Schema lookup now verifies an actual persisted definition
+owned by the task at the exact revision and compares its SHA-256, with checked SQL integer
+conversion (the first direct u64 SQL parameter did not compile and was corrected). Builder and
+sample operation IDs are unique in consent storage, preventing a new consent ID from silently
+rebinding the same execution identities. A two-connection race admits only one concrete Draft
+seal; revoking that saved seal also rejects late continuation. Final storage counts are 66 unit
+and 16 integration tests. Server-target all-feature/all-target Clippy additionally compiles the
+Application/Server dependency chain. This migration was exercised only in fresh temporary test
+databases, not the user's running workspace. Live and human tests remain unexecuted.
