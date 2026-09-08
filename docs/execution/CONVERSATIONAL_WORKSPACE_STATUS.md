@@ -4865,3 +4865,37 @@ That stronger run 80538 passed **2/2 (6.5s)** in
 `/tmp/annotagent-history-reference-exact`. Production build succeeded during these
 runs, with the existing large-chunk warning. These tests do not claim Live model
 quality or real human usability. Full combined regression remains outstanding.
+
+### 2026-09-09 — Current-source completion audit and combined round 5
+
+Previous increment was progress (committed runtime-backed history paging), not a wait
+or a completion claim. At `32eb846` the Rust command chain completed with exit 0:
+`cargo fmt --all --check && cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo test --workspace --all-features && cargo build --workspace --all-features`.
+Handle 16894 is terminal. Existing explicitly ignored external-weight/paid tests remain
+ignored; successful workspace tests are not evidence of Live SAM or Provider accuracy.
+
+The complete browser suite is running on **36529**, using the actual process-confirmed
+workspace `/tmp/annotagent-guided-e2e-11895`, service 8791, screenshots under
+`/tmp/annotagent-full-browser-round5`. First 18 tests passed at this checkpoint; this
+is not the suite total or a green final result. Continue polling that same handle.
+Do not start another browser suite or rebuild its Web assets until it is terminal.
+No product source was changed during this combined run.
+
+Re-read attachment sections 3–18 and checked current source, rather than treating old
+status prose as proof. Current evidence boundaries:
+
+| Requirement area | Inspected current evidence | Remaining conclusion |
+| --- | --- | --- |
+| Goal → Schema → Builder → Sample with one initial consent | `conversation-initial-journey.spec.ts` exercises UI and actual child service receipts, including clarification | Current combined result pending; Fixture only |
+| Canvas answer → Revision → checkpoint | `conversation-samples.spec.ts` checks lost ACK, exact revision, duplicate answer and resume Draft; `conversation-reference-target.spec.ts` checks bbox/category targets | Proven targeted tests; all-suite result pending |
+| Correction → autonomous bounded improvement | `conversation_human_requests.rs::continue_conversation_correction`, `ConversationRepairCard.tsx`, and sample browser test | Current answer prepares a Draft locally; Builder repair and subsequent sample each use a separate authorization. Not equivalent to automatically continuing an already-authorized improvement allowance |
+| Initial authorization scope | `ConversationJourneyConsent` binds concrete Builder and sample operation IDs, model/image scope, call bounds, expiry; only clarification continuation is explicitly permitted | Do not reinterpret existing saved grants as permission for new repair operations. A bounded opt-in continuation needs an explicit scope design using existing services |
+| Formal processing and export | Sample test source verifies immutable batch scope, lost start ACK, duplicate operation ID, Review save failure, real JSON file/archive and durable export events | Broad source assertions exist; await their execution in round 5 |
+| Reference assistance without a candidate | Application `needs_reference_target` requires semantic/geometry evidence and excludes infrastructure/provider/budget failures | Actual bbox/category reference path exists. Do not claim generic point/comparison request types from it |
+| Large journal and images | Tail paging, exact context reads, bounded thumbnails and cache regression | No-task reference-only scan and task auxiliary pagination remain limitations; no measured end-to-end latency claim |
+| Accessibility | Real viewport/keyboard/reduced-motion tests; simulated composition events | Native 200% zoom, actual OS IME and assistive-technology testing remain unexecuted |
+| Quality / usability | Explicit TEST transport and real local persistence | Live inference/accuracy and real novice study remain unexecuted, not replaced by fixtures |
+
+The automatic improvement continuation row is a fidelity issue to resolve explicitly,
+not permission to increase budgets or silently extend old consent. The overall goal
+remains active. No remote changes, push, credentials or real workspace mutations.
