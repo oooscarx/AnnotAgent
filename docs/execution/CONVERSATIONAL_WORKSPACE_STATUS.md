@@ -4271,3 +4271,34 @@ still reference image assets rather than server-generated small previews. This i
 bounded thumbnail rendering, not server-side pagination, lower index-transfer bytes or a measured
 end-to-end speedup. Those remain relevant to the broader performance audit. No real workspace,
 Provider, remote or previous repository PNG was changed; no push or Live/human claim.
+
+### 2026-09-09 — Current-tree full Rust regression checkpoint
+
+Verified the current implementation after the export/navigation/keyboard/thumbnail increments.
+The following exact chained commands completed with exit 0 (not just compilation started):
+
+```
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
+cargo build --workspace --all-features
+```
+
+All executed Rust tests pass. Explicitly ignored billable Provider and legal-weight-dependent
+real model tests remain ignored: this does not claim all live backends were exercised. The
+application suite reports 145 passed/one billable ignored and the separate offline advisor
+integration passes; process-death, storage and other workspace suites were included in the
+full command. No ignored tests were force-enabled and no old conversation credential was used.
+
+The default-entry screenshot now honors the isolated evidence directory. Current-tree browser
+checkpoint passes the existing default-entry test and both complete bbox/classification-review
+paths: 3 passed, 31.2s harness, workspace `/tmp/annotagent-guided-e2e-97103`, screenshots under
+`/tmp/annotagent-regression-checkpoint`. The paths include real Rust persistence, TEST model
+transport, human canvas/Review operations and verified archive downloads; they are not live
+accuracy or human usability trials. Production Web assets were rebuilt by that harness.
+
+This is a regression checkpoint, not completion: full-browser-suite evidence still needs a
+non-overwriting screenshot strategy for the remaining old hardcoded paths. Existing modified
+repository screenshots were preserved. Other open acceptance items include the full requirement
+matrix audit, metadata/thumbnail transfer performance and unexecuted assistive-technology,
+native IME, actual browser zoom and human/live-conditional checks. No push or remote change.
