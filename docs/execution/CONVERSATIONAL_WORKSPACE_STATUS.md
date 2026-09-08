@@ -5093,3 +5093,25 @@ This completes the post-correction single-authorization UI slice, not the whole 
 Current-image class-group repair and pre-authorized improvement after a future answer
 are not enabled by this UI change. Old grants do not acquire those permissions. Final
 combined full-suite validation and conditional Live/accessibility reporting remain open.
+
+### 2026-09-09 — Repair sample storage scope fence
+
+Before extending answer-triggered continuation, audited the existing repair envelope.
+Application already verifies a completed Builder receipt and exact resulting revision;
+Storage's sample seal nevertheless accepted a different Draft under a repair consent.
+Added a regression first: `repair_sample_cannot_switch_drafts_or_regress_the_authorized_revision`
+failed with `repair accepted draft` (test process 2448, exit 101). This is a storage
+invariant gap, not evidence that the current UI had executed an unauthorized Draft.
+
+The sample scope now requires the authorized repair Draft identity and a revision at
+least as recent as the approved starting revision. Builder may advance that same copy;
+Application still checks its exact final receipt/hash. Once sealed, even a later revision
+cannot replace it. Regression checks rejected attempts leave no sample seal, then checks
+a valid advancement, database reopen, idempotent retry and rejection of later replacement.
+
+Verification: all 9 Storage journey tests and Storage all-target/all-feature clippy pass
+(29199); Application journey regression passes (81827, 1 test). Isolated temporary
+SQLite only; no model calls, user workspace changes, remote changes or push. No browser
+changes in this increment. Pre-authorizing a pending human answer remains unimplemented;
+it must freeze the request/image/feedback revision and resolve only that acknowledged
+answer, not authorize arbitrary future corrections. The overall goal remains incomplete.

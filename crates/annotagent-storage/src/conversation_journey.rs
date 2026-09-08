@@ -191,6 +191,10 @@ fn fits(consent: &ConversationJourneyConsent, sample: &JourneySampleScope) -> bo
     sample.operation_id == consent.sample_operation_id
         && !sample.draft_id.is_nil()
         && sample.draft_revision > 0
+        && consent.repair.as_ref().is_none_or(|repair| {
+            Uuid::parse_str(&repair.draft_id).ok() == Some(sample.draft_id)
+                && sample.draft_revision >= repair.revision
+        })
         && digest(&sample.authorization_fingerprint)
         && sample.schema_id == consent.schema_id
         && sample.schema_revision == consent.schema_revision
@@ -631,6 +635,89 @@ pub(crate) mod tests {
             maximum_calls: 10,
         };
         (project, conversation, consent, sample)
+    }
+
+    #[test]
+    fn repair_sample_cannot_switch_drafts_or_regress_the_authorized_revision() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TEST-repair-seal.db");
+        let store = SqliteStore::open(&path).unwrap();
+        let (project, conversation, mut consent, mut sample) = setup(&store);
+        consent.repair = Some(ConversationBuilderRepair {
+            request_id: Uuid::new_v4(),
+            draft_id: sample.draft_id.to_string(),
+            revision: sample.draft_revision,
+            content_hash: "a".repeat(64),
+        });
+        store
+            .save_conversation_journey(&project, conversation, &consent)
+            .unwrap();
+        for change in ["draft", "older revision"] {
+            let mut wrong = sample.clone();
+            if change == "draft" {
+                wrong.draft_id = Uuid::new_v4();
+            } else {
+                wrong.draft_revision -= 1;
+            }
+            assert!(
+                store
+                    .seal_conversation_journey_sample(
+                        &project,
+                        conversation,
+                        consent.task_id,
+                        consent.id,
+                        &wrong
+                    )
+                    .is_err(),
+                "repair accepted {change}"
+            );
+            assert!(
+                store
+                    .conversation_journey(&project, conversation, consent.task_id, consent.id)
+                    .unwrap()
+                    .unwrap()
+                    .sample
+                    .is_none()
+            );
+        }
+        // Builder may advance the same editable copy; its exact receipt is
+        // checked by Application before this storage-level scope fence.
+        sample.draft_revision += 1;
+        let sealed = store
+            .seal_conversation_journey_sample(
+                &project,
+                conversation,
+                consent.task_id,
+                consent.id,
+                &sample,
+            )
+            .unwrap();
+        drop(store);
+        let store = SqliteStore::open(&path).unwrap();
+        assert_eq!(
+            store
+                .seal_conversation_journey_sample(
+                    &project,
+                    conversation,
+                    consent.task_id,
+                    consent.id,
+                    &sample
+                )
+                .unwrap(),
+            sealed
+        );
+        sample.draft_revision += 1;
+        assert!(
+            store
+                .seal_conversation_journey_sample(
+                    &project,
+                    conversation,
+                    consent.task_id,
+                    consent.id,
+                    &sample
+                )
+                .is_err()
+        );
     }
 
     #[test]
