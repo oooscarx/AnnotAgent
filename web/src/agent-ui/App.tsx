@@ -415,6 +415,12 @@ export function AgentPreviewApp({
                               <strong>⌁ AnnotAgent</strong>
                             )}
                             <p>{item.text}</p>
+                            {item.reference && (
+                              <small>
+                                引用：示意图片 {item.reference.image} ·{" "}
+                                {item.reference.candidate}
+                              </small>
+                            )}
                             {item.role === "user" && (
                               <small>
                                 演示输入 ·{" "}

@@ -166,7 +166,12 @@ export class FixtureAdapter implements WorkspaceAdapter {
     return t;
   }
   private check(c: Command, payload: unknown): Task | null {
-    const sig = JSON.stringify({ project: c.project, task: c.task, payload });
+    const sig = JSON.stringify({
+      project: c.project,
+      task: c.task,
+      selection: c.selection,
+      payload,
+    });
     if (this.commands.has(c.id)) {
       if (this.commands.get(c.id) !== sig) throw Error("同一命令不能改变内容");
       return null;
@@ -222,7 +227,13 @@ export class FixtureAdapter implements WorkspaceAdapter {
       this.publish();
       return;
     }
-    t.items.push({ id: c.id, role: "user", text, model });
+    t.items.push({
+      id: c.id,
+      role: "user",
+      text,
+      model,
+      reference: c.selection,
+    });
     t.title = text.slice(0, 35);
     t.draft = "";
     t.operationModel = model;

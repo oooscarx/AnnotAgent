@@ -45,6 +45,7 @@ export type ThreadItem = {
   role: "user" | "assistant";
   text: string;
   model?: string;
+  reference?: Command["selection"];
 };
 export type Task = {
   id: string;
