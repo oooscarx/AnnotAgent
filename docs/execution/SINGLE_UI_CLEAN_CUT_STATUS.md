@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Native stop-target selection recovery and legacy deletion
+
+Audited the retired ConversationStopCard against HttpAdapter stop selection. Native selection now persists the exact message and target before POST, restores only that target after an uncertain response, rejects foreign conversation/message receipts and conflicting server choices, and clears recovery only after matching acknowledgment. Choices include task and operation identity rather than ambiguous same-kind labels. Missing storage blocks submission; passive reload does not repeat POST. Deleted the unmounted ConversationStopCard and unreferenced agent-model-picker stylesheet, retaining shared stop-domain helpers.
+
+Verification:308 unit tests across90 files, typecheck and isolated production build passed. Adapter regression drops a selection response, reloads the original choice, rejects a different target without POST, and retries the identical selection. Actual TEST HTTP browser stop regression passed: queued input, narrow-screen Stop, server stopping receipt, unknown remote outcome and reload without fictional resume. Multi-target lost-selection browser execution remains unverified; the adapter transport test is not presented as that evidence. Build served from /tmp/annotagent-native-stop-selection-dist by owned8794/8795 TEST fixture; no user8787/8788, true workspace, Published records, credentials or remote changes. Baseline bc3813c plus this slice. Goal remains active; clarification/future-rule/repair migration, broader Replay and final acceptance are still required.
+
 ## Native Builder independent stop and cancellation recovery
 
 Actual slow-TEST execution exposed a real regression: synchronous launch kept the shared busy lock, disabling Stop until the operation finished. Stop now has its own request lock and remains reachable while launch is pending. Its exact operation intent is persisted before cancellation POST; passive task-owned cancellation reads restore it after refresh. Unknown stop does not re-enable a model POST. Launch also rechecks server cancellations before submission. Settled matching records clear pending recovery, while historical cancellation remains readable; UI reports cancellation receipt, not guaranteed remote termination or refunded cost.

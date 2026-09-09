@@ -10,6 +10,8 @@ import { canCancelQueuedMessage, isPendingQueuedMessage, type QueuedMessage } fr
 import type { QueueConsent, QueuePreview } from "../conversation-queue-api";
 import type { SendCommand, SendReceipt } from "../conversation-send";
 import type { StopRequestRecord } from "../conversation-stop-api";
+import {ownedStopSelection} from "./stopSelection";
+import {stopTargetMatches} from "../conversation-control";
 import type { WorkspaceAdapter, Snapshot, Task, Command, Settings, ImageId, Box, Phase, Action } from "./adapter";
 
 type Page<T> = { items: T[]; next_cursor: string | number | null };
@@ -229,6 +231,9 @@ export class HttpAdapter implements WorkspaceAdapter {
       }
       const persistedStop = this.stored<{id:string}|null>(`stop.${id}`, null) || [...thread].reverse().find(t=>t.message.input.reference?.scope==="stop_request");
       const stop = persistedStop && ws ? await this.transport<StopRequestRecord & {normalized_state: Phase|null}>(`${this.conversation(project)}/stop-requests/${esc(persistedStop.id)}`, {signal:ctrl.signal}) : null;
+      const selectionRaw=persistedStop?this.storage?.getItem(this.key(`stop-selection.${id}.${persistedStop.id}`))||null:null;
+      const stopSelection=stop?ownedStopSelection(stop,p.conversation_id!,persistedStop!.id,selectionRaw):undefined;
+      if(stopSelection&&stop?.selected_target)this.save(`stop-selection.${id}.${persistedStop!.id}`,null);
       if (seq !== this.sequence) return;
       const receipts = [
         ...(ws?.calls || []).map(c=>({id:c.id,title:"模型结构化决策",status:c.status==="completed" && (c.failure || c.evidence?.decision?.Err) ? "invalid_result" : c.status,detail:failureDetail(c.failure) || c.evidence?.decision?.Ok?.rationale || c.evidence?.decision?.Err || c.evidence?.error,startedAt:c.started_at || undefined,finishedAt:c.completed_at || undefined,durationMs:c.duration_ms ?? undefined,stage:callStage(c.stage)})),
@@ -243,7 +248,7 @@ export class HttpAdapter implements WorkspaceAdapter {
         ...result, approval:pendingApproval?.view || t.approval, actions: {...ws?.actions || t.actions,answer:{available:!!result.human && ["classification","bounding_box"].includes(result.human.kind),reason:"仅保存当前人工作答的样例修正"}}, model: ws?.agent_model.model_profile_id || this.defaults.pipeline_builder || t.model,
         loaded:true, image: human?.input.image_id || artifacts[0]?.id || "", editBoxes: edits.revision===result.resultRevision ? edits.boxes || {} : {},
         phase, receipts, humanQuestion:human?.input.question,
-        stopTargets:stop?.status==="needs_selection"?stop.targets.map(t=>({id:`${t.kind}:${t.id}`,label:`${t.kind} · ${t.state}`})):[],
+        stopTargets:stop?.status==="needs_selection"?stop.targets.filter(t=>!stopSelection||stopTargetMatches(t,stopSelection.target)).map(target=>({id:`${target.kind}:${target.id}`,label:`${stopSelection?"核实原选择 · ":""}${this.state.tasks.find(t=>t.id===target.task_id)?.title||target.task_id} · ${target.kind} · ${target.id.slice(0,8)} · ${target.state}`})):[],
         resumeTargets:ws?.resume_actions?.filter(a=>a.available).map(a=>({id:`${a.kind}:${a.id}`,label:a.kind,reason:a.reason})),
         queue: ws?.queue.filter(q => isPendingQueuedMessage(q.status)).map(q => q.input.message.text) || [],
         queueEntries: ws?.queue.map(q=>({id:q.input.message.id,text:q.input.message.text,status:q.status,canCancel:canCancelQueuedMessage(q.status),canPlan:!human&&q.status==="waiting_for_dispatch"&&!q.planning_call_id})),
@@ -367,9 +372,18 @@ export class HttpAdapter implements WorkspaceAdapter {
     if(!input || !task.stopTargets?.some(t=>t.id===target))throw new Error("停止目标已变化，请重新读取");
     const root=`${this.conversation(task.project)}/stop-requests/${esc(input.id)}`;
     const record=await this.transport<StopRequestRecord>(root);
+    const suffix=`stop-selection.${task.id}.${input.id}`;
+    const pending=ownedStopSelection(record,task.conversationId!,input.id,this.storage?.getItem(this.key(suffix))||null);
     const chosen=record.targets.find(t=>`${t.kind}:${t.id}`===target);
     if(!chosen)throw new Error("此目标不在已冻结的停止请求中");
-    await this.transport(`${root}/select`,{method:"POST",body:JSON.stringify({target:{kind:chosen.kind,id:chosen.id,task_id:chosen.task_id}})});
+    if(pending&&!stopTargetMatches(pending.target,chosen))throw new Error("原停止选择尚未核实，不能切换目标");
+    const selection=pending||{message_id:input.id,target:{kind:chosen.kind,id:chosen.id,task_id:chosen.task_id},pending:true};
+    if(!this.storage)throw new Error("无法保存停止目标恢复记录，未发送请求");
+    this.save(suffix,selection);
+    const result=await this.transport<StopRequestRecord>(`${root}/select`,{method:"POST",body:JSON.stringify({target:selection.target})});
+    ownedStopSelection(result,task.conversationId!,input.id,JSON.stringify(selection));
+    if(!result.selected_target||!stopTargetMatches(result.selected_target,selection.target))throw new Error("停止选择尚未被服务器确认");
+    this.save(suffix,null);
     await this.reloadCurrent(task);
   }
   async resumeOperation(c: Command, target?:string) {

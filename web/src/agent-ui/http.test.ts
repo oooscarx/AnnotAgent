@@ -41,6 +41,17 @@ function mockTransport(overrides: Record<string, unknown | (() => Promise<unknow
   return { transport, paths };
 }
 describe("HTTP UI read boundary (synthetic transport tests, not HTTP E2E)", () => {
+  it("freezes a lost stop selection across reload and refuses another target",async()=>{
+    const targets=[{kind:"builder",id:"one",task_id:"t1",state:"running",parent_journey_ids:[]},{kind:"call",id:"two",task_id:"t1",state:"running",parent_journey_ids:[]}];
+    let record={message:{conversation_id:"conversation-a",input:{id:"stop",text:"停止",image:null,reference:{scope:"stop_request",task_id:"t1"}}},status:"needs_selection",targets,selected_target:null as unknown,normalized_state:null};
+    const stopPath="/api/projects/TEST-alpha/conversations/conversation-a/stop-requests/stop";
+    const {transport:base}=mockTransport({[stopPath]:async()=>record});const bodies:string[]=[];
+    const transport:Transport=async<T>(path:string,init?:RequestInit)=>{if(path===`${stopPath}/select`){bodies.push(String(init?.body));if(bodies.length===1)throw new Error("TEST lost before acknowledgement");record={...record,status:"cancel_requested",selected_target:JSON.parse(String(init?.body)).target};return record as T;}return base<T>(path,init);};
+    const values=new Map<string,string>([["annotagent.http-ui.TEST-workspace.stop.t1",JSON.stringify({id:"stop"})]]);const storage={getItem:(k:string)=>values.get(k)||null,setItem:(k:string,v:string)=>values.set(k,v)} as unknown as Storage;
+    const adapter=new HttpAdapter(transport,storage);await adapter.refresh();await adapter.loadTask("TEST-alpha","t1");const c={id:"selection",task:"t1",project:"TEST-alpha",revision:"schema-1"};
+    await expect(adapter.selectStop(c,"builder:one")).rejects.toThrow("TEST lost");await adapter.loadTask("TEST-alpha","t1");expect(adapter.snapshot().tasks.find(t=>t.id==="t1")?.stopTargets?.map(t=>t.id)).toEqual(["builder:one"]);
+    await expect(adapter.selectStop(c,"call:two")).rejects.toThrow();expect(bodies).toHaveLength(1);await adapter.selectStop(c,"builder:one");expect(bodies[1]).toBe(bodies[0]);expect(adapter.snapshot().tasks.find(t=>t.id==="t1")?.stopTargets).toEqual([]);
+  });
   it("keeps original canvas resources separate from controlled thumbnail resources",async()=>{
     const {transport}=mockTransport({"/api/projects/TEST-alpha/images":{images:[{image_id:"i",name:"image",url:"/api/images/i/file",thumbnail_url:"/api/images/i/thumbnail"}]}});
     const adapter=new HttpAdapter(transport);await adapter.refresh();await adapter.loadTask("TEST-alpha","t1");expect(adapter.snapshot().artifacts[0]).toMatchObject({src:"/api/images/i/file",thumbnail:"/api/images/i/thumbnail"});
