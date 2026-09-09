@@ -60,6 +60,8 @@
 .conversation-processing .journey-consent h3 { font-size: 1rem; line-height: 1.4; margin: 0; }
 .conversation-schema-card h3 { margin: 0; }
 .conversation-history > [aria-label="Human requests"] { display: grid; gap: 14px; min-width: 0; }
+.conversation-history > .conversation-human-requests[data-empty=true] { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 12px; font-size: .85rem; }
+.conversation-human-requests[data-empty=true] > button { background: transparent; border-color: transparent; padding: 4px 0; min-height: 44px; text-decoration: underline; }
 .conversation-history > [aria-label="Human requests"] h3 { margin: 0; }
 .conversation-history > [aria-label="Human requests"] > button { justify-self: start; }
 .conversation-history > [aria-label="Human requests"] article { padding-block: 12px; border-block-start: 1px solid var(--aa-border); }

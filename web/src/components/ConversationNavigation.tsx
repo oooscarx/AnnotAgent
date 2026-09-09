@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ConversationMessage, ConversationTask } from "../types";
 
 /** Current backend has one primary conversation per Project, with independent tasks.
@@ -14,14 +14,22 @@ export function ConversationNavigation({ projectName, tasks, messages, selectedT
   onSettings: () => void;
 }) {
   const [search, setSearch] = useState("");
-  const [collapsed, setCollapsed] = useState(() => window.matchMedia("(max-width: 1024px)").matches);
+  const [narrow,setNarrow]=useState(()=>window.matchMedia("(max-width: 1024px)").matches);
+  const [userCollapsed,setUserCollapsed]=useState<boolean>();
+  const collapsed=userCollapsed??narrow;
+  useEffect(()=>{
+    const query=window.matchMedia("(max-width: 1024px)");
+    const change=()=>setNarrow(query.matches);
+    query.addEventListener("change",change);change();
+    return ()=>query.removeEventListener("change",change);
+  },[]);
   const entries = tasks.map(task => ({
     id: task.input.id,
     title: messages.find(message => message.input.id === task.input.source_message_id)?.input.text ?? `Task ${task.input.id.slice(0, 8)}`,
   }));
   const filtered = entries.filter(entry => entry.title.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
   return <nav className="agent-conversation-navigation" data-collapsed={collapsed} aria-label="Conversations">
-    <button type="button" aria-expanded={!collapsed} aria-controls="agent-conversation-list" onClick={() => setCollapsed(value => !value)}>{collapsed ? "Show tasks" : "Hide tasks"}</button>
+    <button type="button" aria-expanded={!collapsed} aria-controls="agent-conversation-list" onClick={() => setUserCollapsed(!collapsed)}>{collapsed ? "Show tasks" : "Hide tasks"}</button>
     <div id="agent-conversation-list" hidden={collapsed}>
       <p className="agent-navigation-project">{projectName}</p>
       <label>Search tasks<input type="search" value={search} onChange={event => setSearch(event.target.value)} /></label>

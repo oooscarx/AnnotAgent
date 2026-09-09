@@ -693,3 +693,41 @@ Verification:
 No user workspace cleanup, Published Version modification, remote change or push.
 Full Agent-first completion, six final screenshots, queue/continuation, compact thread
 objects, native zoom across the complete flow and live/human validation remain open.
+
+## M1 continuation — remove redundant thread context, 2026-09-09
+
+Resumed after verified mode work in 62e201a. The initial welcome/input explanation
+now appears only in an empty conversation, not above every existing task. An explicitly
+selected goal remains identified in its saved message and navigation, without a button
+to select itself again. Other messages retain their goal-selection action; legacy
+messages without an explicit task URL can still be admitted through that action.
+No goal, history or selection API was removed.
+
+An actually loaded, entirely empty human-request list uses a compact inline status and
+refresh action. Errors, loading state, pending help, selected completed requests,
+deferred work and other-goal history retain their existing treatment and controls.
+Existing five rendering regressions are preserved; two new tests cover the compact
+empty boundary and retained actionable/foreign history. No failure is reported empty.
+
+Actual screenshots revealed that shrinking a desktop window kept the default expanded
+task navigation. It now follows the media query until the user explicitly chooses a
+collapsed/expanded state. Manual choices are retained while mounted; cross-reload
+layout preference persistence is still outstanding.
+
+Verification: typecheck and production build passed; 242 unit tests / 49 files passed
+(16071). Thread context + Plan/Execute + Send browser tests 7/7 passed (18091), isolated
+`/tmp/annotagent-guided-e2e-68455`. They check independent task switching, URL refresh,
+no redundant selected-goal action, read-only request refresh, zero inference ledger
+entries for selection, 1440/1024/390 widths, automatic nav collapse and manual reopening.
+This is viewport evidence, not native 200% or human usability validation.
+
+Actual TEST application screenshots inspected: `agent-thread-context-1440.png` and
+`agent-thread-context-390.png`. They show reduced repeated context and the mobile
+navigation correction, but still reveal legacy planning forms and oversized actions.
+They are partial regression evidence, not the six final designed states. Older tests
+asserting the selected goal's redundant aria-pressed button need migration to saved
+context/navigation assertions; no full legacy browser-suite pass is claimed.
+
+No backend/credential/Published Version/user-workspace mutation, push or remote change.
+Full compact thread/Plan blocks, attachment integration, queue/continuation and final
+visual/accessibility evidence remain unfinished.

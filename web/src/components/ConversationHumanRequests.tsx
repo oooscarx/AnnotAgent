@@ -38,7 +38,8 @@ export function ConversationHumanRequests({requests,taskId,activeId,ready,loadEr
     </div>
     {pending===value.input.id&&<p role="status">Saving request state…</p>}
   </article>;}
-  return <section aria-label="Human requests" className="conversation-human-requests">
+  const empty=ready&&!loadError&&current.length===0&&history.length===0;
+  return <section aria-label="Human requests" className="conversation-human-requests" data-empty={empty}>
     {!ready ? loadError ? <p role="alert">Could not load saved requests: {loadError}. Refresh requests retries the read; it does not start inference.</p> : <p role="status">Loading saved requests…</p> : <>
       {current.length>0&&<><h3>Requests for your help</h3><p className="muted">For the current annotation goal. Opening a request does not call a model.</p>{current.map(card)}</>}
       {history.length>0&&<details><summary>Request history and other goals ({history.length}){otherPending>0 ? ` · ${otherPending} awaiting help in other goals` : ""}</summary>{history.map(card)}</details>}

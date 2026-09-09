@@ -40,3 +40,26 @@ it("keeps deferred work unfinished and provides an explicit reopen action",()=>{
   expect(html).not.toContain("No outstanding visual requests");
   expect(html).not.toContain("Retry Draft preparation");
 });
+
+const actions={onRefresh:()=>{},onOpen:()=>{},onCancel:async()=>{},onRetry:async()=>{},onInspect:()=>{}};
+it("only compacts an actually loaded empty request list",()=>{
+  const empty=renderToStaticMarkup(<ConversationHumanRequests {...actions} requests={[]} ready taskId="TEST-task"/>);
+  expect(empty).toContain('data-empty="true"');
+  expect(empty).toContain("Refresh requests");
+  expect(empty).toContain("No outstanding visual requests for this goal.");
+  const failed=renderToStaticMarkup(<ConversationHumanRequests {...actions} requests={[]} ready={false} loadError="TEST read failed"/>);
+  expect(failed).toContain('data-empty="false"');
+  expect(failed).toContain('role="alert"');
+  expect(failed).toContain("TEST read failed");
+  expect(failed).not.toContain("No outstanding");
+});
+it("keeps real pending requests and other-goal history out of the empty treatment",()=>{
+  const request={input:{id:"TEST-request",task_id:"TEST-task",question:"TEST correct this boundary"},status:"pending"} as HumanRequest;
+  for(const taskId of ["TEST-task","TEST-other"]){
+    const html=renderToStaticMarkup(<ConversationHumanRequests {...actions} requests={[request]} ready taskId={taskId}/>);
+    expect(html).toContain('data-empty="false"');
+    expect(html).toContain("TEST correct this boundary");
+    expect(html).toContain("Open requested result");
+    expect(html).toContain("Cancel request");
+  }
+});
