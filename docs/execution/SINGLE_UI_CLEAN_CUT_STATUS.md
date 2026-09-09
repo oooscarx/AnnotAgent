@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Native saved model-assisted future proposal adoption
+
+Future-rule editor now reads the existing future-proposal endpoint through the adapter service. SavedFutureProposal verifies exact feedback/scope command/context/base Schema ID+revision, owned task and future-only scope before presenting actual goal/rationale/labels/rules. Existing phase semantics distinguish draft, clarification, cancellation, failure and unknown; only completed valid draft can be adopted. Explicit replacement confirmation fills the local editor, preserving proposal call/digest/definition provenance for existing server save validation. Frozen/invalid/saved rule editing cannot be replaced. No new model request or authorization is created by read/adopt/refresh.
+
+315 unit tests across95 files, typecheck and isolated production build passed (/tmp/annotagent-native-saved-future-proposal-dist, baseline dc67c75 plus slice). Actual HTTP saved-proposal read/adoption and conflict recovery remain to test; new-proposal authorization/execute/cancel entry still required. No real Provider/workspace/Published/user services/dist or remote changes. Goal active; this is not a claim of complete model-assisted rule workflow.
+
 ## Future-rule Builder positive execution and old scope form removal
 
 Extended the native real HTTP scenario beyond preview/cancel: explicitly confirmed the loopback TEST Builder, verified exact new Schema ID/revision in request and completed operation, a distinct new Workflow Draft ID and its native management link, with original Sample Test unchanged. Browser writes were exactly scope answer, future-schema save and one Builder launch; refresh/older history did not redispatch. Extended scenario passed on owned8794/8795 using /tmp/annotagent-native-future-builder-dist (source40da00e). This proves wiring, not live-model quality or separate sample execution.
