@@ -2,6 +2,7 @@
 
 mod importers;
 pub mod training_package;
+mod training_package_validation;
 
 pub use importers::*;
 

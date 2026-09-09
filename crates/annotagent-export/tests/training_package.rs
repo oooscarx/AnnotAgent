@@ -4,7 +4,12 @@ use annotagent_core::{
 };
 use annotagent_export::training_package::*;
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, fs, io::Read, path::Path};
+use std::{
+    collections::BTreeMap,
+    fs,
+    io::{Read, Write},
+    path::Path,
+};
 
 fn fixture(root: &Path) -> (TaskDeliveryIntent, Vec<PackageImage>) {
     let mut scope = Vec::new();
@@ -220,4 +225,199 @@ fn group_conflicts_and_object_only_acceptance_do_not_imply_image_readiness() {
     sources[0].annotations[0].review_status = ReviewStatus::NeedsReview;
     assert!(write_training_package(intent, 1, &sources, &destination).is_err());
     assert!(!destination.exists());
+}
+
+// Repair checksums after tampering so semantic validation, not hashing, must reject it.
+fn rewrite_with_matching_hashes(
+    source: &Path,
+    target: &Path,
+    change: impl FnOnce(&mut BTreeMap<String, Vec<u8>>, &mut PackageManifest),
+) {
+    let mut archive = zip::ZipArchive::new(fs::File::open(source).unwrap()).unwrap();
+    let mut files = BTreeMap::new();
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).unwrap();
+        let name = entry.name().to_owned();
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).unwrap();
+        files.insert(name, bytes);
+    }
+    let mut manifest: PackageManifest =
+        serde_json::from_slice(&files.remove("annotagent/manifest.json").unwrap()).unwrap();
+    change(&mut files, &mut manifest);
+    manifest.intent_sha256 = format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&manifest.intent).unwrap())
+    );
+    files.insert(
+        "annotagent/split-manifest.json".into(),
+        serde_json::to_vec(&manifest.images).unwrap(),
+    );
+    files.insert(
+        "annotagent/exclusions.json".into(),
+        serde_json::to_vec(
+            &manifest
+                .images
+                .iter()
+                .filter(|i| i.image.is_none())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap(),
+    );
+    manifest.files = files
+        .iter()
+        .map(|(name, bytes)| {
+            (
+                name.clone(),
+                FileEvidence {
+                    sha256: format!("{:x}", Sha256::digest(bytes)),
+                    bytes: bytes.len() as u64,
+                },
+            )
+        })
+        .collect();
+    files.insert(
+        "annotagent/manifest.json".into(),
+        serde_json::to_vec(&manifest).unwrap(),
+    );
+    let mut output = zip::ZipWriter::new(fs::File::create(target).unwrap());
+    for (name, bytes) in files {
+        output
+            .start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        output.write_all(&bytes).unwrap();
+    }
+    output.finish().unwrap();
+}
+
+#[test]
+fn independent_validator_rejects_semantic_tampering_even_with_matching_hashes() {
+    let temp = tempfile::tempdir().unwrap();
+    let (intent, sources) = fixture(temp.path());
+    let original = temp.path().join("valid.zip");
+    write_training_package(intent, 1, &sources, &original).unwrap();
+    let rewritten = temp.path().join("rewritten-valid.zip");
+    rewrite_with_matching_hashes(&original, &rewritten, |_, _| {});
+    validate_training_package(&rewritten).unwrap();
+    for (case, row) in [
+        ("nan", "0 NaN 0.2 0.2 0.2\n"),
+        ("outside", "0 0.9 0.2 0.8 0.2\n"),
+        ("class", "99 0.2 0.2 0.2 0.2\n"),
+        ("empty", "0 0.2 0.2 0 0.2\n"),
+    ] {
+        let target = temp.path().join(format!("{case}.zip"));
+        rewrite_with_matching_hashes(&original, &target, |files, manifest| {
+            let image = manifest
+                .images
+                .iter()
+                .find(|i| matches!(i.confirmation, ImageConfirmation::PositiveComplete { .. }))
+                .unwrap();
+            files.insert(image.label.clone().unwrap(), row.as_bytes().to_vec());
+        });
+        assert!(
+            validate_training_package(&target).is_err(),
+            "must reject {case} with matching hashes"
+        );
+    }
+    let target = temp.path().join("unsafe-yaml.zip");
+    rewrite_with_matching_hashes(&original, &target, |files, _| {
+        files.insert("data.yaml".into(),b"train: /private/images\nval: /private/images\ndownload: unsafe\nnames: {0: cup, 1: ball}\n".to_vec());
+    });
+    assert!(validate_training_package(&target).is_err());
+    let target = temp.path().join("leaked-secret.zip");
+    rewrite_with_matching_hashes(&original, &target, |files, _| {
+        files.insert(
+            "credentials.json".into(),
+            b"TEST fixture, not a real credential".to_vec(),
+        );
+    });
+    assert!(
+        validate_training_package(&target)
+            .unwrap_err()
+            .to_string()
+            .contains("Unexpected files")
+    );
+    let target = temp.path().join("group-leak.zip");
+    rewrite_with_matching_hashes(&original, &target, |_, manifest| {
+        for split in [DatasetSplit::Train, DatasetSplit::Val] {
+            let id = manifest
+                .images
+                .iter()
+                .find(|i| i.split == Some(split))
+                .unwrap()
+                .image_id;
+            manifest
+                .intent
+                .dataset_scope
+                .as_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|i| i.image_id == id)
+                .unwrap()
+                .group_ids = vec!["TEST-capture".into()];
+        }
+    });
+    assert!(
+        validate_training_package(&target)
+            .unwrap_err()
+            .to_string()
+            .contains("leaks across splits")
+    );
+    let target = temp.path().join("corrupt-pixels.zip");
+    rewrite_with_matching_hashes(&original, &target, |files, manifest| {
+        let image = manifest.images.iter().find(|i| i.image.is_some()).unwrap();
+        let bytes = files.get_mut(image.image.as_ref().unwrap()).unwrap();
+        let idat = bytes.windows(4).position(|v| v == b"IDAT").unwrap();
+        bytes[idat + 8] ^= 0xff;
+        manifest
+            .intent
+            .dataset_scope
+            .as_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|i| i.image_id == image.image_id)
+            .unwrap()
+            .content_sha256 = format!("{:x}", Sha256::digest(bytes));
+    });
+    assert!(validate_training_package(&target).is_err());
+}
+
+#[test]
+fn empty_positive_training_set_is_blocked_and_missing_class_has_a_warning() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut intent, mut sources) = fixture(temp.path());
+    intent.label_spec.as_mut().unwrap().push(DeliveryLabel {
+        stable_id: "unused".into(),
+        display_name: "未出现类别".into(),
+        aliases: vec![],
+        include: String::new(),
+        exclude: String::new(),
+    });
+    let path = temp.path().join("rare-class.zip");
+    write_training_package(intent.clone(), 1, &sources, &path).unwrap();
+    let mut archive = zip::ZipArchive::new(fs::File::open(&path).unwrap()).unwrap();
+    let manifest: PackageManifest =
+        serde_json::from_reader(archive.by_name("annotagent/manifest.json").unwrap()).unwrap();
+    assert!(
+        manifest
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("未出现类别") && warning.contains("only 0"))
+    );
+    for source in &mut sources {
+        source.annotations.clear();
+        if !matches!(source.confirmation, ImageConfirmation::Excluded { .. }) {
+            source.confirmation = ImageConfirmation::NegativeConfirmed {
+                confirmation_id: "TEST-negative-reviewed".into(),
+            };
+        }
+    }
+    let empty = temp.path().join("all-negative.zip");
+    assert!(
+        write_training_package(intent, 1, &sources, &empty)
+            .unwrap_err()
+            .to_string()
+            .contains("positive training example")
+    );
+    assert!(!empty.exists());
 }

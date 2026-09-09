@@ -371,6 +371,10 @@ pub fn write_training_package(
         other_classes.is_subset(&train_classes),
         "A class occurs only outside train; revise the split instead of exporting invalid training data"
     );
+    ensure!(
+        !train_classes.is_empty(),
+        "A standalone training package requires at least one confirmed positive training example"
+    );
     let temporary = destination.with_extension("zip.partial");
     let file = File::options()
         .create_new(true)
@@ -497,7 +501,34 @@ pub fn write_training_package(
             "publication":"This archive is published only after all listed checks pass"
         }))?,
     )?;
-    let manifest=PackageManifest{format_version:1,delivery_revision:revision,intent_sha256:digest(&serde_json::to_vec(&intent)?),intent,license:"unknown".into(),loader_commit:"6e43d1e1e5db72afbf686dee6745669bcb124b0a".into(),files,images:evidence,warnings:vec!["Near-duplicate visual similarity was not checked; exact content and known groups stay together.".into()]};
+    let mut warnings = vec!["Near-duplicate visual similarity was not checked; exact content and known groups stay together.".into()];
+    for label in intent.label_spec.as_ref().context("labels missing")? {
+        let count = sources
+            .iter()
+            .filter(|source| {
+                included.contains(&source.image_id)
+                    && source.annotations.iter().any(|a| {
+                        a.label
+                            .as_ref()
+                            .is_some_and(|id| id.as_str() == label.stable_id)
+                    })
+            })
+            .count();
+        if count < 2 {
+            warnings.push(format!("Class {} appears in only {count} included images; useful train/val class coverage is not established.", label.display_name));
+        }
+    }
+    let manifest = PackageManifest {
+        format_version: 1,
+        delivery_revision: revision,
+        intent_sha256: digest(&serde_json::to_vec(&intent)?),
+        intent,
+        license: "unknown".into(),
+        loader_commit: "6e43d1e1e5db72afbf686dee6745669bcb124b0a".into(),
+        files,
+        images: evidence,
+        warnings,
+    };
     zip.start_file(
         "annotagent/manifest.json",
         zip::write::SimpleFileOptions::default(),
@@ -525,8 +556,13 @@ pub fn write_training_package(
 /// Reopens the finished archive and checks entry paths, pairing and every payload hash.
 pub fn validate_training_package(path: &Path) -> Result<()> {
     let mut zip = zip::ZipArchive::new(File::open(path)?)?;
+    let manifest_entry = zip.by_name("annotagent/manifest.json")?;
+    ensure!(
+        manifest_entry.size() <= 32 * 1024 * 1024,
+        "Package manifest exceeds validation limit"
+    );
     let manifest: PackageManifest =
-        serde_json::from_reader(zip.by_name("annotagent/manifest.json")?)?;
+        serde_json::from_reader(manifest_entry.take(32 * 1024 * 1024 + 1))?;
     ensure!(
         zip.len() == manifest.files.len() + 1,
         "Unexpected or missing package entries"
@@ -571,5 +607,5 @@ pub fn validate_training_package(path: &Path) -> Result<()> {
             );
         }
     }
-    Ok(())
+    crate::training_package_validation::validate_contents(&mut zip, &manifest, &seen)
 }
