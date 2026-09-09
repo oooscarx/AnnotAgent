@@ -2,6 +2,21 @@ import { randomUUID } from "node:crypto";
 import { test, expect } from "./fixtures";
 import { sample } from "./conversation-feedback-helpers";
 import { isolatedEvidencePath } from "./evidence";
+import type { Locator } from "@playwright/test";
+
+async function reviewExactModel(card: Locator, modelName: string) {
+  await card.getByRole("button", {name:"Review build and sample authorization",exact:true}).click();
+  const choices = card.locator("details").filter({has:card.locator("summary").filter({hasText:"Allowed image models"})});
+  await expect(choices).toBeVisible();
+  if (!(await choices.evaluate(element => (element as HTMLDetailsElement).open))) await choices.locator("summary").click();
+  // A full suite can have more than the 32-model authorization ceiling. Select
+  // this scenario's exact fixture, never assume a small registry or widen scope.
+  for (const checkbox of await choices.getByRole("checkbox").all()) {
+    if (await checkbox.isChecked()) await checkbox.uncheck();
+  }
+  await choices.getByRole("checkbox", {name:modelName,exact:true}).check();
+  await card.getByRole("button", {name:"Review build and sample authorization",exact:true}).click();
+}
 
 test("preauthorized pending correction waits without inference and the saved answer resumes one joint repair", async ({ page, request }) => {
   test.setTimeout(180_000);
@@ -62,7 +77,7 @@ for (const retryAdmission of [false,true]) test(`pending request UI restores aut
   const help = state.savedRequests[0];
   await page.goto(`${state.url}&request=${help.input.id}`);
   const pendingCard = page.getByRole("region", { name: "Build and test annotation plan", exact: true }).filter({has:page.getByRole("heading",{name:"Continue after your correction",exact:true})});
-  await pendingCard.getByRole("button", { name: "Review build and sample authorization", exact:true }).click();
+  await reviewExactModel(pendingCard, state.model.display_name);
   const panel = pendingCard.getByLabel("Build and sample authorization",{exact:true});
   await expect(panel).toContainText("does not authorize future corrections");
   await panel.getByRole("checkbox",{name:/Allow this plan and sample test/}).check();
@@ -169,7 +184,7 @@ test("the correction card authorizes repair and sample together and restores onl
   await page.getByRole("button", { name: "Submit correction", exact: true }).click();
   const repair = page.getByRole("region", { name: "Repair annotation pipeline", exact: true });
   const joint = repair.getByRole("region", { name: "Build and test annotation plan", exact: true });
-  await joint.getByRole("button", { name: "Review build and sample authorization", exact: true }).click();
+  await reviewExactModel(joint, state.model.display_name);
   const consentPanel = joint.getByLabel("Build and sample authorization", { exact: true });
   await expect(consentPanel).toContainText("not future corrections");
   await expect(consentPanel).toContainText("Cost unknown");

@@ -5416,3 +5416,22 @@ baseline case 51 finished. **The new frontend has not been built or served yet**
 178-case run must finish against its original assets. Its last observed passing case is
 74. A fresh targeted browser history/setup test and build are required after that run;
 the ongoing baseline sweep cannot prove this new read path. No real data or remote changes.
+
+### 2026-09-09 — Full-suite registry-size failures diagnosed, exact test selection fixed
+
+34639 remains live, through case 86. Cases 80, 81 and 83 failed; the full sweep is not
+green. Inspected all three retained error contexts: the saved repair card had 68 available
+Registry models, correctly selected none rather than exceeding the 32-model permission
+ceiling, and asked for an explicit choice. The tests expected the authorization panel
+without choosing a model. This is suite-size dependence in the test, not evidence that
+saved corrections or execution recovery failed. Other tests in this file passed.
+
+Updated the three UI scenarios to open the existing model choices, uncheck defaults and
+explicitly select their own TEST model before reviewing consent. No production ceiling,
+automatic selection or scope validation was relaxed. The helper works with both small
+and large registries and retains the real UI authorization path, without interception.
+Typecheck and diff checks pass. A fresh browser rerun is still required after the current
+sweep terminates; no passing rerun is claimed yet. Failure screenshots, contexts and traces
+were preserved under `/tmp/annotagent-full-run-failures-20260909` before any future runner
+cleanup. New-query frontend integration remains pending as recorded above. The complete
+230-unit Web suite passed in 44477 after 6eee1e0's changes.
