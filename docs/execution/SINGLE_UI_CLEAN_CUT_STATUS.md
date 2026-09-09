@@ -1,5 +1,13 @@
 # Single UI Clean Cut
 
+## Native project conversation call-limit management
+
+Migrated old ConversationProjectBudget into an on-demand native control at Project → manage/data → 管理项目调用额度. It reads the real revision, cumulative maximum and reserved count. Explicit confirmation explains counts are not tokens/money/global usage and do not authorize model/data execution. No blank-as-unlimited or resetting reservations. Same server CAS/idempotent API reused; workspace+project-local exact request persisted before POST, unknown response restores without automatic POST, explicit original-command recovery reads current server value (which may include another writer). Discard/reload clearly does not revoke an already-submitted request. Dirty/unload and invalid-recovery guards retained. Deleted the now-unreferenced old budget component, kept pure budget availability semantics.
+
+Verification: typecheck,295 unit tests across84 files and production build /tmp/annotagent-native-project-limit-dist passed. Two actual HTTP E2E scenarios passed: native project/import/labels regression; new TEST project call-limit cancellation has no write, successful first POST response deliberately lost after another writer advances limit, refresh sends nothing, identical-command retry preserves newer maximum/revision and reserved count without model calls. Only fresh TEST project metadata mutated. No real workspace/dist, Published Version, user8787/8788, Rust or remote modifications. Owned TEST service8794/8795 stopped; no push. Goal remains active.
+
+Read-only backend HEAD now7e856b7, titled owned replay previews/non-duplicating sandbox receipts. Only identity inspected in this slice; not yet read, tested, integrated or counted as delivered native Replay. Next verify UIAPI-017 contract and implementation before any wiring. Other previously listed capability gaps remain.
+
 ## Old conversation card graph and legacy navigation physically deleted
 
 Verified all15 old Builder/Journey/Schema/HumanSchema/FutureSchema/Feedback/Repair/Sample/ImageClass/BudgetNotice components form a detached graph: no imports from native production, preview or remaining external components. Deleted their JSX, then removed navigation.ts (723 lines) after its only remaining users were old compatibility tests. Deleted those34 old-route tests, added two native negative/ownership cases covering the retired route families and nested legacy return keys. Server APIs, domain models, request parsers, scope/revision safety helpers and their tests remain. Approximately2,780 lines removed; source is recoverable at e617d61. No historical data deleted.
