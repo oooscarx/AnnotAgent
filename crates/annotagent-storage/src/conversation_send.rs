@@ -73,7 +73,7 @@ impl SqliteStore {
             if input.schema_revision.len()!=64 || !input.schema_revision.bytes().all(|b|b.is_ascii_hexdigit()) { return Err(invalid("Send requires a schema revision digest")); }
             let agent_model=crate::conversation_agent_model::read(&tx,conversation)?;
             if input.agent_model.as_ref().is_some_and(|observed| *observed!=agent_model) {
-                return Err(invalid("Agent model choice changed before Send; reload the selection before sending this message"));
+                return Err(StorageError::StaleConversationAgentModel);
             }
             // A legacy journal ID cannot silently acquire a new dispatch meaning.
             let existing:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE conversation_id=?1 AND message_id=?2)",params![conversation.to_string(),input.message.id.to_string()],|r|r.get(0))?;

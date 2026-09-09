@@ -146,6 +146,10 @@ const PIPELINE_LIFECYCLE_MIGRATION: &str =
 
 #[derive(Debug, Error)]
 pub enum StorageError {
+    #[error(
+        "Agent model choice changed before Send; review the current selection before sending this message"
+    )]
+    StaleConversationAgentModel,
     #[error("invalid conversation operation: {0}")]
     InvalidConversation(String),
     #[error("invalid sample operation: {0}")]

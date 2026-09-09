@@ -562,3 +562,43 @@ Evidence:
 Goal remains incomplete: Plan/Execute Composer control, queued input, full continuation
 trace and substantial remaining view convergence are still pending. No push, real-data
 cleanup, Published Version edits, remote changes or paid model calls.
+
+## M3 Composer observed-choice CAS and rejected-send recovery
+
+Previous goal turn was progress (7b1ef2f). Connected the optional observed model selection
+to the actual Composer: Picker reports the passive server selection to its parent, Send
+freezes that displayed revision/ID before asynchronous admission, and the frozen pending
+command persists it. While a new selection is unresolved, ordinary new Send waits; direct
+Stop remains independent. The API client now uses the shared SendCommand type rather than
+a stale duplicate inline type (caught by typecheck before runtime tests).
+
+Added a typed StorageError for stale model choices, mapped only at Send to HTTP409 with
+code send_model_selection_changed and admitted:false. This is an atomic pre-write rejection,
+not an unknown network outcome. The UI exposes recovery ONLY after that exact response.
+It fetches current choice, preserves original text/image/candidate/task/schema, creates a
+replacement command ID and persists it before dropping the rejected pending ID. No POST
+occurs until the user separately presses Send updated request. Enter cannot bypass the
+required review. Generic failures/lost acknowledgements still retry the original command;
+they never get silently replaced. Refresh retains the pending command; if definitive
+rejection state was not local, retry gets the same server rejection before replacement.
+
+Tests on current sources:
+
+- Browser picker + Send 5/5 passed (26270), isolated
+  `/tmp/annotagent-guided-e2e-63660`. Test changes selection externally after UI load,
+  confirms UI POST includes the stale observed snapshot and receives 409, then checks
+  review causes no Send, replacement changes only message ID/model snapshot, and exactly
+  one message is finally added. Existing in-flight model test and all four original
+  Send admission/lost-ack/refresh tests remain green. This is TEST transport, not Live.
+- Stop browser suite 10/10 passed (29607), separate isolated
+  `/tmp/annotagent-guided-e2e-63954`: empty stop, reserved-call cancellation, frozen target,
+  late completion, lost acknowledgement, revoked authorization, composition and task scope.
+  This preserves existing Stop contracts, not yet the full new UI continuation trace.
+- Storage Send 3/3 + fmt passed (7023); Web typecheck passed before browser execution,
+  239 unit tests / 49 files passed (33728), strict Storage/Application/Server all-target/
+  all-feature Clippy passed (7179); git diff --check passed. Browser harness production
+  builds passed with the existing large chunk warning.
+
+Still incomplete: resolving/fixing default models at Send, mode/turn policy, queue draining,
+continuation/remaining-budget trace, compact actual plan/human objects and six final states.
+No real workspace, Published Version, credentials, remote or push operation changed.

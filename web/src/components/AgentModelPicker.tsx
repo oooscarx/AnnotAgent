@@ -7,8 +7,9 @@ type Preference = { revision: number; model_profile_id: string | null };
 type Command = { conversation: string; input: { request_id: string; expected_revision: number; model_profile_id: string | null } };
 
 /** Registry-backed next-authorization choice. No probes, credentials or model calls. */
-export function AgentModelPicker({ project, conversation, onConversation, onSettings }: {
+export function AgentModelPicker({ project, conversation, onConversation, onSettings, onPreference }: {
   project: string; conversation?: string; onConversation: (id: string) => void; onSettings: () => void;
+  onPreference: (value: Preference | undefined) => void;
 }) {
   const [models, setModels] = useState<RegistryModelProfile[]>([]);
   const [providers, setProviders] = useState<ProviderProfile[]>([]);
@@ -23,10 +24,11 @@ export function AgentModelPicker({ project, conversation, onConversation, onSett
   const summary = useRef<HTMLElement>(null);
   useEffect(() => {
     alive.current = true;
+    onPreference(undefined);
     const controller = new AbortController();
     void Promise.all([api.modelProfiles(), api.providers(), conversation ? api.conversationAgentModel(project, conversation, controller.signal) : Promise.resolve({revision:0,model_profile_id:null})]).then(([registry, accounts, choice]) => {
       if (controller.signal.aborted) return;
-      setModels(registry.models); setProviders(accounts.providers); setPreference(choice);
+      setModels(registry.models); setProviders(accounts.providers); setPreference(choice); onPreference(choice);
     }).catch(reason => { if (!controller.signal.aborted) setError((reason as Error).message); });
     return () => { alive.current = false; controller.abort(); };
   }, [project, conversation]);
@@ -35,7 +37,7 @@ export function AgentModelPicker({ project, conversation, onConversation, onSett
   const close = () => { if (details.current) details.current.open = false; summary.current?.focus(); };
   async function choose(id: string | null) {
     if (busy || !preference) return;
-    setBusy(true); setError("");
+    setBusy(true); setError(""); onPreference(undefined);
     try {
       if (!command.current) {
         const owner = conversation ?? (await api.createConversation(project)).conversation_id;
@@ -46,7 +48,7 @@ export function AgentModelPicker({ project, conversation, onConversation, onSett
       const current = command.current;
       const result = await api.selectConversationAgentModel(project, current.conversation, current.input);
       if (!alive.current) return;
-      setPreference(result); command.current = undefined; setPending(false);
+      setPreference(result); onPreference(result); command.current = undefined; setPending(false);
       onConversation(current.conversation);
     } catch (reason) { if (alive.current) setError((reason as Error).message); }
     finally { if (alive.current) setBusy(false); }
@@ -59,7 +61,7 @@ export function AgentModelPicker({ project, conversation, onConversation, onSett
     try {
       const current = await api.conversationAgentModel(project, owner);
       if (!alive.current) return;
-      setPreference(current); command.current = undefined; setPending(false); setError(""); onConversation(owner);
+      setPreference(current); onPreference(current); command.current = undefined; setPending(false); setError(""); onConversation(owner);
     } catch (reason) { if (alive.current) setError((reason as Error).message); }
     finally { if (alive.current) setBusy(false); }
   }

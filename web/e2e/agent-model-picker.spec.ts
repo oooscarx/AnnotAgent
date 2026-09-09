@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { expect, test } from "./fixtures";
+import type { SendCommand } from "../src/conversation-send";
 
 test("Registry picker persists next-scope model without probes, sends or changing frozen scopes", async ({page,request}) => {
   test.setTimeout(120_000);
@@ -79,6 +80,32 @@ test("Registry picker persists next-scope model without probes, sends or changin
   expect(await (await request.post(`${root}/send`,{data:frozenMessage})).json()).toEqual(captured);
   const count = (await (await request.get(`${root}/messages`)).json()).length;
   const stale = await request.post(`${root}/send`,{data:{...frozenMessage,message:{...frozenMessage.message,id:randomUUID()}}});
-  expect(stale.status()).toBe(400);
+  expect(stale.status()).toBe(409);
+  expect((await stale.json()).code).toBe("send_model_selection_changed");
   expect((await (await request.get(`${root}/messages`)).json()).length).toBe(count);
+  // The UI carries its observed revision. A different tab changes it before Send.
+  await page.reload();
+  await expect(page.getByLabel("Choose Agent model",{exact:true})).toContainText(models[0].display_name);
+  const seen = await (await request.get(`${root}/agent-model`)).json();
+  expect((await request.post(`${root}/agent-model`,{data:{request_id:randomUUID(),expected_revision:seen.revision,model_profile_id:models[1].id}})).ok()).toBe(true);
+  const commands: SendCommand[]=[];
+  page.on("request",req=>{if(req.method()==="POST"&&new URL(req.url()).pathname===`${root}/send`)commands.push(req.postDataJSON());});
+  await composer.fill("TEST preserve this message across a model conflict");
+  await page.getByRole("button",{name:"Send",exact:true}).click();
+  await expect(page.getByRole("button",{name:"Review current model for this message",exact:true})).toBeVisible();
+  expect(commands).toHaveLength(1);
+  expect(commands[0].agent_model).toEqual(seen);
+  await page.getByRole("button",{name:"Review current model for this message",exact:true}).click();
+  await expect(page.getByRole("button",{name:"Send updated request",exact:true})).toBeEnabled();
+  await expect(composer).toHaveValue("TEST preserve this message across a model conflict");
+  expect(commands).toHaveLength(1);
+  await page.getByRole("button",{name:"Send updated request",exact:true}).click();
+  await expect(composer).toHaveValue("");
+  expect(commands).toHaveLength(2);
+  expect(commands[1].message.id).not.toBe(commands[0].message.id);
+  expect({...commands[1].message,id:commands[0].message.id}).toEqual(commands[0].message);
+  expect(commands[1].task_id).toBe(commands[0].task_id);
+  expect(commands[1].schema_revision).toBe(commands[0].schema_revision);
+  expect(commands[1].agent_model?.model_profile_id).toBe(models[1].id);
+  expect((await (await request.get(`${root}/messages`)).json()).length).toBe(count+1);
 });

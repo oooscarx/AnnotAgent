@@ -158,7 +158,11 @@ pub(super) async fn send(
         .application
         .send_project_conversation_message(&project, conversation, &input)
         .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(|error| {
+            if matches!(error.downcast_ref::<annotagent_storage::StorageError>(), Some(annotagent_storage::StorageError::StaleConversationAgentModel)) {
+                ApiError { status: StatusCode::CONFLICT, body: json!({"error":error.to_string(),"code":"send_model_selection_changed","status":409,"admitted":false}) }
+            } else { ApiError::bad_request(error) }
+        })
 }
 
 pub(super) async fn send_receipt(

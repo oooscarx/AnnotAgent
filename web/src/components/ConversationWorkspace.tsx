@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { api, type ProcessingReceipt } from "../api";
+import { api, ApiRequestError, type ProcessingReceipt } from "../api";
 import { queryKeys, workspaceQueries } from "../queryCache";
 import { boundedReads } from "../boundedReads";
 import { loadConversationHistory } from "../conversation-history";
@@ -29,7 +29,7 @@ import { mergeImageClassReview } from "../conversation-image-class";
 import { ConversationNavigation } from "./ConversationNavigation";
 import { AgentComposer } from "./AgentComposer";
 import { AgentModelPicker } from "./AgentModelPicker";
-import { parsePendingSend, sameSendCommand } from "../conversation-send";
+import { parsePendingSend, sameSendCommand, type SendModel } from "../conversation-send";
 
 /** The journal and image importer share the existing Project; neither starts inference. */
 export function ConversationWorkspace({ project, pane, conversationId, imageId, draftId, sampleTestId, taskId, humanRequestId, classReviewId, referenceMessageId, processingOperationId, exportBefore, results, onNavigate, onNavigationGuardChange }: {
@@ -42,6 +42,11 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
   onNavigationGuardChange: (guard?: () => boolean) => void;
 }) {
   const [conversation, setConversation] = useState<string>();
+  const [agentChoice, setAgentChoice] = useState<SendModel>();
+  const frozenAgentChoice = useRef<SendModel | undefined>(undefined);
+  const [rejectedModelSend, setRejectedModelSend] = useState(false);
+  const [revisedSend, setRevisedSend] = useState(false);
+  const [modelPickerGeneration, setModelPickerGeneration] = useState(0);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [messageContext, setMessageContext] = useState<ConversationMessage[]>([]);
   const [defaultGoal, setDefaultGoal] = useState<ConversationMessage>();
@@ -302,7 +307,11 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
   }
   async function send() {
     if (pending.current || !ready || !text.trim() || composing.current) return;
+    if (rejectedModelSend && !isStopCommand(text)) { setError("Review the changed Agent model before sending this rejected message again."); return; }
+    if (revisedSend && !agentChoice) return;
     if(!frozen.current) {
+      if (!isStopCommand(text) && !agentChoice) { setError("Wait for the saved Agent model selection before sending."); return; }
+      frozenAgentChoice.current = agentChoice ? {...agentChoice} : undefined;
       if (taskId && !referenceTask && !isStopCommand(text)) { setError("Wait for the selected task to load before sending."); return; }
       const intent = composerIntent(text, false);
       frozenTask.current = pinnedSelection?.input.reference?.scope === "sample_candidate" ? {id:pinnedSelection.input.reference.task_id,revision:pinnedSelection.input.reference.project_schema_revision} : {id:referenceTask?.id ?? null,revision:referenceTask?.schema_revision};
@@ -330,7 +339,7 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
         if (alive.current) acceptStop(record);
         return;
       }
-      if (!frozenSend.current) frozenSend.current = {conversation:id,input:{message:input,task_id:frozenTask.current.id,schema_revision:frozenTask.current.revision ?? (await api.projectGoal(project.id)).revision}};
+      if (!frozenSend.current) frozenSend.current = {conversation:id,input:{message:input,task_id:frozenTask.current.id,schema_revision:frozenTask.current.revision ?? (await api.projectGoal(project.id)).revision,agent_model:frozenAgentChoice.current}};
       // Persist before POST. If storage is unavailable, do not send a command that
       // the browser cannot recover after a lost acknowledgement and refresh.
       sessionStorage.setItem(sendStorageKey, JSON.stringify(frozenSend.current));
@@ -347,7 +356,7 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
       }
       setTasks(existing);
       sessionStorage.removeItem(sendStorageKey);
-      frozen.current = undefined; frozenSend.current=undefined; unsent.current = ""; setText(""); setPinnedSelection(undefined); setStatus("Message sent and saved. No new model call was authorized.");
+      frozen.current = undefined; frozenSend.current=undefined; frozenAgentChoice.current=undefined; setRejectedModelSend(false); setRevisedSend(false); unsent.current = ""; setText(""); setPinnedSelection(undefined); setStatus("Message sent and saved. No new model call was authorized.");
       if(receipt.disposition === "new_task"){
         pending.current=false;
         onNavigate(projectWorkPath(project.id,{conversationId:id,taskId:receipt.task_id,imageId:input.image?.image_id}));
@@ -355,12 +364,33 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
         setStatus("Goal saved. Preparing model authorization; no model has been called.");
       }
     } catch (error) { if (alive.current) {
+      if (!stopping && !messageSaved && error instanceof ApiRequestError && error.code === "send_model_selection_changed") {
+        setRejectedModelSend(true); setError(error.message); setStatus("This message was not admitted. Its text, image and candidate reference are retained; review the changed model before creating a replacement send."); return;
+      }
       if (stopping && stopConversation.current) {
         try { const record = await stopApi.read(project.id, stopConversation.current, input.id); if (alive.current && record) { acceptStop(record); return; } } catch { /* Preserve exact stop command; do not repeat its POST. */ }
       }
       setError((error as Error).message); setStatus(stopping ? t("The stop request acknowledgement is unknown. Retry preserves the original task scope; nothing was retried on reload.") : messageSaved ? "Message saved; goal preparation is not confirmed. Retry uses the same message and restores any saved task." : "Not confirmed saved. Retry sends the same message and frozen image reference.");
     } }
     finally { pending.current = false; if (alive.current) setBusy(false); }
+  }
+  async function reviewRejectedSendModel() {
+    const previous = frozenSend.current;
+    if (!rejectedModelSend || !previous || pending.current) return;
+    pending.current = true; setBusy(true);
+    try {
+      const current = await api.conversationAgentModel(project.id, previous.conversation);
+      if (!alive.current) return;
+      const replacement = {conversation:previous.conversation,input:{...previous.input,message:{...previous.input.message,id:crypto.randomUUID()},agent_model:current}};
+      // Persist the replacement before discarding the definitively rejected ID.
+      // No POST is performed; the user must separately send this reviewed scope.
+      sessionStorage.setItem(sendStorageKey,JSON.stringify(replacement));
+      frozenSend.current=replacement; frozen.current=replacement.input.message; frozenAgentChoice.current=current;
+      setConversation(previous.conversation); setAgentChoice(current); setModelPickerGeneration(value=>value+1);
+      setRejectedModelSend(false); setRevisedSend(true); setError("");
+      setStatus("Current model choice loaded. Text, image and candidate reference are unchanged. Review the model, then send the updated request; nothing was sent automatically.");
+    } catch (error) { if (alive.current) setError((error as Error).message); }
+    finally { pending.current=false; if (alive.current) setBusy(false); }
   }
   async function useMessageAsGoal(message: ConversationMessage) {
     if (!conversation || pending.current || !isAnnotationGoalMessage(message)) return;
@@ -475,7 +505,8 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
           onCompositionChange={value=>{composing.current=value;}}
           onSubmit={()=>{void send();}}
           reference={stopComposer ? <small>{t("Standalone stop control · No LLM or image submission. Multiple active operations require an explicit choice.")}</small> : pinnedSelection?.input.reference?.scope === "sample_candidate" ? <div className="conversation-candidate-reference" aria-label="Message candidate reference"><strong>Only this saved candidate</strong><span>{pinnedSelection.name} · {pinnedSelection.input.reference.candidate_id} · Draft revision {pinnedSelection.input.reference.draft_revision}</span><small>Changing the displayed image does not change this reference. Saving the message does not edit the annotation.</small><button type="button" disabled={busy||Boolean(frozen.current)} onClick={()=>setPinnedSelection(undefined)}>Remove candidate reference</button></div> : <small>{referenceImage ? `Image reference: ${referenceImage.name}` : "No image reference · Project-level message"}</small>}
-          actions={<><AgentModelPicker key={project.id} project={project.id} conversation={conversation} onConversation={setConversation} onSettings={()=>onNavigate(conversationSettingsPath(project.id,"models",navigationContext))}/>{stopComposer ? <button className="danger-button" disabled={!ready || busy} type="submit">{t(busy ? "Saving stop request…" : frozen.current ? "Retry same stop request" : taskId ? "Stop selected task" : "Stop active work")}</button> : <button className="primary" disabled={!ready || busy || !text.trim()} type="submit">{busy ? "Sending…" : frozen.current ? "Retry same send" : "Send"}</button>}</>} />
+          actions={<><AgentModelPicker key={`${project.id}:${modelPickerGeneration}`} project={project.id} conversation={conversation} onConversation={setConversation} onPreference={setAgentChoice} onSettings={()=>onNavigate(conversationSettingsPath(project.id,"models",navigationContext))}/>{stopComposer ? <button className="danger-button" disabled={!ready || busy} type="submit">{t(busy ? "Saving stop request…" : frozen.current ? "Retry same stop request" : taskId ? "Stop selected task" : "Stop active work")}</button> : <button className="primary" disabled={!ready || busy || !text.trim() || rejectedModelSend || ((!frozen.current || revisedSend) && !agentChoice)} type="submit">{busy ? "Sending…" : revisedSend ? "Send updated request" : frozen.current ? "Retry same send" : "Send"}</button>}</>} />
+        {rejectedModelSend && <div className="conversation-consent" aria-label="Model selection changed before Send"><p>The server rejected this send before saving a message. Keep the same text and object references, but review the current model choice.</p><button type="button" disabled={busy} onClick={()=>void reviewRejectedSendModel()}>Review current model for this message</button></div>}
       </section>
       <div className="conversation-divider" role="separator" aria-label="Resize conversation panel" aria-orientation="vertical" tabIndex={0} aria-valuemin={25} aria-valuemax={75} aria-valuenow={width} aria-valuetext={`${width}% conversation panel`}
         onKeyDown={(event) => {
