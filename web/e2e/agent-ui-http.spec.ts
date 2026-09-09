@@ -334,8 +334,8 @@ test("d: actual stop POST is observed as stopping and settles to unknown without
   const initial=await(await response).json();expect(initial.normalized_state).toBe("stopping");
   await testInfo.attach("actual-initial-stop-receipt",{body:JSON.stringify(initial,null,2),contentType:"application/json"});
   await page.getByRole("button",{name:"收起数据",exact:true}).click();
-  await expect(page.getByText(/远端结果未知/)).toBeVisible();
-  await page.reload();await expect(page.getByText(/远端结果未知/)).toBeVisible();
+  await expect(page.getByRole("region",{name:"当前执行状态",exact:true}).getByRole("status")).toContainText("远端结果未知");
+  await page.reload();await expect(page.getByRole("region",{name:"当前执行状态",exact:true}).getByRole("status")).toContainText("远端结果未知");
   const final=await(await request.get(scene.workspace_url)).json();expect(final.calls.some((c:{status:string})=>c.status==="in_doubt")).toBe(true);
   expect(final.resume_actions.filter((a:{available:boolean})=>a.available)).toEqual([]);
 });
