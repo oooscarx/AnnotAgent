@@ -37,6 +37,7 @@ export function ExecutionProgress({ receipts }: { receipts: NonNullable<Task["re
     <p role="status">{current.title} · {executionStatus(current.status)}</p>
     {current.stage && <p>阶段：{current.stage}</p>}
     <small>耗时：{executionElapsed(current.startedAt, current.finishedAt, current.durationMs, active ? now : undefined)}{active && " · 等待服务端回执，不代表模型完成百分比"}</small>
+    {active && current.title === "模型结构化决策" && <small>当前接口接收完整模型响应，尚不提供逐段文本；状态更新不是模型文字流。</small>}
     {current.detail && <p>{current.detail}</p>}
     {current.status === "in_doubt" && <p>当前没有此请求的活动执行。远端是否完成和实际费用尚无法确认；刷新不会重新调用模型。</p>}
     <details><summary>执行记录 · {receipts.length} 项</summary>{receipts.map(r => <details key={r.id}>
