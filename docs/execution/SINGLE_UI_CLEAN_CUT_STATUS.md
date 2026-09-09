@@ -53,6 +53,8 @@ Verification: typecheck/build, 289 unit tests (one cutover TODO), seven isolated
 
 Backend CAS delivery commit `210091a` now exists; not integrated or accepted as verified in this slice. Next integration must inspect it and its contract/tests. No main Rust edits, paid calls, user service/dist updates, real workspace changes or push. Full removal is still incomplete.
 
+Post-capture inspection: accumulated TEST classification labels were touching because the reused Canvas class lacked new-shell spacing. Added scoped wrapping/gap/chip rules for native Review/Run. The screenshot above records the detected before-state; recapture is pending, not a polished final visual claim.
+
 ### Model lifecycle, probe consent and quality evidence
 
 New native ModelProfileActions exposes lock/unlock, typed-name delete confirmation, explicitly confirmed billable connectivity test, saved probe usage, operation-scoped quality contracts and generation/limit details. It reuses existing endpoints and privileged protection; refresh/Disclosure expansion never sends a probe. Model/provider preflight rejects observed configuration changes before a mutation. This remains client preflight, not backend atomic CAS. Failed/unknown probe confirmation cannot immediately resubmit; the user must inspect records. Connectivity success is explicitly not geometry accuracy or comprehensive capability verification. Zero usage cost is labeled unverified, not free.

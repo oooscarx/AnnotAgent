@@ -1059,6 +1059,8 @@ caption {
 .ui-app .native-review .canvas-zoom-controls { display: inline-flex; gap: 8px; align-items: center; }
 .ui-app .native-review .canvas-annotation-list { list-style: none; padding: 0; }
 .ui-app .native-review .canvas-hint { color: var(--aa-text-muted); }
+.ui-app .native-review .canvas-classification-results { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 8px; }
+.ui-app .native-review .canvas-classification-results > span { display: inline-flex; padding: 4px 8px; border: 1px solid var(--aa-border); border-radius: 6px; max-width: 100%; overflow-wrap: anywhere; }
 .ui-app .native-review .bbox-resize-hit-area { fill: transparent; stroke: none; pointer-events: all; }
 .ui-app .model-profile-editor { display: grid; gap: 16px; }
 .ui-app .model-profile-editor fieldset { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 12px; border: 1px solid var(--aa-border); border-radius: 8px; padding: 16px; min-width: 0; }
