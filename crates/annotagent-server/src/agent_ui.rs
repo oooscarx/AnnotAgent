@@ -72,6 +72,48 @@ mod tests {
     use super::*;
     use crate::tests::{request, response_json, test_state};
     use annotagent_provider::InMemorySecretStore;
+    #[test]
+    fn contract_examples_decode_with_current_http_dtos() {
+        let examples: Value = serde_json::from_str(include_str!(
+            "../../../docs/contracts/agent-ui-v1/EXAMPLES.json"
+        ))
+        .unwrap();
+        serde_json::from_value::<annotagent_storage::ConversationSendInput>(
+            examples["send"].clone(),
+        )
+        .unwrap();
+        serde_json::from_value::<annotagent_storage::SelectConversationAgentModel>(
+            examples["select_agent_model"].clone(),
+        )
+        .unwrap();
+        serde_json::from_value::<annotagent_storage::ConversationMessageInput>(
+            examples["stop"].clone(),
+        )
+        .unwrap();
+        serde_json::from_value::<crate::conversation_stop::SelectStop>(
+            examples["select_stop"].clone(),
+        )
+        .unwrap();
+        serde_json::from_value::<crate::agent_ui_settings::BudgetPatch>(
+            examples["budget_patch"].clone(),
+        )
+        .unwrap();
+        serde_json::from_value::<annotagent_storage::ProjectCallLimitInput>(
+            examples["call_limit"].clone(),
+        )
+        .unwrap();
+        serde_json::from_value::<annotagent_storage::ConversationSchemaAuthorization>(
+            examples["schema_consent"].clone(),
+        )
+        .unwrap();
+        let schema: Value = serde_json::from_str(include_str!(
+            "../../../docs/contracts/agent-ui-v1/SCHEMAS.json"
+        ))
+        .unwrap();
+        assert!(
+            schema["$defs"]["SendReceipt"]["properties"]["resolved_agent_model_id"].is_object()
+        );
+    }
     #[tokio::test]
     async fn stop_http_trace_keeps_unknown_receipt_and_spent_budget_on_retry() {
         for (terminal, normalized) in [

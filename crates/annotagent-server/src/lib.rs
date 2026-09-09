@@ -435,11 +435,21 @@ struct ApiError {
 
 impl ApiError {
     fn conversation(error: anyhow::Error) -> Self {
-        if let Some(StorageError::FeedbackRevisionConflict { current }) = error.downcast_ref::<StorageError>() {
-            return Self { status:StatusCode::CONFLICT, body:json!({"error":error.to_string(),"status":409,"code":"stale_revision","suggested_action":"reload_human_request","current_revision":current}) };
+        if let Some(StorageError::FeedbackRevisionConflict { current }) =
+            error.downcast_ref::<StorageError>()
+        {
+            return Self {
+                status: StatusCode::CONFLICT,
+                body: json!({"error":error.to_string(),"status":409,"code":"stale_revision","suggested_action":"reload_human_request","current_revision":current}),
+            };
         }
-        if let Some(StorageError::ConversationContract { code, .. }) = error.downcast_ref::<StorageError>() {
-            return Self { status:StatusCode::BAD_REQUEST, body:json!({"error":error.to_string(),"status":400,"code":code,"suggested_action":"reload_owner_snapshot","current_revision":null}) };
+        if let Some(StorageError::ConversationContract { code, .. }) =
+            error.downcast_ref::<StorageError>()
+        {
+            return Self {
+                status: StatusCode::BAD_REQUEST,
+                body: json!({"error":error.to_string(),"status":400,"code":code,"suggested_action":"reload_owner_snapshot","current_revision":null}),
+            };
         }
         Self::bad_request(error)
     }
@@ -8160,11 +8170,13 @@ fn events(
     let stream = stream::unfold(
         (receiver, query.run_id, permit, false),
         |(mut receiver, run_id, permit, done)| async move {
-            if done { return None; }
+            if done {
+                return None;
+            }
             loop {
                 match receiver.recv().await {
                     Ok(value) if run_id.is_none_or(|filter| filter == value.run_id) => {
-                        let event = Event::default().id(value.event_id.to_string())
+                        let event = Event::default()
                             .event(serde_json::to_value(value.kind).ok()?.as_str()?)
                             .json_data(&value)
                             .ok()?;
@@ -8176,8 +8188,8 @@ fn events(
                         | tokio::sync::broadcast::error::RecvError::Closed,
                     ) => {
                         let event=Event::default().event("resync_required").json_data(json!({"code":"live_event_gap","snapshot_url":"/api/navigation","suggested_action":"reload_exact_task_and_run_snapshots"})).ok()?;
-                        return Some((Ok(event),(receiver,run_id,permit,true)));
-                    },
+                        return Some((Ok(event), (receiver, run_id, permit, true)));
+                    }
                 }
             }
         },

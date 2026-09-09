@@ -1,0 +1,20 @@
+{
+  "fixture_only": true,
+  "workspace_tests": {
+    "suites": 90,
+    "passed": 741,
+    "failed": 0,
+    "ignored": 6
+  },
+  "http_tests": {
+    "passed": 57,
+    "failed": 0,
+    "ignored": 1
+  },
+  "build": "cargo build --workspace --offline: passed",
+  "clippy": "cargo clippy -p annotagent-storage -p annotagent-application -p annotagent-server --all-targets --offline -- -D warnings: passed",
+  "fmt": "cargo fmt --all --check: passed",
+  "bound_http_port": null,
+  "test_transport": "in-process Axum HTTP; ephemeral fake-provider sockets",
+  "real_provider_or_weights_tests": "not enabled"
+}

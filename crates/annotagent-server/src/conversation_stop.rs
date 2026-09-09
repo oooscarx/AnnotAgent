@@ -29,7 +29,7 @@ fn view(
         .map_err(ApiError::bad_request)?;
     let mut response = serde_json::to_value(record).map_err(ApiError::internal)?;
     response["observation"] = json!(observation);
-    response["normalized_state"] = json!(match observation.as_ref().map(|v|v.state) {
+    response["normalized_state"] = json!(match observation.as_ref().map(|v| v.state) {
         Some("cancel_pending") => Some("stopping"),
         Some("unknown") => Some("outcome_unknown"),
         Some("cancelled") => Some("interrupted"),

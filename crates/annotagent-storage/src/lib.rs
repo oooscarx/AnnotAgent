@@ -1,7 +1,6 @@
 //! `SQLite` persistence for projects, auditable runs, revisions, and correction memory.
 
 mod agent_ui;
-mod event_replay;
 mod batch;
 mod conversation_builder;
 mod conversation_calls;
@@ -11,6 +10,7 @@ mod conversation_feedback_scope;
 mod conversation_future_schema;
 mod conversation_future_schema_proposal;
 mod conversation_image_class;
+mod event_replay;
 pub use conversation_exports::{ConversationExport, ConversationExportEvent};
 pub use conversation_future_schema_proposal::{
     ConversationFutureSchemaProposalAuthorizationRecord, ConversationFutureSchemaProposalSource,

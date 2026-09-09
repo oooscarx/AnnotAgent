@@ -51,7 +51,6 @@ pub struct ConversationSendReceipt {
     /// Resolved at Send when setup exists. Historical/unconfigured messages have None.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved_agent_model_id: Option<annotagent_core::ModelProfileId>,
-
 }
 
 fn invalid(message: &str) -> StorageError {
@@ -80,13 +79,16 @@ impl SqliteStore {
         conversation: Uuid,
         input: &ConversationSendInput,
     ) -> Result<ConversationSendReceipt, StorageError> {
-        self.send_conversation_message_with_model(project,conversation,input,None,None)
+        self.send_conversation_message_with_model(project, conversation, input, None, None)
     }
 
     /// Application supplies the passive resolved default and observed preference.
     /// CAS is in the same transaction as the message, receipt and queue insertion.
     pub fn send_conversation_message_with_model(
-        &self, project: &str, conversation: Uuid, input: &ConversationSendInput,
+        &self,
+        project: &str,
+        conversation: Uuid,
+        input: &ConversationSendInput,
         resolved_agent_model_id: Option<annotagent_core::ModelProfileId>,
         observed: Option<&crate::ConversationAgentModel>,
     ) -> Result<ConversationSendReceipt, StorageError> {
@@ -544,13 +546,35 @@ mod tests {
                 .is_err()
         );
         let admissions = std::thread::scope(|scope| {
-            let reserve = || store.reserve_conversation_call(&owner,task,approval.grant.id,&approval.grant.scope_hash,&approval.request_hash).unwrap();
+            let reserve = || {
+                store
+                    .reserve_conversation_call(
+                        &owner,
+                        task,
+                        approval.grant.id,
+                        &approval.grant.scope_hash,
+                        &approval.request_hash,
+                    )
+                    .unwrap()
+            };
             let first = scope.spawn(reserve);
             let second = scope.spawn(reserve);
-            [first.join().unwrap(),second.join().unwrap()]
+            [first.join().unwrap(), second.join().unwrap()]
         });
-        assert_eq!(admissions.iter().filter(|result| matches!(result,ConversationCallAdmission::Admitted)).count(),1);
-        assert_eq!(admissions.iter().filter(|result| matches!(result,ConversationCallAdmission::Existing(_))).count(),1);
+        assert_eq!(
+            admissions
+                .iter()
+                .filter(|result| matches!(result, ConversationCallAdmission::Admitted))
+                .count(),
+            1
+        );
+        assert_eq!(
+            admissions
+                .iter()
+                .filter(|result| matches!(result, ConversationCallAdmission::Existing(_)))
+                .count(),
+            1
+        );
         assert!(
             store
                 .cancel_queued_conversation_message(&owner, conversation, task, first.message.id)
@@ -628,8 +652,10 @@ mod tests {
                 .unwrap(),
             ConversationCallAdmission::Existing(_)
         ));
-        println!("AGENT_UI_TRACE {}",serde_json::json!({"fixture":true,"test":"queued_planning_preserves_budget_and_requires_exact_fifo_call","dispatch_admitted_count":1,"duplicate_dispatch_existing_count":1,"after_restart":store.conversation_message_queue(&owner,conversation,task,0).unwrap(),"budget":store.conversation_call_budget(&owner,task).unwrap()}));
-
+        println!(
+            "AGENT_UI_TRACE {}",
+            serde_json::json!({"fixture":true,"test":"queued_planning_preserves_budget_and_requires_exact_fifo_call","dispatch_admitted_count":1,"duplicate_dispatch_existing_count":1,"after_restart":store.conversation_message_queue(&owner,conversation,task,0).unwrap(),"budget":store.conversation_call_budget(&owner,task).unwrap()})
+        );
     }
 
     fn input() -> ConversationSendInput {

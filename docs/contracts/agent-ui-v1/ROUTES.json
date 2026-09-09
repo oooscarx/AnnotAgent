@@ -1,5 +1,10 @@
 [
   {
+    "path": "/api/navigation",
+    "registration": "get(agent_ui::navigation))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
     "path": "/api/health",
     "registration": "get(health))",
     "source": "crates/annotagent-server/src/lib.rs"
@@ -401,13 +406,28 @@
   },
   {
     "path": "/api/settings",
-    "registration": "get(get_settings).put(put_settings))",
+    "registration": "get(agent_ui_settings::get).put(put_settings).patch(agent_ui_settings::patch))",
     "source": "crates/annotagent-server/src/lib.rs"
   },
   {
     "path": "/api/events",
-    "registration": "get(events))\n        .with_state(state)",
+    "registration": "get(event_replay::events))\n        .with_state(state)",
     "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/task-navigation",
+    "registration": "get(super::agent_ui::tasks))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/workspace",
+    "registration": "get(super::agent_ui::snapshot))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/thread",
+    "registration": "get(super::agent_ui::thread))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
   },
   {
     "path": "/api/projects/{project_id}/conversations/{conversation_id}/send",
