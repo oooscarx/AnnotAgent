@@ -1076,6 +1076,12 @@ caption {
 .native-run-inspector article { display: grid; gap: 12px; min-width: 0; }
 .native-run-inspector :is(p,h2,h3,h4) { margin: 0; }
 .native-run-inspector > button { justify-self: start; }
+.native-skill-registry { display: grid; gap: 16px; min-width: 0; }
+.native-skill-registry label { display: grid; gap: 8px; }
+.native-skill-registry dl { display: grid; gap: 12px; }
+.native-skill-registry dt { font-weight: 600; }
+.native-skill-registry dd { margin: 4px 0 0; overflow-wrap: anywhere; }
+.native-skill-registry pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .native-artifact-preview { display: grid; gap: 12px; min-width: 0; }
 .native-artifact-image { position: relative; width: 100%; max-width: 960px; }
 .native-artifact-image img { display: block; width: 100%; height: auto; }

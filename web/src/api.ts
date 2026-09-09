@@ -1149,7 +1149,7 @@ export const api = {
     request<{ revisions: AnnotationRevision[] }>(projectId
       ? `/api/projects/${encodeURIComponent(projectId)}/reviews/${encodeURIComponent(id)}/revisions`
       : `/api/annotations/${encodeURIComponent(id)}/revisions`),
-  skills: () => request<SkillDetail[]>("/api/skills"),
+  skills: (signal?: AbortSignal) => request<SkillDetail[]>("/api/skills", {signal}),
   agentSessions: (projectId: string, signal?: AbortSignal) =>
     request<{ sessions: AgentSession[] }>(
       `/api/projects/${projectId}/agent-sessions`,

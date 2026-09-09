@@ -105,7 +105,6 @@ import type {
   RunNodeArtifactInspection,
   RunResultSummary,
   RunProvenanceSummary,
-  SkillDetail,
   WorkflowCatalog,
   WorkflowDraft,
   WorkflowDraftNode,
@@ -9697,62 +9696,6 @@ function ProjectAgentActivity({
   );
 }
 
-function SkillsPage({ onError }: { onError: (value: string) => void }) {
-  const [skills, setSkills] = useState<SkillDetail[]>([]);
-  useEffect(() => {
-    void api
-      .skills()
-      .then(setSkills)
-      .catch((error: Error) => onError(error.message));
-  }, []);
-  const groups: { kind: SkillDetail["kind"]; title: string; detail: string }[] = [
-    { kind: "capability", title: "Capability Skills", detail: "Reusable model and processing abilities" },
-    { kind: "domain", title: "Domain Skills", detail: "Domain validation, policy, recovery and memory" },
-    { kind: "pack", title: "Skill Packs", detail: "Versioned collections of Domain and Capability Skills" },
-  ];
-  return (
-    <section className="page-stack">
-      <div className="boundary-note">
-        <span>AnnotAgent</span>
-        <i>Tool · Core Node · Model · Skill</i>
-        <span>Layered Skill Registry</span>
-      </div>
-      {groups.map((group) => {
-        const items = skills.filter((skill) => skill.kind === group.kind);
-        if (!items.length) return null;
-        return (
-          <section className="skill-group" key={group.kind}>
-            <div><span className="eyebrow">{group.detail}</span><h2>{t(group.title)}</h2></div>
-            {items.map((skill) => (
-              <Panel key={skill.id} title={`${skill.display_name} · v${skill.version}`} eyebrow={`${skill.kind} · ${skill.id}`}>
-                <p className="lede">{skill.description}</p>
-                <div className="skill-columns">
-                  <TagGroup title="Provided Nodes" values={skill.nodes} />
-                  <TagGroup title="Registered tools" values={skill.tools} />
-                  <TagGroup title={t("Capabilities")} values={skill.capabilities} />
-                  <TagGroup title="Capability requirements" values={skill.capability_requirements} />
-                  <TagGroup title={t("Validators")} values={skill.validators} />
-                  <TagGroup title={t("Refiners")} values={skill.refiners} />
-                  <TagGroup title="Policies" values={skill.policies} />
-                  <TagGroup title="Templates" values={skill.workflow_templates.map((template) => template.id)} />
-                  <TagGroup title="Correction taxonomy" values={skill.correction_taxonomy} />
-                  <TagGroup title="Prompt resources" values={skill.resources} />
-                  <TagGroup title="Used by Projects" values={skill.projects} />
-                </div>
-              </Panel>
-            ))}
-          </section>
-        );
-      })}
-      {skills.length === 0 && (
-        <Empty
-          title="No Skills installed"
-          detail="Install a registered extension before creating a runnable Project."
-        />
-      )}
-    </section>
-  );
-}
 
 type ExpertWorkerDraft = Record<string, any>;
 

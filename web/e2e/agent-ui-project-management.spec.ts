@@ -1,6 +1,14 @@
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
+test("native Skill registry is lazy, searchable, server-backed and read-only",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");const skills=await(await request.get("/api/skills")).json();expect(skills.length).toBeGreaterThan(0);
+  const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});await page.goto("/settings/plugins");
+  const region=page.getByRole("region",{name:"Skill 注册表",exact:true});await expect(region).toHaveCount(0);
+  const toggle=page.locator("summary").filter({hasText:"Skills、工具与领域规则"});await toggle.click();await expect(region.getByRole("textbox",{name:"搜索 Skill",exact:true})).toBeVisible();
+  await region.getByRole("textbox",{name:"搜索 Skill",exact:true}).fill(skills[0].id);await expect(region.locator("summary").filter({hasText:skills[0].display_name}).first()).toBeVisible();await region.locator("summary").filter({hasText:skills[0].display_name}).first().click();await expect(region).toContainText(skills[0].description);
+  await region.getByRole("textbox",{name:"搜索 Skill",exact:true}).fill("TEST-no-such-skill");await expect(region).toContainText("没有匹配的 Skill");await toggle.click();await expect(region).toHaveCount(0);await page.reload();await expect(region).toHaveCount(0);expect(writes).toEqual([]);
+});
 test("native image removal requires explicit filename and only deletes an isolated TEST copy",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
   await page.goto("/projects/new");await page.getByLabel("项目名称",{exact:true}).fill(`TEST removal ${randomUUID()}`);await page.getByRole("button",{name:"创建项目",exact:true}).click();await expect(page).toHaveURL(/\/manage\/data$/);

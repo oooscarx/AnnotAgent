@@ -5,8 +5,10 @@ import { Disclosure } from "./Disclosure";
 import { Dialog } from "./Dialog";
 import { BundleInstaller } from "./BundleInstaller";
 import { BundleImport } from "./BundleImport";
+import {SkillRegistry} from "./SkillRegistry";
 
 export function PluginSettings({ service, workspaceId }: { service: PluginManagement; workspaceId?: string }) {
+  const [showSkills,setShowSkills]=useState(false);
   const [data, setData] = useState<{ registry: ExpertPluginRegistry; instances: InstalledModelInstance[]; bundles: InstalledModelBundle[] }>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -44,6 +46,7 @@ export function PluginSettings({ service, workspaceId }: { service: PluginManage
   };
   const ask = (title: string, detail: string, action: () => Promise<unknown>) => setConfirmation({title, detail, action});
   return <section className="plugin-settings" aria-label="真实插件与模型包管理">
+    <Disclosure title="Skills、工具与领域规则" onToggle={e=>setShowSkills(e.currentTarget.open)}>{showSkills&&<SkillRegistry service={service}/>}</Disclosure>
     <p>本机插件与模型实例分别显示。旧权重槽缺失不等于配套 Model Bundle 不可用。</p>
     {error && <p role="alert" className="error">{error}</p>}
     {message && <p role="status">{message}</p>}

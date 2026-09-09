@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Skill Registry moved into native Settings
+
+New Plugin Settings disclosure mounts a real `SkillRegistry` only when opened. It reads `/api/skills` with cancellation, searchable identity/description and details for nodes, tools, capabilities/requirements, validators, refiners, policies, correction taxonomy, resources, project usage and Workflow/project templates. Errors never fall back to fixture lists; registered metadata is explicitly distinct from installed/Ready models. No new global Skills navigation. Audited old SkillsPage had no remaining invocation and deleted the whole obsolete function plus its type import from old App after migrating its information.
+
+Web typecheck/build and313 unit tests passed. Full management browser suite19 passed (17 actual TEST HTTP, two controlled Worker/Mask responses), now also covering last slice's saved label attributes and file-removal confirmation. New registry case verifies lazy mount, server data, search/no-match, collapse/reload and zero writes. Final post-deletion build passed. No Rust changed; no real models called. Tests only used marked isolated workspace; removed only newly uploaded synthetic TEST copies with originals preserved. Owned TEST service stopped. User services/workspace/web/dist untouched, no push. Remaining legacy root/styles and historical-scope/publication/replay migration requirements still contradict completion; goal active.
+
 ## Native data removal and Label definition parity
 
 Audited actual BuildData/BuildLabels rather than assuming absent API capabilities. Migrated existing removeImage operation into native data management with filename confirmation, explicit irreversible-file deletion/history-image risk warning, exact project/hash preflight, pending guard, native focus-managed Dialog and no automatic retry. The API removes the actual project file, not a Trash entry; UI does not falsely promise restore. Real test created a new TEST project, uploaded a synthetic copy, cancelled with zero DELETE, confirmed exactly one hash-bound DELETE, and refreshed without repeating it. Only this temporary TEST copy was deleted; repository source and user datasets were untouched and the test copy can be reimported.
