@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Server-only saved proposal authorization continuation
+
+Native controls now offer original-authorization preview for an unexecuted, unexpired, uncancelled server record even without browser recovery. Preview uses the original call/model and compares call/model/scope hash/previous grant/expiry before confirmation. Any receipt, including reserved/failed/in_doubt, is ineligible; no new authorization identity or budget is substituted. Added eligibility unit coverage.
+
+317 unit tests, typecheck and isolated build passed. Real HTTP extended case deliberately lost the successful proposal authorization response: no execute followed. Removed only TEST browser proposal recovery keys, refreshed, explicitly reconfirmed the server's original preview and executed once. Server consent matched exactly and the rest of adoption/save/Builder/history path passed. Browser writes still include one authorization and one execute, not a replacement grant. One extended scenario passed, /tmp/annotagent-future-server-auth-dist source784a186 plus slice. Stop/lost-execute/unknown dedicated tests and remaining migration still open. No true workspace, paid API, Published, user services or remote changes; goal active.
+
 ## Native rule-proposal actual authorization and execution
 
 Replaced API-only proposal generation in the integration scenario with native controls: open actual preview, assert destination/unchecked launch gate, approve and execute, observe actual draft suggestion, adopt/edit/save, recover and build a new plan. Only preview query model selection is routed to the explicitly registered/probed TEST Profile; no response substitution. Exact browser writes now include one proposal authorization and execution plus scope/save/Builder actions. Full extended real HTTP scenario passed with original sample preserved and older-history navigation. Added parent activity propagation so pending proposal/preview/unknown state blocks rule save/edit and cannot hide the independent Stop control by materializing a rule mid-execution.
