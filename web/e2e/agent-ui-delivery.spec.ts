@@ -1,0 +1,33 @@
+import {test,expect} from "@playwright/test";
+import {readFileSync} from "node:fs";
+
+test("delivery intake and formal review restore through real HttpAdapter without model or package writes",async({page,request},info)=>{
+  test.skip(!process.env.DELIVERY_SCENE_MANIFEST,"Requires an explicitly seeded isolated delivery scene");
+  const health=await request.get("/api/health");expect(health.headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const scene=JSON.parse(readFileSync(process.env.DELIVERY_SCENE_MANIFEST!,"utf8"));
+  expect(scene.project).toMatch(/^TEST-delivery-/);
+  const image=scene.images[0];
+  const source=scene.batch.batch.images.find((i:{image_id:string})=>i.image_id===image.image_id).child_run_id;
+  expect(source).toBeTruthy();
+  const writes:string[]=[];page.on("request",r=>{if(!["GET","HEAD"].includes(r.method()))writes.push(`${r.method()} ${new URL(r.url()).pathname}`);});
+  await page.goto(`/projects/${encodeURIComponent(scene.project)}/work?task=${scene.task_id}`);
+  await expect(page.getByRole("region",{name:"训练数据交付信息",exact:true})).toContainText("12 张图片");
+  await page.getByText("检查正式训练图片（整图审核）",{exact:true}).click();
+  const review=page.getByRole("region",{name:"训练图片整图审核",exact:true});
+  await review.getByLabel("图片",{exact:true}).selectOption(image.image_id);
+  await review.getByLabel("正式标注来源",{exact:true}).selectOption(source);
+  await expect(review).toContainText("未解决对象 3");
+  await review.locator("svg").scrollIntoViewIfNeeded();
+  await page.screenshot({path:info.outputPath("delivery-formal-review-TEST.png")});
+  await expect(review.getByRole("button",{name:"确认整张图标注完整",exact:true})).toBeDisabled();
+  await expect(review.getByRole("button",{name:"确认整张图没有目标",exact:true})).toBeDisabled();
+  await expect(review.locator("svg image")).toHaveAttribute("href",image.url);
+  await page.reload();
+  await expect(review.getByLabel("正式标注来源",{exact:true})).toHaveValue(source);
+  await expect(review).toContainText("未解决对象 3");
+  await page.getByRole("button",{name:"检查当前打包范围",exact:true}).click();
+  await expect(page.getByRole("region",{name:"训练数据包交付",exact:true})).toContainText("还有 12 张未完成当前整图确认");
+  await expect(page.getByRole("link",{name:"下载数据集 ZIP",exact:true})).toHaveCount(0);
+  expect(writes).toEqual([]);
+  await page.screenshot({path:info.outputPath("delivery-unresolved-package-TEST.png")});
+});
