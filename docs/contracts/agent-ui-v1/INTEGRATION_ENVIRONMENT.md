@@ -118,3 +118,13 @@ python3 crates/annotagent-e2e-fixture/support/http_stop_scene.py --enable-fixtur
 ```
 
 输出新的真实 Task/consent/start/stop 请求与独立 `UIAPI-003_STOP_<task>.json`。不自动执行；加 `--verify` 才自动开始、停止并检查真实状态链和 in_doubt。该命令仅接受带 marker 的 loopback fixture，检查响应 TEST header；不接触 8787。保留原 `manual_stop` 场景不变，终端 JSON 中使用新的 scene 字段。过期/撤销不能换 ID 重发原模型调用，新 scene 是明确创建的新测试。
+
+## UIAPI-004 专项回归
+
+保持一个全新 fixture 启动，在另一个终端执行：
+
+```sh
+python3 crates/annotagent-e2e-fixture/support/http_queue_human_check.py --enable-fixture --manifest /absolute/temp/TEST-agent-ui-xxxx/manifest.json
+```
+
+会通过真实 API 消费 bbox pending 问题，创建补充与一次 Schema call，输出 UIAPI-004_HTTP.json；每次使用全新 seed。验证人工门禁、preview/POST 竞态、拒绝时授权/预算不变及原 Consent 幂等重试。不会直接修改 SQLite 或伪造 HTTP 成功。旧冻结授权重开恢复另由存储回归覆盖。

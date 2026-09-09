@@ -46,6 +46,22 @@ pub(super) async fn authorization(
     })))
 }
 
+fn admission_error(error: anyhow::Error) -> ApiError {
+    if let Some(annotagent_storage::StorageError::ConversationContract { code, .. }) =
+        error.downcast_ref::<annotagent_storage::StorageError>()
+        && matches!(
+            *code,
+            "human_input_pending" | "schema_clarification_pending"
+        )
+    {
+        return ApiError {
+            status: StatusCode::CONFLICT,
+            body: json!({"status":409,"code":code,"error":error.to_string(),"admitted":false,"suggested_action":"answer_human_then_retry_same_command"}),
+        };
+    }
+    ApiError::bad_request(error)
+}
+
 fn scope(
     state: &ServerState,
     project: &str,
@@ -62,6 +78,15 @@ fn scope(
     if queued.cancelled_at.is_some() {
         return Err(ApiError::bad_request("Queued instruction is cancelled"));
     }
+    state
+        .application
+        .check_queued_schema_admission(
+            project,
+            conversation,
+            task,
+            queued.planning_call_id.unwrap_or_default(),
+        )
+        .map_err(admission_error)?;
     let frozen = queued
         .receipt
         .agent_model
@@ -207,7 +232,7 @@ pub(super) async fn propose(
     state
         .application
         .authorize_queued_schema(&project, &input)
-        .map_err(ApiError::bad_request)?;
+        .map_err(admission_error)?;
     let permit=state.journey_workers.clone().try_acquire_owned().map_err(|_|ApiError{status:StatusCode::TOO_MANY_REQUESTS,body:json!({"error":"Planning capacity full. Authorization is saved; retry the same request later."})})?;
     let application = state.application.clone();
     let execution = ConversationSchemaExecution {
@@ -231,5 +256,5 @@ pub(super) async fn propose(
     .await
     .map_err(|_| ApiError::internal("Worker interrupted; inspect the saved call before retrying"))?
     .map(Json)
-    .map_err(ApiError::bad_request)
+    .map_err(admission_error)
 }

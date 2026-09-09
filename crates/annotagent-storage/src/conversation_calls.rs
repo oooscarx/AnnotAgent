@@ -169,15 +169,19 @@ pub(crate) fn require_call_admission_clear(
 ) -> Result<(), StorageError> {
     let waiting: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM conversation_human_requests WHERE task_id=?1 AND status='pending' UNION ALL SELECT 1 FROM conversation_image_class_reviews WHERE task_id=?1 AND status='pending')", [task.to_string()], |row| row.get(0))?;
     if waiting {
-        return Err(invalid(
-            "Task is waiting for human input; no model call was admitted",
-        ));
+        return Err(StorageError::ConversationContract {
+            code: "human_input_pending",
+            message: "Task is waiting for human input; no model call was admitted".into(),
+        });
     }
     let clarification:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM conversation_model_calls m WHERE m.task_id=?1 AND m.status='completed' AND json_extract(m.evidence_json,'$.decision.Ok.decision')='clarify' AND NOT EXISTS(SELECT 1 FROM conversation_schema_clarification_answers a WHERE a.call_id=m.id))",[task.to_string()],|row|row.get(0))?;
     if clarification {
-        return Err(invalid(
-            "Task is waiting for its Schema clarification answer; no model call was admitted",
-        ));
+        return Err(StorageError::ConversationContract {
+            code: "schema_clarification_pending",
+            message:
+                "Task is waiting for its Schema clarification answer; no model call was admitted"
+                    .into(),
+        });
     }
     let cancelled: bool = db.query_row(
         "SELECT EXISTS(SELECT 1 FROM conversation_call_cancellations WHERE call_id=?1)",
