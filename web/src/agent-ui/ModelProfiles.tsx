@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import type { ProviderProfile, RegistryModelProfile } from "../types";
 import type { api } from "../api";
 import { Dialog } from "./Dialog";
+import {GlobalModelDefaults,type GlobalDefaultsService} from "./GlobalModelDefaults";
 import { ModelProfileEditor, type EditableModel } from "./ModelProfileEditor";
 import { ModelProfileActions, type ModelActionService } from "./ModelProfileActions";
-export type ModelProfileService = Pick<typeof api, "modelProfiles" | "providers" | "createModelProfile" | "updateModelProfile"> & ModelActionService;
+export type ModelProfileService = Pick<typeof api, "modelProfiles" | "providers" | "createModelProfile" | "updateModelProfile"> & ModelActionService & GlobalDefaultsService;
 export function ModelProfiles({service}:{service:ModelProfileService}) {
   const [models,setModels]=useState<RegistryModelProfile[]>();
   const [providers,setProviders]=useState<ProviderProfile[]>([]);
@@ -41,6 +42,7 @@ export function ModelProfiles({service}:{service:ModelProfileService}) {
     finally{pending.current=false;if(mounted.current)setBusy(false);}
   };
   return <section aria-label="模型配置"><h2>模型配置</h2><p>Registry 中的模型定义用于后续请求；不自动探测、不更改已有发布版本。</p>
+    <GlobalModelDefaults service={service}/>
     {error&&!edit&&<p role="alert" className="error">{error}</p>}{message&&<p role="status">{message}</p>}
     {!models&&!error&&<p role="status">读取模型配置…</p>}
     <div className="actions"><button disabled={busy} onClick={()=>void reload().catch(e=>setError(e.message))}>重新读取</button><button disabled={!providers.length||busy} onClick={()=>{setError("");setEdit("new");}}>添加模型配置</button></div>

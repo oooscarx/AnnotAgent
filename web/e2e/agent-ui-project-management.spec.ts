@@ -1,6 +1,12 @@
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
+test("native global default editor reads real compatible models and cancels without writes",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");const base=await(await request.get("/api/agent-model-bindings")).json();
+  const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});await page.goto("/settings/agent-models");await page.locator("summary").filter({hasText:"全局默认模型"}).click();
+  const region=page.getByRole("region",{name:"全局默认模型配置",exact:true});const select=region.getByRole("combobox",{name:"Pipeline Builder 默认模型",exact:true});await expect(select).toHaveValue(base.pipeline_builder||"");
+  const options=await select.locator("option").evaluateAll(nodes=>nodes.map(n=>(n as HTMLOptionElement).value));const different=options.find(value=>value!==(base.pipeline_builder||""));expect(different).toBeDefined();await select.selectOption(different!);await expect(region.getByRole("button",{name:"保存全局默认",exact:true})).toBeEnabled();await region.getByRole("button",{name:"取消默认模型修改",exact:true}).click();await expect(select).toHaveValue(base.pipeline_builder||"");expect(writes).toEqual([]);await select.selectOption(different!);await region.getByRole("button",{name:"保存全局默认",exact:true}).click();await expect(region.getByRole("status")).toContainText("全局默认已保存");expect((await(await request.get("/api/agent-model-bindings")).json()).pipeline_builder||"").toBe(different);await select.selectOption(base.pipeline_builder||"");await region.getByRole("button",{name:"保存全局默认",exact:true}).click();await expect(region.getByRole("button",{name:"保存全局默认",exact:true})).toBeDisabled();await expect.poll(async()=>await(await request.get("/api/agent-model-bindings")).json()).toEqual(base);await page.reload();expect(writes).toHaveLength(2);expect(writes.every(url=>url.endsWith("/api/agent-model-bindings"))).toBe(true);
+});
 test("native version summary restores exact version and rejects missing versions without writes",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
   const project="TEST-agent-ui-15eb0549-f44e-4ae1-81dd-0ebf67714eb2";const summary=await(await request.get(`/api/projects/${project}/summary`)).json();const version=summary.project.available_workflow_versions[0];expect(version).toBeTruthy();

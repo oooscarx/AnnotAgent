@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Global defaults migrated; old ModelRegistryPage removed
+
+Audit identified one real old-page gap before deletion: global pipeline_builder/vision_language/text_generation defaults. Added a native Settings disclosure using actual compatible-model queries, preserving unknown/current selections, explicit save/cancel, dirty guard, stale-load protection and reread-before-write conflict detection. It does not change task preference, in-flight requests or Published bindings. Existing endpoint is not atomic CAS; frontend preflight is not claimed as such. Reads do not probe or execute models. After integrating this with existing native ModelProfiles/actions/quality contracts, deleted old ModelRegistryPage function and replaced its two legacy embedded mounts with links to `/settings/agent-models`.
+
+315 unit tests and21 management E2E passed before the added save round trip (19 actual TEST HTTP, two controlled responses). The focused default test additionally saved a changed TEST global default, verified server readback, restored original and verified it, then refreshed without repeat writes. Initial test observed disabled-while-saving before completion; corrected to poll actual persisted response rather than treating disabled as saved. Final post-deletion typecheck/build passed. No Rust changed, real workspace/user services/dist unchanged. Only isolated TEST defaults were modified/restored; no model calls or push. Owned TEST service stopped. Legacy Provider page, root/styles and remaining management gaps persist; goal active.
+
 ## Native Review source round trip
 
 Review queue page offset is now an explicit validated URL value with Back/popstate restoration. Queue→item, saved next-item navigation and return-to-queue preserve that offset. Review→Run carries only a typed same-project source review ID and annotation ID; Run offers a canonical return link, while the target Review continues authoritative server ownership checks. Arbitrary external/legacy return URLs are not accepted. Existing local unsaved edit persistence and dirty guards remain.
