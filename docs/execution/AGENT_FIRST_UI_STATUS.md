@@ -221,3 +221,31 @@ cross-task rejection and stopping one actual task without touching another. This
 the extraction, not final Plan/continue/queue requirements or native IME/200% usability.
 No Rust code changed in this slice; no full Rust or entire E2E pass claimed. No push/remote
 change and no Live inference. Overall M1 and the full goal remain incomplete.
+
+## Server send foundation — atomic admission, not execution
+
+Previous turn was progress (e1c2b70 Composer extraction with 12 browser regressions).
+Added POST `/api/projects/:project/conversations/:conversation/send` with a strict input:
+message ID/text/frozen image or candidate reference, explicit task context (nullable for a
+new task), and schema revision. The application resolves stable Project ownership, validates
+first-admission provenance and the new-task current schema under the existing schema lock.
+Storage atomically saves the journal message, new task if needed, and frozen receipt in new
+migration 0053. Existing tasks receive an explicit persisted message association, not a
+replacement goal. Candidate feedback must agree with its task/revision; stop still requires
+the dedicated stop endpoint. Legacy journal IDs cannot silently become new dispatch commands.
+
+Exact retry returns the original receipt and task even after restart; changes to frozen
+context conflict. Extracted the original journal validation into a shared transaction helper,
+retaining foreign image and candidate schema checks. This is a dispatch admission record,
+NOT an execution grant, Plan policy or implemented queue processor. Composer still uses the
+old endpoint pending client frozen-command/receipt recovery integration. No auto-LLM call,
+Publish, Commit or Batch is attached to send, and no prototype response is returned.
+
+Verification: two new storage tests (restart/idempotency/retarget rejection and a deliberate
+receipt-insert failure proving full message/task rollback), five existing journal tests and
+one new application stale-schema/owner/stop test passed (77559, 55597). Initial clippy caught
+test-module placement; corrected it. Storage/Application/Server all-target/all-feature clippy
+passed 9772. Fresh production build and isolated real HTTP test 80866 passed 1/1, proving
+stable retry, one task/two linked messages, forbidden extra execute field and zero authorized
+or reserved model calls. This is not Plan-permission coverage or a full Rust/browser sweep.
+No real workspace restart/migration, paid call, push, remote change or historical rewrite.

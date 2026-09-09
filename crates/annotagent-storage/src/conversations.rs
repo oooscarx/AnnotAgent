@@ -68,6 +68,85 @@ pub(crate) fn require_owner(
     Ok(())
 }
 
+pub(crate) fn append_message_in_transaction(
+    db: &rusqlite::Connection,
+    project: &str,
+    conversation: Uuid,
+    input: &ConversationMessageInput,
+) -> Result<ConversationMessage, StorageError> {
+    if matches!(
+        input.reference,
+        Some(ConversationSelectionRef::StopRequest { .. })
+    ) {
+        return Err(invalid(
+            "stop messages require the atomic stop-command service",
+        ));
+    }
+    if input.text.trim().is_empty() || input.text.len() > 65_536 {
+        return Err(invalid(
+            "message text must be nonempty and at most 65536 bytes",
+        ));
+    }
+
+    require_owner(db, project, conversation)?;
+    let existing: Option<(i64, String)> = db.query_row("SELECT sequence,input_json FROM conversation_messages WHERE conversation_id=?1 AND message_id=?2", params![conversation.to_string(), input.id.to_string()], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
+    if let Some((sequence, json)) = existing {
+        let saved: ConversationMessageInput = serde_json::from_str(&json)?;
+        if saved != *input {
+            return Err(invalid(
+                "message ID already has different content or references",
+            ));
+        }
+        return Ok(ConversationMessage {
+            conversation_id: conversation,
+            sequence,
+            input: saved,
+        });
+    }
+    if let Some(ConversationSelectionRef::SampleCandidate {
+        task_id,
+        project_schema_revision,
+        ..
+    }) = &input.reference
+    {
+        if input.image.is_none() {
+            return Err(invalid("Selected candidate requires an image reference"));
+        }
+        let task_owned: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM conversation_tasks WHERE id=?1 AND conversation_id=?2 AND schema_revision=?3)", params![task_id.to_string(),conversation.to_string(),project_schema_revision], |row| row.get(0))?;
+        if !task_owned {
+            return Err(invalid(
+                "Selected candidate task or Schema revision does not match this conversation",
+            ));
+        }
+    }
+    if let Some(image) = &input.image {
+        let hash: Option<String> = db
+            .query_row(
+                "SELECT sha256 FROM images WHERE id=?1 AND project_id=?2",
+                params![image.image_id, project],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if hash.as_deref() != Some(image.sha256.as_str()) {
+            return Err(invalid(
+                "image is foreign, missing or changed since selection",
+            ));
+        }
+    }
+    let sequence: i64 = db.query_row(
+        "SELECT COALESCE(MAX(sequence),0)+1 FROM conversation_messages WHERE conversation_id=?1",
+        [conversation.to_string()],
+        |row| row.get(0),
+    )?;
+    db.execute("INSERT INTO conversation_messages(conversation_id,sequence,message_id,input_json,created_at) VALUES (?1,?2,?3,?4,?5)", params![conversation.to_string(), sequence, input.id.to_string(), serde_json::to_string(input)?, chrono::Utc::now().to_rfc3339()])?;
+
+    Ok(ConversationMessage {
+        conversation_id: conversation,
+        sequence,
+        input: input.clone(),
+    })
+}
+
 impl SqliteStore {
     /// Oldest unscoped message, without transferring a reference-only journal.
     /// This is context discovery, not task selection or execution authorization.
@@ -167,41 +246,12 @@ impl SqliteStore {
         conversation: Uuid,
         input: &ConversationMessageInput,
     ) -> Result<ConversationMessage, StorageError> {
-        if matches!(
-            input.reference,
-            Some(ConversationSelectionRef::StopRequest { .. })
-        ) {
-            return Err(invalid(
-                "stop messages require the atomic stop-command service",
-            ));
-        }
-        if input.text.trim().is_empty() || input.text.len() > 65_536 {
-            return Err(invalid(
-                "message text must be nonempty and at most 65536 bytes",
-            ));
-        }
         self.with_connection(|db| {
             let transaction = db.unchecked_transaction()?;
-            require_owner(&transaction, project, conversation)?;
-            let existing: Option<(i64, String)> = transaction.query_row("SELECT sequence,input_json FROM conversation_messages WHERE conversation_id=?1 AND message_id=?2", params![conversation.to_string(), input.id.to_string()], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
-            if let Some((sequence, json)) = existing {
-                let saved: ConversationMessageInput = serde_json::from_str(&json)?;
-                if saved != *input { return Err(invalid("message ID already has different content or references")); }
-                return Ok(ConversationMessage { conversation_id: conversation, sequence, input: saved });
-            }
-            if let Some(ConversationSelectionRef::SampleCandidate { task_id, project_schema_revision, .. }) = &input.reference {
-                if input.image.is_none() { return Err(invalid("Selected candidate requires an image reference")); }
-                let task_owned: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM conversation_tasks WHERE id=?1 AND conversation_id=?2 AND schema_revision=?3)", params![task_id.to_string(),conversation.to_string(),project_schema_revision], |row| row.get(0))?;
-                if !task_owned { return Err(invalid("Selected candidate task or Schema revision does not match this conversation")); }
-            }
-            if let Some(image) = &input.image {
-                let hash: Option<String> = transaction.query_row("SELECT sha256 FROM images WHERE id=?1 AND project_id=?2", params![image.image_id, project], |row| row.get(0)).optional()?;
-                if hash.as_deref() != Some(image.sha256.as_str()) { return Err(invalid("image is foreign, missing or changed since selection")); }
-            }
-            let sequence: i64 = transaction.query_row("SELECT COALESCE(MAX(sequence),0)+1 FROM conversation_messages WHERE conversation_id=?1", [conversation.to_string()], |row| row.get(0))?;
-            transaction.execute("INSERT INTO conversation_messages(conversation_id,sequence,message_id,input_json,created_at) VALUES (?1,?2,?3,?4,?5)", params![conversation.to_string(), sequence, input.id.to_string(), serde_json::to_string(input)?, chrono::Utc::now().to_rfc3339()])?;
+            let message =
+                append_message_in_transaction(&transaction, project, conversation, input)?;
             transaction.commit()?;
-            Ok(ConversationMessage { conversation_id: conversation, sequence, input: input.clone() })
+            Ok(message)
         })
     }
 

@@ -47,6 +47,7 @@ pub use conversation_journey::{
     JourneyImageScope, JourneyModelScope, JourneySampleScope,
 };
 mod conversation_schema;
+mod conversation_send;
 mod conversation_task_selection;
 mod conversation_tasks;
 pub use conversation_calls::{
@@ -59,6 +60,9 @@ pub use conversation_human_requests::{
     ConversationHumanRequestStatus, ConversationResumeEvent,
 };
 pub use conversation_schema::{ConversationSchemaDefinition, ConversationSchemaDraft};
+pub use conversation_send::{
+    ConversationSendDisposition, ConversationSendInput, ConversationSendReceipt,
+};
 pub use conversation_task_selection::{ConversationTaskSelection, SelectConversationTask};
 mod conversations;
 pub use conversation_tasks::{BeginConversationTask, ConversationTask};
@@ -674,6 +678,7 @@ impl SqliteStore {
             transaction.execute_batch(include_str!("../../../migrations/0050_conversation_exports.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0051_conversation_export_events.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0052_conversation_answer_delivery.sql"))?;
+            transaction.execute_batch(include_str!("../../../migrations/0053_conversation_send_receipts.sql"))?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(52,'conversation_answer_delivery',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(51,'conversation_export_events',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(50,'conversation_exports',?1)",[Utc::now().to_rfc3339()])?;

@@ -9447,6 +9447,39 @@ impl LocalApplication {
         Ok(self.store.project_conversation(&owner)?)
     }
 
+    /// Admit one frozen send command without granting inference or execution.
+    pub fn send_project_conversation_message(
+        &self,
+        project_id: &str,
+        conversation: uuid::Uuid,
+        input: &annotagent_storage::ConversationSendInput,
+    ) -> Result<annotagent_storage::ConversationSendReceipt> {
+        let _guard = self
+            .project_schema_writes
+            .lock()
+            .map_err(|_| anyhow!("project schema lock poisoned"))?;
+        let owner = self.conversation_project_identity(project_id)?;
+        if let Some((saved, receipt)) =
+            self.store
+                .conversation_send_receipt(&owner, conversation, input.message.id)?
+        {
+            if saved != *input {
+                bail!("Send ID conflicts with its frozen task, message or schema");
+            }
+            return Ok(receipt);
+        }
+        if input.task_id.is_none()
+            && self.project_goal(project_id)?["revision"].as_str()
+                != Some(input.schema_revision.as_str())
+        {
+            bail!("Project schema changed before send admission. No message or task was saved.");
+        }
+        self.validate_conversation_message_selection(project_id, conversation, &input.message)?;
+        Ok(self
+            .store
+            .send_conversation_message(&owner, conversation, input)?)
+    }
+
     pub fn append_project_conversation_message(
         &self,
         project_id: &str,
@@ -27783,6 +27816,78 @@ export:
         invalid.value = AnnotationValue::Classification { labels: vec![] };
         assert!(app.create_human_annotation(run_id, invalid).await.is_err());
         assert_eq!(app.store().list_annotations(run_id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn unified_send_freezes_task_and_checks_schema_without_execution() {
+        let temporary = tempfile::tempdir().unwrap();
+        let app = LocalApplication::new(temporary.path()).unwrap();
+        let yaml = "version: 1\nproject:\n  name: TEST send\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n";
+        app.create_project("TEST-send", yaml).unwrap();
+        app.create_project("TEST-other", yaml).unwrap();
+        let conversation = app.create_project_conversation("TEST-send").unwrap();
+        let mut command = annotagent_storage::ConversationSendInput {
+            message: annotagent_storage::ConversationMessageInput {
+                id: uuid::Uuid::new_v4(),
+                text: "TEST cups".into(),
+                image: None,
+                reference: None,
+            },
+            task_id: None,
+            schema_revision: "0".repeat(64),
+        };
+        assert!(
+            app.send_project_conversation_message("TEST-send", conversation, &command)
+                .is_err()
+        );
+        assert!(
+            app.project_conversation_messages("TEST-send", conversation, 0, 100)
+                .unwrap()
+                .is_empty()
+        );
+        command.schema_revision = app.project_goal("TEST-send").unwrap()["revision"]
+            .as_str()
+            .unwrap()
+            .into();
+        let receipt = app
+            .send_project_conversation_message("TEST-send", conversation, &command)
+            .unwrap();
+        assert_eq!(
+            app.send_project_conversation_message("TEST-send", conversation, &command)
+                .unwrap(),
+            receipt
+        );
+        assert_eq!(
+            app.conversation_tasks("TEST-send", conversation)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            app.send_project_conversation_message("TEST-other", conversation, &command)
+                .is_err()
+        );
+        let mut conflict = command.clone();
+        conflict.schema_revision = "b".repeat(64);
+        assert!(
+            app.send_project_conversation_message("TEST-send", conversation, &conflict)
+                .is_err()
+        );
+        let mut stop = command;
+        stop.message.id = uuid::Uuid::new_v4();
+        stop.message.reference = Some(annotagent_storage::ConversationSelectionRef::StopRequest {
+            task_id: Some(receipt.task_id),
+        });
+        assert!(
+            app.send_project_conversation_message("TEST-send", conversation, &stop)
+                .is_err()
+        );
+        assert_eq!(
+            app.project_conversation_messages("TEST-send", conversation, 0, 100)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]

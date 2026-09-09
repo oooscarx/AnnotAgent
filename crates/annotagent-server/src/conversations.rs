@@ -126,6 +126,18 @@ pub(super) async fn append(
         .map_err(ApiError::bad_request)
 }
 
+pub(super) async fn send(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation)): AxumPath<(String, uuid::Uuid)>,
+    Json(input): Json<annotagent_storage::ConversationSendInput>,
+) -> ApiResult<Json<annotagent_storage::ConversationSendReceipt>> {
+    state
+        .application
+        .send_project_conversation_message(&project, conversation, &input)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
 pub(super) async fn tasks(
     State(state): State<ServerState>,
     AxumPath((project, conversation)): AxumPath<(String, uuid::Uuid)>,
