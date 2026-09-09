@@ -43,16 +43,23 @@ it("saves an issue-only answer without asserting corrected geometry or invoking 
   const writes:{path:string;body:Record<string,unknown>}[]=[];
   const transport:Transport=async<T>(path:string,init?:RequestInit)=>{
     if(init?.method!=="POST")return read<T>(path,init);
-    const body=JSON.parse(String(init.body));writes.push({path,body});human.status="applied";
+    const body=JSON.parse(String(init.body));writes.push({path,body});
+    if(writes.length===1)throw new Error("TEST lost response");
+    human.status="applied";
     return {...human,answer:body.answer} as T;
   };
-  const adapter=new HttpAdapter(transport);await adapter.refresh();await adapter.loadTask(project.project_id,"t1");
+  const memory=new Map<string,string>();
+  const storage={getItem:(key:string)=>memory.get(key) || null,setItem:(key:string,value:string)=>memory.set(key,value)} as Storage;
+  const adapter=new HttpAdapter(transport,storage);await adapter.refresh();await adapter.loadTask(project.project_id,"t1");
   const command={id:"answer",project:project.project_id,task:"t1",revision:"schema-1",selection:{image:"image-uuid",candidate:"",revision:"sample:"}};
   await expect(adapter.reportSampleIssue(command,"foreign-image","poor_boundary")).rejects.toThrow("选择或版本");
   await expect(adapter.reportSampleIssue({...command,selection:{...command.selection,revision:"stale"}},"image-uuid","poor_boundary")).rejects.toThrow("选择或版本");
   expect(writes).toHaveLength(0);
-  await adapter.reportSampleIssue(command,"image-uuid","poor_boundary");
-  expect(writes).toHaveLength(1);expect(writes[0].path).toBe(`${root}/t1/human-requests/review/answer`);
+  await expect(adapter.reportSampleIssue(command,"image-uuid","poor_boundary")).rejects.toThrow("lost response");
+  await expect(adapter.reportSampleIssue(command,"image-uuid","wrong_target")).rejects.toThrow("不能改变");
+  expect(writes).toHaveLength(1);
+  await adapter.reportSampleIssue({...command,id:"new-click"},"image-uuid","poor_boundary");
+  expect(writes).toHaveLength(2);expect(writes[1]).toEqual(writes[0]);expect(writes[0].path).toBe(`${root}/t1/human-requests/review/answer`);
   expect(writes[0].body.answer).toMatchObject({reason:"poor_boundary",corrected_value:null,corrected_label:null,sequence:1});
   expect(adapter.snapshot().tasks.find(t=>t.id==="t1")?.repairRequests?.[0].status).toBe("applied");
 });
