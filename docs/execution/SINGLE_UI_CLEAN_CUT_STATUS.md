@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Actual native calibration creation and server-backed restoration
+
+Extended real HTTP E2E using the existing bbox TEST fixture's actual VLM-detection Draft/sample and loopback-only Profile. Created a TEST processing operation through the existing authorization/publication boundary; it completed a real detection Run. Subsequent checks reuse that exact completed version instead of rerunning it. Added an explicit TEST Project bbox target because Conversation Schema is intentionally not Project Schema. An attempted processing preview after that definition change correctly refused old sample authority; the test does not bypass that check.
+
+Native UI selected the frozen detector, Project target, label and actual Run; reviewed the request, double-clicked confirmation, observed exactly one POST and a real uncalibrated report with zero matching samples (not a quality pass). Reload reopened the editor and re-read the stored report without POST. Immutable published object remained byte-for-byte equal. Updated scenario passed twice, final run2.9s approximately; no substituted API responses. This proves computation/acknowledged recovery and truthful insufficient evidence, not passed-quality calibration or lost-response reconciliation. The latter and improvement operations remain outstanding. Production sourcebf0233d/build /tmp/annotagent-native-calibration-create-dist; only tests changed. All writes limited to explicit TEST workspace; user services, real providers/data, existing Published Versions and remotes untouched.
+
 ## Calibration node eligibility corrected against actual frozen TEST data
 
 Actual TEST published versions contain classification nodes, not a detection pipeline. Audit of geometry_calibration_key requires a revisioned model_profile_binding present in snapshot.model_profiles; legacy model_binding alone is insufficient. Native selection now requires that frozen binding and a geometry-capable output contract (detection/mask/polygon/candidate set), excluding classification-only outputs and unfrozen models. This fixes the prior overly broad model_binding selector rather than using a classifier to fabricate positive geometry evidence.
