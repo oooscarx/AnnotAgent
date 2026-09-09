@@ -10,6 +10,27 @@ test("production rejects every old page through native UI without loading legacy
   await page.reload();await expect(page.getByRole("heading",{name:"页面不存在",exact:true})).toBeVisible();await page.getByRole("link",{name:"返回项目列表",exact:true}).click();await expect(page.getByRole("heading",{name:"我的项目",exact:true})).toBeVisible();expect(writes).toEqual([]);
   expect(loaded.filter(u=>/\/src\/App\.tsx|\/src\/styles\.css|\/assets\/styles-/.test(u))).toEqual([]);
 });
+test("native Replay reads real unsupported model scope and never posts",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const runs=await(await request.get("/api/runs?limit=50")).json();const run=runs.runs.find((r:{project_name:string})=>r.project_name==="TEST Agent UI HTTP fixture");expect(run).toBeTruthy();
+  const inspection=await(await request.get(`/api/runs/${run.id}/pipeline-artifacts`)).json();const node=inspection.nodes[0].node_id;
+  const preview=await(await request.get(`/api/runs/${run.id}/replay/${encodeURIComponent(node)}?project_id=${run.project_id}`)).json();expect(preview.available).toBe(false);expect(preview.refusal_reasons).toContain("current_binding_replay_unsupported");
+  const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});await page.goto(`/projects/${run.project_id}/manage/runs/${run.id}?view=debug&node=${encodeURIComponent(node)}`);
+  const replay=page.getByRole("region",{name:"节点 Replay",exact:true});await replay.getByRole("button",{name:"检查重放范围",exact:true}).click();await expect(replay).toContainText("current_binding_replay_unsupported");await expect(replay.getByRole("button",{name:"确认重放范围…",exact:true})).toBeDisabled();await page.reload();await expect(replay.getByRole("button",{name:"检查重放范围",exact:true})).toBeVisible();expect(writes).toEqual([]);
+});
+test("controlled Replay transport restores a lost receipt without repeating execution",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const runs=await(await request.get("/api/runs?limit=50")).json();const run=runs.runs.find((r:{project_name:string})=>r.project_name==="TEST Agent UI HTTP fixture");const inspection=await(await request.get(`/api/runs/${run.id}/pipeline-artifacts`)).json();const node=inspection.nodes[0].node_id;const path=`/api/runs/${run.id}/replay/${encodeURIComponent(node)}`;
+  const original=await(await request.get(`${path}?project_id=${run.project_id}`)).json();let saved:Record<string,unknown>|undefined;const sent:unknown[]=[];
+  // Explicit browser transport fixture only. It does not invoke backend Replay.
+  await page.route(`**${path}**`,async route=>{
+    if(route.request().method()==="POST"){const body=route.request().postDataJSON();sent.push(body);saved={command_id:body.command_id,project_id:run.project_id,run_id:run.id,node_id:node,request:body,status:"completed",started_at:"TEST-time",completed_at:"TEST-time",failure:null,result:{source_run_id:run.id,replayed_from:node,sandbox:true,reexecuted_nodes:[node],preserved_upstream_nodes:[],inspection}};await route.abort();return;}
+    if(route.request().url().includes("/commands/")){if(saved)await route.fulfill({json:saved});else await route.fulfill({status:404,json:{error:"TEST receipt not yet created"}});return;}
+    await route.fulfill({json:{...original,available:true,refusal_reasons:[],limits:{maximum_model_requests:0,timeout_seconds:30,unknown_cost:false}}});
+  });
+  await page.goto(`/projects/${run.project_id}/manage/runs/${run.id}?view=debug&node=${encodeURIComponent(node)}`);const replay=page.getByRole("region",{name:"节点 Replay",exact:true});await replay.getByRole("button",{name:"检查重放范围",exact:true}).click();await replay.getByRole("button",{name:"确认重放范围…",exact:true}).click();await page.getByRole("dialog").getByRole("button",{name:"取消",exact:true}).click();expect(sent).toEqual([]);
+  await replay.getByRole("button",{name:"确认重放范围…",exact:true}).click();await page.getByRole("dialog").getByRole("button",{name:"开始 Sandbox 重放",exact:true}).click();await expect.poll(()=>sent.length).toBe(1);await page.reload();await expect(replay).toContainText("已保存重放报告；不代表所有节点成功或标注被接受");expect(sent).toHaveLength(1);await replay.getByRole("button",{name:"读取原命令回执",exact:true}).click();await expect(replay).toContainText("实际执行");expect(sent).toHaveLength(1);
+});
 test("native Project call limit recovers its command without resetting newer quota or invoking models",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
   await page.goto("/projects/new");await page.getByLabel("项目名称",{exact:true}).fill(`TEST call limit ${Date.now()}`);await page.getByRole("button",{name:"创建项目",exact:true}).click();await expect(page).toHaveURL(/\/manage\/data$/);

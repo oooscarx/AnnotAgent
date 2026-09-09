@@ -1897,6 +1897,17 @@ export interface NodeReplayReport {
   inspection: RunNodeArtifactInspection;
   sandbox: boolean;
 }
+export interface NodeReplayPreview {
+  project_id:string;source_run_id:string;node_id:string;scope_hash:string;
+  source_record_hash:string;source_snapshot_hash:string;checkpoint_hash:string;image_hash:string;
+  downstream_nodes:{node_id:string;kind:string;model_profile_binding:unknown;model_binding:string|null}[];
+  preserved_upstream_nodes:string[];
+  destinations:{sandbox:boolean;formal_annotations:boolean;source_checkpoint_write:boolean;published_write:boolean};
+  limits:{maximum_model_requests:number;timeout_seconds:number;unknown_cost:boolean};
+  current_bindings:unknown[];available:boolean;refusal_reasons:string[];
+}
+export interface NodeReplayCommand {project_id:string;command_id:string;scope_hash:string;maximum_model_requests:number;allow_unknown_cost:boolean}
+export interface NodeReplayReceipt {command_id:string;project_id:string;run_id:string;node_id:string;request:NodeReplayCommand;status:"running"|"completed"|"outcome_unknown";started_at:string;completed_at:string|null;result:NodeReplayReport|null;failure:string|null}
 
 export type ConversationSampleReference = {scope:"sample_candidate"; task_id:string; project_schema_revision:string; draft_id:string; draft_revision:number; sample_test_id:string; candidate_id:string; source_artifact_id:string};
 export type ConversationStopReference = {scope:"stop_request"; task_id:string|null};

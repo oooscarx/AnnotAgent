@@ -941,6 +941,9 @@ export const api = {
       `/api/runs/${runId}/replay/${encodeURIComponent(nodeId)}`,
       { method: "POST" },
     ),
+  nodeReplayPreview:(project:string,run:string,node:string,signal?:AbortSignal)=>request<import("./types").NodeReplayPreview>(`/api/runs/${encodeURIComponent(run)}/replay/${encodeURIComponent(node)}?project_id=${encodeURIComponent(project)}`,{signal}),
+  nodeReplayCommand:(run:string,node:string,command:import("./types").NodeReplayCommand)=>request<import("./types").NodeReplayReceipt>(`/api/runs/${encodeURIComponent(run)}/replay/${encodeURIComponent(node)}`,{method:"POST",body:JSON.stringify(command)}),
+  nodeReplayReceipt:(project:string,run:string,node:string,command:string,signal?:AbortSignal)=>request<import("./types").NodeReplayReceipt>(`/api/runs/${encodeURIComponent(run)}/replay/${encodeURIComponent(node)}/commands/${encodeURIComponent(command)}?project_id=${encodeURIComponent(project)}`,{signal}),
   saveWorkflowDraft: (draft: WorkflowDraft, signal?: AbortSignal) =>
     request<WorkflowDraft>(`/api/workflow-drafts/${draft.id}`, {
       method: "PATCH",
