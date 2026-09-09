@@ -11,7 +11,10 @@ import type { OpenConversationSample } from "./ConversationSampleCard";
 /** Restores server objects; mounting never creates a task or invokes a model. */
 export function ConversationSchemaCard({ project, conversation, message, onDirtyChange, onSample, onAssistance, onSetup,prepareRequested }: { prepareRequested?:boolean; project: string; conversation: string; message: string; onDirtyChange: (dirty: boolean) => void; onAssistance?:()=>void; onSample: OpenConversationSample; onSetup?:(task?:string)=>void }) {
   const [task, setTask] = useState<ConversationTask>();
-  const [initialJourney,setInitialJourney]=useState(true);
+  // New goals start with text-only planning. A combined image authorization is
+  // restored only when that task actually has a saved Journey, never inferred
+  // from the absence of previous calls.
+  const [initialJourney,setInitialJourney]=useState(false);
   const [initialPrepare,setInitialPrepare]=useState(false);
   const [journeyActive,setJourneyActive]=useState(false);
   const [manual,setManual]=useState(false);
@@ -51,7 +54,7 @@ export function ConversationSchemaCard({ project, conversation, message, onDirty
       setTask(current); setReceipt(calls[0]); setCallId(id); setCancelled(cancellations.some((item) => item.call_id === id)); setReady(true);
       setHumanSchema(human[0]?.id); setManual(human.length>0);
       const initial=journeys.items.find(item=>item.record.consent.schema_proposal);
-      setInitialJourney(Boolean(initial ? !initial.schema || initial.schema.status!=="completed" : !calls.length&&!authorization&&!human.length&&!cancellations.length));
+      setInitialJourney(Boolean(initial && (!initial.schema || initial.schema.status!=="completed")));
     }).catch((error: Error) => { if (!controller.signal.aborted) setError(error.message); });
     return () => { active.current = false; controller.abort(); };
   }, [project, conversation, message,prepareRequested]);
@@ -139,10 +142,12 @@ export function ConversationSchemaCard({ project, conversation, message, onDirty
     {onSetup&&<button disabled={busy||journeyActive} onClick={()=>onSetup(task?.input.id)}>Review model setup</button>}
   </section>;
   return <section className="conversation-schema-card" aria-label="Annotation Schema proposal">
-    <h3>Define the annotation goal</h3>
+    <h3>Plan the annotation goal</h3>
+    {!receipt&&!manual&&<p>Planning may use a paid text model. Image processing requires a separate authorization.</p>}
     {savedConsent&&!cancelled&&!receipt&&<aside className="conversation-consent" aria-label="Saved Schema authorization"><p>The original Schema request is saved, but no model call was admitted. No automatic retry is running.</p><small>Original model binding retained · Authorization expires {savedConsent.expires_at}. Refreshing the budget does not renew this consent.</small><button disabled={busy} onClick={()=>void prepare()}>Review saved Schema request</button><button disabled={busy} onClick={()=>void stop()}>Cancel saved Schema request</button></aside>}
     {!manual && cancelled && !clarification && <p role="status">Cancellation saved. No automatic retry will be started; any saved model outcome remains below.</p>}
     {!manual && !cancelled && !receipt && !preview && !savedConsent && <><p>AnnotAgent can propose labels and an output type from your saved goal. You will review the model and data scope before any call.</p><button disabled={!ready || busy} onClick={() => void prepare()}>{busy ? "Checking model…" : "Prepare label proposal"}</button></>}
+    {!manual&&!cancelled&&!receipt&&!savedConsent&&!waiting&&<button disabled={!ready||busy} onClick={()=>void prepareInitial()}>Review combined planning and sample authorization</button>}
     {!manual && !waiting && !cancelled && (!receipt||clarification) && <button disabled={!ready||busy||Boolean(savedConsent)} onClick={()=>void prepare(true)}>{clarification?"Answer this clarification":"Define labels myself · no LLM needed"}</button>}
     {clarification&&!humanSchema&&!cancelled&&!manual&&<button disabled={busy} onClick={()=>void cancelQuestion()}>Cancel clarification</button>}
     {clarification&&!humanSchema&&cancelled&&<p role="status">Clarification cancelled. No answer was saved and this task will not continue. The original question and usage remain in history. Save a new goal to start a separate task.</p>}

@@ -6,7 +6,7 @@ import { projectBuildPath } from "../navigation";
 import { ConversationSampleCard, type OpenConversationSample } from "./ConversationSampleCard";
 import {ConversationJourneyCard} from "./ConversationJourneyCard";
 import type { ConversationBuilderConsent, ConversationBuilderItem, ConversationBuilderPreview, ConversationSchemaDraft } from "../types";
-import { builderMatchesSchema, builderMatchesClassRepair, builderMatchesHumanRepair, consentMatchesSchema } from "../conversation-schema-history";
+import { builderMatchesSchema, builderMatchesClassRepair, builderMatchesHumanRepair, consentMatchesSchema, journeyMatchesSchema, consentMatchesRepair } from "../conversation-schema-history";
 import { builderConsent, restoreBuilderPending } from "../conversation-builder-pending";
 
 /** Restoring history only reads. Model work requires a new, explicit consent. */
@@ -22,7 +22,7 @@ function BuilderCard({ project, conversation, task, schema, editing, onSample, r
   const repair=Boolean(repairRequest || imageClassRepair);
   const historyScope=imageClassRepair ? {image_class_review_id:imageClassRepair.id} : repairRequest ? {repair_request_id:repairRequest.id} : undefined;
   const matches=(entry:ConversationBuilderItem)=>entry.operation.task_id===task && (imageClassRepair ? builderMatchesClassRepair(entry,schema,imageClassRepair) : repairRequest ? builderMatchesHumanRepair(entry,schema,repairRequest) : builderMatchesSchema(entry,schema) && !entry.operation.evidence?.repair_source && entry.session?.working_draft?.build_mode.kind!=="repair_draft");
-  const [advanced,setAdvanced]=useState(false);
+  const [advanced,setAdvanced]=useState(true);
   const [journeyActive,setJourneyActive]=useState(false);
   const [item,setItem]=useState<ConversationBuilderItem>();
   const [preview,setPreview]=useState<ConversationBuilderPreview>();
@@ -46,8 +46,19 @@ function BuilderCard({ project, conversation, task, schema, editing, onSample, r
     const scope=frozen.current ? {operation_id:frozen.current.selection.operation_id} : historyScope;
     void api.conversationBuilderHistory(project,conversation,task,controller.signal,scope).then(async(history)=>{
       const entry=history.items.find(entry=>matches(entry)&&(!frozen.current||entry.operation.id===frozen.current.selection.operation_id));
-      const journeys=entry&&!imageClassRepair ? await api.journeyHistory(project,conversation,task,controller.signal) : undefined;
-      if(!controller.signal.aborted) { setItem(entry);if(entry?.operation.status!=="reserved"&&entry){clearPending();setPreview(undefined);setUncertain(false);}if(entry&&journeys&&!journeys.items.some(journey=>journey.record.consent.builder_operation_id===entry.operation.id))setAdvanced(true);if(frozen.current)setAdvanced(true);setReady(true); }
+      const journeys=!imageClassRepair ? await api.journeyHistory(project,conversation,task,controller.signal) : undefined;
+      if(!controller.signal.aborted) {
+        setItem(entry);
+        if(entry?.operation.status!=="reserved"&&entry){clearPending();setPreview(undefined);setUncertain(false);}
+        // Existing jointly authorized tasks retain their coordinator, including
+        // a consent saved before its Builder was admitted. New work defaults to
+        // the backend's planning-only Builder and a separate sample approval.
+        const savedJourney=journeys?.items.some(journey=>journeyMatchesSchema(journey,schema)
+          &&consentMatchesRepair(journey.record.resolved_consent??journey.record.consent,repairRequest)
+          &&(!entry||journey.record.consent.builder_operation_id===entry.operation.id));
+        setAdvanced(Boolean(frozen.current)||!savedJourney);
+        setReady(true);
+      }
     }).catch((error:Error)=>{if(!controller.signal.aborted)setError(error.message);});
     return ()=>{alive.current=false;controller.abort();};
   },[project,conversation,task,repairRequest?.draft,imageClassRepair?.id]);
@@ -131,10 +142,10 @@ function BuilderCard({ project, conversation, task, schema, editing, onSample, r
   if(!imageClassRepair&&!advanced&&invalidRetry===undefined)return <section className="conversation-plan-actions" aria-label={repair ? "Repair annotation pipeline" : "Build annotation pipeline"}>
     <ConversationJourneyCard key={`${project}:${conversation}:${task}`} repairRequest={repairRequest} project={project} conversation={conversation} task={task} schema={schema} disabled={editing||running} onSample={onSample} onAssistance={onAssistance} onActiveChange={setJourneyActive}/>
     <button disabled={!ready||busy||editing||running||journeyActive} onClick={()=>{setAdvanced(true);void prepare();}}>Review Builder authorization</button>
-    <small>Advanced: build only, then authorize samples separately.</small>
+    <small>Plan only: build a Draft, then authorize samples separately.</small>
   </section>;
   return <section className="conversation-builder-card" aria-label={repair ? "Repair annotation pipeline" : "Build annotation pipeline"}>
-    {!imageClassRepair&&!running&&!busy&&<button onClick={()=>setAdvanced(false)}>Back to build and sample task</button>}
+    {!imageClassRepair&&!running&&!busy&&<button disabled={!ready||editing} onClick={()=>setAdvanced(false)}>Review combined planning and sample authorization</button>}
     {completed ? <details className="conversation-completed-stage"><summary><strong>Builder outcome saved</strong><span>View build details</span></summary><div>{buildDetails}</div></details> : buildDetails}
     {draftId && !running && <a href={projectBuildPath(project,"pipeline",{draftId,agentSessionId:session?.id,workspaceReturn:window.location.pathname+window.location.search})}>Open saved Pipeline details</a>}
     {draftId && !running && <ConversationSampleCard key={`${task}:${draftId}`} project={project} conversation={conversation} task={task} draft={draftId} disabled={editing || busy} onOpen={onSample} onAssistance={onAssistance} />}

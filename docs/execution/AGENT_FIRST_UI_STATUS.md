@@ -602,3 +602,48 @@ Tests on current sources:
 Still incomplete: resolving/fixing default models at Send, mode/turn policy, queue draining,
 continuation/remaining-budget trace, compact actual plan/human objects and six final states.
 No real workspace, Published Version, credentials, remote or push operation changed.
+
+## M2 continuation — planning-first entry, 2026-09-09
+
+The preceding user-reply turn only confirmed novice-study arrangements; it was not
+implementation progress. Resumed against HEAD fd2b8c8, with unrelated screenshot
+changes left untouched and no applicable repository/ancestor AGENTS.md found.
+
+Code inspection found that the standalone conversation Builder already enforces
+`planning_only: true` and `maximum_dry_runs: 0` in Application, but a fresh goal
+defaulted to the combined Schema/Builder/sample authorization UI. New goals now
+start at the text-only Schema preview, and their saved labels lead to the standalone
+planning Builder. The UI explicitly states possible text-model fees and separate
+image authorization. This changes the real service path, not just a Plan badge.
+
+Existing combined Journeys remain available through an explicit review action.
+Opening that action does not approve it. Saved Journeys restore by exact Schema
+identity and repair provenance, including a consent saved before Builder admission;
+standalone pending retry envelopes keep precedence. No saved consent is rewritten.
+
+Verification:
+
+- Web typecheck and production builds passed; 239 unit tests / 49 files passed.
+- New `agent-plan-entry.spec.ts` plus Send recovery: 5/5 passed (41479), isolated
+  `/tmp/annotagent-guided-e2e-65599`. It drives Registry selection, actual Send,
+  text authorization, persisted label proposal, refresh, Builder preview and explicit
+  combined-panel opening. Only Send, task-selection and the approved Schema proposal
+  POSTs occur; the task ledger records exactly one reserved call. Refresh and panel
+  changes add no mutation. The first test attempt rejected the legitimate saved
+  task-selection POST; the assertion now explicitly allows that metadata operation,
+  not arbitrary mutations.
+- Existing initial Journey classification service regression 1/1 passed (7170),
+  isolated `/tmp/annotagent-guided-e2e-65430`; this is service-chain evidence, not a
+  claim that all older UI tests using the removed Save message label pass.
+- Application `planning_policy_rejects_model_requested_dry_run_even_with_positive_sample_budget`
+  and `deterministic_advisor_plan_stops_before_sample_execution` both passed.
+- All model traffic was the explicitly marked local TEST protocol fixture, not Live
+  accuracy evidence. Existing production chunk-size warning remains.
+
+Visual inspection of the actual application still shows oversized legacy goal/status
+forms. The partial authorization screenshot is not one of the six final deliverables.
+Remaining M2 work includes persisted Composer Plan/Execute mode and per-turn policy,
+the scoped transition into execution, and compact real Plan/approval objects. The
+default-path change does not establish that all Plan permissions or the complete
+Agent-first goal are finished. No push, remote change, user workspace cleanup or
+Published Version mutation occurred.
