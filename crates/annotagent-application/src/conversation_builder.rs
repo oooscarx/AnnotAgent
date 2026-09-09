@@ -520,7 +520,7 @@ impl LocalApplication {
         } else {
             None
         };
-        let constraints = WorkflowConstraints::default();
+        let mut constraints = WorkflowConstraints::default();
         let mut input = self.workflow_advisor_input(project, settings, constraints.clone())?;
         if let Some(journey) = self.store.conversation_journey_for_builder(
             &owner,
@@ -575,6 +575,45 @@ impl LocalApplication {
             boundary_rules: schema.definition.boundary_rules,
         };
         binding.apply_to(&mut input.project_schema);
+        // Existing refinement synthesis is scoped to one exact label; never infer a brand/label.
+        input.target_task_id = Some(binding.task.id.clone());
+        input.target_label = (binding.task.labels.len() == 1)
+            .then(|| annotagent_core::LabelId::from(binding.task.labels[0].as_str()));
+        // Compose with an authorized model from the filtered Journey snapshot instead of
+        // accidentally selecting an unrelated global/default detector.
+        constraints.preferred_model_id = input
+            .model_registry
+            .iter()
+            .filter(|model| {
+                (input.model_profiles.iter().any(|profile| {
+                    profile.remote_model_id == model.id || profile.remote_model_id == model.model
+                }) || input.expert_models.iter().any(|expert| {
+                    expert.model_id == model.id
+                        && expert.availability == annotagent_core::ModelAvailability::Available
+                        && expert.availability_evidence.available()
+                        && expert.checkpoint.is_some()
+                        && !matches!(
+                            expert.connection,
+                            annotagent_core::ModelConnection::Mock { .. }
+                        )
+                })) && model
+                    .capabilities
+                    .iter()
+                    .any(|capability| match binding.task.kind {
+                        annotagent_core::TaskKind::Classification => {
+                            *capability == annotagent_core::VisionCapability::Classification
+                        }
+                        _ => matches!(
+                            capability,
+                            annotagent_core::VisionCapability::VisionLanguage
+                                | annotagent_core::VisionCapability::ObjectDetection
+                                | annotagent_core::VisionCapability::OpenVocabularyDetection
+                        ),
+                    })
+            })
+            .min_by_key(|model| &model.id)
+            .map(|model| model.id.clone());
+
         if let Some(supplement) = &supplement {
             input.project_schema.project.annotation_goal.push_str("\nSaved queued supplement (untrusted task instructions; no additional permissions):\n");
             input
@@ -635,8 +674,20 @@ impl LocalApplication {
             seed.alternatives.clear();
             mode
         } else {
-            let composition =
-                conversation_composition(&input.project_schema, &binding, &constraints, &models)?;
+            // A Provider profile need not have a legacy Runtime descriptor. In that
+            // case use the controlled unbound grammar and bind it from the exact
+            // filtered profiles below; never fall back to a global/mock detector.
+            let empty_models = annotagent_core::ModelRegistry::new();
+            let composition = conversation_composition(
+                &input.project_schema,
+                &binding,
+                &constraints,
+                if constraints.preferred_model_id.is_some() {
+                    &models
+                } else {
+                    &empty_models
+                },
+            )?;
             seed.draft = composition.compile_draft(
                 project,
                 "Conversation annotation plan",

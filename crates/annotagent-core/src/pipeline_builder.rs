@@ -170,6 +170,9 @@ pub struct PipelinePlanCandidate {
     pub fragment_ids: Vec<PipelineFragmentId>,
     #[serde(default)]
     pub node_blueprints: Vec<WorkflowDraftNode>,
+    /// Exact controlled authoring projection, when the candidate originated from one.
+    #[serde(default)]
+    pub label_pipeline: Option<crate::LabelWorkflowComposition>,
     #[serde(default)]
     pub edge_blueprints: Vec<WorkflowEdge>,
     #[serde(default)]
@@ -499,6 +502,7 @@ impl PipelineFragment {
             status: PipelineCandidateStatus::Blocked,
             sufficiency: CandidateSufficiency::Partial,
             fragment_ids: vec![self.id.clone()],
+            label_pipeline: None,
             node_blueprints: self.node_blueprints.clone(),
             edge_blueprints: self.edge_blueprints.clone(),
             model_bindings: Vec::new(),
@@ -721,6 +725,9 @@ impl RegistryPipelineSynthesizer {
                 "Pipeline Plan Candidate contains an edge outside its node blueprint".to_owned(),
             ));
         }
+        working_draft
+            .label_pipeline
+            .clone_from(&candidate.label_pipeline);
         working_draft.nodes.clone_from(&candidate.node_blueprints);
         working_draft.edges.clone_from(&candidate.edge_blueprints);
         working_draft.status = if candidate.is_runnable() {
@@ -4107,6 +4114,7 @@ mod tests {
             status: PipelineCandidateStatus::Runnable,
             sufficiency: CandidateSufficiency::Complete,
             fragment_ids: Vec::new(),
+            label_pipeline: None,
             node_blueprints: vec![WorkflowDraftNode {
                 id: "commit".to_owned(),
                 node_type: "core.commit".to_owned(),

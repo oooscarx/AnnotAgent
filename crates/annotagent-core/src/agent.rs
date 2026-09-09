@@ -897,6 +897,7 @@ mod tests {
             status: crate::PipelineCandidateStatus::Runnable,
             sufficiency: crate::CandidateSufficiency::Complete,
             fragment_ids: vec!["fragment-1".to_owned()],
+            label_pipeline: None,
             node_blueprints: Vec::new(),
             edge_blueprints: Vec::new(),
             model_bindings: Vec::new(),

@@ -62,3 +62,15 @@ Queue preview/POST 现在对 pending human 返回 409 `human_input_pending`（Sc
 迁移0058仅新建metadata表；旧call保留created_at但缺失end/failure为null，不能追回此前被丢弃的原因。未访问用户报告的robocup-ball数据库或调用。Provider没有现成文本/tool delta协议，本轮未新增streaming；stream:true在发送前拒绝，新增读取body阶段取消。详见 UIAPI-008_PROGRESS.md、UIAPI-008_EXAMPLES.json、UIAPI-008_TRACE.json。
 
 验证：563 passed、0 failed、3原有ignored（Core/Provider/Storage/Application/Server）；全workspace all-targets严格Clippy、fmt通过。隔离HTTP seed278请求，42个call回执观察/23个call身份，真实provider_request→settled/in_doubt、typed cancellation与计时验证通过。测试启动器已退出自有进程，数据保留。未接触8787/8788、真实密钥/服务/数据库、前端worktree；无push/merge。最终提交SHA在交付回复固定，继续接口支持状态。
+
+## UIAPI-009 审计/具体缺口交付
+
+现有 API 无持久 workspace history cutover；Run 有分页但按 updated_at 排序，Pipeline/Trash 无分页，management 无 scope 绑定。已交付 UIAPI-009_GAP.md：明确标记未实现的 GET/preview/一次性确认契约、冻结ID排除成员、SQL分页、Trash与级联保护、原引用继续可读及隔离验收清单。此为用户允许的 concrete gap specification，不能宣称切换已完成。没有运行/伪报新功能测试，也未读写真实数据库；仅源码审计与文档检查。UIAPI-009 仍阻塞，后续须实现文档所列事务与API，前端不能用浏览器时间替代。
+
+## UIAPI-011 Builder executable projection
+
+已补 PipelinePlanCandidate 的可空 label_pipeline 持久化、Registry revalidation 和 materialization；保留 Schema-bound受控模板、单label目标、授权Provider/native模型选择，绑定同步到composition。已有 Sample guard/审批/Geometry Safety不变，旧操作回执不改写、不自动重跑。
+
+验证：Core/Application/Storage/Server 515 passed、0 failed、3原有ignored；全workspace all-targets严格Clippy与fmt通过。专项测试保存重读typed候选，materialize保留Profile/ModelInstance ID及Geometry Safety；禁用segmenter后候选仍变为不可用。真实隔离HTTP seed278请求通过，实际classification与VLM Detection Builder草稿均保留LabelPipeline。native是测试manifest合同验证，不冒充真实安装权重推理。
+
+契约/边界：UIAPI-011_BUILDER.md、UIAPI-011_TRACE.json。无SQL迁移；旧candidate缺字段仍为null，不伪造旧DAG projection。现有refinement生成器只对精确单label目标参与，本轮不扩多label调度。集成端负责新的精确授权与真实VLM+SAM验证；此后端未读改真实workspace/旧Draft，未安装/付费/操作8787或8788/推送/合并前端。最终SHA在交付回复固定。

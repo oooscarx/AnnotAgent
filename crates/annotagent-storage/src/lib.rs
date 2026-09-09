@@ -4962,6 +4962,7 @@ mod tests {
             status: annotagent_core::PipelineCandidateStatus::Blocked,
             sufficiency: annotagent_core::CandidateSufficiency::Partial,
             fragment_ids: Vec::new(),
+            label_pipeline: None,
             node_blueprints: Vec::new(),
             edge_blueprints: Vec::new(),
             model_bindings: Vec::new(),
