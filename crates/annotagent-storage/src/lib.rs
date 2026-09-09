@@ -83,6 +83,7 @@ pub use conversations::{
 mod history_scope;
 mod management;
 mod model_install_commands;
+mod replay_commands;
 mod workflow_clone;
 mod workflow_publication;
 pub use history_scope::{EstablishHistoryScope, HISTORY_POLICY, HistoryScope, HistoryScopePreview};
@@ -718,6 +719,8 @@ impl SqliteStore {
             transaction.execute_batch(include_str!("../../../migrations/0059_history_scope.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0061_workflow_publication_commands.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0062_workflow_clone_commands.sql"))?;
+            transaction.execute_batch(include_str!("../../../migrations/0063_replay_commands.sql"))?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(63,'replay_commands',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(62,'workflow_clone_commands',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(61,'workflow_publication_commands',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(59,'history_scope',?1)",[Utc::now().to_rfc3339()])?;

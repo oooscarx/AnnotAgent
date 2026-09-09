@@ -99,3 +99,8 @@ Implemented owned `GET /api/projects/{project_id}/workflows/{workflow_id}/versio
 ## UIAPI-016 exact clone
 
 Existing version clone POST now accepts complete `{project_id,source_snapshot_hash,command_id}`. First/replay201 return the same original creation Draft receipt; GET its ID for current edits. Owner/hash/scope checks and atomic durable receipt prevent duplicate copies. No Published/default changes or inference. Additive0062. Full contract and tests: `docs/contracts/agent-ui-v1/UIAPI-016_CLONE.md`. This supersedes the legacy-clone recovery gap recorded in UIAPI-015; empty-body legacy calls still lack recovery.
+
+
+## UIAPI-017 bounded Replay delivery; live-binding gap remains
+
+Existing Replay path now has passive owned GET preview, exact scope-bound POST and durable GET command receipts. Core/frozen Mock sandbox only; live Provider/Plugin/current binding Replay explicitly refuses and remains a parity blocker. No automatic retry, source checkpoint/formal annotation/Published writes. Contract and bounded follow-up requirements: `docs/contracts/agent-ui-v1/UIAPI-017_REPLAY.md`. Additive0063.
