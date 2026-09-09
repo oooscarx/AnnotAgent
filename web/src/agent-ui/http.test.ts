@@ -41,6 +41,19 @@ function mockTransport(overrides: Record<string, unknown | (() => Promise<unknow
   return { transport, paths };
 }
 describe("HTTP UI read boundary (synthetic transport tests, not HTTP E2E)", () => {
+  it("preserves server timing and safe errors without an old unknown call masking active work", async () => {
+    const {transport}=mockTransport({[`${root}/t1/workspace`]:{
+      project_id:project.project_id,project_owner_id:project.project_owner_id,conversation_id:project.conversation_id,
+      task:{input:{id:"t1",schema_revision:"schema-1"}},agent_model:{revision:0,model_profile_id:null},actions:{},queue:[],
+      calls:[{id:"old",status:"in_doubt",started_at:"2026-09-09T00:00:00Z",completed_at:"2026-09-09T00:00:02Z",duration_ms:2000,stage:"settled",failure:{category:"timeout",stage:"response_body"}},
+        {id:"active",status:"reserved",started_at:"2026-09-09T00:01:00Z",stage:"provider_request"}],
+    }});
+    const adapter=new HttpAdapter(transport);await adapter.refresh();await adapter.loadTask(project.project_id,"t1");
+    const task=adapter.snapshot().tasks.find(t=>t.id==="t1")!;
+    expect(task.phase).toBe("running");
+    expect(task.receipts?.[0]).toMatchObject({durationMs:2000,detail:"请求超时 · 读取响应",finishedAt:"2026-09-09T00:00:02Z"});
+    expect(task.receipts?.[1]).toMatchObject({stage:"模型请求处理中",startedAt:"2026-09-09T00:01:00Z"});
+  });
   it("reads actual identity, thread and UUID images without POST, assistant fabrication or resume inference", async () => {
     const { transport, paths } = mockTransport(); const adapter = new HttpAdapter(transport);
     await adapter.refresh(); await adapter.loadTask("TEST-alpha", "t1");

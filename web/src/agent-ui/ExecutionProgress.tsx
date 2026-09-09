@@ -13,7 +13,7 @@ export function failureDetail(failure: ConversationCallReceipt["failure"]) {
 export const executionStatus = (status: string) => ({
   reserved: "已受理，等待模型执行回执", running: "执行中", pending: "等待执行",
   queued: "已排队", cancelling: "正在停止", completed: "已完成", succeeded: "已完成",
-  failed: "执行失败", in_doubt: "本地执行已结束 · 远端结果未知",
+  failed: "执行失败", invalid_result: "模型已返回，结果校验失败", in_doubt: "本地执行已结束 · 远端结果未知",
 }[status] || status);
 
 export function executionElapsed(start?: string, end?: string, duration?: number, now?: number) {

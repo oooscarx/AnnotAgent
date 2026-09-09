@@ -1,6 +1,6 @@
 import { it, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ExecutionProgress, executionElapsed, failureDetail, callStage } from "./ExecutionProgress";
+import { ExecutionProgress, executionElapsed, failureDetail, callStage, executionStatus } from "./ExecutionProgress";
 
 it("keeps legacy unknown outcomes visible without fabricating timing or retry", () => {
   const html = renderToStaticMarkup(<ExecutionProgress receipts={[{id:"old",title:"目标规划",status:"in_doubt"}]} />);
@@ -25,4 +25,5 @@ it("presents typed error categories and HTTP codes without requiring raw provide
   expect(failureDetail({category:"invalid_structured_output",stage:"structured_output"})).toContain("结构化结果不符合协议");
   expect(failureDetail(null)).toBeUndefined();
   expect(callStage("response_received")).toContain("已收到响应");
+  expect(executionStatus("invalid_result")).toBe("模型已返回，结果校验失败");
 });
