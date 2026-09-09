@@ -4,7 +4,7 @@ import type { ProviderProfile } from "../types";
 import { Dialog } from "./Dialog";
 import { Disclosure } from "./Disclosure";
 
-export type ProviderControlService=Pick<typeof api,"providers"|"discoverProviderModels"|"updateProvider"|"deleteProviderCredential">;
+export type ProviderControlService=Pick<typeof api,"providers"|"providerPresets"|"saveProviderCredential"|"discoverProviderModels"|"updateProvider"|"deleteProviderCredential">;
 export function ProviderControls({providerId,service,onChanged}:{providerId:string;service:ProviderControlService;onChanged:()=>Promise<void>}) {
   const [provider,setProvider]=useState<ProviderProfile>();
   const [error,setError]=useState("");
