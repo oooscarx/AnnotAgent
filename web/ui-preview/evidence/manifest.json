@@ -1,0 +1,206 @@
+[
+  {
+    "file": "01-new-task-light.png",
+    "sha": "452ea027d1c87488ba6d34c392ade996681d979b",
+    "url": "http://127.0.0.1:5174/ui-preview?task=new",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T09:26:29.030Z"
+  },
+  {
+    "file": "02-plan-light.png",
+    "sha": "452ea027d1c87488ba6d34c392ade996681d979b",
+    "url": "http://127.0.0.1:5174/ui-preview?task=new",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T09:26:29.912Z"
+  },
+  {
+    "file": "06-model-picker-light.png",
+    "sha": "452ea027d1c87488ba6d34c392ade996681d979b",
+    "url": "http://127.0.0.1:5174/ui-preview?task=new",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T09:26:29.982Z"
+  },
+  {
+    "file": "03-running-queue-light.png",
+    "sha": "452ea027d1c87488ba6d34c392ade996681d979b",
+    "url": "http://127.0.0.1:5174/ui-preview?task=new&pane=image",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T09:26:30.180Z"
+  },
+  {
+    "file": "05-stopping-light.png",
+    "sha": "452ea027d1c87488ba6d34c392ade996681d979b",
+    "url": "http://127.0.0.1:5174/ui-preview?task=new&pane=image",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T09:26:30.248Z"
+  },
+  {
+    "file": "04-interrupted-dark.png",
+    "sha": "452ea027d1c87488ba6d34c392ade996681d979b",
+    "url": "http://127.0.0.1:5174/ui-preview?task=new&pane=image",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "theme": "dark",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T09:26:32.598Z"
+  },
+  {
+    "file": "07-human-assistance-light.png",
+    "sha": "452ea027d1c87488ba6d34c392ade996681d979b",
+    "url": "http://127.0.0.1:5174/ui-preview?task=new&pane=image",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T09:26:33.748Z"
+  },
+  {
+    "file": "08-general.png",
+    "sha": "452ea027d1c87488ba6d34c392ade996681d979b",
+    "url": "http://127.0.0.1:5174/ui-preview?task=new&settings=general",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T09:26:33.883Z"
+  },
+  {
+    "file": "09-providers.png",
+    "sha": "452ea027d1c87488ba6d34c392ade996681d979b",
+    "url": "http://127.0.0.1:5174/ui-preview?task=new&settings=providers",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T09:26:34.015Z"
+  },
+  {
+    "file": "10-provider-validation.png",
+    "sha": "452ea027d1c87488ba6d34c392ade996681d979b",
+    "url": "http://127.0.0.1:5174/ui-preview?task=new&settings=providers",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T09:26:34.109Z"
+  },
+  {
+    "file": "11-agent-models.png",
+    "sha": "452ea027d1c87488ba6d34c392ade996681d979b",
+    "url": "http://127.0.0.1:5174/ui-preview?task=new&settings=agent",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T09:26:34.283Z"
+  },
+  {
+    "file": "12-vision-plugins.png",
+    "sha": "452ea027d1c87488ba6d34c392ade996681d979b",
+    "url": "http://127.0.0.1:5174/ui-preview?task=new&settings=vision",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T09:26:34.416Z"
+  },
+  {
+    "file": "13-data-privacy.png",
+    "sha": "452ea027d1c87488ba6d34c392ade996681d979b",
+    "url": "http://127.0.0.1:5174/ui-preview?task=new&settings=privacy",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T09:26:34.550Z"
+  },
+  {
+    "file": "14-usage-budget.png",
+    "sha": "452ea027d1c87488ba6d34c392ade996681d979b",
+    "url": "http://127.0.0.1:5174/ui-preview?task=new&settings=usage",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T09:26:34.683Z"
+  },
+  {
+    "file": "15-mobile-conversation.png",
+    "sha": "452ea027d1c87488ba6d34c392ade996681d979b",
+    "url": "http://127.0.0.1:5174/ui-preview?task=new",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T09:26:34.825Z"
+  },
+  {
+    "file": "16-mobile-canvas.png",
+    "sha": "452ea027d1c87488ba6d34c392ade996681d979b",
+    "url": "http://127.0.0.1:5174/ui-preview?task=new&pane=image",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T09:26:34.900Z"
+  },
+  {
+    "file": "17-mobile-settings.png",
+    "sha": "452ea027d1c87488ba6d34c392ade996681d979b",
+    "url": "http://127.0.0.1:5174/ui-preview?task=new&settings=general",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T09:26:35.037Z"
+  }
+]

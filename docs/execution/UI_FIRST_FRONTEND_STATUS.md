@@ -1,5 +1,7 @@
 # UI First Frontend — Agent A
 
+Current: **F0–F3 UI Preview delivered for visual review; no HTTP integration authorized or started.** Final source commit `452ea027d1c87488ba6d34c392ade996681d979b`.
+
 ## Baseline and boundaries
 
 - Base: `c41b281b49252d520117029d39611865133798af`.
@@ -28,8 +30,6 @@
 - 7 new unit tests passed; targeted layout and pane/model browser tests passed. Full interaction browser rerun follows an IME-test correction: synthetic composition does not emulate native OS editing, so its no-send assertion is separate from Shift+Enter newline assertion.
 - Preview build passed; preview assets moved to its own public directory so a built preview retains images. No production asset or entry replacement.
 
-## Remaining / next
-
 ## F2 — six settings pages
 
 - General: immediate theme preview/cancel, language navigation preference, font/density, initial project-collapse preference, shortcut guidance.
@@ -53,4 +53,10 @@ F3 follows with responsive/artifact coverage, actual screenshots and handoff. No
 - Geometry pointer conversion uses SVG screen transform, not viewport dimensions, so aspect-ratio letterboxing does not skew drag coordinates. Numeric edits are clamped to original image dimensions. Candidate reference can be attached to the next Composer command.
 - Not executed: real Provider/HTTP integration, real model inference/accuracy, Rust regression (no Rust edits), native OS IME input, native browser 200% zoom, screen-reader session, human usability study. Synthetic composition/keyboard and viewport layout checks are not substitutes for those.
 
-F1: interaction correctness, dialogs/focus, scoped drafts, refresh/navigation guards, image edit controls and fixture semantics. F2: six-page error/save flows, model/provider consistency. F3: browser matrix, screenshots and handoff. No Live tests, no human usability tests, no native browser 200% zoom verification yet.
+### Final verification
+
+- Source `452ea02`: `npm run typecheck` passed; `npm test` **252/252**; `npm run test:ui-preview` **21/21**; `npm run build` and `npm run build:ui-preview` passed. `git diff --check` clean.
+- Reviewed actual light/dark workspace, model picker, human question/continue visibility, six Settings pages and mobile screenshots after layout corrections. Screenshot manifest records exact source SHA/URL/viewport/theme. Gallery: `/evidence/compare.html`, actual images under `web/ui-preview/evidence/`, references clearly labeled separately.
+- Preview is serving current source at **127.0.0.1:5174**, not user 8787 or an embedded stale production dist. Separate preview build also includes illustration assets. No production simulator namespace found in production dist scan.
+- Handoff: `docs/handoff/UI_FIRST_FRONTEND.md`, including visible controls, simulated/real boundary, backend connection requests, limitations and phase commits.
+- Branch `codex/agent-ui-frontend`; only Agent A-owned paths changed. No push, remote mutation, Rust/backend edits, original workspace cleanup or historical version mutation. Remaining work is native/human validation and post-approval integration, not additional Rust work in this branch.
