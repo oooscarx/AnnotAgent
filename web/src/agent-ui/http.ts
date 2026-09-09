@@ -241,7 +241,7 @@ export class HttpAdapter implements WorkspaceAdapter {
         ...(ws?.calls || []).map(c=>({id:c.id,title:"模型结构化决策",status:c.status==="completed" && (c.failure || c.evidence?.decision?.Err) ? "invalid_result" : c.status,detail:failureDetail(c.failure) || c.evidence?.decision?.Ok?.rationale || c.evidence?.decision?.Err || c.evidence?.error,startedAt:c.started_at || undefined,finishedAt:c.completed_at || undefined,durationMs:c.duration_ms ?? undefined,stage:callStage(c.stage)})),
         ...(ws?.builder_operations?.items || []).map(b=>({id:b.operation.id,title:"方案构建回执",status:b.operation.evidence?.outcome==="failed"?"failed":b.operation.status,detail:b.operation.evidence?.error || (b.operation.evidence?.outcome==="failed"?b.session?.next_action:undefined) || b.operation.evidence?.outcome})),
         ...(ws?.sample_operations || []).map(s=>({id:s.id,title:"样例测试回执",status:s.status,detail:s.error})),
-        ...(ws?.journey_consents || []).filter(j=>j.dispatch).map(journeyReceipt),
+        ...(ws?.journey_consents || []).filter(j=>j.dispatch).sort((a,b)=>(a.dispatch?.updated_at || "").localeCompare(b.dispatch?.updated_at || "")).map(journeyReceipt),
       ];
       const active = ws?.calls.some(c=>c.status==="reserved") || ws?.journey_consents?.some(j=>j.dispatch?.status==="running") || ws?.sample_operations?.some(s=>["running","queued","cancelling"].includes(s.status)) || result.processing?.some(p=>["pending","running","pausing"].includes(p.status));
       const phase: Phase = stop?.normalized_state || (active ? "running" : ws?.calls.some(c=>c.status==="in_doubt") ? "outcome_unknown" : human ? "waiting_for_human" : "idle");
