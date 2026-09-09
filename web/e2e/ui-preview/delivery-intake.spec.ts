@@ -1,0 +1,31 @@
+import {test,expect} from "@playwright/test";
+import {resolve} from "node:path";
+
+test("intake label rename preserves identity and rules, split edits and failed retries retain exact commands",async({page})=>{
+  await page.goto("/ui-preview?task=new");
+  await page.evaluate(async path=>{
+    const {React,createRoot,DeliveryIntake}=await import(path);
+    const host=document.createElement("main");document.body.replaceChildren(host);
+    const state={commands:[] as any[],fail:true};Object.assign(window,{intakeTest:state});
+    const saved={revision:2,content_sha256:"TEST",intent:{dataset_scope:[{image_id:"i"}],label_spec:[{stable_id:"cup-stable",display_name:"杯子",aliases:["cup"],include:"完整杯子",exclude:"图片上的图案"}],training_target:{annotation_kind:"bounding_box",framework:"ultralytics",export_profile:"ultralytics_yolo_detection",profile_revision:1},split_policy:{train_percent:80,seed:71,preserve_existing:true,keep_known_groups_together:true}}};
+    const view={saved,missing_slots:[],blockers:[],maximum_sample_images:3,execution_authorized:false};
+    const service={read:async()=>view,save:async(_p:string,_t:string,input:any)=>{state.commands.push(input);if(state.fail)throw new Error("TEST save unavailable");return {...view,saved:{...saved,revision:3,intent:{...saved.intent,label_spec:input.label_spec,split_policy:input.split_policy}}};}};
+    createRoot(host).render(React.createElement(DeliveryIntake,{service,project:"TEST",task:"TEST",images:[{id:"i",name:"TEST original"}]}));
+  },`/@fs/${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`);
+  await page.getByRole("button",{name:"查看交付信息",exact:true}).click();
+  await page.getByLabel("类别 1 名称",{exact:true}).fill("水杯");
+  await page.getByText("调整数据划分",{exact:true}).click();
+  await page.getByLabel("训练集比例（百分比）").fill("70");
+  await page.getByRole("button",{name:"保存交付信息",exact:true}).click();
+  await expect(page.getByRole("alert")).toContainText("TEST save unavailable");
+  await expect(page.getByLabel("类别 1 名称",{exact:true})).toHaveValue("水杯");
+  await page.getByRole("button",{name:"保存交付信息",exact:true}).click();
+  const commands=await page.evaluate(()=>(window as any).intakeTest.commands);
+  expect(commands).toHaveLength(2);expect(commands[0]).toEqual(commands[1]);
+  expect(commands[0].expected_revision).toBe(2);
+  expect(commands[0].label_spec).toEqual([{stable_id:"cup-stable",display_name:"水杯",aliases:["cup"],include:"完整杯子",exclude:"图片上的图案"}]);
+  expect(commands[0].split_policy).toEqual({train_percent:70,seed:71,preserve_existing:true,keep_known_groups_together:true});
+  await page.getByRole("button",{name:"取消修改",exact:true}).click();
+  await expect(page.getByLabel("类别 1 名称",{exact:true})).toHaveValue("杯子");
+  await expect(page.getByLabel("训练集比例（百分比）")).toHaveValue("80");
+});

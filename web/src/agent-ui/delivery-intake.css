@@ -6,7 +6,10 @@
 .delivery-intake legend { margin-bottom: 8px; }
 .delivery-intake form > fieldset { display: grid; gap: 16px; }
 .delivery-intake form > label, .delivery-intake form > fieldset > label { display: grid; gap: 8px; }
-.delivery-intake textarea, .delivery-intake select { width: 100%; min-width: 0; padding: 9px 12px; border: 1px solid var(--aa-border); border-radius: 8px; background: var(--aa-bg); }
+.delivery-intake textarea, .delivery-intake select, .delivery-label-edit input, .delivery-intake input[type="number"] { width: 100%; min-width: 0; padding: 9px 12px; border: 1px solid var(--aa-border); border-radius: 8px; background: var(--aa-bg); }
+.delivery-label-edit { display: grid; gap: 8px; margin-block: 12px; }
+.delivery-label-edit label, .delivery-intake fieldset > label { display: grid; gap: 8px; }
+.delivery-label-edit .ui-disclosure > label { margin-block: 10px; }
 .delivery-intake p, .delivery-intake small { margin: 0; line-height: 1.6; overflow-wrap: anywhere; }
 .delivery-intake-images { display: grid; gap: 8px; max-height: 180px; overflow: auto; padding-block: 10px; }
 .delivery-intake-images label { display: flex; gap: 8px; align-items: start; overflow-wrap: anywhere; }

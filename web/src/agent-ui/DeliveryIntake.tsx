@@ -25,7 +25,9 @@ export function intakeLabels(text: string, previous: DeliveryLabel[], createId: 
 export function DeliveryIntake({ service, delivery, project, task, images, locked = false }: { service: DeliveryIntakeService; delivery?:DeliveryService; project: string; task: string; images: { id: string; name: string; src?:string }[]; locked?: boolean }) {
   const [view, setView] = useState<IntakeView>();
   const [ids, setIds] = useState<string[]>([]);
-  const [labels, setLabels] = useState("");
+  const [labels, setLabels] = useState<DeliveryLabel[]>([]);
+  const [newLabels,setNewLabels]=useState("");
+  const [splitPolicy,setSplitPolicy]=useState<Split>(split);
   const [selectedTarget, setTarget] = useState<Target | null>(null);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -42,7 +44,8 @@ export function DeliveryIntake({ service, delivery, project, task, images, locke
   const apply = (value: IntakeView) => {
     setPrepared("");
     setView(value); setIds(value.saved?.intent.dataset_scope?.map(i => i.image_id) || []);
-    setLabels(value.saved?.intent.label_spec?.map(l => l.display_name).join("\n") || "");
+    setLabels(value.saved?.intent.label_spec || []);setNewLabels("");
+    setSplitPolicy(value.saved?.intent.split_policy || split);
     setTarget(value.saved?.intent.training_target || null); setDirty(false);
   };
   useEffect(() => {
@@ -59,8 +62,8 @@ export function DeliveryIntake({ service, delivery, project, task, images, locke
   const save = async () => {
     if (!view || inFlight.current || locked || objectEditing) return;
     inFlight.current = true; setBusy(true); setError("");
-    const signature = JSON.stringify([view.saved?.revision || 0, ids, labels, selectedTarget]);
-    if (retry.current?.signature !== signature) retry.current = { signature, input: { command_id: crypto.randomUUID(), expected_revision: view.saved?.revision || 0, image_ids: ids.length ? ids : null, label_spec: labels.trim() ? intakeLabels(labels, view.saved?.intent.label_spec || []) : null, training_target: selectedTarget, split_policy: view.saved?.intent.split_policy || split } };
+    const signature = JSON.stringify([view.saved?.revision || 0, ids, labels, newLabels, selectedTarget,splitPolicy]);
+    if (retry.current?.signature !== signature) {const next=[...labels,...intakeLabels(newLabels,[])];retry.current = { signature, input: { command_id: crypto.randomUUID(), expected_revision: view.saved?.revision || 0, image_ids: ids.length ? ids : null, label_spec: next.length?next:null, training_target: selectedTarget, split_policy:splitPolicy } };}
     try { apply(await service.save(project, task, retry.current.input)); retry.current = null; }
     catch (e) { setError((e as Error).message); }
     finally { inFlight.current = false; setBusy(false); }
@@ -87,9 +90,20 @@ export function DeliveryIntake({ service, delivery, project, task, images, locke
         {!images.length && <p>先使用输入框的图片按钮上传图片。未上传的文件不属于已保存范围。</p>}
         <div className="delivery-intake-images">{images.map(image => <label key={image.id}><input type="checkbox" checked={ids.includes(image.id)} onChange={e => { setIds(e.target.checked ? [...ids, image.id] : ids.filter(id => id !== image.id)); setDirty(true); }} /><span>{image.name}</span></label>)}</div>
       </fieldset>
-      <label>标注哪些类别？<textarea disabled={busy} rows={3} value={labels} placeholder={"每行一个类别，例如：\n杯子\n瓶子"} onChange={e => { setLabels(e.target.value); setDirty(true); }} /></label>
+      <fieldset disabled={busy}><legend>标注哪些类别？</legend>
+        {labels.map((label,index)=><div className="delivery-label-edit" key={label.stable_id}>
+          <label>类别 {index+1} 名称<input required value={label.display_name} onChange={e=>{setLabels(current=>current.map(l=>l.stable_id===label.stable_id?{...l,display_name:e.target.value}:l));setDirty(true);}}/></label>
+          <Disclosure title={`类别 ${index+1} 规则与排序`}>
+            {(["aliases","include","exclude"] as const).map(field=><label key={field}>{field==="aliases"?"别名（每行一个）":field==="include"?"包含规则":"排除规则"}<textarea value={field==="aliases"?label.aliases.join("\n"):label[field]} onChange={e=>{const value=e.target.value;setLabels(current=>current.map(l=>l.stable_id===label.stable_id?{...l,[field]:field==="aliases"?value.split("\n"):value}:l));setDirty(true);}}/></label>)}
+            <div className="delivery-intake-actions"><button type="button" disabled={index===0} onClick={()=>{setLabels(current=>{const next=[...current];[next[index-1],next[index]]=[next[index],next[index-1]];return next;});setDirty(true);}}>上移类别 {index+1}</button><button type="button" onClick={()=>{setLabels(current=>current.filter(l=>l.stable_id!==label.stable_id));setDirty(true);}}>从新交付版本移除类别 {index+1}</button></div>
+          </Disclosure>
+        </div>)}
+        <label>{labels.length?"添加类别（每行一个）":"类别名称（每行一个）"}<textarea rows={3} value={newLabels} placeholder={"杯子\n瓶子"} onChange={e=>{setNewLabels(e.target.value);setDirty(true);}}/></label>
+        <small>改名称和规则保留类别身份；排序决定新包的 class_id。保存后产生新交付版本，不更改旧 Run 或旧数据包。</small>
+      </fieldset>
       <label>训练什么任务？<select disabled={busy} value={selectedTarget ? supportedTarget ? target.export_profile : "unsupported" : ""} onChange={e => { setTarget(e.target.value ? target : null); setDirty(true); }}><option value="">请选择任务和训练格式</option><option value="ultralytics_yolo_detection">框出目标 · Ultralytics YOLO Object Detection</option>{selectedTarget && !supportedTarget && <option disabled value="unsupported">{selectedTarget.annotation_kind} · {selectedTarget.export_profile}（尚无完整交付预设）</option>}</select></label>
-      <p>本预设交付目标框，不会把分类或分割需求自动改成检测。按图片组划分训练/验证 {view.saved?.intent.split_policy.train_percent || 80}/{100 - (view.saved?.intent.split_policy.train_percent || 80)}；整图需人工确认，模型未检出不等于确认负样本。</p>
+      <p>本预设交付目标框，不会把分类或分割需求自动改成检测。建议按图片组划分训练/验证 {splitPolicy.train_percent}/{100-splitPolicy.train_percent}；整图需人工确认，模型未检出不等于确认负样本。</p>
+      <Disclosure title="调整数据划分"><label>训练集比例（百分比）<input disabled={busy} type="number" min={1} max={99} step={1} required value={splitPolicy.train_percent} onChange={e=>{setSplitPolicy(current=>({...current,train_percent:Number(e.target.value)}));setDirty(true);}}/></label><p>保留已有划分和已知来源组，不拆组凑比例；实际数量在打包检查报告中展示。仅修改比例，保留当前 seed 与其他约束。</p></Disclosure>
       {view.blockers.map((b, i) => <p role="alert" key={i}>{b}</p>)}
       <div className="delivery-intake-actions"><button type="button" disabled={busy || !dirty} onClick={() => { apply(view); setError(""); retry.current = null; }}>取消修改</button><button type="submit" disabled={busy || locked || !dirty}>{busy ? "保存中…" : "保存交付信息"}</button><span role="status">{dirty ? "尚未保存" : view.saved ? "已保存到服务器" : "等待填写"}</span></div>
       <small>保存不会调用模型或开始处理。样例最多 {view.maximum_sample_images} 张，执行前需要确认模型、数据目的地和费用范围。</small>
