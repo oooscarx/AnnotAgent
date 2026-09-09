@@ -848,6 +848,7 @@ mod tests {
             .unwrap();
         let task = root.task_id;
         let decision = crate::ConversationSchemaDecision::Draft {
+            delivery: None,
             kind: crate::ConversationOutputKind::BoundingBox,
             labels: vec!["cup".into()],
             multi_label: false,

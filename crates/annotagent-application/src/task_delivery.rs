@@ -164,6 +164,7 @@ impl LocalApplication {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let decision = crate::conversation_schema::ConversationSchemaDecision::Draft {
+            delivery: None,
             kind: crate::conversation_schema::ConversationOutputKind::BoundingBox,
             labels: labels.iter().map(|l| l.stable_id.clone()).collect(),
             multi_label: false,
