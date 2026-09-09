@@ -397,6 +397,12 @@ impl DetectionWorkerSettings {
     /// Projects a configured HTTP Worker into the same capability manifest used by newly
     /// scaffolded expert models. Configuration alone never counts as live health or a smoke test.
     pub fn expert_manifest(&self) -> Result<ExpertModelManifest> {
+        self.expert_manifest_with_authentication(true)
+    }
+    fn expert_manifest_with_authentication(
+        &self,
+        check_authentication: bool,
+    ) -> Result<ExpertModelManifest> {
         let capabilities = self
             .expected_capabilities
             .iter()
@@ -467,8 +473,9 @@ impl DetectionWorkerSettings {
         };
         let mut availability_evidence = self.availability_evidence.clone();
         availability_evidence.weights_ready = weights_ready;
-        let authentication_ready =
-            self.authentication_reference.is_none() || self.authorization_header().is_ok();
+        let authentication_ready = !check_authentication
+            || self.authentication_reference.is_none()
+            || self.authorization_header().is_ok();
         if !authentication_ready {
             availability_evidence.health_passed = false;
             availability_evidence.detail = Some(
@@ -4515,6 +4522,13 @@ fn workflow_catalog_with_api_key(
     settings: &Settings,
     temporary_api_key: Option<&str>,
 ) -> Result<(NodeRegistry, ModelRegistry)> {
+    workflow_catalog_mode(settings, temporary_api_key, false)
+}
+fn workflow_catalog_mode(
+    settings: &Settings,
+    temporary_api_key: Option<&str>,
+    metadata_only: bool,
+) -> Result<(NodeRegistry, ModelRegistry)> {
     let capabilities = vec![
         VisionCapability::VisionLanguage,
         VisionCapability::OpenVocabularyDetection,
@@ -4527,7 +4541,12 @@ fn workflow_catalog_with_api_key(
         VisionCapability::KeypointDetection,
     ];
     let mut models = ModelRegistry::new();
-    if settings.default_provider == "mock" {
+    if metadata_only {
+        models.register_backend(Arc::new(PluginCatalogVisionBackend {
+            id: "workspace-provider-adapter".into(),
+            capabilities,
+        }))?;
+    } else if settings.default_provider == "mock" {
         models.register_backend(Arc::new(MockVisionBackend::new(
             "workspace-provider-adapter",
             capabilities,
@@ -4623,21 +4642,30 @@ fn workflow_catalog_with_api_key(
         })?;
     }
     for worker in &settings.detection_workers {
-        let authorization = worker.authorization_header().ok().flatten();
-        models.register_backend(Arc::new(HttpJsonVisionBackend::new(
-            HttpJsonVisionBackendConfig {
+        if metadata_only {
+            models.register_backend(Arc::new(PluginCatalogVisionBackend {
                 id: worker.id.clone(),
-                endpoint: format!("{}/v1/infer", worker.base_url.trim_end_matches('/')),
                 capabilities: worker.expected_capabilities.clone(),
-                request_timeout: Duration::from_secs(worker.timeout_seconds),
-                authorization,
-                expected_model_identity: Some(worker.model_id.clone()),
-                max_retries: worker.max_retries,
-                max_response_bytes: worker.max_response_bytes,
-                allow_remote: worker.allow_remote,
-            },
-        )?))?;
-        models.register_expert_manifest(worker.expert_manifest()?)?;
+            }))?;
+        } else {
+            let authorization = worker.authorization_header().ok().flatten();
+            models.register_backend(Arc::new(HttpJsonVisionBackend::new(
+                HttpJsonVisionBackendConfig {
+                    id: worker.id.clone(),
+                    endpoint: format!("{}/v1/infer", worker.base_url.trim_end_matches('/')),
+                    capabilities: worker.expected_capabilities.clone(),
+                    request_timeout: Duration::from_secs(worker.timeout_seconds),
+                    authorization,
+                    expected_model_identity: Some(worker.model_id.clone()),
+                    max_retries: worker.max_retries,
+                    max_response_bytes: worker.max_response_bytes,
+                    allow_remote: worker.allow_remote,
+                },
+            )?))?;
+        }
+        models.register_expert_manifest(
+            worker.expert_manifest_with_authentication(!metadata_only)?,
+        )?;
     }
     if settings.default_provider == "mock" {
         for (id, display_name, capability, output_type) in [
@@ -7562,7 +7590,21 @@ impl LocalApplication {
         settings: &Settings,
         temporary_api_key: Option<&str>,
     ) -> Result<(NodeRegistry, ModelRegistry)> {
-        let (nodes, mut models) = workflow_catalog_with_api_key(settings, temporary_api_key)?;
+        let (nodes, models) = workflow_catalog_with_api_key(settings, temporary_api_key)?;
+        self.extend_workflow_catalog(nodes, models)
+    }
+    fn static_workflow_catalog(
+        &self,
+        settings: &Settings,
+    ) -> Result<(NodeRegistry, ModelRegistry)> {
+        let (nodes, models) = workflow_catalog_mode(settings, None, true)?;
+        self.extend_workflow_catalog(nodes, models)
+    }
+    fn extend_workflow_catalog(
+        &self,
+        nodes: NodeRegistry,
+        mut models: ModelRegistry,
+    ) -> Result<(NodeRegistry, ModelRegistry)> {
         let mut manifests = self
             .plugin_registry
             .lock()
@@ -16782,6 +16824,34 @@ impl LocalApplication {
     ) -> Result<WorkflowValidationReport> {
         let project = self.workflow_project_schema(draft)?;
         let (nodes, models) = self.workflow_catalog(settings)?;
+        self.validate_workflow_draft_in_catalog(
+            draft,
+            &project,
+            &nodes,
+            &models,
+            require_publish_ready,
+        )
+    }
+
+    /// Read-only Core validation. This path cannot construct Provider/HTTP Worker adapters,
+    /// resolve credentials, start plugins, save samples, or publish a version.
+    pub fn validate_workflow_draft_static(
+        &self,
+        draft: &WorkflowDraft,
+        settings: &Settings,
+    ) -> Result<WorkflowValidationReport> {
+        let project = self.workflow_project_schema(draft)?;
+        let (nodes, models) = self.static_workflow_catalog(settings)?;
+        self.validate_workflow_draft_in_catalog(draft, &project, &nodes, &models, false)
+    }
+    fn validate_workflow_draft_in_catalog(
+        &self,
+        draft: &WorkflowDraft,
+        project: &ProjectSchema,
+        nodes: &NodeRegistry,
+        models: &ModelRegistry,
+        require_publish_ready: bool,
+    ) -> Result<WorkflowValidationReport> {
         let enabled_skills = draft
             .enabled_skills
             .keys()
@@ -16805,14 +16875,14 @@ impl LocalApplication {
             .collect::<Vec<_>>();
         let geometry_context = self.geometry_safety_validation_context(
             &draft.project_id,
-            &project,
+            project,
             draft,
             &frozen_profiles,
         )?;
         let mut report = WorkflowStaticValidator.validate_for_publish_with_geometry(
             draft,
-            &nodes,
-            &models,
+            nodes,
+            models,
             &validation_catalog,
             &enabled_skills,
             require_publish_ready,
@@ -16875,8 +16945,8 @@ impl LocalApplication {
         if draft.label_pipeline.is_some() {
             let grammar = PipelineGrammarValidator.validate(
                 draft,
-                &nodes,
-                &models,
+                nodes,
+                models,
                 &validation_catalog,
                 &enabled_skills,
                 &PipelineBuilderConstraints {
@@ -16899,7 +16969,7 @@ impl LocalApplication {
         }
         report
             .issues
-            .extend(label_projection_issues(draft, &project, &nodes, &models));
+            .extend(label_projection_issues(draft, project, nodes, models));
         append_unresolved_binding_issues(draft, &mut report);
         report.valid = report.issues.iter().all(|issue| !issue.blocking);
         Ok(report)
@@ -22786,6 +22856,29 @@ export:
         );
         untested.authentication_reference = Some("workspace-secret".to_owned());
         assert!(untested.validate_authentication_reference().is_err());
+    }
+
+    #[test]
+    fn static_worker_manifest_keeps_recorded_evidence_without_resolving_authentication() {
+        let mut worker = load_settings(None).unwrap().detection_workers[0].clone();
+        worker.authentication_reference = Some("invalid-reference-for-TEST".into());
+        worker.availability_evidence.health_passed = true;
+        worker.availability_evidence.detail = Some("TEST recorded evidence".into());
+        let metadata = worker.expert_manifest_with_authentication(false).unwrap();
+        assert!(metadata.availability_evidence.health_passed);
+        assert_eq!(
+            metadata.availability_evidence.detail.as_deref(),
+            Some("TEST recorded evidence")
+        );
+        let runtime = worker.expert_manifest().unwrap();
+        assert!(!runtime.availability_evidence.health_passed);
+        assert!(
+            runtime
+                .availability_evidence
+                .detail
+                .unwrap()
+                .contains("authentication reference cannot be resolved")
+        );
     }
 
     #[test]

@@ -105,7 +105,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, StatusCode, header},
     middleware,
     response::{IntoResponse, Response, Sse, sse::Event},
-    routing::{delete, get, patch, post},
+    routing::{delete, get, post},
 };
 use chrono::Utc;
 use futures::{Stream, StreamExt as _, stream};
@@ -805,8 +805,9 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route("/api/workflow-drafts/diff", post(diff_workflow_drafts))
         .route(
             "/api/workflow-drafts/{draft_id}",
-            patch(save_workflow_draft),
+            get(get_owned_workflow_draft).patch(save_workflow_draft),
         )
+        .route("/api/workflow-drafts/{draft_id}/validate", post(validate_owned_workflow_draft))
         .route(
             "/api/workflow-drafts/{draft_id}/apply-diff",
             post(apply_workflow_draft_diff),
@@ -3904,6 +3905,67 @@ fn workflow_draft_uses_mock(draft: &WorkflowDraft) -> bool {
                 .filter_map(|step| step.model_binding.as_ref())
                 .any(|binding| is_mock(&binding.model_id))
         })
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OwnedWorkflowDraftQuery {
+    project_id: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StaticWorkflowValidationRequest {
+    project_id: String,
+    expected_revision: u64,
+}
+fn read_owned_workflow_draft(
+    state: &ServerState,
+    id: &str,
+    project: &str,
+) -> ApiResult<WorkflowDraft> {
+    state
+        .application
+        .project_path(project)
+        .map_err(ApiError::not_found)?;
+    let draft = state
+        .application
+        .store()
+        .get_workflow_draft(id)
+        .map_err(ApiError::not_found)?;
+    if draft.project_id != project {
+        return Err(ApiError::not_found(
+            "Workflow Draft was not found in this Project",
+        ));
+    }
+    Ok(draft)
+}
+async fn get_owned_workflow_draft(
+    State(state): State<ServerState>,
+    AxumPath(id): AxumPath<String>,
+    Query(query): Query<OwnedWorkflowDraftQuery>,
+) -> ApiResult<Json<WorkflowDraft>> {
+    read_owned_workflow_draft(&state, &id, &query.project_id).map(Json)
+}
+async fn validate_owned_workflow_draft(
+    State(state): State<ServerState>,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<StaticWorkflowValidationRequest>,
+) -> ApiResult<Json<Value>> {
+    let draft = read_owned_workflow_draft(&state, &id, &request.project_id)?;
+    if draft.revision != request.expected_revision {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            body: json!({"code":"workflow_draft_revision_conflict","status":409,"draft_id":id,"project_id":request.project_id,"expected_revision":request.expected_revision,"current_revision":draft.revision,"error":"Workflow Draft changed; reload before validating"}),
+        });
+    }
+    let settings = state.settings.read().await.clone();
+    let validation = state
+        .application
+        .validate_workflow_draft_static(&draft, &settings)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(
+        json!({"project_id":draft.project_id,"draft_id":draft.id,"revision":draft.revision,"content_hash":draft.content_hash,"validation_kind":"static","validation":validation}),
+    ))
 }
 
 async fn save_workflow_draft(
@@ -11625,6 +11687,146 @@ mod tests {
         assert!(
             catalog["installations"][0]
                 .get("installation_root")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn owned_static_validation_is_revisioned_core_only_and_never_executes() {
+        let temp = tempfile::tempdir().unwrap();
+        let app = Arc::new(LocalApplication::new(temp.path()).unwrap());
+        let project = "version: 1\nproject:\n  name: TEST static\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n";
+        app.create_project("TEST-owner", project).unwrap();
+        app.create_project("TEST-other", project).unwrap();
+        let draft:WorkflowDraft=serde_json::from_value(json!({"id":"TEST-stable-static","project_id":"TEST-owner","name":"TEST static type mismatch","status":"editing","nodes":[
+            {"id":"image","node_type":"core.image_input","kind":"image_input","outputs":[{"id":"candidates","artifact_type":"bounding_box"}]},
+            {"id":"commit","node_type":"core.commit","kind":"commit","inputs":[{"id":"candidates","artifact_type":"semantic_mask"}]}
+        ],"edges":[{"from_node":"image","from_port":"candidates","to_node":"commit","to_port":"candidates"}],"created_at":Utc::now(),"updated_at":Utc::now()})).unwrap();
+        app.store().save_workflow_draft(&draft).unwrap();
+        let saved = app.store().get_workflow_draft(&draft.id).unwrap();
+        app.store()
+            .publish_workflow_draft(
+                &saved,
+                "TEST-published".into(),
+                annotagent_core::WorkflowSnapshot {
+                    draft: Some(saved.clone()),
+                    ..annotagent_core::WorkflowSnapshot::default()
+                },
+            )
+            .unwrap();
+        let saved = app.store().get_workflow_draft(&draft.id).unwrap();
+        let before =
+            serde_json::to_value(app.store().list_published_workflow_versions(None).unwrap())
+                .unwrap();
+        let state = test_state(app.clone(), Arc::new(InMemorySecretStore::default())).await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        {
+            let mut settings = state.settings.write().await;
+            settings.default_provider = "openai".into();
+            settings.provider.endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
+            settings.provider.api_key_env = "TEST_STATIC_NO_CREDENTIAL".into();
+            for worker in &mut settings.detection_workers {
+                worker.base_url = format!("http://{}", listener.local_addr().unwrap());
+            }
+        }
+        let service = router(state.clone(), None);
+        let path = format!("/api/workflow-drafts/{}", draft.id);
+        let (status, fetched) = call_json(
+            &service,
+            axum::http::Method::GET,
+            &format!("{path}?project_id=TEST-owner"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(fetched["id"], draft.id);
+        assert_eq!(fetched["revision"], saved.revision);
+        let (status, _) = call_json(
+            &service,
+            axum::http::Method::GET,
+            &format!("{path}?project_id=TEST-other"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        for (body, expected) in [
+            (
+                json!({"project_id":"TEST-other","expected_revision":saved.revision}),
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                json!({"project_id":"TEST-owner","expected_revision":saved.revision+1}),
+                StatusCode::CONFLICT,
+            ),
+            (
+                json!({"project_id":"TEST-owner","expected_revision":"one"}),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+        ] {
+            let (status, _) = call_json(
+                &service,
+                axum::http::Method::POST,
+                &format!("{path}/validate"),
+                body,
+            )
+            .await;
+            assert_eq!(status, expected);
+        }
+        let (status, report) = call_json(
+            &service,
+            axum::http::Method::POST,
+            &format!("{path}/validate"),
+            json!({"project_id":"TEST-owner","expected_revision":saved.revision}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{report:#?}");
+        assert_eq!(report["validation_kind"], "static");
+        assert_eq!(report["revision"], saved.revision);
+        assert_eq!(report["project_id"], "TEST-owner");
+        assert_eq!(report["validation"]["valid"], false);
+        assert!(
+            report["validation"]["issues"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|issue| issue["code"] == "artifact_type_mismatch")
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), listener.accept())
+                .await
+                .is_err()
+        );
+        // Invalid network configuration would fail Provider/HTTP adapter construction, but Core checks still return a report.
+        {
+            let mut settings = state.settings.write().await;
+            settings.provider.endpoint = "not a URL".into();
+            for worker in &mut settings.detection_workers {
+                worker.base_url = "not a URL".into();
+            }
+        }
+        let (status, again) = call_json(
+            &service,
+            axum::http::Method::POST,
+            &format!("{path}/validate"),
+            json!({"project_id":"TEST-owner","expected_revision":saved.revision}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{again:#?}");
+        assert_eq!(
+            before,
+            serde_json::to_value(app.store().list_published_workflow_versions(None).unwrap())
+                .unwrap()
+        );
+        assert_eq!(saved, app.store().get_workflow_draft(&draft.id).unwrap());
+        assert!(app.store().list_runs().unwrap().is_empty());
+        assert!(
+            app.store()
+                .get_workflow_sample_test_for_revision(
+                    &draft.id,
+                    saved.revision,
+                    &saved.content_hash
+                )
+                .unwrap()
                 .is_none()
         );
     }
