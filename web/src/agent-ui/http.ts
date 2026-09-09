@@ -43,6 +43,7 @@ export class HttpAdapter implements WorkspaceAdapter {
     return this.taskRoot(task);
   }
   readonly delivery: import("./deliveryService").DeliveryService = {
+    editObject:(project,task,image,input)=>this.transport(`${this.deliveryRoot(project,task)}/delivery-images/${esc(image)}/objects`,{method:"POST",body:JSON.stringify(input)}),
     pendingPackage: (project,task)=>{this.deliveryRoot(project,task);return this.storage?readPendingDelivery(this.storage,this.deliveryPendingKey(project,task)):undefined;},
     history: async(project,task,before,signal)=>{
       const rows=await this.transport<{id:string;created_at:string;format:string}[]>(`${this.deliveryRoot(project,task)}/exports?limit=100${before?`&before=${esc(before)}`:""}`,{signal});

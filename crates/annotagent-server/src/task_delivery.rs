@@ -83,6 +83,23 @@ pub(super) async fn confirm_image(
         .map_err(ApiError::conversation)
 }
 
+pub(super) async fn edit_object(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task, image)): AxumPath<(
+        String,
+        uuid::Uuid,
+        uuid::Uuid,
+        annotagent_core::ImageId,
+    )>,
+    Json(input): Json<annotagent_storage::DeliveryObjectEdit>,
+) -> ApiResult<Json<annotagent_core::AnnotationRevision>> {
+    state
+        .application
+        .edit_task_delivery_object(&project, conversation, task, image, &input)
+        .map(Json)
+        .map_err(ApiError::conversation)
+}
+
 pub(super) async fn get(
     State(state): State<ServerState>,
     AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,

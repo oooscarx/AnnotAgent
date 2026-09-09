@@ -451,6 +451,49 @@ mod tests {
                 .status(),
             StatusCode::OK
         );
+        let image_uri = format!("{root}/delivery-images/{}", images[0].image_id);
+        let source_uri = format!("{image_uri}?source_run_id={run}");
+        let before = response_json(request(&restored, Method::GET, &source_uri, None).await).await;
+        let object = &before["snapshot"]["annotations"][0];
+        let edit = json!({"command_id":uuid::Uuid::new_v4(),"intent_revision":before["intent_revision"],"intent_sha256":before["intent_sha256"],"source_run_id":run,"annotation_id":object["id"],"expected_snapshot_sha256":before["snapshot"]["sha256"],"label":object["label"],"value":{"kind":"bounding_box","rect":[0.12,0.12,0.16,0.16]},"review_status":"needs_review","reason":"TEST saved boundary correction"});
+        let edit_uri = format!("{image_uri}/objects");
+        let edited = request(&restored, Method::POST, &edit_uri, Some(edit.clone())).await;
+        assert!(edited.status().is_success());
+        let revision = response_json(edited).await;
+        assert_eq!(
+            response_json(request(&restored, Method::POST, &edit_uri, Some(edit.clone())).await)
+                .await,
+            revision
+        );
+        let mut stale = edit.clone();
+        stale["command_id"] = json!(uuid::Uuid::new_v4());
+        assert!(
+            !request(&restored, Method::POST, &edit_uri, Some(stale))
+                .await
+                .status()
+                .is_success()
+        );
+        let after = response_json(request(&restored, Method::GET, &source_uri, None).await).await;
+        assert_eq!(after["confirmation_current"], false);
+        assert_eq!(after["unresolved_objects"], 1);
+        assert!(
+            !request(
+                &restored,
+                Method::POST,
+                &edit_uri.replacen("TEST-package", "TEST-foreign", 1),
+                Some(edit)
+            )
+            .await
+            .status()
+            .is_success()
+        );
+        // Newly edited annotations do not mutate an already frozen package.
+        assert_eq!(
+            request(&restored, Method::GET, &format!("{uri}/download"), None)
+                .await
+                .status(),
+            StatusCode::OK
+        );
         std::fs::write(
             temp.path().join(format!(
                 "TEST-package/exports/deliveries/{command}/dataset.zip"

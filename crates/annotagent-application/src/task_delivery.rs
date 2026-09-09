@@ -237,6 +237,23 @@ impl LocalApplication {
         })
     }
 
+    /// Revises an existing formal object with snapshot CAS; does not confirm the whole image.
+    pub fn edit_task_delivery_object(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        image: ImageId,
+        input: &annotagent_storage::DeliveryObjectEdit,
+    ) -> Result<annotagent_core::AnnotationRevision> {
+        let saved = self
+            .require_delivery_intake(project, conversation, task)?
+            .context("Save delivery information before editing formal objects")?;
+        self.store
+            .edit_delivery_object(&saved.intent.project_id, conversation, task, image, input)
+            .map_err(Into::into)
+    }
+
     /// Saves only a scoped human receipt, never accepts objects, starts a model or packages data.
     pub fn confirm_task_delivery_image(
         &self,

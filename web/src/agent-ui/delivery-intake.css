@@ -4,7 +4,8 @@
 .delivery-intake form { display: grid; gap: 16px; padding-top: 12px; max-width: 680px; }
 .delivery-intake fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
 .delivery-intake legend { margin-bottom: 8px; }
-.delivery-intake form > label { display: grid; gap: 8px; }
+.delivery-intake form > fieldset { display: grid; gap: 16px; }
+.delivery-intake form > label, .delivery-intake form > fieldset > label { display: grid; gap: 8px; }
 .delivery-intake textarea, .delivery-intake select { width: 100%; min-width: 0; padding: 9px 12px; border: 1px solid var(--aa-border); border-radius: 8px; background: var(--aa-bg); }
 .delivery-intake p, .delivery-intake small { margin: 0; line-height: 1.6; overflow-wrap: anywhere; }
 .delivery-intake-images { display: grid; gap: 8px; max-height: 180px; overflow: auto; padding-block: 10px; }
@@ -17,6 +18,7 @@
 .delivery-review-controls { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,230px),1fr)); gap: 12px; }
 .delivery-review label { display: grid; gap: 8px; min-width: 0; }
 .delivery-review .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.delivery-object-editor { display: grid; gap: 10px; }
 .delivery-package, .delivery-package-receipt { display: grid; gap: 12px; min-width: 0; padding-block: 12px; }
 .delivery-package h3 { margin: 0; }
 .delivery-package label { display: grid; gap: 8px; }

@@ -32,6 +32,8 @@ export function DeliveryIntake({ service, delivery, project, task, images, locke
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(false);
   const [reviewOpen,setReviewOpen]=useState(()=>new URL(location.href).searchParams.has("delivery_image"));
+  const [reviewVisited,setReviewVisited]=useState(reviewOpen);
+  const [objectEditing,setObjectEditing]=useState(false);
   const retry = useRef<{ signature: string; input: IntakeInput } | null>(null);
   const inFlight = useRef(false);
   const preparation = useRef<{command_id:string;expected_revision:number;expected_sha256:string} | null>(null);
@@ -55,7 +57,7 @@ export function DeliveryIntake({ service, delivery, project, task, images, locke
     return () => { window.removeEventListener("ui-preview:before-navigate", guard); window.removeEventListener("beforeunload", unload); };
   }, [dirty]);
   const save = async () => {
-    if (!view || inFlight.current || locked) return;
+    if (!view || inFlight.current || locked || objectEditing) return;
     inFlight.current = true; setBusy(true); setError("");
     const signature = JSON.stringify([view.saved?.revision || 0, ids, labels, selectedTarget]);
     if (retry.current?.signature !== signature) retry.current = { signature, input: { command_id: crypto.randomUUID(), expected_revision: view.saved?.revision || 0, image_ids: ids.length ? ids : null, label_spec: labels.trim() ? intakeLabels(labels, view.saved?.intent.label_spec || []) : null, training_target: selectedTarget, split_policy: view.saved?.intent.split_policy || split } };
@@ -78,6 +80,8 @@ export function DeliveryIntake({ service, delivery, project, task, images, locke
     {view?.saved && !view.missing_slots.length && !view.blockers.length && service.prepare && <div className="delivery-intake-actions"><button type="button" disabled={busy||locked||dirty} onClick={()=>void prepare()}>{busy?"保存中…":"确认目标并准备方案"}</button><small>复用已填写的类别和任务类型，不再要求填写内部 ID。模型执行仍需授权。</small></div>}
     {prepared && <p role="status">{prepared}</p>}
     {expanded && view && <form aria-disabled={locked} onSubmit={e => { e.preventDefault(); void save(); }}>
+      {objectEditing&&<p role="status">请先保存或撤销对象修改，再调整交付范围；收起审核面板不会丢失编辑。</p>}
+      <fieldset disabled={objectEditing}>
       {locked && <p role="status">任务执行中，暂时不能保存交付信息；已有输入保留。</p>}
       <fieldset disabled={busy}><legend>用哪些图片？</legend><div className="delivery-intake-selection"><button type="button" onClick={() => { setIds(images.map(i => i.id)); setDirty(true); }}>选择当前 {images.length} 张图片</button><span>已选 {ids.length} 张</span></div>
         {!images.length && <p>先使用输入框的图片按钮上传图片。未上传的文件不属于已保存范围。</p>}
@@ -89,9 +93,10 @@ export function DeliveryIntake({ service, delivery, project, task, images, locke
       {view.blockers.map((b, i) => <p role="alert" key={i}>{b}</p>)}
       <div className="delivery-intake-actions"><button type="button" disabled={busy || !dirty} onClick={() => { apply(view); setError(""); retry.current = null; }}>取消修改</button><button type="submit" disabled={busy || locked || !dirty}>{busy ? "保存中…" : "保存交付信息"}</button><span role="status">{dirty ? "尚未保存" : view.saved ? "已保存到服务器" : "等待填写"}</span></div>
       <small>保存不会调用模型或开始处理。样例最多 {view.maximum_sample_images} 张，执行前需要确认模型、数据目的地和费用范围。</small>
+      </fieldset>
     </form>}
     {delivery && view?.saved && <>
-      {!view.missing_slots.length && !view.blockers.length && !dirty && <Disclosure title="检查正式训练图片（整图审核）" open={reviewOpen} onToggle={e=>setReviewOpen(e.currentTarget.open)}>{reviewOpen&&<DeliveryReview key={`${task}:${view.saved.revision}`} service={delivery} project={project} task={task} locked={locked} images={(view.saved.intent.dataset_scope || []).flatMap(i=>{const image=images.find(a=>a.id===i.image_id);return image?[image]:[{id:i.image_id,name:"原图不可用"}];})}/>}</Disclosure>}
+      {!view.missing_slots.length && !view.blockers.length && <Disclosure title="检查正式训练图片（整图审核）" open={reviewOpen} onToggle={e=>{setReviewOpen(e.currentTarget.open);if(e.currentTarget.open)setReviewVisited(true);}}>{(reviewVisited||reviewOpen)&&<DeliveryReview key={`${task}:${view.saved.revision}`} service={delivery} project={project} task={task} labels={view.saved.intent.label_spec||[]} locked={locked||dirty} onEditingState={setObjectEditing} images={(view.saved.intent.dataset_scope || []).flatMap(i=>{const image=images.find(a=>a.id===i.image_id);return image?[image]:[{id:i.image_id,name:"原图不可用"}];})}/>}</Disclosure>}
       <DeliveryPackage key={`${task}:${view.saved.revision}`} service={delivery} project={project} task={task} locked={locked||dirty||!!view.missing_slots.length||!!view.blockers.length} scope={{revision:view.saved.revision,content_sha256:view.saved.content_sha256,image_ids:(view.saved.intent.dataset_scope||[]).map(i=>i.image_id)}} onInspect={id=>{const url=new URL(location.href);url.searchParams.set("delivery_image",id);url.searchParams.delete("delivery_run");history.pushState(history.state,"",url);window.dispatchEvent(new PopStateEvent("popstate"));setReviewOpen(true);}}/>
     </>}
   </section>;

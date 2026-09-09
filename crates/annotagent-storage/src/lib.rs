@@ -84,7 +84,7 @@ pub use conversation_send::{
 pub use conversation_task_selection::{ConversationTaskSelection, SelectConversationTask};
 pub use delivery_image_review::{
     DeliveryImageDecision, DeliveryImageReview, DeliveryImageReviewInput, DeliveryImageSnapshot,
-    DeliveryRunSource,
+    DeliveryObjectEdit, DeliveryRunSource,
 };
 pub use task_delivery::TaskDeliveryRevision;
 mod conversations;
@@ -2159,11 +2159,24 @@ impl SqliteStore {
         annotation: &Annotation,
         reason: Option<&str>,
     ) -> Result<AnnotationRevision, StorageError> {
+        self.update_annotation_guarded(annotation, reason, None, |_| Ok(None))
+    }
+
+    pub(crate) fn update_annotation_guarded(
+        &self,
+        annotation: &Annotation,
+        reason: Option<&str>,
+        revision_id: Option<AnnotationRevisionId>,
+        guard: impl FnOnce(&rusqlite::Connection) -> Result<Option<AnnotationRevision>, StorageError>,
+    ) -> Result<AnnotationRevision, StorageError> {
         annotation
             .validate()
             .map_err(|error| StorageError::InvalidEnum(error.to_string()))?;
         self.with_connection(|connection| {
             let transaction = connection.unchecked_transaction()?;
+            if let Some(existing) = guard(&transaction)? {
+                return Ok(existing);
+            }
             let before_json: String = transaction
                 .query_row(
                     "SELECT annotation_json FROM annotations WHERE id = ?1",
@@ -2189,7 +2202,7 @@ impl SqliteStore {
                     StorageError::InvalidEnum(format!("invalid revision id: {error}"))
                 })?;
             let revision = AnnotationRevision {
-                revision_id: AnnotationRevisionId::new(),
+                revision_id: revision_id.unwrap_or_default(),
                 annotation_id: annotation.id,
                 parent_revision_id,
                 before: Some(before.snapshot()),

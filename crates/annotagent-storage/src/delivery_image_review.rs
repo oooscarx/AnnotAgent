@@ -54,6 +54,21 @@ pub struct DeliveryRunSource {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeliveryObjectEdit {
+    pub command_id: Uuid,
+    pub intent_revision: u32,
+    pub intent_sha256: String,
+    pub source_run_id: RunId,
+    pub annotation_id: annotagent_core::AnnotationId,
+    pub expected_snapshot_sha256: String,
+    pub label: String,
+    pub value: annotagent_core::AnnotationValue,
+    pub review_status: ReviewStatus,
+    pub reason: String,
+}
+
 fn invalid(message: &str) -> StorageError {
     StorageError::InvalidConversation(message.into())
 }
@@ -147,6 +162,104 @@ pub(super) fn decode(
 }
 
 impl SqliteStore {
+    /// Existing revision writer plus same-transaction delivery snapshot checks.
+    pub fn edit_delivery_object(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        image: ImageId,
+        input: &DeliveryObjectEdit,
+    ) -> Result<annotagent_core::AnnotationRevision, StorageError> {
+        if !matches!(
+            input.review_status,
+            ReviewStatus::NeedsReview | ReviewStatus::HumanAccepted | ReviewStatus::Rejected
+        ) || !matches!(
+            input.value,
+            annotagent_core::AnnotationValue::BoundingBox { .. }
+        ) || input.reason.trim().is_empty()
+            || input.reason.len() > 2000
+        {
+            return Err(invalid(
+                "Object edit requires a bbox, explicit human review state and bounded reason",
+            ));
+        }
+        let initial = self.delivery_image_snapshot(
+            project,
+            conversation,
+            task,
+            image,
+            Some(input.source_run_id),
+        )?;
+        let mut annotation = initial
+            .annotations
+            .into_iter()
+            .find(|a| a.id == input.annotation_id)
+            .ok_or_else(|| invalid("Object is not in this owned image and source Run"))?;
+        annotation.label = Some(input.label.as_str().into());
+        annotation.value = input.value.clone();
+        annotation.review_status = input.review_status;
+        let fingerprint = format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&(
+                project,
+                conversation,
+                task,
+                image,
+                input
+            ))?)
+        );
+        let reason = format!("{} [delivery request {fingerprint}]", input.reason);
+        self.update_annotation_guarded(
+            &annotation,
+            Some(&reason),
+            Some(annotagent_core::AnnotationRevisionId(input.command_id)),
+            |db| {
+                let saved = intent(db, project, conversation, task)?;
+                let existing: Option<String> = db
+                    .query_row(
+                        "SELECT revision_json FROM annotation_revisions WHERE revision_id=?1",
+                        [input.command_id.to_string()],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                if let Some(json) = existing {
+                    let revision: annotagent_core::AnnotationRevision =
+                        serde_json::from_str(&json)?;
+                    if revision.annotation_id != input.annotation_id
+                        || revision.reason.as_deref() != Some(reason.as_str())
+                    {
+                        return Err(invalid(
+                            "Object edit command conflicts with its immutable saved request",
+                        ));
+                    }
+                    return Ok(Some(revision));
+                }
+                if saved.revision != input.intent_revision
+                    || saved.content_sha256 != input.intent_sha256
+                {
+                    return Err(invalid("Delivery intent changed before object save"));
+                }
+                if !saved
+                    .intent
+                    .label_spec
+                    .as_ref()
+                    .is_some_and(|labels| labels.iter().any(|l| l.stable_id == input.label))
+                {
+                    return Err(invalid(
+                        "Edited object label is outside the delivery Schema",
+                    ));
+                }
+                let current = snapshot(db, &saved, image, Some(input.source_run_id))?;
+                if current.sha256 != input.expected_snapshot_sha256 {
+                    return Err(invalid(
+                        "Image annotations changed; local object edit was not applied",
+                    ));
+                }
+                Ok(None)
+            },
+        )
+    }
     /// Explicit selectable formal sources, never an implicit latest-Run projection.
     pub fn delivery_run_sources(
         &self,
@@ -307,6 +420,85 @@ mod tests {
             })
             .unwrap();
         assert!(sources().unwrap().is_empty());
+    }
+    #[test]
+    fn object_edits_use_snapshot_cas_and_existing_revision_history() {
+        let root = tempfile::tempdir().unwrap();
+        let f = TestData::new(root.path());
+        f.put(&f.annotation);
+        let i = &f.saved.intent;
+        let confirmed = f
+            .confirm(&f.input(DeliveryImageDecision::PositiveComplete))
+            .unwrap();
+        let input = DeliveryObjectEdit {
+            command_id: Uuid::new_v4(),
+            intent_revision: f.saved.revision,
+            intent_sha256: f.saved.content_sha256.clone(),
+            source_run_id: f.run,
+            annotation_id: f.annotation.id,
+            expected_snapshot_sha256: confirmed.snapshot.sha256.clone(),
+            label: "target".into(),
+            value: annotagent_core::AnnotationValue::BoundingBox {
+                rect: annotagent_core::NormalizedRect::new(0.12, 0.12, 0.16, 0.16).unwrap(),
+            },
+            review_status: ReviewStatus::NeedsReview,
+            reason: "TEST tighten boundary".into(),
+        };
+        let edit = |input: &DeliveryObjectEdit| {
+            f.store.edit_delivery_object(
+                &i.project_id,
+                i.conversation_id,
+                i.task_id,
+                f.image,
+                input,
+            )
+        };
+        let result = edit(&input).unwrap();
+        assert_eq!(result.revision_id.0, input.command_id);
+        assert_eq!(edit(&input).unwrap(), result);
+        let mut changed = input.clone();
+        changed.reason = "different request".into();
+        assert!(edit(&changed).is_err());
+        changed.command_id = Uuid::new_v4();
+        assert!(
+            edit(&changed)
+                .unwrap_err()
+                .to_string()
+                .contains("annotations changed")
+        );
+        assert!(
+            f.store
+                .edit_delivery_object("foreign", i.conversation_id, i.task_id, f.image, &input)
+                .is_err()
+        );
+        let current = f
+            .store
+            .delivery_image_snapshot(
+                &i.project_id,
+                i.conversation_id,
+                i.task_id,
+                f.image,
+                Some(f.run),
+            )
+            .unwrap();
+        assert_ne!(current.sha256, confirmed.snapshot.sha256);
+        assert_eq!(current.annotations[0].value, input.value);
+        assert_eq!(
+            current.annotations[0].review_status,
+            ReviewStatus::NeedsReview
+        );
+        assert!(
+            f.confirm(&f.input(DeliveryImageDecision::PositiveComplete))
+                .is_err()
+        );
+        changed.expected_snapshot_sha256 = current.sha256;
+        changed.label = "outside-schema".into();
+        assert!(
+            edit(&changed)
+                .unwrap_err()
+                .to_string()
+                .contains("outside the delivery Schema")
+        );
     }
     impl TestData {
         fn new(root: &std::path::Path) -> Self {

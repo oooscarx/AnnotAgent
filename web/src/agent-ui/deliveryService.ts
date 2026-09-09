@@ -8,6 +8,11 @@ export type DeliveryReviewInput = {
   decision: "positive_complete" | "negative_confirmed" | "excluded";
   reason: string | null; confirmed: boolean;
 };
+export type DeliveryObjectEdit = {
+  command_id:string;intent_revision:number;intent_sha256:string;source_run_id:string;
+  annotation_id:string;expected_snapshot_sha256:string;label:string;value:Annotation["value"];
+  review_status:"needs_review"|"human_accepted"|"rejected";reason:string;
+};
 export type DeliveryImageSnapshot = {
   image_id: string; content_sha256: string; source_run_id: string | null;
   annotations: Annotation[]; sha256: string;
@@ -37,6 +42,7 @@ export type DeliveryPackageStart = { job: DeliveryPackageStatus; active: boolean
 
 /** Explicit commands retain caller-owned idempotency keys; reads never start jobs. */
 export interface DeliveryService {
+  editObject(project:string,task:string,image:string,input:DeliveryObjectEdit):Promise<unknown>;
   pendingPackage(project:string,task:string):DeliveryPackageInput|undefined;
   history(project: string, task: string, before?:string, signal?:AbortSignal): Promise<{items:{id:string;created_at:string}[];next_cursor:string|null}>;
   image(project: string, task: string, image: string, run: string | null, signal?: AbortSignal): Promise<DeliveryImageView>;
