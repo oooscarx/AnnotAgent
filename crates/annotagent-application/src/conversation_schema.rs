@@ -42,6 +42,68 @@ impl Drop for CallCancellationGuard<'_> {
 }
 
 impl crate::LocalApplication {
+    /// Resolve the original goal and this exact saved supplement, never the latest
+    /// message or a mutable model preference. This step sends no image pixels.
+    fn queued_schema_goal(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        message: Uuid,
+    ) -> Result<(String, annotagent_storage::ConversationQueuedMessage)> {
+        let record = self
+            .conversation_tasks(project, conversation)?
+            .into_iter()
+            .find(|record| record.input.id == task)
+            .ok_or_else(|| anyhow::anyhow!("Task does not belong to this conversation"))?;
+        let owner = self.conversation_project_identity(project)?;
+        let original = self
+            .store
+            .conversation_message(&owner, conversation, record.input.source_message_id)?
+            .ok_or_else(|| anyhow::anyhow!("Original goal is missing"))?;
+        let queued = self
+            .store
+            .queued_conversation_message(&owner, conversation, task, message)?;
+        let goal = serde_json::to_string(
+            &json!({"original_goal":original.input.text,"supplement":queued.input.message.text}),
+        )?;
+        if goal.len() > 65_536 {
+            bail!(
+                "Original goal and supplement exceed the bounded planning context; no request was sent"
+            );
+        }
+        Ok((goal, queued))
+    }
+
+    /// Read-only preview digest for the existing text-only Schema phase. This is
+    /// not a Workflow execution or authorization, even for Execute-mode messages.
+    pub fn queued_schema_request_hash(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        message: Uuid,
+        remote_model: &str,
+    ) -> Result<String> {
+        let (goal, queued) = self.queued_schema_goal(project, conversation, task, message)?;
+        let record = self
+            .conversation_tasks(project, conversation)?
+            .into_iter()
+            .find(|r| r.input.id == task)
+            .ok_or_else(|| anyhow::anyhow!("Task not found"))?;
+        let yaml = std::fs::read(self.project_path(project)?)?;
+        if annotagent_image_tools::sha256(&yaml) != record.input.schema_revision {
+            bail!("Schema changed after task admission");
+        }
+        let schema = annotagent_core::ProjectSchema::from_yaml(std::str::from_utf8(&yaml)?)
+            .map_err(|error| anyhow::anyhow!(error))?;
+        Ok(annotagent_image_tools::sha256(&serde_json::to_vec(
+            &json!({
+                "contract":"conversation-queued-schema-v1", "task":record.input, "message":queued.input,
+                "send_snapshot":queued.receipt,"goal":goal,"remote_model":remote_model,"schema":schema,
+            }),
+        )?))
+    }
     pub(crate) fn workflow_project_schema(
         &self,
         draft: &annotagent_core::WorkflowDraft,
@@ -147,12 +209,21 @@ impl crate::LocalApplication {
             .store
             .conversation_message(&owner, conversation, task_record.input.source_message_id)?
             .ok_or_else(|| anyhow::anyhow!("Saved task goal not found"))?;
+        let goal = if let Some(queued) =
+            self.store
+                .queued_planning_authorization(&owner, conversation, task, call)?
+        {
+            self.queued_schema_goal(project, conversation, task, queued.message_id)?
+                .0
+        } else {
+            source.input.text
+        };
         Ok(self.store.create_conversation_schema_draft(
             &owner,
             task,
             call,
             &annotagent_storage::ConversationSchemaDefinition {
-                goal: source.input.text,
+                goal,
                 task: config,
                 boundary_rules,
             },
@@ -392,10 +463,33 @@ impl crate::LocalApplication {
         }
         let schema = annotagent_core::ProjectSchema::from_yaml(std::str::from_utf8(&yaml)?)
             .map_err(|error| anyhow::anyhow!(error))?;
-        let request_hash = annotagent_image_tools::sha256(&serde_json::to_vec(&json!({
+        let mut request_hash = annotagent_image_tools::sha256(&serde_json::to_vec(&json!({
             "contract":"conversation-schema-v1", "task":task.input, "message":source,
             "remote_model":execution.remote_model, "schema":schema,
         }))?);
+        let mut goal = source.input.text;
+        if let Some(queued) = self.store.queued_planning_authorization(
+            &owner,
+            execution.conversation_id,
+            execution.task_id,
+            execution.call_id,
+        )? {
+            request_hash = self.queued_schema_request_hash(
+                project_id,
+                execution.conversation_id,
+                execution.task_id,
+                queued.message_id,
+                &execution.remote_model,
+            )?;
+            goal = self
+                .queued_schema_goal(
+                    project_id,
+                    execution.conversation_id,
+                    execution.task_id,
+                    queued.message_id,
+                )?
+                .0;
+        }
         match self.store.reserve_conversation_call(
             &owner,
             execution.task_id,
@@ -442,7 +536,7 @@ impl crate::LocalApplication {
         let attempt = propose_conversation_schema(
             provider,
             &execution.remote_model,
-            &source.input.text,
+            &goal,
             &schema.tasks,
             cancellation,
         )
@@ -996,6 +1090,210 @@ mod tests {
         let mut extra = response.clone();
         extra.tool_calls.push(response.tool_calls[0].clone());
         assert!(parse_conversation_schema_response(&extra).is_err());
+    }
+
+    #[tokio::test]
+    async fn queued_schema_consumes_exact_supplement_without_replacing_original_or_repeating_calls()
+    {
+        use annotagent_storage::{
+            ConversationCallGrant, ConversationMessageInput, ConversationSendInput,
+            ConversationSendMode, QueuedPlanningAuthorization,
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let app = crate::LocalApplication::new(temp.path()).unwrap();
+        let project = "TEST-queued-schema";
+        app.create_project(project, "version: 1\nproject:\n  name: TEST queue\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n").unwrap();
+        let conversation = app.create_project_conversation(project).unwrap();
+        let owner = app.conversation_project_identity(project).unwrap();
+        let mut command = ConversationSendInput {
+            message: ConversationMessageInput {
+                id: Uuid::new_v4(),
+                text: "TEST find cups".into(),
+                image: None,
+                reference: None,
+            },
+            task_id: None,
+            schema_revision: app.project_goal(project).unwrap()["revision"]
+                .as_str()
+                .unwrap()
+                .into(),
+            agent_model: None,
+            mode: Some(ConversationSendMode::Plan),
+        };
+        let original = app
+            .store
+            .send_conversation_message(&owner, conversation, &command)
+            .unwrap();
+        let task = original.task_id;
+        let grant = ConversationCallGrant {
+            id: Uuid::new_v4(),
+            task_id: task,
+            scope_hash: "a".repeat(64),
+            maximum_calls: 1,
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+        };
+        app.store
+            .authorize_conversation_calls(&owner, &grant)
+            .unwrap();
+        let original_execution = ConversationSchemaExecution {
+            conversation_id: conversation,
+            task_id: task,
+            call_id: Uuid::new_v4(),
+            remote_model: "TEST model".into(),
+            scope_hash: grant.scope_hash.clone(),
+        };
+        let provider = provider(draft("bounding_box", &["cup"]));
+        app.execute_conversation_schema(
+            project,
+            &original_execution,
+            &provider,
+            CancellationToken::default(),
+        )
+        .await
+        .unwrap();
+        let original_draft = app
+            .conversation_schema_for_call(project, conversation, task, original_execution.call_id)
+            .unwrap()
+            .unwrap();
+        command.task_id = Some(task);
+        command.message.id = Uuid::new_v4();
+        command.message.text = "TEST exclude yellow cups".into();
+        app.store
+            .send_conversation_message(&owner, conversation, &command)
+            .unwrap();
+        let call = Uuid::new_v4();
+        let request_hash = app
+            .queued_schema_request_hash(
+                project,
+                conversation,
+                task,
+                command.message.id,
+                "TEST model",
+            )
+            .unwrap();
+        assert!(
+            app.queued_schema_request_hash(
+                project,
+                conversation,
+                Uuid::new_v4(),
+                command.message.id,
+                "TEST model"
+            )
+            .is_err()
+        );
+        let approval = QueuedPlanningAuthorization {
+            conversation_id: conversation,
+            message_id: command.message.id,
+            previous_grant_id: Some(grant.id),
+            grant: ConversationCallGrant {
+                id: call,
+                maximum_calls: 2,
+                ..grant
+            },
+            model_id: annotagent_core::ModelProfileId::new(),
+            request_hash: request_hash.clone(),
+        };
+        app.store
+            .authorize_queued_planning(&owner, &approval)
+            .unwrap();
+        // A newer journal entry must not retarget the admitted request.
+        let mut later = command.clone();
+        later.message.id = Uuid::new_v4();
+        later.message.text = "TEST unrelated newer instruction".into();
+        app.store
+            .send_conversation_message(&owner, conversation, &later)
+            .unwrap();
+        let execution = ConversationSchemaExecution {
+            call_id: call,
+            ..original_execution.clone()
+        };
+        let mut changed = execution.clone();
+        changed.remote_model = "TEST different model".into();
+        assert!(
+            app.execute_conversation_schema(
+                project,
+                &changed,
+                &provider,
+                CancellationToken::default()
+            )
+            .await
+            .is_err()
+        );
+        let receipt = app
+            .execute_conversation_schema(
+                project,
+                &execution,
+                &provider,
+                CancellationToken::default(),
+            )
+            .await
+            .unwrap();
+        {
+            let requests = provider.requests.lock().unwrap();
+            assert_eq!(requests.len(), 2);
+            assert!(requests[1].images.is_empty());
+            assert!(requests[1].messages[1].content.contains("TEST find cups"));
+            assert!(
+                requests[1].messages[1]
+                    .content
+                    .contains("TEST exclude yellow cups")
+            );
+            assert!(
+                !requests[1].messages[1]
+                    .content
+                    .contains("unrelated newer instruction")
+            );
+        }
+        let saved = app
+            .conversation_schema_for_call(project, conversation, task, call)
+            .unwrap()
+            .unwrap();
+        assert!(saved.definition.goal.contains("TEST exclude yellow cups"));
+        assert_ne!(saved.id, original_draft.id);
+        assert_eq!(
+            app.conversation_schema_for_call(
+                project,
+                conversation,
+                task,
+                original_execution.call_id
+            )
+            .unwrap()
+            .unwrap(),
+            original_draft
+        );
+        drop(app);
+        let app = crate::LocalApplication::new(temp.path()).unwrap();
+        assert_eq!(
+            app.execute_conversation_schema(
+                project,
+                &execution,
+                &provider,
+                CancellationToken::default()
+            )
+            .await
+            .unwrap(),
+            receipt
+        );
+        assert_eq!(provider.requests.lock().unwrap().len(), 2);
+        assert_eq!(
+            app.store
+                .conversation_call_budget(&owner, task)
+                .unwrap()
+                .unwrap()
+                .used_calls,
+            2
+        );
+        assert_eq!(
+            app.queued_schema_request_hash(
+                project,
+                conversation,
+                task,
+                command.message.id,
+                "TEST model"
+            )
+            .unwrap(),
+            request_hash
+        );
     }
 
     #[tokio::test]

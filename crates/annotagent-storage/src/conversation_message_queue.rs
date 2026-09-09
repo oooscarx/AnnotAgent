@@ -96,6 +96,18 @@ pub(crate) fn read(
 }
 
 impl SqliteStore {
+    pub fn queued_conversation_message(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        message: Uuid,
+    ) -> Result<ConversationQueuedMessage, StorageError> {
+        self.with_connection(|db| {
+            require_task(db, project, conversation, task)?;
+            read(db, conversation, task, message)
+        })
+    }
     /// Read-only, bounded page; sequence comes from the existing message journal.
     pub fn conversation_message_queue(
         &self,

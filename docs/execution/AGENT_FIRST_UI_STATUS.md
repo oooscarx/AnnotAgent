@@ -866,3 +866,25 @@ Next: connect exact queued-plan preview/consent and dispatch through existing
 planning service. The inbox is usable for viewing/cancellation, but does not yet
 consume supplements; it explicitly says they have not been applied. Full goal stays
 active; final six-state visuals and complete stop/continue validation are pending.
+
+## M3 queued semantic planning source — 2026-09-09
+
+The existing Schema executor now recognizes an exact queued planning authorization.
+It hashes the original task, frozen supplement receipt, full schema and remote model,
+then sends original goal plus that supplement as bounded untrusted text. Newer journal
+messages cannot retarget this request. No pixels are sent. Result materialization
+keeps the supplement in a new Schema Draft, preserving the original Draft and task;
+receipt retry after restart reuses the saved response and cumulative call ledger.
+The queue source lookup is a direct owner-checked lookup, not an unbounded history scan.
+
+Evidence: six Schema tests passed (48399, 11058), including actual TEST Provider request
+capture, wrong-model rejection before inference, newer-message isolation, unchanged
+old Draft, exact retry after restart and two cumulative calls. Full Application suite
+155 passed / 1 explicitly ignored paid smoke (23524). Strict Application/Storage
+all-target/all-feature Clippy passed (59306), after correcting test lock scope.
+No Live inference, user data changes, remote changes or push.
+
+This is the existing semantic Schema phase only, not a generic conversation response
+or Workflow revision. HTTP consent/preview, prior editable-plan context, controlled
+Workflow continuation and queue dispatch UI remain unfinished. Do not treat producing
+a Schema Draft as satisfying the full queued instruction. Overall goal stays active.
