@@ -1567,7 +1567,9 @@ mod tests {
             remote_model: "TEST model".into(),
             scope_hash: "a".repeat(64),
         };
-        let provider = provider(draft("bounding_box", &["cup"]));
+        let mut proposal = draft("bounding_box", &["cup"]);
+        proposal["delivery"] = json!({"labels":[{"existing_id":null,"display_name":"杯子","aliases":["cup"],"include":"真实杯子","exclude":"图案"}],"training_target":null});
+        let provider = provider(proposal);
         assert!(
             app.execute_conversation_schema(
                 "schema-test",
@@ -1602,6 +1604,23 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(receipt.status, ConversationCallStatus::Completed);
+        let delivery_view = app
+            .task_delivery_intent("schema-test", conversation, task)
+            .unwrap();
+        assert!(delivery_view.saved.is_none());
+        assert_eq!(delivery_view.proposals.len(), 1);
+        assert_eq!(delivery_view.proposals[0].call_id, execution.call_id);
+        assert_eq!(
+            delivery_view.proposals[0].semantics.labels[0].display_name,
+            "杯子"
+        );
+        assert!(
+            delivery_view.proposals[0]
+                .semantics
+                .training_target
+                .is_none()
+        );
+        assert!(!delivery_view.execution_authorized);
         assert!(receipt.started_at.is_some() && receipt.completed_at.is_some());
         assert!(receipt.duration_ms.is_some_and(|ms| ms >= 0));
         assert_eq!(receipt.stage.as_deref(), Some("settled"));

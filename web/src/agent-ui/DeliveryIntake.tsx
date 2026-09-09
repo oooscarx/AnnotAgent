@@ -7,9 +7,10 @@ import { DeliveryPackage } from "./DeliveryPackage";
 
 export type DeliveryLabel = { stable_id: string; display_name: string; aliases: string[]; include: string; exclude: string };
 type Target = { annotation_kind: string; framework: string; export_profile: string; profile_revision: number };
+export type DeliveryProposal={call_id:string;question:string|null;semantics:{labels:(Omit<DeliveryLabel,"stable_id">&{existing_id:string|null})[];training_target:Target|null}};
 type Split = { train_percent: number; seed: number; preserve_existing: boolean; keep_known_groups_together: boolean };
 export type IntakeInput = { command_id: string; expected_revision: number; image_ids: string[] | null; label_spec: DeliveryLabel[] | null; training_target: Target | null; split_policy: Split };
-export type IntakeView = { saved: null | { revision: number; content_sha256: string; intent: { dataset_scope: null | { image_id: string }[]; label_spec: DeliveryLabel[] | null; training_target: Target | null; split_policy: Split } }; missing_slots: string[]; blockers: string[]; maximum_sample_images: number; execution_authorized: boolean };
+export type IntakeView = { saved: null | { revision: number; content_sha256: string; intent: { dataset_scope: null | { image_id: string }[]; label_spec: DeliveryLabel[] | null; training_target: Target | null; split_policy: Split } }; missing_slots: string[]; blockers: string[]; maximum_sample_images: number; execution_authorized: boolean;proposals?:DeliveryProposal[] };
 export interface DeliveryIntakeService {
   read(project: string, task: string, signal?: AbortSignal): Promise<IntakeView>;
   save(project: string, task: string, input: IntakeInput): Promise<IntakeView>;
@@ -20,6 +21,17 @@ const split: Split = { train_percent: 80, seed: 0, preserve_existing: true, keep
 /** Preserve explicit IDs/semantics for unchanged names; ordering is the export class order. */
 export function intakeLabels(text: string, previous: DeliveryLabel[], createId: () => string = () => crypto.randomUUID()): DeliveryLabel[] {
   return text.split("\n").map(s => s.trim()).filter(Boolean).map(name => previous.find(p => p.display_name === name) || { stable_id: createId(), display_name: name, aliases: [], include: "", exclude: "" });
+}
+
+/** Explicit proposal adoption fills unresolved labels; unknown targets never erase known ones. */
+export function mergeDeliveryProposal(previous:DeliveryLabel[],proposal:DeliveryProposal,createId:()=>string=()=>crypto.randomUUID()):DeliveryLabel[] {
+  const next=previous.map(l=>({...l}));
+  for(const proposed of proposal.semantics.labels){
+    const {existing_id,...semantics}=proposed;
+    if(existing_id){const index=next.findIndex(l=>l.stable_id===existing_id);if(index<0)throw new Error("提议引用的类别不在当前交付版本中，请重新查看目标。");next[index]={...semantics,stable_id:existing_id};}
+    else if(!next.some(l=>l.display_name===semantics.display_name))next.push({...semantics,stable_id:createId()});
+  }
+  return next;
 }
 
 export function DeliveryIntake({ service, delivery, project, task, images, locked = false }: { service: DeliveryIntakeService; delivery?:DeliveryService; project: string; task: string; images: { id: string; name: string; src?:string }[]; locked?: boolean }) {
@@ -82,6 +94,16 @@ export function DeliveryIntake({ service, delivery, project, task, images, locke
     {view?.saved && !expanded && <p>{view.saved.intent.dataset_scope?.length || 0} 张图片 · {view.saved.intent.label_spec?.map(l => l.display_name).join("、") || "类别待确定"} · {view.missing_slots.length ? "仍有信息待补齐" : "信息已保存，尚未批准执行"}</p>}
     {view?.saved && !view.missing_slots.length && !view.blockers.length && service.prepare && <div className="delivery-intake-actions"><button type="button" disabled={busy||locked||dirty} onClick={()=>void prepare()}>{busy?"保存中…":"确认目标并准备方案"}</button><small>复用已填写的类别和任务类型，不再要求填写内部 ID。模型执行仍需授权。</small></div>}
     {prepared && <p role="status">{prepared}</p>}
+    {view&&<Disclosure title="从已保存的 Agent 提议填写交付目标">
+      <p>这里只读取本任务的历史提议；选择后先检查和保存，不批准推理，也不改变图片范围。历史提议可能早于当前目标。</p>
+      <button type="button" disabled={busy||dirty||objectEditing} onClick={()=>{setBusy(true);void service.read(project,task).then(apply).catch(e=>setError(e.message)).finally(()=>setBusy(false));}}>读取已保存的提议</button>
+      {!view.proposals?.length&&<p>目前没有可采用的结构化交付提议。可以继续填写目标；此按钮不会调用模型。</p>}
+      {view.proposals?.map(proposal=><div className="delivery-label-edit" key={proposal.call_id}>
+        <p>{proposal.semantics.labels.map(l=>l.display_name).join("、")||"类别尚未明确"} · {proposal.semantics.training_target?.export_profile||"训练任务仍需说明"}</p>
+        {proposal.question&&<p>{proposal.question}</p>}
+        <button type="button" disabled={busy||locked||objectEditing||dirty} onClick={()=>{try{setLabels(mergeDeliveryProposal(labels,proposal));if(proposal.semantics.training_target)setTarget(proposal.semantics.training_target);setExpanded(true);setDirty(true);setError("");}catch(e){setError((e as Error).message);}}}>检查并采用提议 {proposal.call_id.slice(0,8)}</button>
+      </div>)}
+    </Disclosure>}
     {expanded && view && <form aria-disabled={locked} onSubmit={e => { e.preventDefault(); void save(); }}>
       {objectEditing&&<p role="status">请先保存或撤销对象修改，再调整交付范围；收起审核面板不会丢失编辑。</p>}
       <fieldset disabled={objectEditing}>
@@ -101,7 +123,7 @@ export function DeliveryIntake({ service, delivery, project, task, images, locke
         <label>{labels.length?"添加类别（每行一个）":"类别名称（每行一个）"}<textarea rows={3} value={newLabels} placeholder={"杯子\n瓶子"} onChange={e=>{setNewLabels(e.target.value);setDirty(true);}}/></label>
         <small>改名称和规则保留类别身份；排序决定新包的 class_id。保存后产生新交付版本，不更改旧 Run 或旧数据包。</small>
       </fieldset>
-      <label>训练什么任务？<select disabled={busy} value={selectedTarget ? supportedTarget ? target.export_profile : "unsupported" : ""} onChange={e => { setTarget(e.target.value ? target : null); setDirty(true); }}><option value="">请选择任务和训练格式</option><option value="ultralytics_yolo_detection">框出目标 · Ultralytics YOLO Object Detection</option>{selectedTarget && !supportedTarget && <option disabled value="unsupported">{selectedTarget.annotation_kind} · {selectedTarget.export_profile}（尚无完整交付预设）</option>}</select></label>
+      <label>训练什么任务？<select aria-label="训练什么任务？" disabled={busy} value={selectedTarget ? supportedTarget ? target.export_profile : "unsupported" : ""} onChange={e => { setTarget(e.target.value ? target : null); setDirty(true); }}><option value="">请选择任务和训练格式</option><option value="ultralytics_yolo_detection">框出目标 · Ultralytics YOLO Object Detection</option>{selectedTarget && !supportedTarget && <option disabled value="unsupported">{selectedTarget.annotation_kind} · {selectedTarget.export_profile}（尚无完整交付预设）</option>}</select></label>
       <p>本预设交付目标框，不会把分类或分割需求自动改成检测。建议按图片组划分训练/验证 {splitPolicy.train_percent}/{100-splitPolicy.train_percent}；整图需人工确认，模型未检出不等于确认负样本。</p>
       <Disclosure title="调整数据划分"><label>训练集比例（百分比）<input disabled={busy} type="number" min={1} max={99} step={1} required value={splitPolicy.train_percent} onChange={e=>{setSplitPolicy(current=>({...current,train_percent:Number(e.target.value)}));setDirty(true);}}/></label><p>保留已有划分和已知来源组，不拆组凑比例；实际数量在打包检查报告中展示。仅修改比例，保留当前 seed 与其他约束。</p></Disclosure>
       {view.blockers.map((b, i) => <p role="alert" key={i}>{b}</p>)}

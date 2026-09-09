@@ -95,6 +95,15 @@ pub struct TaskDeliveryView {
     pub maximum_sample_images: usize,
     /// This projection cannot grant permission to execute or certify a package.
     pub execution_authorized: bool,
+    /// Explicitly selectable historical model proposals, never automatically adopted.
+    pub proposals: Vec<TaskDeliveryProposal>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TaskDeliveryProposal {
+    pub call_id: Uuid,
+    pub semantics: crate::conversation_schema::DeliverySemanticsProposal,
+    pub question: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -361,12 +370,53 @@ impl LocalApplication {
                 }
             }
         }
+        let mut proposals = Vec::new();
+        for receipt in self
+            .store
+            .conversation_call_history(&owner, task)?
+            .into_iter()
+            .rev()
+        {
+            if receipt.status != annotagent_storage::ConversationCallStatus::Completed {
+                continue;
+            }
+            let Some(evidence) = receipt.evidence else {
+                continue;
+            };
+            let Ok(attempt) = serde_json::from_value::<
+                crate::conversation_schema::ConversationSchemaAttempt,
+            >(evidence) else {
+                continue;
+            };
+            let Ok(decision) =
+                crate::conversation_schema::parse_conversation_schema_response(&attempt.response)
+            else {
+                continue;
+            };
+            let (semantics, question) = match decision {
+                crate::ConversationSchemaDecision::Draft { delivery, .. } => (delivery, None),
+                crate::ConversationSchemaDecision::Clarify {
+                    delivery, question, ..
+                } => (delivery, Some(question)),
+            };
+            if let Some(semantics) = semantics {
+                proposals.push(TaskDeliveryProposal {
+                    call_id: receipt.id,
+                    semantics,
+                    question,
+                });
+            }
+            if proposals.len() == 10 {
+                break;
+            }
+        }
         Ok(TaskDeliveryView {
             saved,
             missing_slots,
             blockers,
             maximum_sample_images: 3,
             execution_authorized: false,
+            proposals,
         })
     }
 
