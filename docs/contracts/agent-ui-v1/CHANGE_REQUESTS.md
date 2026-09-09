@@ -37,3 +37,8 @@ POST /api/model-installations adds optional command_id; first admission202, exac
 ## UIAPI-013 static Workflow validation
 
 GET `/api/workflow-drafts/{id}?project_id=...` returns the persisted Draft. POST `/api/workflow-drafts/{id}/validate` takes `{project_id,expected_revision}` and returns `{project_id,draft_id,revision,content_hash,validation_kind:"static",validation:WorkflowValidationReport}`. Wrong owner404, stale revision409, invalid request types422; blocking static issues remain200 with `validation.valid=false`. Metadata-only Core checks do not resolve credentials, instantiate Provider/HTTP Worker clients, call plugins, execute samples or mutate publication. Exact adapter mapping and boundary: [UIAPI-013_STATIC_VALIDATION.md](UIAPI-013_STATIC_VALIDATION.md).
+
+
+## UIAPI-009 implemented: immutable workspace history scope
+
+See `docs/contracts/agent-ui-v1/UIAPI-009_HISTORY_SCOPE.md` for the executable contract and isolated acceptance tests. Passive GET, preview plus explicit privileged idempotent establishment, persisted identity membership, SQL-filtered scoped pagination and management preview/action guards are implemented. Direct references and Published/annotation data remain unchanged. Migration0059 only adds scope tables; no real workspace scope was established. Frontend must send the returned scope ID explicitly on both lists and management requests.

@@ -538,7 +538,8 @@ fn is_privileged_action(method: &Method, path: &str) -> bool {
     if !is_mutation(method) {
         return false;
     }
-    path == "/api/settings"
+    path == "/api/history-scope"
+        || path == "/api/settings"
         || path.contains("/credential")
         || path.ends_with("/active-probe")
         || path == "/api/model-bundles/install"

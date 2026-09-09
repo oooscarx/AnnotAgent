@@ -43,7 +43,7 @@ pub struct SummaryPage<T> {
 }
 
 impl<T> SummaryPage<T> {
-    fn new(items: Vec<T>, total: usize, request: PageRequest) -> Self {
+    pub(crate) fn new(items: Vec<T>, total: usize, request: PageRequest) -> Self {
         let consumed = request.offset.saturating_add(items.len());
         Self {
             items,
@@ -230,11 +230,24 @@ impl SqliteStore {
         project_id: Option<&str>,
         request: PageRequest,
     ) -> Result<SummaryPage<StoredBatchSummary>, StorageError> {
+        self.list_batch_summaries_scoped(project_id, request, None)
+    }
+    pub fn list_batch_summaries_scoped(
+        &self,
+        project_id: Option<&str>,
+        request: PageRequest,
+        history_scope: Option<&str>,
+    ) -> Result<SummaryPage<StoredBatchSummary>, StorageError> {
         self.with_connection(|connection| {
-            let filter = project_id.map_or(
+            let transaction=connection.unchecked_transaction()?;
+            let connection=&transaction;
+            if let Some(id)=history_scope {crate::history_scope::validate_scope(connection,id)?;}
+
+            let mut filter = project_id.map_or(
                 "WHERE b.deleted_at IS NULL",
                 |_| "WHERE b.project_id = ?1 AND b.deleted_at IS NULL",
-            );
+            ).to_owned();
+            if history_scope.is_some() {filter.push_str(" AND NOT EXISTS(SELECT 1 FROM history_scope_exclusions e WHERE e.kind='batch' AND e.object_id=b.id AND e.project_id=b.project_id)");}
             let sql = format!(
                 "SELECT b.id, b.project_id, b.project_path, b.provider, b.status,
                         b.max_concurrency, b.workflow_version, b.workflow_snapshot_json,
@@ -282,20 +295,8 @@ impl SqliteStore {
                     )?
                     .collect::<Result<Vec<_>, _>>()?
             };
-            let total = if let Some(project_id) = project_id {
-                connection.query_row(
-                    "SELECT COUNT(*) FROM dataset_batches
-                     WHERE project_id = ?1 AND deleted_at IS NULL",
-                    [project_id],
-                    |row| row.get::<_, i64>(0),
-                )?
-            } else {
-                connection.query_row(
-                    "SELECT COUNT(*) FROM dataset_batches WHERE deleted_at IS NULL",
-                    [],
-                    |row| row.get::<_, i64>(0),
-                )?
-            };
+            let sql=format!("SELECT COUNT(*) FROM dataset_batches b {filter}");
+            let total=if let Some(project_id)=project_id {connection.query_row(&sql,[project_id],|r|r.get::<_,i64>(0))?} else {connection.query_row(&sql,[],|r|r.get::<_,i64>(0))?};
             Ok(SummaryPage::new(items, i64_to_usize(total), request))
         })
     }
@@ -307,11 +308,27 @@ impl SqliteStore {
         project_id: Option<ProjectId>,
         request: PageRequest,
     ) -> Result<SummaryPage<StoredRunSummary>, StorageError> {
+        self.list_run_summaries_scoped(project_id, request, None)
+    }
+
+    pub fn list_run_summaries_scoped(
+        &self,
+        project_id: Option<ProjectId>,
+        request: PageRequest,
+        history_scope: Option<&str>,
+    ) -> Result<SummaryPage<StoredRunSummary>, StorageError> {
         self.with_connection(|connection| {
-            let filter = project_id.map_or(
+            let transaction=connection.unchecked_transaction()?;
+            let connection=&transaction;
+            if let Some(id)=history_scope { crate::history_scope::validate_scope(connection,id)?; }
+
+            let mut filter = project_id.map_or(
                 "WHERE r.deleted_at IS NULL",
                 |_| "WHERE r.project_id = ?1 AND r.deleted_at IS NULL",
-            );
+            ).to_owned();
+            if history_scope.is_some() {
+                filter.push_str(" AND NOT EXISTS(SELECT 1 FROM history_scope_exclusions e WHERE e.kind='run' AND e.object_id=r.id AND e.project_id=COALESCE(r.project_id,''))");
+            }
             let sql = format!(
                 "SELECT r.id, r.project_id, r.project_name, r.skill_id, r.provider, r.model,
                         r.status, r.project_schema_json, r.workflow_snapshot_json,
@@ -367,19 +384,10 @@ impl SqliteStore {
                     )?
                     .collect::<Result<Vec<_>, _>>()?
             };
-            let total = if let Some(project_id) = project_id {
-                connection.query_row(
-                    "SELECT COUNT(*) FROM runs WHERE project_id = ?1 AND deleted_at IS NULL",
-                    [project_id.to_string()],
-                    |row| row.get::<_, i64>(0),
-                )?
-            } else {
-                connection.query_row(
-                    "SELECT COUNT(*) FROM runs WHERE deleted_at IS NULL",
-                    [],
-                    |row| row.get::<_, i64>(0),
-                )?
-            };
+            let count_sql=format!("SELECT COUNT(*) FROM runs r {filter}");
+            let total = if let Some(project_id)=project_id {
+                connection.query_row(&count_sql,[project_id.to_string()],|r|r.get::<_,i64>(0))?
+            } else { connection.query_row(&count_sql,[],|r|r.get::<_,i64>(0))? };
             Ok(SummaryPage::new(items, i64_to_usize(total), request))
         })
     }

@@ -88,6 +88,58 @@ struct PipelineLifecycle {
 }
 
 impl SqliteStore {
+    pub fn list_pipeline_lifecycle_scoped(
+        &self,
+        scope: &ManagementScope,
+        history_scope: &str,
+        include_archived: bool,
+        include_deleted: bool,
+        page: crate::PageRequest,
+    ) -> Result<crate::SummaryPage<PipelineLifecycleSummary>, StorageError> {
+        self.with_connection(|c| {
+            let tx=c.unchecked_transaction()?;
+            crate::history_scope::validate_scope(&tx,history_scope)?;
+            let filter="FROM workflow_pipelines p WHERE p.project_id=?1 AND (?2 OR p.archived_at IS NULL) AND (?3 OR p.deleted_at IS NULL) AND NOT EXISTS(SELECT 1 FROM history_scope_exclusions e WHERE e.project_id=p.project_id AND e.kind='pipeline' AND e.object_id=p.workflow_id)";
+            let total=tx.query_row(&format!("SELECT COUNT(*) {filter}"),params![scope.project_id,include_archived,include_deleted],|r|r.get::<_,i64>(0))?;
+            let ids=tx.prepare(&format!("SELECT workflow_id {filter} ORDER BY updated_at DESC,workflow_id LIMIT ?4 OFFSET ?5"))?.query_map(params![scope.project_id,include_archived,include_deleted,i64::try_from(page.limit).unwrap_or(i64::MAX),i64::try_from(page.offset).unwrap_or(i64::MAX)],|r|r.get::<_,String>(0))?.collect::<Result<Vec<_>,_>>()?;
+            let items=ids.into_iter().map(|id|pipeline_summary(&tx,scope,&id,include_archived,include_deleted)).collect::<Result<Vec<_>,_>>()?;
+            Ok(crate::SummaryPage::new(items,total as usize,page))
+        })
+    }
+
+    pub fn list_trash_scoped(
+        &self,
+        scope: &ManagementScope,
+        history_scope: &str,
+        kind: Option<ManagementObjectKind>,
+        page: crate::PageRequest,
+    ) -> Result<crate::SummaryPage<TrashEntry>, StorageError> {
+        self.with_connection(|c| {
+            let tx=c.unchecked_transaction()?;
+            crate::history_scope::validate_scope(&tx,history_scope)?;
+            let union="WITH objects AS (
+                SELECT project_id,'run' AS kind,id,0 AS version,lifecycle_revision AS revision,deleted_at,deletion_operation_id,project_name AS name FROM runs WHERE project_id=?1
+                UNION ALL SELECT project_id,'batch',id,0,lifecycle_revision,deleted_at,deletion_operation_id,id FROM dataset_batches WHERE project_id=?2
+                UNION ALL SELECT project_id,'pipeline',workflow_id,0,lifecycle_revision,deleted_at,deletion_operation_id,display_name FROM workflow_pipelines WHERE project_id=?2
+                UNION ALL SELECT project_id,'workflow_draft',id,0,lifecycle_revision,deleted_at,deletion_operation_id,COALESCE(json_extract(draft_json,'$.name'),id) FROM workflow_drafts WHERE project_id=?2
+                UNION ALL SELECT project_id,'workflow_version',workflow_id,version,lifecycle_revision,deleted_at,deletion_operation_id,COALESCE(display_name,workflow_id) FROM workflow_versions WHERE project_id=?2
+            )";
+            let filter="FROM objects o WHERE deleted_at IS NOT NULL AND (?3 IS NULL OR kind=?3)
+                AND NOT EXISTS(SELECT 1 FROM history_scope_exclusions e WHERE e.project_id=o.project_id AND e.object_id=o.id AND ((e.kind=o.kind AND e.version=o.version) OR (o.kind='workflow_version' AND e.kind='pipeline')))";
+            let kind=kind.map(|k|serde_json::to_value(k).map(|v|v.as_str().unwrap_or_default().to_owned())).transpose()?;
+            let total=tx.query_row(&format!("{union} SELECT COUNT(*) {filter}"),params![scope.stable_project_id.to_string(),scope.project_id,kind],|r|r.get::<_,i64>(0))?;
+            let mut stmt=tx.prepare(&format!("{union} SELECT kind,id,version,revision,deleted_at,deletion_operation_id,name {filter} ORDER BY deleted_at DESC,kind,id,version LIMIT ?4 OFFSET ?5"))?;
+            let rows=stmt.query_map(params![scope.stable_project_id.to_string(),scope.project_id,kind,i64::try_from(page.limit).unwrap_or(i64::MAX),i64::try_from(page.offset).unwrap_or(i64::MAX)],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,u32>(2)?,r.get::<_,i64>(3)?,r.get::<_,String>(4)?,r.get::<_,String>(5)?,r.get::<_,String>(6)?)))?;
+            let mut items=Vec::new();
+            for row in rows {
+                let (kind,id,version,revision,deleted_at,operation,name)=row?;
+                let kind:ManagementObjectKind=serde_json::from_value(serde_json::Value::String(kind))?;
+                items.push(trash_entry(scope,ManagementObjectRef{kind,id,version:(kind==ManagementObjectKind::WorkflowVersion).then_some(version),expected_revision:to_u64(revision)},name,&deleted_at,operation)?);
+            }
+            Ok(crate::SummaryPage::new(items,total as usize,page))
+        })
+    }
+
     pub fn acquire_management_lease(
         &self,
         scope: &ManagementScope,
@@ -250,7 +302,10 @@ impl SqliteStore {
                 "request Project does not match the resolved Project scope",
             ));
         }
-        self.with_connection(|connection| preview(connection, scope, request))
+        self.with_connection(|connection| {
+            let tx = connection.unchecked_transaction()?;
+            preview(&tx, scope, request)
+        })
     }
 
     pub fn execute_management(
@@ -268,6 +323,12 @@ impl SqliteStore {
             ));
         }
         self.with_connection(|connection| {
+            let transaction = rusqlite::Transaction::new_unchecked(
+                connection,
+                rusqlite::TransactionBehavior::Immediate,
+            )?;
+            let connection = &transaction;
+            check_history_management(connection, scope, request, &request.objects)?;
             if let Some((stored_request, result)) = connection
                 .query_row(
                     "SELECT request_json, result_json FROM management_operations
@@ -313,7 +374,6 @@ impl SqliteStore {
                 return Err(management_error(&blocker.code, &blocker.message));
             }
 
-            let transaction = connection.unchecked_transaction()?;
             let now = Utc::now();
             let operation_id = Uuid::new_v4().to_string();
             transaction.execute(
@@ -445,6 +505,12 @@ impl SqliteStore {
             ));
         }
         self.with_connection(|connection| {
+            let transaction = rusqlite::Transaction::new_unchecked(
+                connection,
+                rusqlite::TransactionBehavior::Immediate,
+            )?;
+            let connection = &transaction;
+            check_history_management(connection, scope, request, &request.objects)?;
             if let Some((stored_request, result)) = connection
                 .query_row(
                     "SELECT request_json, result_json FROM management_operations
@@ -520,6 +586,7 @@ impl SqliteStore {
                     now.to_rfc3339(),
                 ],
             )?;
+            transaction.commit()?;
             Ok(receipt)
         })
     }
@@ -530,6 +597,12 @@ impl SqliteStore {
         request: &ManagementRequest,
     ) -> Result<ManagementReceipt, StorageError> {
         self.with_connection(|connection| {
+            let transaction = rusqlite::Transaction::new_unchecked(
+                connection,
+                rusqlite::TransactionBehavior::Immediate,
+            )?;
+            let connection = &transaction;
+            check_history_management(connection, scope, request, &request.objects)?;
             let (operation_id, stored_request, created_at) = connection
                 .query_row(
                     "SELECT id, request_json, created_at FROM management_operations
@@ -571,7 +644,6 @@ impl SqliteStore {
                         .join(" "),
                 ));
             }
-            let transaction = connection.unchecked_transaction()?;
             let now = Utc::now();
             let affected = move_to_trash(
                 &transaction,
@@ -1000,12 +1072,76 @@ fn lifecycle_usage_totals(values: (i64, i64, i64, f64)) -> LifecycleUsageTotals 
     }
 }
 
+fn check_history_management(
+    connection: &Connection,
+    scope: &ManagementScope,
+    request: &ManagementRequest,
+    objects: &[ManagementObjectRef],
+) -> Result<(), StorageError> {
+    let Some(id) = request.history_scope.as_deref() else {
+        return Ok(());
+    };
+    crate::history_scope::validate_scope(connection, id)?;
+    let check = |object: &ManagementObjectRef| {
+        let project = if object.kind == ManagementObjectKind::Run {
+            scope.stable_project_id.to_string()
+        } else {
+            scope.project_id.clone()
+        };
+        crate::history_scope::check_object(connection, id, &project, object)
+    };
+    for object in objects {
+        check(object)?;
+        match object.kind {
+            ManagementObjectKind::Batch => {
+                let batch = read_batch(connection, &object.id)?;
+                for run in batch_impacted_runs(connection, &batch, request.action)? {
+                    check(&ManagementObjectRef {
+                        kind: ManagementObjectKind::Run,
+                        id: run,
+                        version: None,
+                        expected_revision: 1,
+                    })?;
+                }
+            }
+            ManagementObjectKind::Pipeline => {
+                for deleted in [false, true] {
+                    for child in pipeline_children(connection, scope, &object.id, deleted, None)? {
+                        check(&child)?;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(replacement) = &request.replacement_default_version {
+        check(&ManagementObjectRef {
+            kind: ManagementObjectKind::WorkflowVersion,
+            id: replacement.workflow_id.clone(),
+            version: Some(replacement.version),
+            expected_revision: 1,
+        })?;
+    }
+    if request.action == ManagementAction::ClearDefault
+        && let Some(current) = read_default(connection, &scope.project_id)?
+    {
+        check(&ManagementObjectRef {
+            kind: ManagementObjectKind::WorkflowVersion,
+            id: current.workflow_id,
+            version: Some(current.version),
+            expected_revision: 1,
+        })?;
+    }
+    Ok(())
+}
+
 fn preview(
     connection: &Connection,
     scope: &ManagementScope,
     request: &ManagementRequest,
 ) -> Result<ManagementPreview, StorageError> {
     let objects = normalize_objects(connection, scope, &request.objects)?;
+    check_history_management(connection, scope, request, &objects)?;
     let mut blockers = Vec::new();
     let mut impact = ManagementImpact {
         top_level_objects: objects.len(),
@@ -1121,7 +1257,7 @@ fn preview(
     } else {
         format!("/projects/{}/build/pipeline", scope.project_id)
     };
-    let material = serde_json::to_vec(&(
+    let mut material = serde_json::to_vec(&(
         &scope.project_id,
         scope.stable_project_id,
         request.action,
@@ -1132,6 +1268,10 @@ fn preview(
         request.clear_default,
         &request.display_name,
     ))?;
+    // Preserve legacy unscoped confirmation hashes. Scoped confirmations bind the exact scope.
+    if let Some(id) = &request.history_scope {
+        material.extend_from_slice(&serde_json::to_vec(&("history_scope", id))?);
+    }
     let confirmation_token = annotagent_image_tools::sha256(&material);
     Ok(ManagementPreview {
         project_id: scope.project_id.clone(),
@@ -3437,6 +3577,277 @@ mod tests {
     use annotagent_runtime::{RunRecord, RuntimeStore};
     use std::collections::BTreeMap;
 
+    // Serialize every pre-existing table to prove establishment has no lifecycle/runtime side effects.
+    fn history_data_snapshot(store: &SqliteStore) -> BTreeMap<String, Vec<String>> {
+        store.with_connection(|c| {
+            let tables=c.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'history_scope%' ORDER BY name")?.query_map([],|r|r.get::<_,String>(0))?.collect::<Result<Vec<_>,_>>()?;
+            let mut result=BTreeMap::new();
+            for table in tables {
+                let mut statement=c.prepare(&format!("SELECT * FROM \"{}\"",table.replace('"',"\"\"")))?;
+                let cols=statement.column_count();
+                let mut rows=statement.query_map([],|r|Ok((0..cols).map(|i|format!("{:?}",r.get_ref(i).unwrap())).collect::<Vec<_>>().join("|")))?.collect::<Result<Vec<_>,_>>()?;
+                rows.sort();result.insert(table,rows);
+            }
+            Ok(result)
+        }).unwrap()
+    }
+    fn history_request(store: &SqliteStore) -> crate::EstablishHistoryScope {
+        crate::EstablishHistoryScope {
+            command_id: Uuid::new_v4(),
+            expected_scope_revision: None,
+            expected_snapshot_hash: store
+                .preview_history_scope()
+                .unwrap()
+                .expected_snapshot_hash,
+            policy: crate::HISTORY_POLICY.into(),
+            confirmed: true,
+        }
+    }
+    fn history_batch(store: &SqliteStore, scope: &ManagementScope, child: RunId) -> BatchId {
+        let now = Utc::now();
+        let id = BatchId::new();
+        store
+            .create_batch(
+                BatchRecord {
+                    id,
+                    project_id: scope.project_id.clone(),
+                    project_path: "TEST/project.yaml".into(),
+                    provider: "TEST".into(),
+                    status: BatchStatus::Completed,
+                    max_concurrency: 1,
+                    workflow_version: "TEST@1".into(),
+                    workflow_snapshot: serde_json::json!({}),
+                    project_snapshot: serde_json::json!({}),
+                    budget_limits: BatchBudgetLimits::default(),
+                    budget_ledger: BatchBudgetLedger::default(),
+                    lease_owner: None,
+                    lease_expires_at: None,
+                    event_sequence: 0,
+                    created_at: now,
+                    updated_at: now,
+                },
+                &[(ImageId::new(), "TEST.png".into())],
+            )
+            .unwrap();
+        store
+            .with_connection(|c| {
+                c.execute(
+                    "UPDATE batch_images SET child_run_id=?2 WHERE batch_id=?1",
+                    params![id.to_string(), child.to_string()],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        store
+            .set_batch_status(id, BatchStatus::Completed, now)
+            .unwrap();
+        id
+    }
+    #[tokio::test]
+    async fn history_scope_membership_pagination_ownership_trash_and_cascades() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let scope = test_scope();
+        let old = insert_run(&store, &scope, RunStatus::Completed).await;
+        let draft = workflow_draft("TEST-old", &scope.project_id);
+        store.save_workflow_draft(&draft).unwrap();
+        store
+            .publish_workflow_draft(
+                &draft,
+                "TEST-old-hash".into(),
+                WorkflowSnapshot {
+                    schema_version: 2,
+                    draft: Some(draft.clone()),
+                    ..WorkflowSnapshot::default()
+                },
+            )
+            .unwrap();
+        let old_batch = history_batch(&store, &scope, old);
+        let accepted = Annotation {
+            id: AnnotationId::new(),
+            image_id: ImageId::new(),
+            task_id: TaskId::from("TEST"),
+            label: Some(LabelId::from("TEST")),
+            value: AnnotationValue::Classification {
+                labels: vec![LabelId::from("TEST")],
+            },
+            attributes: BTreeMap::new(),
+            confidence: Some(0.9),
+            source: AnnotationSource::Model,
+            review_status: ReviewStatus::HumanAccepted,
+            provenance: AnnotationProvenance::default(),
+            created_at: Utc::now(),
+        };
+        RuntimeStore::commit_annotation(&store, old, &accepted)
+            .await
+            .unwrap();
+        let stale = history_request(&store);
+        let old2 = insert_run(&store, &scope, RunStatus::Completed).await;
+        assert!(
+            matches!(store.establish_history_scope(&stale),Err(StorageError::Management{code,..}) if code=="history_scope_snapshot_changed")
+        );
+        assert!(store.history_scope().unwrap().is_none());
+        let before = history_data_snapshot(&store);
+        let req = history_request(&store);
+        let (history, _) = store.establish_history_scope(&req).unwrap();
+        let hid = history.id.to_string();
+        assert_eq!(before, history_data_snapshot(&store));
+        let page = crate::PageRequest::bounded(Some(1), None);
+        assert_eq!(
+            store
+                .list_run_summaries_scoped(Some(scope.stable_project_id), page, Some(&hid))
+                .unwrap()
+                .total,
+            0
+        );
+        assert!(
+            store
+                .list_run_summaries_scoped(None, page, Some("foreign"))
+                .is_err()
+        );
+        let new = insert_run(&store, &scope, RunStatus::Completed).await;
+        let new2 = insert_run(&store, &scope, RunStatus::Completed).await;
+        let foreign_scope = ManagementScope {
+            project_id: "other-project".into(),
+            stable_project_id: ProjectId::new(),
+        };
+        insert_run(&store, &foreign_scope, RunStatus::Completed).await;
+        store
+            .save_workflow_draft(&workflow_draft("TEST-new-a", &scope.project_id))
+            .unwrap();
+        store
+            .save_workflow_draft(&workflow_draft("TEST-new-b", &scope.project_id))
+            .unwrap();
+        store
+            .save_workflow_draft(&workflow_draft("TEST-foreign", &foreign_scope.project_id))
+            .unwrap();
+        store.with_connection(|c| {
+            c.execute("UPDATE runs SET created_at='2000-01-01T00:00:00Z',updated_at='2000-01-01T00:00:00Z' WHERE id IN (?1,?2)",params![new.to_string(),new2.to_string()])?;
+            c.execute("UPDATE runs SET updated_at='2099-01-01T00:00:00Z' WHERE id=?1",[old.to_string()])?;
+            c.execute("UPDATE workflow_pipelines SET created_at='2000-01-01T00:00:00Z',updated_at='2000-01-01T00:00:00Z' WHERE workflow_id LIKE 'TEST-new-%'",[])?;
+            Ok(())
+        }).unwrap();
+        let first = store
+            .list_run_summaries_scoped(Some(scope.stable_project_id), page, Some(&hid))
+            .unwrap();
+        assert_eq!(first.total, 2);
+        assert_eq!(first.next_offset, Some(1));
+        let second = store
+            .list_run_summaries_scoped(
+                Some(scope.stable_project_id),
+                crate::PageRequest::bounded(Some(1), Some(1)),
+                Some(&hid),
+            )
+            .unwrap();
+        assert_eq!(second.total, 2);
+        assert_ne!(first.items[0].run.id, second.items[0].run.id);
+        assert_eq!(second.next_offset, None);
+        let pipelines = store
+            .list_pipeline_lifecycle_scoped(&scope, &hid, true, true, page)
+            .unwrap();
+        assert_eq!(pipelines.total, 2);
+        assert_eq!(pipelines.items.len(), 1);
+        assert_eq!(pipelines.next_offset, Some(1));
+        let object = |kind, id: String| ManagementObjectRef {
+            kind,
+            id,
+            version: None,
+            expected_revision: 1,
+        };
+        for obj in [
+            object(ManagementObjectKind::Run, old.to_string()),
+            object(ManagementObjectKind::Batch, old_batch.to_string()),
+            object(ManagementObjectKind::Pipeline, "TEST-old".into()),
+            object(ManagementObjectKind::WorkflowDraft, "TEST-old".into()),
+        ] {
+            let mut action = request(
+                &scope.project_id,
+                obj,
+                ManagementAction::MoveToTrash,
+                "TEST-hidden",
+            );
+            action.history_scope = Some(hid.clone());
+            assert!(
+                matches!(store.preview_management(&scope,&action),Err(StorageError::Management{code,..}) if code=="history_object_out_of_scope")
+            );
+            assert!(store.execute_management(&scope, &action).is_err());
+        }
+        // A newly-created Batch cannot cascade into an excluded old Run.
+        let mixed = history_batch(&store, &scope, old2);
+        let mut action = request(
+            &scope.project_id,
+            object(ManagementObjectKind::Batch, mixed.to_string()),
+            ManagementAction::MoveToTrash,
+            "TEST-cascade",
+        );
+        action.history_scope = Some(hid.clone());
+        assert!(
+            matches!(store.preview_management(&scope,&action),Err(StorageError::Management{code,..}) if code=="history_object_out_of_scope")
+        );
+        // Confirmation tokens bind scope; a legacy preview cannot authorize a scoped write.
+        let mut action = request(
+            &scope.project_id,
+            object(ManagementObjectKind::Run, new.to_string()),
+            ManagementAction::MoveToTrash,
+            "TEST-new-trash",
+        );
+        action.confirmation_token = Some(
+            store
+                .preview_management(&scope, &action)
+                .unwrap()
+                .confirmation_token,
+        );
+        action.history_scope = Some(hid.clone());
+        assert!(
+            matches!(store.execute_management(&scope,&action),Err(StorageError::Management{code,..}) if code=="revision_conflict")
+        );
+        confirmed(&store, &scope, action);
+        confirmed(
+            &store,
+            &scope,
+            request(
+                &scope.project_id,
+                object(ManagementObjectKind::Run, old.to_string()),
+                ManagementAction::MoveToTrash,
+                "TEST-old-unscoped-trash",
+            ),
+        );
+        let trash = store.list_trash_scoped(&scope, &hid, None, page).unwrap();
+        assert_eq!(trash.total, 1);
+        assert_eq!(trash.items[0].object.id, new.to_string());
+        assert_eq!(store.list_project_trash(&scope, None).unwrap().len(), 2);
+        let mut restore = request(
+            &scope.project_id,
+            trash.items[0].object.clone(),
+            ManagementAction::Restore,
+            "TEST-restore",
+        );
+        restore.history_scope = Some(hid.clone());
+        confirmed(&store, &scope, restore);
+        assert_eq!(
+            store
+                .list_trash_scoped(&scope, &hid, None, page)
+                .unwrap()
+                .total,
+            0
+        );
+        assert!(store.get_run_summary(old).is_ok()); // Direct refs keep their existing lifecycle behavior.
+        assert!(store.get_workflow_draft("TEST-old").is_ok());
+        assert_eq!(
+            store
+                .list_published_workflow_versions(Some(&scope.project_id))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .list_project_annotations_for_run(scope.stable_project_id, old)
+                .unwrap(),
+            vec![accepted]
+        );
+        assert_eq!(store.history_scope().unwrap(), Some(history));
+    }
+
     fn test_scope() -> ManagementScope {
         ManagementScope {
             project_id: "project".to_owned(),
@@ -3451,6 +3862,7 @@ mod tests {
         key: &str,
     ) -> ManagementRequest {
         ManagementRequest {
+            history_scope: None,
             project_id: project_id.to_owned(),
             objects: vec![object],
             action,
