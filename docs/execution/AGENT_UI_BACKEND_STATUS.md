@@ -161,3 +161,8 @@ Verification: publication/clone filter **10 passed**, existing legacy designer H
 ## UIAPI-017 bounded Replay delivery; live-binding gap remains
 
 Existing Replay path now has passive owned GET preview, exact scope-bound POST and durable GET command receipts. Core/frozen Mock sandbox only; live Provider/Plugin/current binding Replay explicitly refuses and remains a parity blocker. No automatic retry, source checkpoint/formal annotation/Published writes. Contract and bounded follow-up requirements: `docs/contracts/agent-ui-v1/UIAPI-017_REPLAY.md`. Additive0063.
+
+
+## UIAPI-017 round 2 dependency evidence — live scope still blocked
+
+Added an executable immutable-snapshot/checkpoint substitution regression and exact internal overlay/per-call permission interfaces needed for live Replay. No live protocol success or parity completion claimed. See `docs/contracts/agent-ui-v1/UIAPI-017_OVERLAY_DEPENDENCY.md`. No runtime behavior changed; no paid or real-workspace calls.

@@ -1325,3 +1325,68 @@ async fn commit_builtin_cannot_be_overridden_or_accept_unvalidated_artifacts() {
     );
     assert!(result.committed.is_empty());
 }
+
+#[tokio::test]
+async fn replay_binding_substitution_requires_separate_overlay_not_snapshot_rehash() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut executor = PublishedDagExecutor::new();
+    executor
+        .register_runner(
+            "TEST-current-binding",
+            Arc::new(CountingPipelineRunner {
+                calls: calls.clone(),
+            }),
+            false,
+        )
+        .unwrap();
+    let source = published(
+        vec![node(
+            "classifier",
+            "TEST-current-binding",
+            WorkflowNodeKind::VisionModel,
+            vec![],
+            vec![],
+        )],
+        vec![],
+    );
+    let request = DagExecutionRequest {
+        project_id: annotagent_core::ProjectId::new(),
+        run_id: RunId::new(),
+        image_id: ImageId::new(),
+        initial_artifacts: vec![],
+        initial_pipeline_artifacts: vec![],
+        cancellation: CancellationToken::new(),
+    };
+    let result = executor.execute(&source, &request).await.unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let original = serde_json::to_value(&result.checkpoint).unwrap();
+    let mut changed = source.clone();
+    changed.draft.nodes[0].model_binding = Some("TEST-current-model".into());
+    changed.snapshot.draft.as_mut().unwrap().nodes[0].model_binding =
+        Some("TEST-current-model".into());
+    let error = executor
+        .replay_from(&changed, &request, result.checkpoint.clone(), "classifier")
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("content hash mismatch"));
+    changed.content_hash = format!(
+        "{:x}",
+        Sha256::digest(changed.snapshot.content_hash_material().unwrap())
+    );
+    let error = executor
+        .replay_from(&changed, &request, result.checkpoint.clone(), "classifier")
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("checkpoint belongs to a different Workflow content hash")
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "neither rejected substitution may invoke a runner"
+    );
+    assert_eq!(serde_json::to_value(&result.checkpoint).unwrap(), original);
+    assert_ne!(source.content_hash, changed.content_hash);
+}
