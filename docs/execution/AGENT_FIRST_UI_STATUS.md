@@ -1,6 +1,14 @@
 # AnnotAgent Agent-first UI — execution record
 
-## Current checkpoint — M0 in progress (2026-09-09)
+## Current checkpoint — M3 queue/Builder integration in progress (2026-09-09)
+
+Current implementation spans M1 layout/Composer, M2 enforced planning and M3
+Registry selection/queued instructions. Queued semantic planning has an explicit
+consent/recovery UI; Workflow revision now has the existing Builder bridge and
+preview/consent contract, but its queue UI and ordered dispatch are not complete.
+M4 recovery and M5 full visual/functional acceptance remain incomplete. No overall
+completion, Live accuracy or human usability claim is made. The sections below
+retain chronological baseline evidence rather than describing today's UI as M0.
 
 Goal: implement the complete Paper & Graphite Agent-first contract, M0–M5.
 This is not a completion declaration. The preceding Conversational Workspace delivery
@@ -1029,3 +1037,26 @@ scoped recovery and ordered dispatch. Existing HTTP paths currently set queued_p
 to None and retain their original behavior. Internal dispatch is connected, not yet
 a completed user-facing Workflow-edit journey. Goal remains active; no push or
 remote modification, no real workspace mutation.
+
+## M3 queued Workflow Builder preview and consent — 2026-09-09
+
+Existing Builder preview accepts an exact queued-message/source-Draft pair, resolves
+the Agent model frozen on that message and binds the revision/content/evidence in
+the preview scope. Its data-sending summary describes the preserved plan and text
+supplement, not fresh image inference. Explicit launch passes that source to the
+existing working-copy Builder; normal Journey callers retain their original scope.
+Both initial launch and persisted-operation retry validate exclusive source identity,
+so changing a message or Draft selector cannot return an unrelated admitted receipt.
+
+Validation: two new Server source-contract tests passed (62627), including mismatched
+message/Draft, missing paired selector, mixed repair sources and unchanged legacy
+serialization. Strict Server all-target/all-feature Clippy passed (60731).
+Full Server library tests passed: 52 passed, 1 dedicated restart subprocess test
+ignored as designed (28270). `git diff --check` passed.
+HTTP/browser queued-Workflow journey and FIFO dispatch are still pending; these unit
+tests are not a claim of complete queue UX. No paid inference or real workspace write.
+
+User explicitly requested push after this checkpoint, overriding this task's earlier
+no-push request for this delivery. Only owned code/status changes are committed;
+unrelated screenshot changes and the untracked design kit remain untouched. Existing
+origin and tsinghua URLs are used without changing remote configuration.

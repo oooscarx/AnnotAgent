@@ -199,6 +199,8 @@ pub(super) async fn preview(
         model_id: selection.planner_model_id,
         repair_request_id: selection.repair_request_id,
         image_class_review_id: None,
+        queued_message_id: None,
+        source_draft_id: None,
     };
     let (model, builder) = conversation_builder::scope(
         &state,
@@ -310,6 +312,8 @@ pub(super) async fn save(
         model_id: consent.builder_model_id,
         repair_request_id: consent.repair.as_ref().map(|repair| repair.request_id),
         image_class_review_id: None,
+        queued_message_id: None,
+        source_draft_id: None,
     };
     let (_, builder) = conversation_builder::scope(
         &state,
@@ -460,6 +464,8 @@ pub(super) async fn execute(
             model_id: saved.consent.builder_model_id,
             repair_request_id: Some(pending.id),
             image_class_review_id: None,
+            queued_message_id: None,
+            source_draft_id: None,
         };
         let (_, preview) = conversation_builder::scope(
             &state,
@@ -644,6 +650,8 @@ async fn advance(
                     model_id: saved.consent.builder_model_id,
                     repair_request_id: None,
                     image_class_review_id: None,
+                    queued_message_id: None,
+                    source_draft_id: None,
                 },
                 AuthorizationBase::Existing(proposal.call_id),
             )?;
