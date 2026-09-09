@@ -21,8 +21,8 @@ const records=[];
 const work=(project,task,extra="")=>`${base.origin}/projects/${encodeURIComponent(project)}/work?task=${encodeURIComponent(task)}${extra}`;
 async function open(url) {
   await page.goto(url);
-  await page.locator('.ui-app[data-adapter="http"] .preview-chip').filter({hasText:"TEST"}).waitFor();
-  if(!url.includes("settings=") && !url.includes("task=new"))await page.locator(".user-message").first().waitFor();
+  await page.locator('.ui-app[data-adapter="http"] .preview-chip').filter({hasText:"TEST"}).waitFor({state:"attached"});
+  if(!url.includes("settings=") && !url.includes("task=new"))await page.locator(".user-message").first().waitFor({state:"attached"});
 }
 async function shot(name,title,note="") {
   await page.locator("img").evaluateAll(images=>Promise.all(images.map(image=>image.decode().catch(()=>{}))));
