@@ -5,6 +5,11 @@ const project = { project_id: "TEST-alpha", project_owner_id: "owner-a", title: 
 const settings = { revision: "revision-1", sections: { data_privacy: { workspace_id: "TEST-workspace" }, usage_budget: { future_run_budget: { max_requests: 10, max_cost: "2.50" } } } };
 const navTask = (id: string) => ({ task_id: id, title: `TEST ${id}`, schema_revision: "schema-1", project_owner_id: "owner-a", conversation_id: "conversation-a", state: "idle" });
 const root = "/api/projects/TEST-alpha/conversations/conversation-a/tasks";
+it("shows a builder admission failure rather than a completed wrapper",async()=>{
+  const {transport}=mockTransport({[`${root}/t1/workspace`]:{project_id:project.project_id,project_owner_id:project.project_owner_id,conversation_id:project.conversation_id,task:{input:{id:"t1",schema_revision:"schema-1"}},agent_model:{revision:0,model_profile_id:null},actions:{},queue:[],calls:[],builder_operations:{items:[{operation:{id:"builder",status:"completed",evidence:{outcome:"failed"}},session:{next_action:"Task is waiting for human input; no model call was admitted"}}]}}});
+  const adapter=new HttpAdapter(transport);await adapter.refresh();await adapter.loadTask(project.project_id,"t1");
+  expect(adapter.snapshot().tasks.find(t=>t.id==="t1")?.receipts?.[0]).toMatchObject({status:"failed",detail:"Task is waiting for human input; no model call was admitted"});
+});
 it("loads before/after from the exact repair request, not an unrelated older sample",async()=>{
   const record=(id:string)=>({sample_test:{id,project_id:project.project_id,draft_id:id+"-draft",draft_revision:1,inputs:[],report:{samples:[]}}});
   const {transport,paths}=mockTransport({
