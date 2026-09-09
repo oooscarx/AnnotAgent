@@ -1,5 +1,13 @@
 # Single UI Clean Cut
 
+## Queue protocol detached from legacy React pages; Replay contract requested
+
+Moved QueuedMessage into conversation-queue-state.ts and switched API/HttpAdapter imports away from components/ConversationQueue. Native queue filtering/cancellation uses the extracted status predicates with tests for every status; running calls still require task stop, terminal records are not cancellable, unknown records remain honestly pending. Deleted the unreachable old ConversationQueue/QueueRows and QueuedPlanning pages; existing native authorization, receipt, queue controls and server API remain. Replaced tests of old HTML with tests of the predicates actually used by HttpAdapter.
+
+Typecheck,323 unit tests and production build passed. One actual isolated HTTP browser scenario passed against /tmp/annotagent-queue-detached-dist: save supplement without execution, inspect bounded text-only scope, explicitly authorize TEST Provider, observe persisted completed queue receipt. This is deterministic loopback TEST inference, not Live. Existing marked TEST workspace on8794/8795 only; user8787/8788 and real workspace/dist unchanged. No Rust edited or push. Remaining migration/cleanup keeps goal active.
+
+New evidence: inspected existing Replay server/application implementation at6c4b4d8. It directly executes sandbox POST with no owner/hash/command body or preview and refuses live-model descendants with an explicit current-binding requirement. Sent UIAPI-017 to fixed backend UUID01a0855e-9c39-7c33-9f18-93e084d14816 after verifying queue help; receipt01a08783-4643-73d1-8c89-831fe92f3221. Requested exact read-only owned preview, bounded explicit authorization/current bindings, durable command/GET recovery, upstream/formal/Published preservation and focused tests. This blocks Replay parity, not independent cleanup. No unsafe replay call was made or fabricated as success.
+
 ## Remove duplicate old header/composer/model/stop controls
 
 Reference search found only definitions of old components/AgentComposer, AgentModelPicker, AgentProjectHeader, AgentStopControl and LanguageSelector; deleted these five dormant files. Native agent-ui App/HttpAdapter/Settings retain the actual project tree, Composer, model CAS, stop receipts and language preferences. Shared conversation-control/API protocols were not deleted. This is physical removal of detached controls, not rewriting their replacement or claiming new capabilities.

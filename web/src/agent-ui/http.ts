@@ -6,7 +6,7 @@ import { historyManagementApi } from "./HistoryManagement";
 import { sampleFeedbackOverlay } from "../sampleFeedbackOverlay";
 import { callStage, failureDetail } from "./ExecutionProgress";
 import type { HumanRequest } from "../conversation-human-api";
-import type { QueuedMessage } from "../components/ConversationQueue";
+import { canCancelQueuedMessage, isPendingQueuedMessage, type QueuedMessage } from "../conversation-queue-state";
 import type { QueueConsent, QueuePreview } from "../conversation-queue-api";
 import type { SendCommand, SendReceipt } from "../conversation-send";
 import type { StopRequestRecord } from "../conversation-stop-api";
@@ -242,8 +242,8 @@ export class HttpAdapter implements WorkspaceAdapter {
         phase, receipts, humanQuestion:human?.input.question,
         stopTargets:stop?.status==="needs_selection"?stop.targets.map(t=>({id:`${t.kind}:${t.id}`,label:`${t.kind} · ${t.state}`})):[],
         resumeTargets:ws?.resume_actions?.filter(a=>a.available).map(a=>({id:`${a.kind}:${a.id}`,label:a.kind,reason:a.reason})),
-        queue: ws?.queue.filter(q => ["waiting_for_dispatch","authorized","running","in_doubt"].includes(q.status)).map(q => q.input.message.text) || [],
-        queueEntries: ws?.queue.map(q=>({id:q.input.message.id,text:q.input.message.text,status:q.status,canCancel:["waiting_for_dispatch","authorized","in_doubt"].includes(q.status),canPlan:!human&&q.status==="waiting_for_dispatch"&&!q.planning_call_id})),
+        queue: ws?.queue.filter(q => isPendingQueuedMessage(q.status)).map(q => q.input.message.text) || [],
+        queueEntries: ws?.queue.map(q=>({id:q.input.message.id,text:q.input.message.text,status:q.status,canCancel:canCancelQueuedMessage(q.status),canPlan:!human&&q.status==="waiting_for_dispatch"&&!q.planning_call_id})),
       }) });
     } catch (e) { if (seq !== this.sequence || ctrl.signal.aborted) return; this.emit({ error: (e as Error).message, artifacts: [] }); throw e; }
   };
