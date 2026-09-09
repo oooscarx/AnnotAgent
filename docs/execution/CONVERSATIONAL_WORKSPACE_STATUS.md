@@ -5542,3 +5542,8 @@ trace was not retained. The observed failure and exact assertion are recorded he
 than claiming a preserved archive. Rust full fmt/clippy/test/build **6393** is also running,
 with durable output at `/tmp/annotagent-rust-post-binding-20260909.log`. No full-green claim,
 no real Provider/data mutation, and no push or remote changes.
+
+99466 subsequently **passed 1/1 (31.0s)**, including actual classification-review export
+with a non-unbound task. Started a new full Web typecheck/unit/build/178-case browser sweep
+against 2502ab3; durable log `/tmp/annotagent-web-combined-20260909.log`, evidence destination
+`/tmp/annotagent-conversation-combined-verified`. This sweep and Rust 6393 remain pending.
