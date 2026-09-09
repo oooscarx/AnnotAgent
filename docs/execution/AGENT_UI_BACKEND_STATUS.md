@@ -132,3 +132,8 @@ See `docs/contracts/agent-ui-v1/UIAPI-009_HISTORY_SCOPE.md` for the executable c
 ## UIAPI-014 second-round repair admission
 
 Implemented exact Applied-source Builder and running-Sample ledger admission with other images still pending, preserving existing grants/limits/stop and sample leases. Saved typed local recovery is revalidated and reused without another pass. Real HTTP three-image TEST regression passed; contract and commands: `docs/contracts/agent-ui-v1/UIAPI-014_REPAIR_ADMISSION.md`. This increment contains no publication/0061 changes; those remain isolated and uncommitted.
+
+
+## UIAPI-014 native frozen versions and exact publication
+
+Implemented owned `GET /api/projects/{project_id}/workflows/{workflow_id}/versions/{version}` returning the actual complete frozen version. Existing Draft publish accepts exact `{command_id,project_id,expected_revision,expected_content_hash}` and atomically saves publication plus replay receipt; no new inference/Run. Additive migration0061; old Published snapshots remain unchanged. Full API/field/error/migration contract: `docs/contracts/agent-ui-v1/UIAPI-014_PUBLICATION.md`. This is separate from repair admission commit220576f.

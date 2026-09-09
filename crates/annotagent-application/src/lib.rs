@@ -18373,7 +18373,7 @@ impl LocalApplication {
         settings: &Settings,
         approval: Option<&PublicationApproval>,
     ) -> Result<PublishedWorkflowVersion> {
-        self.publish_workflow_with_processing_guard(draft_id, settings, approval, None)
+        self.publish_workflow_with_processing_guard(draft_id, settings, approval, None, None)
     }
 
     /// The same publication boundary, with a transaction-local cancellation fence for
@@ -18390,6 +18390,26 @@ impl LocalApplication {
             settings,
             Some(approval),
             Some(processing_id),
+            None,
+        )
+    }
+
+    pub fn publish_workflow_command(
+        &self,
+        command: &annotagent_storage::WorkflowPublicationCommand,
+        settings: &Settings,
+    ) -> Result<PublishedWorkflowVersion> {
+        self.project_path(&command.project_id)?;
+        if let Some(result) = self.store.workflow_publication_result(command)? {
+            return Ok(result);
+        }
+        command.check_draft(&self.store.get_workflow_draft(&command.draft_id)?)?;
+        self.publish_workflow_with_processing_guard(
+            &command.draft_id,
+            settings,
+            None,
+            None,
+            Some(command),
         )
     }
 
@@ -18399,6 +18419,7 @@ impl LocalApplication {
         settings: &Settings,
         approval: Option<&PublicationApproval>,
         processing_id: Option<&str>,
+        command: Option<&annotagent_storage::WorkflowPublicationCommand>,
     ) -> Result<PublishedWorkflowVersion> {
         let draft = self.store.get_workflow_draft(draft_id)?;
         let scope = self.management_scope(&draft.project_id)?;
@@ -18416,7 +18437,8 @@ impl LocalApplication {
             &owner,
             chrono::Duration::minutes(30),
         )?;
-        let result = self.publish_workflow_unleased(draft_id, settings, approval, processing_id);
+        let result =
+            self.publish_workflow_unleased(draft_id, settings, approval, processing_id, command);
         let release = self
             .store
             .release_management_lease(&scope, &object, "publication", &owner);
@@ -18433,8 +18455,17 @@ impl LocalApplication {
         settings: &Settings,
         approval: Option<&PublicationApproval>,
         processing_id: Option<&str>,
+        command: Option<&annotagent_storage::WorkflowPublicationCommand>,
     ) -> Result<PublishedWorkflowVersion> {
+        if let Some(command) = command {
+            if let Some(result) = self.store.workflow_publication_result(command)? {
+                return Ok(result);
+            }
+        }
         let mut draft = self.store.get_workflow_draft(draft_id)?;
+        if let Some(command) = command {
+            command.check_draft(&draft)?;
+        }
         if matches!(
             draft.status,
             WorkflowDraftStatus::Published | WorkflowDraftStatus::Archived
@@ -18479,13 +18510,23 @@ impl LocalApplication {
         {
             bail!("workflow publication requires a passing Sample Test without failed images");
         }
-        let report = self.dry_run_workflow(draft_id, settings)?;
+        let report = if command.is_some() {
+            self.validate_workflow_draft_static(&draft, settings)?
+        } else {
+            self.dry_run_workflow(draft_id, settings)?
+        };
         if !report.valid {
             bail!("workflow has blocking static validation issues");
         }
         draft.status = WorkflowDraftStatus::Validated;
         draft.updated_at = chrono::Utc::now();
-        let publish_report = self.validate_workflow_draft(&draft, settings, true)?;
+        let publish_report = if command.is_some() {
+            let project = self.workflow_project_schema(&draft)?;
+            let (nodes, models) = self.static_workflow_catalog(settings)?;
+            self.validate_workflow_draft_in_catalog(&draft, &project, &nodes, &models, true)?
+        } else {
+            self.validate_workflow_draft(&draft, settings, true)?
+        };
         if !publish_report.valid {
             let blockers = publish_report
                 .issues
@@ -18506,7 +18547,11 @@ impl LocalApplication {
         {
             bail!("The approved models or Project definition changed before publication");
         }
-        let (_, models) = self.workflow_catalog(settings)?;
+        let (_, models) = if command.is_some() {
+            self.static_workflow_catalog(settings)?
+        } else {
+            self.workflow_catalog(settings)?
+        };
         normalize_profile_compatibility_bindings(&mut draft, &models)?;
         let snapshot = WorkflowSnapshot::frozen(&draft, &models, draft.enabled_skills.clone())
             .with_model_profiles(model_profiles)
@@ -18514,7 +18559,10 @@ impl LocalApplication {
             .with_safety_compatibility(annotagent_core::WorkflowSafetyCompatibility::Safe);
         let serialized = snapshot.content_hash_material()?;
         let content_hash = annotagent_image_tools::sha256(&serialized);
-        let published = if let Some(processing_id) = processing_id {
+        let published = if let Some(command) = command {
+            self.store
+                .publish_workflow_draft_command(&draft, content_hash, snapshot, command)?
+        } else if let Some(processing_id) = processing_id {
             self.store.publish_workflow_draft_for_processing(
                 &draft,
                 content_hash,

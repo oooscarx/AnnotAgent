@@ -844,6 +844,7 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
             "/api/workflows/{workflow_id}/versions/{version}/create-geometry-safe-draft",
             post(create_geometry_safe_draft),
         )
+        .route("/api/projects/{project_id}/workflows/{workflow_id}/versions/{version}", get(get_owned_workflow_version))
         .route("/api/workflows/compare", post(compare_workflow_versions))
         .route(
             "/api/projects/{project_id}/pipeline-improvements",
@@ -4600,10 +4601,93 @@ struct DryRunWorkflowRequest {
     authorization_fingerprint: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PublishWorkflowRequest {
+    command_id: uuid::Uuid,
+    project_id: String,
+    expected_revision: u64,
+    expected_content_hash: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmptyWorkflowPublication {}
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum WorkflowPublicationBody {
+    Exact(PublishWorkflowRequest),
+    Legacy(EmptyWorkflowPublication),
+}
+fn publication_error(error: anyhow::Error) -> ApiError {
+    if let Some(StorageError::WorkflowDraftRevisionConflict { expected, current }) =
+        error.downcast_ref::<StorageError>()
+    {
+        return ApiError {
+            status: StatusCode::CONFLICT,
+            body: json!({"status":409,"code":"workflow_draft_revision_conflict","error":"Workflow Draft changed; reload before publishing","expected_revision":expected,"current_revision":current}),
+        };
+    }
+    if let Some(StorageError::Management { .. }) = error.downcast_ref::<StorageError>() {
+        return ApiError::management(error);
+    }
+    ApiError::bad_request(error)
+}
+async fn get_owned_workflow_version(
+    State(state): State<ServerState>,
+    AxumPath((project_id, workflow_id, version)): AxumPath<(String, String, u32)>,
+) -> ApiResult<Json<annotagent_core::PublishedWorkflowVersion>> {
+    state
+        .application
+        .project_path(&project_id)
+        .map_err(ApiError::not_found)?;
+    let frozen = state
+        .application
+        .store()
+        .get_published_workflow_version(&workflow_id, version)
+        .map_err(ApiError::not_found)?;
+    if frozen.project_id != project_id {
+        return Err(ApiError::not_found(
+            "Published Workflow was not found in this Project",
+        ));
+    }
+    Ok(Json(frozen))
+}
+
 async fn publish_workflow(
     State(state): State<ServerState>,
     AxumPath(draft_id): AxumPath<String>,
+    request: Option<Json<WorkflowPublicationBody>>,
 ) -> ApiResult<Json<Value>> {
+    let command = request
+        .and_then(|Json(body)| match body {
+            WorkflowPublicationBody::Exact(request) => Some(request),
+            WorkflowPublicationBody::Legacy(_) => None,
+        })
+        .map(|request| annotagent_storage::WorkflowPublicationCommand {
+            command_id: request.command_id,
+            project_id: request.project_id,
+            draft_id: draft_id.clone(),
+            expected_revision: request.expected_revision,
+            expected_content_hash: request.expected_content_hash,
+        });
+    if let Some(command) = &command {
+        state
+            .application
+            .project_path(&command.project_id)
+            .map_err(ApiError::not_found)?;
+        if let Some(result) = state
+            .application
+            .store()
+            .workflow_publication_result(command)
+            .map_err(|e| publication_error(e.into()))?
+        {
+            return Ok(Json(json!(result)));
+        }
+        let draft = read_owned_workflow_draft(&state, &draft_id, &command.project_id)?;
+        command
+            .check_draft(&draft)
+            .map_err(|e| publication_error(e.into()))?;
+    }
     let settings = state.settings.read().await.clone();
     let (draft, _) = state
         .application
@@ -4635,17 +4719,14 @@ async fn publish_workflow(
             ));
         }
     }
-    let version = match state.application.publish_workflow(&draft_id, &settings) {
-        Ok(version) => version,
-        Err(error)
-            if error
-                .to_string()
-                .contains("workflow_draft_revision_conflict:") =>
-        {
-            return Err(ApiError::revision_conflict(error));
-        }
-        Err(error) => return Err(ApiError::bad_request(error)),
+    let result = if let Some(command) = &command {
+        state
+            .application
+            .publish_workflow_command(command, &settings)
+    } else {
+        state.application.publish_workflow(&draft_id, &settings)
     };
+    let version = result.map_err(publication_error)?;
     Ok(Json(json!(version)))
 }
 
@@ -16092,6 +16173,165 @@ export:
             .expect("persisted Draft");
         assert_eq!(persisted.name, "saved by tab A");
         assert_eq!(persisted.revision, draft.revision + 1);
+    }
+
+    #[tokio::test]
+    async fn owned_publication_http_exact_confirmation_frozen_get_and_lost_response() {
+        let temp = tempfile::tempdir().unwrap();
+        let app = Arc::new(LocalApplication::new(temp.path()).unwrap());
+        for project in ["TEST-publish-owner", "TEST-publish-other"] {
+            app.create_project(
+                project,
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .unwrap();
+        }
+        let state = test_state(app.clone(), Arc::new(InMemorySecretStore::default())).await;
+        let mut settings = annotagent_application::load_settings(None).unwrap();
+        settings.default_provider = "mock".into();
+        let draft = app
+            .create_workflow_draft_with_template(
+                "TEST-publish-owner",
+                &settings,
+                false,
+                Some("robocup.ball.vlm-bootstrap"),
+            )
+            .unwrap();
+        annotagent_image_tools::generate_synthetic_robocup(
+            &temp.path().join("TEST-publish-owner/images/TEST.png"),
+        )
+        .unwrap();
+        // Test-only preparation executes the existing Mock sample path. Publication itself must not execute it again.
+        app.dry_run_workflow_samples(&draft.id, &settings, &[0])
+            .await
+            .unwrap();
+        let saved = app.store().get_workflow_draft(&draft.id).unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        settings.provider.endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
+        settings.provider.api_key_env = "TEST_PUBLICATION_NO_CREDENTIAL".into();
+        *state.settings.write().await = settings;
+        let service = router(state, None);
+        let uri = format!("/api/workflow-drafts/{}/publish", draft.id);
+        let body = json!({"command_id":uuid::Uuid::new_v4(),"project_id":"TEST-publish-owner","expected_revision":saved.revision,"expected_content_hash":saved.content_hash});
+        let mut wrong = body.clone();
+        wrong["project_id"] = json!("TEST-publish-other");
+        assert_eq!(
+            call_json(&service, axum::http::Method::POST, &uri, wrong)
+                .await
+                .0,
+            StatusCode::NOT_FOUND
+        );
+        wrong = body.clone();
+        wrong["expected_revision"] = json!(saved.revision + 1);
+        let (status, error) = call_json(&service, axum::http::Method::POST, &uri, wrong).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(error["current_revision"], saved.revision);
+        wrong = body.clone();
+        wrong["expected_content_hash"] = json!("TEST-wrong");
+        let (status, error) = call_json(&service, axum::http::Method::POST, &uri, wrong).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(error["code"], "workflow_draft_content_conflict");
+        assert!(
+            app.store()
+                .list_published_workflow_versions(None)
+                .unwrap()
+                .is_empty()
+        );
+        let before_samples =
+            serde_json::to_value(app.store().get_workflow_sample_test(&draft.id).unwrap()).unwrap();
+        let before_runs = app
+            .store()
+            .list_run_summaries_scoped(None, annotagent_storage::PageRequest::default(), None)
+            .unwrap()
+            .total;
+        let (status, frozen) =
+            call_json(&service, axum::http::Method::POST, &uri, body.clone()).await;
+        assert_eq!(status, StatusCode::OK, "{frozen}");
+        assert_eq!(frozen["draft"]["revision"], saved.revision);
+        assert_eq!(frozen["draft"]["content_hash"], saved.content_hash);
+        assert!(frozen["snapshot"]["draft"].is_object());
+        let version_uri = format!(
+            "/api/projects/TEST-publish-owner/workflows/{}/versions/{}",
+            draft.id, frozen["version"]
+        );
+        assert_eq!(
+            call_json(&service, axum::http::Method::GET, &version_uri, Value::Null).await,
+            (StatusCode::OK, frozen.clone())
+        );
+        assert_eq!(
+            call_json(
+                &service,
+                axum::http::Method::GET,
+                &version_uri.replace("TEST-publish-owner", "TEST-publish-other"),
+                Value::Null
+            )
+            .await
+            .0,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            call_json(
+                &service,
+                axum::http::Method::GET,
+                &format!(
+                    "/api/projects/TEST-publish-owner/workflows/{}/versions/999",
+                    draft.id
+                ),
+                Value::Null
+            )
+            .await
+            .0,
+            StatusCode::NOT_FOUND
+        );
+        let mut copy = app
+            .clone_workflow_version(
+                &draft.id,
+                u32::try_from(frozen["version"].as_u64().unwrap()).unwrap(),
+            )
+            .unwrap();
+        copy.name = "TEST independently edited clone".into();
+        app.store().save_workflow_draft(&copy).unwrap();
+        assert_eq!(
+            call_json(&service, axum::http::Method::GET, &version_uri, Value::Null).await,
+            (StatusCode::OK, frozen.clone())
+        );
+        let restarted = Arc::new(LocalApplication::new(temp.path()).unwrap());
+        let service2 = router(
+            test_state(restarted, Arc::new(InMemorySecretStore::default())).await,
+            None,
+        );
+        assert_eq!(
+            call_json(&service2, axum::http::Method::POST, &uri, body.clone()).await,
+            (StatusCode::OK, frozen.clone())
+        );
+        wrong = body;
+        wrong["expected_revision"] = json!(saved.revision + 1);
+        let (status, error) = call_json(&service2, axum::http::Method::POST, &uri, wrong).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(error["code"], "workflow_publication_command_conflict");
+        assert_eq!(
+            app.store()
+                .list_published_workflow_versions(None)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            serde_json::to_value(app.store().get_workflow_sample_test(&draft.id).unwrap()).unwrap(),
+            before_samples
+        );
+        assert_eq!(
+            app.store()
+                .list_run_summaries_scoped(None, annotagent_storage::PageRequest::default(), None)
+                .unwrap()
+                .total,
+            before_runs
+        );
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(30), listener.accept())
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

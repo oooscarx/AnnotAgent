@@ -83,7 +83,9 @@ pub use conversations::{
 mod history_scope;
 mod management;
 mod model_install_commands;
+mod workflow_publication;
 pub use history_scope::{EstablishHistoryScope, HISTORY_POLICY, HistoryScope, HistoryScopePreview};
+pub use workflow_publication::WorkflowPublicationCommand;
 mod processing_operations;
 mod sample_feedback;
 mod sample_operations;
@@ -712,6 +714,8 @@ impl SqliteStore {
             transaction.execute_batch(include_str!("../../../migrations/0060_model_install_commands.sql"))?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(60,'model_install_commands',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute_batch(include_str!("../../../migrations/0059_history_scope.sql"))?;
+            transaction.execute_batch(include_str!("../../../migrations/0061_workflow_publication_commands.sql"))?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(61,'workflow_publication_commands',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(59,'history_scope',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(58,'conversation_call_progress',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(57,'queued_workflow_copies',?1)",[Utc::now().to_rfc3339()])?;
@@ -2781,7 +2785,7 @@ impl SqliteStore {
         snapshot: WorkflowSnapshot,
         processing_id: &str,
     ) -> Result<PublishedWorkflowVersion, StorageError> {
-        self.publish_workflow_draft_inner(draft, content_hash, snapshot, Some(processing_id))
+        self.publish_workflow_draft_inner(draft, content_hash, snapshot, Some(processing_id), None)
     }
 
     pub fn publish_workflow_draft(
@@ -2790,7 +2794,17 @@ impl SqliteStore {
         content_hash: String,
         snapshot: WorkflowSnapshot,
     ) -> Result<PublishedWorkflowVersion, StorageError> {
-        self.publish_workflow_draft_inner(draft, content_hash, snapshot, None)
+        self.publish_workflow_draft_inner(draft, content_hash, snapshot, None, None)
+    }
+
+    pub fn publish_workflow_draft_command(
+        &self,
+        draft: &WorkflowDraft,
+        content_hash: String,
+        snapshot: WorkflowSnapshot,
+        command: &WorkflowPublicationCommand,
+    ) -> Result<PublishedWorkflowVersion, StorageError> {
+        self.publish_workflow_draft_inner(draft, content_hash, snapshot, None, Some(command))
     }
 
     fn publish_workflow_draft_inner(
@@ -2799,18 +2813,23 @@ impl SqliteStore {
         content_hash: String,
         snapshot: WorkflowSnapshot,
         processing_id: Option<&str>,
+        command: Option<&WorkflowPublicationCommand>,
     ) -> Result<PublishedWorkflowVersion, StorageError> {
         self.with_connection(|connection| {
-            let transaction = connection.unchecked_transaction()?;
+            let transaction = rusqlite::Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Immediate)?;
+            if let Some(command) = command {
+                if let Some(result) = workflow_publication::replay(&transaction, command)? { return Ok(result); }
+                command.check_draft(draft)?;
+            }
             if let Some(id)=processing_id {
                 Self::validate_processing_publication(&transaction,draft,&content_hash,&snapshot,id)?;
             }
-            let (current_revision, current_hash) = transaction
+            let (current_revision, current_hash, current_status, current_project) = transaction
                 .query_row(
-                    "SELECT revision, content_hash FROM workflow_drafts
+                    "SELECT revision, content_hash, status, project_id FROM workflow_drafts
                      WHERE id = ?1 AND deleted_at IS NULL AND archived_at IS NULL",
                     [&draft.id],
-                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?)),
                 )
                 .optional()?
                 .ok_or_else(|| {
@@ -2819,9 +2838,20 @@ impl SqliteStore {
                         draft.id
                     ))
                 })?;
+            if let Some(command) = command {
+                if command.project_id != current_project {
+                    return Err(StorageError::Management { code: "foreign_project_object".into(), message: "Workflow Draft was not found in this Project".into() });
+                }
+                if current_status == "published" {
+                    return Err(StorageError::Management { code: "workflow_already_published".into(), message: "Draft is already published; recover the original command or view its frozen version".into() });
+                }
+            }
             let current_revision = u64::try_from(current_revision).unwrap_or(1);
             let expected_hash =
                 annotagent_image_tools::sha256(&draft.content_hash_material()?);
+            if command.is_some() && current_revision == draft.revision && current_hash != expected_hash {
+                return Err(StorageError::Management { code: "workflow_draft_content_conflict".into(), message: "Draft bindings changed while freezing publication; review the current Draft and its Sample Test before confirming again".into() });
+            }
             if current_revision != draft.revision || current_hash != expected_hash {
                 return Err(StorageError::WorkflowDraftRevisionConflict {
                     expected: draft.revision,
@@ -2904,6 +2934,10 @@ impl SqliteStore {
                     version.published_at.to_rfc3339(),
                 ],
             )?;
+            if let Some(command) = command {
+                transaction.execute("INSERT INTO workflow_publication_commands(command_id,request_json,result_json) VALUES(?1,?2,?3)",
+                    params![command.command_id.to_string(),serde_json::to_string(command)?,serde_json::to_string(&version)?])?;
+            }
             transaction.commit()?;
             Ok(version)
         })

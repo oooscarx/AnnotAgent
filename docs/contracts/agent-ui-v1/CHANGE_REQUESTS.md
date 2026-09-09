@@ -46,3 +46,8 @@ GET `/api/workflow-drafts/{id}?project_id=...` returns the persisted Draft. POST
 ## UIAPI-009 implemented: immutable workspace history scope
 
 See `docs/contracts/agent-ui-v1/UIAPI-009_HISTORY_SCOPE.md` for the executable contract and isolated acceptance tests. Passive GET, preview plus explicit privileged idempotent establishment, persisted identity membership, SQL-filtered scoped pagination and management preview/action guards are implemented. Direct references and Published/annotation data remain unchanged. Migration0059 only adds scope tables; no real workspace scope was established. Frontend must send the returned scope ID explicitly on both lists and management requests.
+
+
+## UIAPI-014 native frozen versions and exact publication
+
+Implemented owned `GET /api/projects/{project_id}/workflows/{workflow_id}/versions/{version}` returning the actual complete frozen version. Existing Draft publish accepts exact `{command_id,project_id,expected_revision,expected_content_hash}` and atomically saves publication plus replay receipt; no new inference/Run. Additive migration0061; old Published snapshots remain unchanged. Full API/field/error/migration contract: `docs/contracts/agent-ui-v1/UIAPI-014_PUBLICATION.md`. This is separate from repair admission commit220576f.
