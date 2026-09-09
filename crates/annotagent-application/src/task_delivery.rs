@@ -1,13 +1,15 @@
 //! Server-owned intake. Saving intent never authorizes a model or starts a job.
 use crate::LocalApplication;
 use annotagent_core::{
-    ImageId,
+    ImageId, ReviewStatus, RunId,
     dataset_delivery::{
         DeliveryImage, DeliveryLabel, DeliveryReviewPolicy, DeliverySlot, DeliverySplitPolicy,
         TaskDeliveryIntent, TrainingTarget,
     },
 };
-use annotagent_storage::TaskDeliveryRevision;
+use annotagent_storage::{
+    DeliveryImageReview, DeliveryImageReviewInput, DeliveryImageSnapshot, TaskDeliveryRevision,
+};
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -33,6 +35,19 @@ pub struct TaskDeliveryView {
     pub execution_authorized: bool,
 }
 
+#[derive(Debug, Serialize)]
+pub struct TaskDeliveryImageView {
+    pub intent_revision: u32,
+    pub intent_sha256: String,
+    pub snapshot: DeliveryImageSnapshot,
+    pub review: Option<DeliveryImageReview>,
+    /// Not package readiness: class, split and lineage validation still apply.
+    pub confirmation_current: bool,
+    pub accepted_objects: usize,
+    pub unresolved_objects: usize,
+    pub notice: String,
+}
+
 pub(crate) fn selected_delivery_image(
     delivery: Option<&TaskDeliveryRevision>,
     image: ImageId,
@@ -47,6 +62,86 @@ pub(crate) fn selected_delivery_image(
 }
 
 impl LocalApplication {
+    /// Restores the exact image/source selection. Never chooses the latest global Run.
+    pub fn task_delivery_image(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        image: ImageId,
+        source_run: Option<RunId>,
+    ) -> Result<TaskDeliveryImageView> {
+        let saved = self
+            .require_delivery_intake(project, conversation, task)?
+            .ok_or_else(|| anyhow::anyhow!("Save delivery information before reviewing images"))?;
+        let snapshot = self.store.delivery_image_snapshot(
+            &saved.intent.project_id,
+            conversation,
+            task,
+            image,
+            source_run,
+        )?;
+        let review = self
+            .store
+            .delivery_image_reviews(&saved.intent.project_id, conversation, task)?
+            .into_iter()
+            .find(|r| r.input.image_id == image);
+        let confirmation_current = review.as_ref().is_some_and(|r| {
+            r.snapshot.sha256 == snapshot.sha256 && r.input.source_run_id == source_run
+        });
+        let accepted_objects = snapshot
+            .annotations
+            .iter()
+            .filter(|a| a.review_status == ReviewStatus::HumanAccepted)
+            .count();
+        let unresolved_objects = snapshot
+            .annotations
+            .iter()
+            .filter(|a| {
+                !matches!(
+                    a.review_status,
+                    ReviewStatus::HumanAccepted | ReviewStatus::Rejected
+                )
+            })
+            .count();
+        let notice = if confirmation_current {
+            "Whole-image decision saved for this snapshot. Package validation is separate."
+        } else if review.is_some() {
+            "The saved decision does not match this image/source snapshot. Inspect and confirm again."
+        } else {
+            "This image has not been confirmed as a whole. Empty results and accepted objects are not whole-image completion."
+        }.into();
+        Ok(TaskDeliveryImageView {
+            intent_revision: saved.revision,
+            intent_sha256: saved.content_sha256,
+            snapshot,
+            review,
+            confirmation_current,
+            accepted_objects,
+            unresolved_objects,
+            notice,
+        })
+    }
+
+    /// Saves only a scoped human receipt, never accepts objects, starts a model or packages data.
+    pub fn confirm_task_delivery_image(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        input: &DeliveryImageReviewInput,
+    ) -> Result<DeliveryImageReview> {
+        let saved = self
+            .require_delivery_intake(project, conversation, task)?
+            .ok_or_else(|| anyhow::anyhow!("Save delivery information before reviewing images"))?;
+        Ok(self.store.confirm_delivery_image(
+            &saved.intent.project_id,
+            conversation,
+            task,
+            input,
+        )?)
+    }
+
     /// Opt-in delivery Tasks must resolve all slots before planning admission.
     /// Existing non-delivery Tasks retain their existing workflow semantics.
     pub fn require_delivery_intake(

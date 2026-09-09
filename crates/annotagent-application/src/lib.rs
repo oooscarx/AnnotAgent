@@ -2,7 +2,7 @@
 
 mod agent_ui;
 mod task_delivery;
-pub use task_delivery::{SaveTaskDeliveryIntent, TaskDeliveryView};
+pub use task_delivery::{SaveTaskDeliveryIntent, TaskDeliveryImageView, TaskDeliveryView};
 mod conversation_builder;
 mod conversation_journey;
 pub use conversation_journey::{ConversationJourneyDataScope, JourneyModelDescription};
