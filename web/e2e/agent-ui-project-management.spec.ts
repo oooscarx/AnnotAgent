@@ -260,6 +260,15 @@ test("native bundle import rejects a real invalid TEST package without installin
   expect(writes.length).toBe(1);expect(writes[0]).toContain("/api/model-bundles/packages/inspect");
   await expect(area.getByRole("button",{name:"导入已检查的模型包…",exact:true})).toHaveCount(0);
 });
+test("controlled pending Batch requires confirmation and rechecks ownership before resume",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const batches=await(await request.get("/api/batches?limit=100")).json();const batch=batches.batches[0];const path=`/api/batches/${batch.id}`;const original=await(await request.get(path)).json();let foreign=false;const writes:string[]=[];
+  // Explicit read-response fixture only; no real batch is resumed or mutated.
+  await page.route(`**${path}`,async route=>route.fulfill({json:{...original,batch:{...original.batch,status:"pending",in_trash:false,project_id:foreign?"TEST-foreign":batch.project_id}}}));
+  page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});await page.goto(`/projects/${batch.project_id}/manage/batches/${batch.id}`);
+  const resume=page.getByRole("button",{name:"继续批次",exact:true});await expect(resume).toBeEnabled();page.once("dialog",dialog=>dialog.dismiss());await resume.click();expect(writes).toEqual([]);
+  foreign=true;page.once("dialog",dialog=>dialog.accept());await resume.click();await expect(page.getByRole("alert")).toContainText("不属于当前项目");expect(writes).toEqual([]);
+});
 test("native Batch detail keeps project ownership and passive refresh",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
   const batches=await(await request.get("/api/batches?limit=100")).json();const batch=batches.batches[0];expect(batch).toBeTruthy();
