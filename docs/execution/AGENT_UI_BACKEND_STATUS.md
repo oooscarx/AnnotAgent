@@ -74,3 +74,11 @@ Queue preview/POST 现在对 pending human 返回 409 `human_input_pending`（Sc
 验证：Core/Application/Storage/Server 515 passed、0 failed、3原有ignored；全workspace all-targets严格Clippy与fmt通过。专项测试保存重读typed候选，materialize保留Profile/ModelInstance ID及Geometry Safety；禁用segmenter后候选仍变为不可用。真实隔离HTTP seed278请求通过，实际classification与VLM Detection Builder草稿均保留LabelPipeline。native是测试manifest合同验证，不冒充真实安装权重推理。
 
 契约/边界：UIAPI-011_BUILDER.md、UIAPI-011_TRACE.json。无SQL迁移；旧candidate缺字段仍为null，不伪造旧DAG projection。现有refinement生成器只对精确单label目标参与，本轮不扩多label调度。集成端负责新的精确授权与真实VLM+SAM验证；此后端未读改真实workspace/旧Draft，未安装/付费/操作8787或8788/推送/合并前端。最终SHA在交付回复固定。
+
+## UIAPI-010 Model Profile CAS delivery
+
+PATCH adds optional expected_revision and transaction-atomic compare/append. Stale edits return safe 409 expected/current revision; every successful HTTP PATCH advances revision, including metadata/no-op edits. Old revision and Published frozen snapshots remain unchanged. Legacy omitted-field requests remain accepted with no claim of stale-browser protection. No migration or frontend changes.
+
+Isolated tests: Storage/Server 243 passed, 0 failed, 2 existing ignored; includes independent-connection two-writer race, reopen/old revision/Published snapshot preservation, and HTTP contract/legacy requests. Workspace all-target Clippy with -D warnings, fmt check and diff check passed. Commands and exact contract: docs/contracts/agent-ui-v1/UIAPI-010_MODEL_CAS.md. No paid calls, keys, real workspace mutation, service restart, push or merge. Final SHA is in delivery response.
+
+UIAPI-009 remains blocked/unimplemented. Prior 8cccca5f4f45ba4203ae77c4d74c79a29fa86323 delivered a concrete gap specification only (UIAPI-009_GAP.md); no scope establishment or runtime acceptance is claimed.

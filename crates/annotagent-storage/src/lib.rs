@@ -155,6 +155,8 @@ const PIPELINE_LIFECYCLE_MIGRATION: &str =
 
 #[derive(Debug, Error)]
 pub enum StorageError {
+    #[error("Model Profile changed: expected revision {expected}, current revision {current}")]
+    ModelProfileRevisionConflict { expected: u64, current: u64 },
     #[error("Feedback changed in another window; reload before saving")]
     FeedbackRevisionConflict { current: u64 },
     #[error("invalid conversation operation: {message}")]
@@ -1207,10 +1209,29 @@ impl SqliteStore {
     }
 
     pub fn save_model_profile(&self, profile: &ModelProfile) -> Result<(), StorageError> {
+        self.save_model_profile_expected(profile, None)
+    }
+
+    /// Append an HTTP edit revision, including metadata-only edits, atomically.
+    pub fn save_model_profile_cas(
+        &self,
+        profile: &ModelProfile,
+        expected_revision: u64,
+    ) -> Result<(), StorageError> {
+        self.save_model_profile_expected(profile, Some(expected_revision))
+    }
+
+    fn save_model_profile_expected(
+        &self,
+        profile: &ModelProfile,
+        expected_revision: Option<u64>,
+    ) -> Result<(), StorageError> {
         profile
             .validate()
             .map_err(|error| StorageError::InvalidModelRevision(error.to_string()))?;
         self.with_connection(|connection| {
+            let transaction = rusqlite::Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Immediate)?;
+            let connection = &transaction;
             let provider_exists = connection.query_row(
                 "SELECT EXISTS(SELECT 1 FROM provider_profiles WHERE id = ?1)",
                 [profile.provider_id.to_string()],
@@ -1238,6 +1259,15 @@ impl SqliteStore {
                         .map_err(StorageError::from)
                 })
                 .transpose()?;
+            if let Some(expected) = expected_revision {
+                let current = latest.as_ref().map_or(0, |(revision, _)| *revision);
+                if current != expected {
+                    return Err(StorageError::ModelProfileRevisionConflict { expected, current });
+                }
+                if expected.checked_add(1) != Some(profile.revision) {
+                    return Err(StorageError::InvalidModelRevision("CAS edit must append exactly one revision".into()));
+                }
+            } else {
             match latest {
                 None if profile.revision != 1 => {
                     return Err(StorageError::InvalidModelRevision(
@@ -1265,6 +1295,7 @@ impl SqliteStore {
                     )));
                 }
                 None => {}
+            }
             }
             connection.execute(
                 "INSERT INTO model_profiles
@@ -1296,6 +1327,7 @@ impl SqliteStore {
                     profile.updated_at.to_rfc3339(),
                 ],
             )?;
+            transaction.commit()?;
             Ok(())
         })
     }
@@ -5511,6 +5543,169 @@ mod tests {
                 .list_agent_sessions(Some("project"))
                 .expect("Agent Sessions"),
             vec![real_session]
+        );
+    }
+
+    #[test]
+    fn model_profile_cas_two_connections_preserves_published_snapshot() {
+        let temp = tempfile::tempdir().expect("TEST database");
+        let path = temp.path().join("cas.sqlite");
+        let store = SqliteStore::open(&path).expect("database");
+        let provider_id = ProviderId::new();
+        let now = Utc::now();
+        store
+            .save_provider_profile(&ProviderProfile {
+                id: provider_id,
+                display_name: "Mock Lab".to_owned(),
+                preset_id: Some("mock".to_owned()),
+                adapter: ProviderAdapterKind::Mock,
+                base_url: url::Url::parse("http://127.0.0.1:8791/v1").expect("URL"),
+                organization: None,
+                workspace: None,
+                credential_ref: None,
+                safe_headers: BTreeMap::new(),
+                connection_policy: ProviderConnectionPolicy::default(),
+                enabled: true,
+                health: ProviderHealthSnapshot {
+                    status: ProviderHealthStatus::Available,
+                    safe_message: None,
+                    checked_at: Some(now),
+                },
+                created_at: now,
+                updated_at: now,
+            })
+            .expect("provider");
+        let model_id = ModelProfileId::new();
+        let profile = ModelProfile {
+            id: model_id,
+            revision: 1,
+            provider_id,
+            display_name: "Vision Builder".to_owned(),
+            remote_model_id: "vision-builder-v1".to_owned(),
+            input_modalities: BTreeSet::from([InputModality::Text, InputModality::Image]),
+            protocol_features: ProtocolFeatures {
+                tool_calls: true,
+                structured_output: true,
+                json_schema: true,
+                usage_reporting: true,
+                ..ProtocolFeatures::default()
+            },
+            task_capabilities: BTreeSet::from([
+                ModelCapability::TextGeneration,
+                ModelCapability::VisionLanguage,
+                ModelCapability::ImageClassification,
+            ]),
+            capability_source: CapabilityDeclarationSource::UserDeclared,
+            limits: ModelLimits {
+                context_tokens: Some(32_768),
+                maximum_output_tokens: Some(4_096),
+                maximum_images_per_request: Some(4),
+                maximum_image_pixels: Some(12_000_000),
+            },
+            generation_defaults: GenerationDefaults {
+                temperature: Some(rust_decimal::Decimal::new(1, 1)),
+                ..GenerationDefaults::default()
+            },
+            pricing: ModelPricing {
+                currency: "USD".to_owned(),
+                per_request: Some(rust_decimal::Decimal::new(1, 3)),
+                source: PricingSource::UserConfigured,
+                updated_at: Some(now),
+                ..ModelPricing::default()
+            },
+            quality_contracts: Vec::new(),
+            status: ModelProfileStatus::Available,
+            enabled: true,
+            locked: false,
+            created_at: now,
+            updated_at: now,
+        };
+        store.save_model_profile(&profile).expect("revision 1");
+
+        let make_draft = |id: &str| WorkflowDraft {
+            schema_version: 2,
+            id: id.to_owned(),
+            project_id: "multi-workflow-project".to_owned(),
+            name: id.to_owned(),
+            status: WorkflowDraftStatus::Editing,
+            revision: 1,
+            content_hash: String::new(),
+            nodes: vec![WorkflowDraftNode {
+                id: "commit".to_owned(),
+                node_type: "commit".to_owned(),
+                kind: WorkflowNodeKind::Commit,
+                ..WorkflowDraftNode::default()
+            }],
+            edges: Vec::new(),
+            enabled_skills: BTreeMap::new(),
+            resource_versions: BTreeMap::new(),
+            runtime_policies: BTreeMap::new(),
+            allow_unvalidated_commit: true,
+            geometry_risk_acceptance: None,
+            annotation_schema: None,
+            label_pipeline: None,
+            created_at: now,
+            updated_at: now,
+        };
+        let draft = make_draft("TEST-cas-published");
+        store.save_workflow_draft(&draft).expect("draft");
+        let snapshot = WorkflowSnapshot {
+            schema_version: 2,
+            draft: Some(draft.clone()),
+            model_profiles: vec![
+                annotagent_core::ModelProfileSnapshot::frozen(
+                    &profile,
+                    &store.get_provider_profile(provider_id).expect("provider"),
+                )
+                .expect("frozen"),
+            ],
+            ..WorkflowSnapshot::default()
+        };
+        store
+            .publish_workflow_draft(&draft, "TEST-hash".into(), snapshot)
+            .expect("publish");
+        let before =
+            serde_json::to_value(store.list_published_workflow_versions(None).unwrap()).unwrap();
+        let other = SqliteStore::open(&path).expect("independent connection");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let handles: Vec<_> = [store, other]
+            .into_iter()
+            .enumerate()
+            .map(|(i, store)| {
+                let barrier = barrier.clone();
+                let mut candidate = profile.clone();
+                candidate.revision = 2;
+                candidate.display_name = format!("writer-{i}");
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    store.save_model_profile_cas(&candidate, 1)
+                })
+            })
+            .collect();
+        let outcomes: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq!(outcomes.iter().filter(|r| r.is_ok()).count(), 1);
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|r| matches!(
+                    r,
+                    Err(StorageError::ModelProfileRevisionConflict {
+                        expected: 1,
+                        current: 2
+                    })
+                ))
+                .count(),
+            1
+        );
+        let store = SqliteStore::open(&path).unwrap();
+        assert_eq!(store.get_model_profile(model_id, None).unwrap().revision, 2);
+        assert_eq!(
+            serde_json::to_value(store.get_model_profile(model_id, Some(1)).unwrap()).unwrap(),
+            serde_json::to_value(profile).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(store.list_published_workflow_versions(None).unwrap()).unwrap(),
+            before
         );
     }
 

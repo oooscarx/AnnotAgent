@@ -29,3 +29,7 @@
 - UIAPI-009 审计：无现成安全cutover API，已交具体缺口/拟议契约 UIAPI-009_GAP.md（未实现）。新增UI历史切换仍阻塞；不可用localStorage或删除旧记录代替。
 
 - UIAPI-011 已修数据链路：受控candidate的LabelPipeline持久化/materialization、精确Schema单label目标、批准Registry模型选择与绑定同步；不降低sample guard，不重跑旧Builder回执，不调用收费模型。见 UIAPI-011_BUILDER.md。
+
+## UIAPI-010 Model Profile CAS
+
+PATCH `/api/model-profiles/:id` accepts optional `expected_revision`; atomic stale edits return 409 `model_profile_revision_conflict` with expected/current revision. Every successful HTTP edit appends a revision, including metadata-only edits. Success remains an unwrapped ModelProfile. `revision` is still not a request field. Exact examples, compatibility and scope: [UIAPI-010_MODEL_CAS.md](UIAPI-010_MODEL_CAS.md).

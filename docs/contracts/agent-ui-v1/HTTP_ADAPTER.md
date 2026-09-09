@@ -143,3 +143,7 @@ Stop POST 的 `normalized_state=stopping` 与后续 GET 的 `outcome_unknown` �
 ## UIAPI-011 Builder projection
 
 `session.plan_candidates[].label_pipeline` 为新增可空字段，保存原受控composition；materialize后的实际计划仍读 `session.builder_proposal.draft.label_pipeline`。旧candidate无字段按null处理，不可由前端生成。Schema/模型/Geometry Safety与sample批准规则不变；详见 UIAPI-011_BUILDER.md。
+
+## UIAPI-010 Model Profile CAS
+
+PATCH `/api/model-profiles/:id` accepts optional `expected_revision`; atomic stale edits return 409 `model_profile_revision_conflict` with expected/current revision. Every successful HTTP edit appends a revision, including metadata-only edits. Success remains an unwrapped ModelProfile. `revision` is still not a request field. Exact examples, compatibility and scope: [UIAPI-010_MODEL_CAS.md](UIAPI-010_MODEL_CAS.md).
