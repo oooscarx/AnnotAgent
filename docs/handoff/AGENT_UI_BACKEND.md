@@ -2,7 +2,23 @@
 
 BASE SHA：c41b281b49252d520117029d39611865133798af。
 分支：codex/agent-ui-backend；worktree：/Users/oscar/Documents/my_workspace/AnnotAgent-backend。
-已提交实现 HEAD：1df67f8（B2）；B3 交付本文件、最终格式化和示例测试。最终分支 HEAD 用 `git rev-parse codex/agent-ui-backend` 获取，亦在交付消息中报告。
+可集成后端代码固定为 **b8955cabcca72d87b1ed27a5cb132789ca535b60**（含 B3 ce46c6f 与本轮真实 HTTP fixture）。后续交接证据提交仅改 docs；集成代码以此 SHA 为准，不跟随移动 HEAD 猜版本。
+
+当前阶段：接口支持。后端不继续扩展产品功能，只处理前端具体联调问题；前端视觉通过后在独立集成分支负责唯一合并与接线。此次没有 merge 或 push。
+
+最新交接入口：
+
+- `docs/contracts/agent-ui-v1/INTEGRATION_ENVIRONMENT.md`：可重复启动、独立数据库/端口、重启验证与同源要求。
+- `docs/contracts/agent-ui-v1/HTTP_ADAPTER.md`：实际字段、actions/reason、revision、command ID、consent、分页、错误及 Thread 来源。
+- `docs/contracts/agent-ui-v1/INTEGRATION_TRACE.json`：固定 SHA 的真实 HTTP 示例与停止/继续/队列/SSE/导出证据。
+
+最短启动：在 backend checkout 执行 `python3 crates/annotagent-e2e-fixture/support/http_fixture.py --enable-fixture`。自动两个 loopback 空闲端口、TEST 临时 workspace/.annotagent/history.db；保留数据，Ctrl-C 只停自有子进程。加 `--smoke` 自动验证后退出；加 `--workspace <已打印的 TEST 路径>` 重启同库。禁用 8787，不读取系统/真实 credential、不调用付费模型、不下载权重。fixture 响应带明确 header，生产没有 Mock 入口。
+
+最新验证：真实 HTTP seed + 同库重启通过，Server lib 57 passed / 0 failed / 2 ignored；严格 server all-targets Clippy、fmt、diff check 通过。第二个 ignored 是显式前台 fixture server，并非漏测业务。无 SQL schema 迁移；只有 test-only 入口、Python 支持脚本和契约文档。
+
+支持边界：paused Batch 从持久 checkpoint 继续；同进程 paused Run 可 resume control；当前人工答案先保存再本地修订/按原精确 consent 继续。cancelled/unknown 不能通用 resume。Queue 为显式授权 POST 驱动，GET/重连不派发。Conversation 靠 snapshot+journal+operation GET 刷新；Run SSE 独立持久补发。Settings task ledger、project limit、probe usage 范围不同，无统一全系统费用。
+
+消息来源：`T/thread` 仅 SQLite 中真实归属用户消息。Schema/Builder/Feedback 是模型结构化决策，执行卡片是系统回执；缺少通用自然语言 assistant 回复，请前端明确来源，不编造成功消息。
 
 B0：d8d6627（先交实际映射）。B1：f6e23c2（导航/快照/安全设置/事件恢复）。B2：1df67f8（实际默认模型冻结、控制回执与并发恢复验证）。
 
@@ -44,14 +60,7 @@ CARGO_TARGET_DIR="$PWD/target" cargo clippy -p annotagent-storage -p annotagent-
 cargo fmt --all --check
 ```
 
-如集成阶段需要空白隔离 HTTP 服务（此命令未执行；不产生 mock 运行）：
-
-```sh
-backend_fixture=$(mktemp -d /tmp/annotagent-agent-b.XXXXXX)
-CARGO_TARGET_DIR="$PWD/target" cargo run --offline -p annotagent -- serve --workspace "$backend_fixture" --port 8792
-```
-
-8792 被占用时选其他空闲端口，不杀已有进程；该 CLI 的非测试构建不启用 built-in mock Registry，因此真实推理验证仍用上述 fake-provider Rust 测试，不用 CLI 自动 probe。HTTP API 不依赖前端 dist，本轮无需安装 Node 包或构建/修改 web。
+联调阶段改用上方已实测启动器；原空白 CLI 命令不再作为 fixture 交接方案。HTTP API 不依赖 web dist，本轮没有安装 Node 包或修改 web。
 
 验证结果：全 workspace 741 passed、0 failed、6 原有 ignored（包含示例 DTO 校验）；最终 HTTP server lib 57 passed、1 ignored。全 workspace build、严格相关 Clippy、全 workspace fmt check 通过。详见 TEST_MATRIX.md。
 

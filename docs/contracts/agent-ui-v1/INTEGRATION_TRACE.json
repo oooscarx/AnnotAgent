@@ -1,0 +1,667 @@
+{
+  "kind": "TEST: synthetic external model; real application HTTP, authorization, SQLite, stop, recovery and export",
+  "backend_sha": "b8955cabcca72d87b1ed27a5cb132789ca535b60",
+  "workspace": "/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-zq1petcj",
+  "base_url": "http://127.0.0.1:52462",
+  "provider_url": "http://127.0.0.1:52463/openai/v1",
+  "full_http_trace": "/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-zq1petcj/HTTP_TRACE.json",
+  "http_request_count": 82,
+  "checks": {
+    "server_tests": "57 passed / 0 failed / 2 ignored",
+    "strict_clippy": "passed",
+    "fmt": "passed",
+    "restart_snapshot_unchanged": true,
+    "restart_sse_replayed": true
+  },
+  "stop_trace": {
+    "task_id": "560769f0-adab-4ae7-b7b5-be2408cbb516",
+    "request_url": "/api/projects/TEST-agent-ui-ae2ccd98-8a8c-483e-8c74-c11f65a46e55/conversations/4c5757e5-3059-4112-ad08-4178693bb697/stop-requests/cd56fd99-c00e-420c-b01c-5e6a8b63dabd",
+    "initial": {
+      "created_at": "2026-09-09T10:41:05.754200+00:00",
+      "dispatch_error": null,
+      "message": {
+        "conversation_id": "4c5757e5-3059-4112-ad08-4178693bb697",
+        "input": {
+          "id": "cd56fd99-c00e-420c-b01c-5e6a8b63dabd",
+          "image": null,
+          "reference": {
+            "scope": "stop_request",
+            "task_id": "560769f0-adab-4ae7-b7b5-be2408cbb516"
+          },
+          "text": "停止"
+        },
+        "sequence": 5
+      },
+      "normalized_state": "stopping",
+      "observation": {
+        "description": "Cancellation is saved; the selected worker is still settling. Previously sent requests may still incur charges.",
+        "state": "cancel_pending"
+      },
+      "resume": {
+        "available": false,
+        "reason": "A stop receipt is not a resumable checkpoint. Use the exact paused Run/Batch or saved HumanRequest; never automatically resend an unknown Provider call."
+      },
+      "selected_target": {
+        "id": "2a998bde-9f90-452c-8429-948eb1993892",
+        "kind": "journey",
+        "task_id": "560769f0-adab-4ae7-b7b5-be2408cbb516"
+      },
+      "status": "cancel_requested",
+      "targets": [
+        {
+          "id": "2a998bde-9f90-452c-8429-948eb1993892",
+          "kind": "journey",
+          "parent_journey_ids": [],
+          "state": "running",
+          "task_id": "560769f0-adab-4ae7-b7b5-be2408cbb516"
+        }
+      ]
+    },
+    "final": {
+      "created_at": "2026-09-09T10:41:05.754200+00:00",
+      "dispatch_error": null,
+      "message": {
+        "conversation_id": "4c5757e5-3059-4112-ad08-4178693bb697",
+        "input": {
+          "id": "cd56fd99-c00e-420c-b01c-5e6a8b63dabd",
+          "image": null,
+          "reference": {
+            "scope": "stop_request",
+            "task_id": "560769f0-adab-4ae7-b7b5-be2408cbb516"
+          },
+          "text": "停止"
+        },
+        "sequence": 5
+      },
+      "normalized_state": "outcome_unknown",
+      "observation": {
+        "description": "Local execution ended. The remote completion and cost are unknown; no automatic retry was started.",
+        "state": "unknown"
+      },
+      "resume": {
+        "available": false,
+        "reason": "A stop receipt is not a resumable checkpoint. Use the exact paused Run/Batch or saved HumanRequest; never automatically resend an unknown Provider call."
+      },
+      "selected_target": {
+        "id": "2a998bde-9f90-452c-8429-948eb1993892",
+        "kind": "journey",
+        "task_id": "560769f0-adab-4ae7-b7b5-be2408cbb516"
+      },
+      "status": "cancel_requested",
+      "targets": [
+        {
+          "id": "2a998bde-9f90-452c-8429-948eb1993892",
+          "kind": "journey",
+          "parent_journey_ids": [],
+          "state": "running",
+          "task_id": "560769f0-adab-4ae7-b7b5-be2408cbb516"
+        }
+      ]
+    }
+  },
+  "restart_compared": [
+    "calls",
+    "budget",
+    "queue",
+    "human_requests",
+    "thread",
+    "stop",
+    "run_events"
+  ],
+  "examples": {
+    "navigation": {
+      "method": "GET",
+      "path": "/api/navigation?limit=1",
+      "status": 200,
+      "request": null,
+      "response": {
+        "items": [
+          {
+            "conversation_id": "4c5757e5-3059-4112-ad08-4178693bb697",
+            "group_id": null,
+            "project_id": "TEST-agent-ui-ae2ccd98-8a8c-483e-8c74-c11f65a46e55",
+            "project_owner_id": "7ce00dfe-aa1a-5c3a-9bf5-f9e798400be2",
+            "title": "TEST Agent UI HTTP fixture"
+          }
+        ],
+        "next_cursor": null,
+        "workspace_id": "1cf4bab7-e03e-534a-8c74-1a27ff8ff24f"
+      }
+    },
+    "next_task_page": {
+      "method": "GET",
+      "path": "/api/projects/TEST-agent-ui-ae2ccd98-8a8c-483e-8c74-c11f65a46e55/conversations/4c5757e5-3059-4112-ad08-4178693bb697/task-navigation?limit=1&cursor=1",
+      "status": 200,
+      "request": null,
+      "response": {
+        "items": [
+          {
+            "conversation_id": "4c5757e5-3059-4112-ad08-4178693bb697",
+            "created_at": "2026-09-09T10:41:05.727602+00:00",
+            "project_owner_id": "7ce00dfe-aa1a-5c3a-9bf5-f9e798400be2",
+            "schema_revision": "78cf73622ac996e47cbd712e358d34ccf7d5ce3c4a2e9f498b1366d8a758b55f",
+            "sequence": 4,
+            "source_message_id": "9ebbaa53-b3af-40c0-bb97-c8dfeaacdb36",
+            "state": "outcome_unknown",
+            "state_scope": "task_activity",
+            "task_id": "560769f0-adab-4ae7-b7b5-be2408cbb516",
+            "title": "TEST delayed schema: classify indoor or outdoor"
+          }
+        ],
+        "next_cursor": 4
+      }
+    },
+    "user_thread": {
+      "method": "GET",
+      "path": "/api/projects/TEST-agent-ui-ae2ccd98-8a8c-483e-8c74-c11f65a46e55/conversations/4c5757e5-3059-4112-ad08-4178693bb697/tasks/256e1f19-6dc7-466b-936b-89472fdabc55/thread?limit=1",
+      "status": 200,
+      "request": null,
+      "response": {
+        "items": [
+          {
+            "conversation_id": "4c5757e5-3059-4112-ad08-4178693bb697",
+            "id": "54311b09-7f14-4f90-a439-fd23179dfa2f",
+            "message": {
+              "conversation_id": "4c5757e5-3059-4112-ad08-4178693bb697",
+              "input": {
+                "id": "54311b09-7f14-4f90-a439-fd23179dfa2f",
+                "image": null,
+                "text": "按室内和室外给图片分类"
+              },
+              "sequence": 1
+            },
+            "project_owner_id": "7ce00dfe-aa1a-5c3a-9bf5-f9e798400be2",
+            "role": "user",
+            "sequence": 1,
+            "source": "persisted_user_message",
+            "task_id": "256e1f19-6dc7-466b-936b-89472fdabc55"
+          }
+        ],
+        "next_cursor": null
+      }
+    },
+    "send": {
+      "method": "POST",
+      "path": "/api/projects/TEST-agent-ui-ae2ccd98-8a8c-483e-8c74-c11f65a46e55/conversations/4c5757e5-3059-4112-ad08-4178693bb697/send",
+      "status": 200,
+      "request": {
+        "message": {
+          "id": "f072f145-5590-4792-9966-68556b3f979d",
+          "text": "TEST Plan only: awaiting explicit approval",
+          "image": null
+        },
+        "schema_revision": "78cf73622ac996e47cbd712e358d34ccf7d5ce3c4a2e9f498b1366d8a758b55f",
+        "mode": "plan"
+      },
+      "response": {
+        "message": {
+          "conversation_id": "4c5757e5-3059-4112-ad08-4178693bb697",
+          "sequence": 6,
+          "input": {
+            "id": "f072f145-5590-4792-9966-68556b3f979d",
+            "text": "TEST Plan only: awaiting explicit approval",
+            "image": null
+          }
+        },
+        "task_id": "5e09b3a2-9ae8-4def-bb72-a29040fc589e",
+        "disposition": "new_task",
+        "agent_model": {
+          "revision": 3,
+          "model_profile_id": "7adc7e39-9253-4b8a-af21-87dc3cdea5ee"
+        },
+        "mode": "plan",
+        "resolved_agent_model_id": "7adc7e39-9253-4b8a-af21-87dc3cdea5ee"
+      }
+    },
+    "send_lookup": {
+      "method": "GET",
+      "path": "/api/projects/TEST-agent-ui-ae2ccd98-8a8c-483e-8c74-c11f65a46e55/conversations/4c5757e5-3059-4112-ad08-4178693bb697/send/9ebbaa53-b3af-40c0-bb97-c8dfeaacdb36",
+      "status": 200,
+      "request": null,
+      "response": {
+        "input": {
+          "message": {
+            "id": "9ebbaa53-b3af-40c0-bb97-c8dfeaacdb36",
+            "image": null,
+            "text": "TEST delayed schema: classify indoor or outdoor"
+          },
+          "mode": "plan",
+          "schema_revision": "78cf73622ac996e47cbd712e358d34ccf7d5ce3c4a2e9f498b1366d8a758b55f",
+          "task_id": null
+        },
+        "receipt": {
+          "agent_model": {
+            "model_profile_id": "8718be28-d6e6-43b2-9bcd-8a707134ea6d",
+            "revision": 2
+          },
+          "disposition": "new_task",
+          "message": {
+            "conversation_id": "4c5757e5-3059-4112-ad08-4178693bb697",
+            "input": {
+              "id": "9ebbaa53-b3af-40c0-bb97-c8dfeaacdb36",
+              "image": null,
+              "text": "TEST delayed schema: classify indoor or outdoor"
+            },
+            "sequence": 4
+          },
+          "mode": "plan",
+          "resolved_agent_model_id": "8718be28-d6e6-43b2-9bcd-8a707134ea6d",
+          "task_id": "560769f0-adab-4ae7-b7b5-be2408cbb516"
+        }
+      }
+    },
+    "model_selection": {
+      "method": "POST",
+      "path": "/api/projects/TEST-agent-ui-ae2ccd98-8a8c-483e-8c74-c11f65a46e55/conversations/4c5757e5-3059-4112-ad08-4178693bb697/agent-model",
+      "status": 200,
+      "request": {
+        "request_id": "8934d772-bccb-422c-be78-e6b63a108b42",
+        "expected_revision": 2,
+        "model_profile_id": "7adc7e39-9253-4b8a-af21-87dc3cdea5ee"
+      },
+      "response": {
+        "revision": 3,
+        "model_profile_id": "7adc7e39-9253-4b8a-af21-87dc3cdea5ee"
+      }
+    },
+    "queue_authorization": {
+      "method": "GET",
+      "path": "/api/projects/TEST-agent-ui-ae2ccd98-8a8c-483e-8c74-c11f65a46e55/conversations/4c5757e5-3059-4112-ad08-4178693bb697/tasks/256e1f19-6dc7-466b-936b-89472fdabc55/message-queue/0f2557cb-06bb-4783-ac7e-e5a2c2f83572/schema-authorization",
+      "status": 200,
+      "request": null,
+      "response": {
+        "call_id": "42802088-0636-442a-aa13-20fabdb59b98",
+        "model_id": "7adc7e39-9253-4b8a-af21-87dc3cdea5ee",
+        "scope_hash": "2c3b7f6fd5db984d867777d6e846db79d5b19591e800db8e72dc4422bdb2de17",
+        "request_hash": "5155c01500ebcd54bb429dc126d30bdf924e9c8e068dc53b0a3be5e74f1de0f6",
+        "previous_grant_id": "5e43b87b-fd30-48c4-ad8c-ac3659b02eed",
+        "maximum_calls": 21,
+        "expires_at": "2026-09-09T11:11:05.361599Z",
+        "allow_unknown_cost": true
+      }
+    },
+    "queue_final": {
+      "method": "GET",
+      "path": "/api/projects/TEST-agent-ui-ae2ccd98-8a8c-483e-8c74-c11f65a46e55/conversations/4c5757e5-3059-4112-ad08-4178693bb697/tasks/256e1f19-6dc7-466b-936b-89472fdabc55/message-queue",
+      "status": 200,
+      "request": null,
+      "response": [
+        {
+          "input": {
+            "message": {
+              "id": "0f2557cb-06bb-4783-ac7e-e5a2c2f83572",
+              "text": "TEST also classify indoors",
+              "image": null
+            },
+            "task_id": "256e1f19-6dc7-466b-936b-89472fdabc55",
+            "schema_revision": "78cf73622ac996e47cbd712e358d34ccf7d5ce3c4a2e9f498b1366d8a758b55f",
+            "mode": "plan"
+          },
+          "receipt": {
+            "message": {
+              "conversation_id": "4c5757e5-3059-4112-ad08-4178693bb697",
+              "sequence": 2,
+              "input": {
+                "id": "0f2557cb-06bb-4783-ac7e-e5a2c2f83572",
+                "text": "TEST also classify indoors",
+                "image": null
+              }
+            },
+            "task_id": "256e1f19-6dc7-466b-936b-89472fdabc55",
+            "disposition": "task_message",
+            "agent_model": {
+              "revision": 1,
+              "model_profile_id": "7adc7e39-9253-4b8a-af21-87dc3cdea5ee"
+            },
+            "mode": "plan",
+            "resolved_agent_model_id": "7adc7e39-9253-4b8a-af21-87dc3cdea5ee"
+          },
+          "status": "completed",
+          "cancelled_at": null,
+          "planning_call_id": "42802088-0636-442a-aa13-20fabdb59b98"
+        },
+        {
+          "input": {
+            "message": {
+              "id": "5cebf311-5b13-4c4b-9dfb-aab9bb47dfca",
+              "text": "TEST cancel this supplement",
+              "image": null
+            },
+            "task_id": "256e1f19-6dc7-466b-936b-89472fdabc55",
+            "schema_revision": "78cf73622ac996e47cbd712e358d34ccf7d5ce3c4a2e9f498b1366d8a758b55f",
+            "mode": "plan"
+          },
+          "receipt": {
+            "message": {
+              "conversation_id": "4c5757e5-3059-4112-ad08-4178693bb697",
+              "sequence": 3,
+              "input": {
+                "id": "5cebf311-5b13-4c4b-9dfb-aab9bb47dfca",
+                "text": "TEST cancel this supplement",
+                "image": null
+              }
+            },
+            "task_id": "256e1f19-6dc7-466b-936b-89472fdabc55",
+            "disposition": "task_message",
+            "agent_model": {
+              "revision": 1,
+              "model_profile_id": "7adc7e39-9253-4b8a-af21-87dc3cdea5ee"
+            },
+            "mode": "plan",
+            "resolved_agent_model_id": "7adc7e39-9253-4b8a-af21-87dc3cdea5ee"
+          },
+          "status": "cancelled",
+          "cancelled_at": "2026-09-09T10:41:05.359257+00:00",
+          "planning_call_id": null
+        }
+      ]
+    },
+    "answer_saved": {
+      "method": "POST",
+      "path": "/api/projects/TEST-agent-ui-ae2ccd98-8a8c-483e-8c74-c11f65a46e55/conversations/4c5757e5-3059-4112-ad08-4178693bb697/tasks/256e1f19-6dc7-466b-936b-89472fdabc55/human-requests/6f7ebfce-89dc-49af-81a8-6c310fc916d9/answer",
+      "status": 200,
+      "request": {
+        "answer": {
+          "revision_id": "f4592fb1-0202-4e80-9354-d7109ce875a7",
+          "sample_test_id": "5e43b87b-fd30-48c4-ad8c-ac3659b02eed",
+          "image_id": "48eb4850-4293-525c-9dd6-ce3793688dd6",
+          "sequence": 1,
+          "reason": "wrong_target",
+          "outcome_id": "classification-0",
+          "corrected_value": {
+            "kind": "classification",
+            "labels": [
+              "室内"
+            ]
+          },
+          "corrected_label": "室内",
+          "note": "TEST saved answer",
+          "created_at": "2026-09-09T10:41:05.338237+00:00"
+        }
+      },
+      "response": {
+        "answer": {
+          "corrected_label": "室内",
+          "corrected_value": {
+            "kind": "classification",
+            "labels": [
+              "室内"
+            ]
+          },
+          "created_at": "2026-09-09T10:41:05.338237Z",
+          "image_id": "48eb4850-4293-525c-9dd6-ce3793688dd6",
+          "note": "TEST saved answer",
+          "outcome_id": "classification-0",
+          "reason": "wrong_target",
+          "revision_id": "f4592fb1-0202-4e80-9354-d7109ce875a7",
+          "sample_test_id": "5e43b87b-fd30-48c4-ad8c-ac3659b02eed",
+          "sequence": 1
+        },
+        "deferral_revision": 0,
+        "deferred": false,
+        "input": {
+          "content_hash": "65380e2d40ffb9009ff18c6b60fdb846a6797817e75da491e4d4da461d7fd77a",
+          "conversation_id": "4c5757e5-3059-4112-ad08-4178693bb697",
+          "expected_feedback_sequence": 0,
+          "id": "6f7ebfce-89dc-49af-81a8-6c310fc916d9",
+          "image_id": "48eb4850-4293-525c-9dd6-ce3793688dd6",
+          "outcome_id": "classification-0",
+          "question": "TEST confirm saved sample classification",
+          "reason_code": "wrong_target",
+          "resume_checkpoint_ref": "9473fa3f-f802-4597-a88b-74322588f117",
+          "sample_test_id": "5e43b87b-fd30-48c4-ad8c-ac3659b02eed",
+          "task_id": "256e1f19-6dc7-466b-936b-89472fdabc55"
+        },
+        "resume_draft_id": null,
+        "resume_error": "SQLite error: UNIQUE constraint failed: workflow_drafts.id",
+        "status": "answered"
+      }
+    },
+    "answer_conflict": {
+      "method": "POST",
+      "path": "/api/projects/TEST-agent-ui-ae2ccd98-8a8c-483e-8c74-c11f65a46e55/conversations/4c5757e5-3059-4112-ad08-4178693bb697/tasks/256e1f19-6dc7-466b-936b-89472fdabc55/human-requests/6f7ebfce-89dc-49af-81a8-6c310fc916d9/answer",
+      "status": 400,
+      "request": {
+        "answer": {
+          "revision_id": "f4592fb1-0202-4e80-9354-d7109ce875a7",
+          "sample_test_id": "5e43b87b-fd30-48c4-ad8c-ac3659b02eed",
+          "image_id": "48eb4850-4293-525c-9dd6-ce3793688dd6",
+          "sequence": 1,
+          "reason": "wrong_target",
+          "outcome_id": "classification-0",
+          "corrected_value": {
+            "kind": "classification",
+            "labels": [
+              "室内"
+            ]
+          },
+          "corrected_label": "室内",
+          "note": "conflicting retry",
+          "created_at": "2026-09-09T10:41:05.338237+00:00"
+        }
+      },
+      "response": {
+        "code": "invalid_request",
+        "current_revision": null,
+        "error": "Human answer conflicts with the saved correction",
+        "status": 400,
+        "suggested_action": "review_request_or_reload_scope"
+      }
+    },
+    "resume_saved_answer": {
+      "method": "POST",
+      "path": "/api/projects/TEST-agent-ui-ae2ccd98-8a8c-483e-8c74-c11f65a46e55/conversations/4c5757e5-3059-4112-ad08-4178693bb697/tasks/256e1f19-6dc7-466b-936b-89472fdabc55/human-requests/6f7ebfce-89dc-49af-81a8-6c310fc916d9/resume",
+      "status": 200,
+      "request": {},
+      "response": {
+        "answer": {
+          "corrected_label": "室内",
+          "corrected_value": {
+            "kind": "classification",
+            "labels": [
+              "室内"
+            ]
+          },
+          "created_at": "2026-09-09T10:41:05.338237Z",
+          "image_id": "48eb4850-4293-525c-9dd6-ce3793688dd6",
+          "note": "TEST saved answer",
+          "outcome_id": "classification-0",
+          "reason": "wrong_target",
+          "revision_id": "f4592fb1-0202-4e80-9354-d7109ce875a7",
+          "sample_test_id": "5e43b87b-fd30-48c4-ad8c-ac3659b02eed",
+          "sequence": 1
+        },
+        "deferral_revision": 0,
+        "deferred": false,
+        "input": {
+          "content_hash": "65380e2d40ffb9009ff18c6b60fdb846a6797817e75da491e4d4da461d7fd77a",
+          "conversation_id": "4c5757e5-3059-4112-ad08-4178693bb697",
+          "expected_feedback_sequence": 0,
+          "id": "6f7ebfce-89dc-49af-81a8-6c310fc916d9",
+          "image_id": "48eb4850-4293-525c-9dd6-ce3793688dd6",
+          "outcome_id": "classification-0",
+          "question": "TEST confirm saved sample classification",
+          "reason_code": "wrong_target",
+          "resume_checkpoint_ref": "9473fa3f-f802-4597-a88b-74322588f117",
+          "sample_test_id": "5e43b87b-fd30-48c4-ad8c-ac3659b02eed",
+          "task_id": "256e1f19-6dc7-466b-936b-89472fdabc55"
+        },
+        "resume_draft_id": null,
+        "resume_error": "SQLite error: UNIQUE constraint failed: workflow_drafts.id",
+        "status": "answered"
+      }
+    },
+    "settings": {
+      "method": "GET",
+      "path": "/api/settings?view=agent-ui",
+      "status": 200,
+      "request": null,
+      "response": {
+        "revision": "17d79b6ea6e58152e91b9308e79885c697176439ddd72b3aef287a209b8c49cf",
+        "sections": {
+          "agent_models": {
+            "defaults_url": "/api/agent-model-bindings",
+            "effective": "next_request",
+            "profiles_url": "/api/model-profiles"
+          },
+          "data_privacy": {
+            "cleanup_requires_preview": true,
+            "outbound_authorization": "exact_operation_scope",
+            "storage_scope": "local_workspace",
+            "workspace_id": "1cf4bab7-e03e-534a-8c74-1a27ff8ff24f"
+          },
+          "general": {
+            "fields": [
+              "theme",
+              "language",
+              "density",
+              "font_size"
+            ],
+            "storage": "browser_preferences"
+          },
+          "providers": {
+            "credential_configured": false,
+            "list_url": "/api/providers",
+            "probe_on_read": false
+          },
+          "usage_budget": {
+            "future_run_budget": {
+              "max_cost": "2.0",
+              "max_images": 1000,
+              "max_input_tokens": 200000,
+              "max_output_tokens": 50000,
+              "max_requests": 500,
+              "max_total_tokens": 250000,
+              "max_wall_clock_seconds": null
+            },
+            "pricing": {
+              "currency": "USD",
+              "input_per_million_tokens": "1.0",
+              "output_per_million_tokens": "4.0",
+              "per_credit": "0",
+              "per_image": "0",
+              "per_request": "0"
+            },
+            "scope": "future_runs_only",
+            "task_budget": "existing_task_ledger",
+            "unknown_cost": null
+          },
+          "vision_plugins": {
+            "bundles_url": "/api/model-bundles",
+            "instances_url": "/api/model-instances",
+            "plugins_url": "/api/plugins"
+          }
+        }
+      }
+    },
+    "settings_conflict": {
+      "method": "PATCH",
+      "path": "/api/settings",
+      "status": 409,
+      "request": {
+        "expected_revision": "TEST-stale",
+        "budget": {
+          "max_cost": "2.0",
+          "max_images": 1000,
+          "max_input_tokens": 200000,
+          "max_output_tokens": 50000,
+          "max_requests": 11,
+          "max_total_tokens": 250000,
+          "max_wall_clock_seconds": null
+        }
+      },
+      "response": {
+        "code": "settings_revision_conflict",
+        "current_revision": "9d4e3905d5e1ac9e3f44bedede08c0e29fe27b8b7166232f783b2288e0d6a510",
+        "error": "Settings changed; reload before updating future budgets",
+        "status": 409,
+        "suggested_action": "reload_settings"
+      }
+    },
+    "csrf_rejection": {
+      "method": "POST",
+      "path": "/api/projects",
+      "status": 403,
+      "request": {},
+      "response": {
+        "code": "csrf_token_invalid",
+        "error": "a valid local-session CSRF token is required",
+        "request_id": "57308a5f-6951-4bc1-83e8-50bb5ed31a57",
+        "status": 403
+      }
+    },
+    "sse_replay": {
+      "method": "GET",
+      "path": "/api/events?run_id=6d466d02-d7e9-4a7e-82ae-f4f2770a1290",
+      "last_event_id": "96585951-c408-4e87-b616-30dddf10356e",
+      "status": 200,
+      "response": "id: 3eff0c3d-12a0-4779-91f4-ff51d9e404f6\nevent: run_started\ndata: {\"schema_version\":1,\"event_id\":\"3eff0c3d-12a0-4779-91f4-ff51d9e404f6\",\"run_id\":\"6d466d02-d7e9-4a7e-82ae-f4f2770a1290\",\"image_id\":\"48eb4850-4293-525c-9dd6-ce3793688dd6\",\"task_id\":null,\"occurred_at\":\"2026-09-09T10:41:04.977478Z\",\"kind\":\"run_started\",\"payload\":{\"type\":\"state\",\"data\":{\"from\":\"pending\",\"to\":\"running\",\"reason\":\"executing 9473fa3f-f802-4597-a88b-74322588f117@v1 content_hash=7fd364d9e57d79374c97d833ec6470698c73d375b120b6cd7c862538a3b91167\"}}}\n"
+    },
+    "sse_gap": {
+      "method": "GET",
+      "path": "/api/events?run_id=6d466d02-d7e9-4a7e-82ae-f4f2770a1290&last_event_id=f7dc1edb-158f-429c-87c8-84fb6ac68419",
+      "status": 409,
+      "request": null,
+      "response": {
+        "code": "event_cursor_gap",
+        "error": "Event cursor is absent from this Run; reload the snapshot",
+        "history_url": "/api/runs/6d466d02-d7e9-4a7e-82ae-f4f2770a1290/events",
+        "snapshot_url": "/api/runs/6d466d02-d7e9-4a7e-82ae-f4f2770a1290",
+        "status": 409,
+        "suggested_action": "reload_snapshot"
+      }
+    },
+    "export_terminal": {
+      "method": "GET",
+      "path": "/api/projects/TEST-agent-ui-ae2ccd98-8a8c-483e-8c74-c11f65a46e55/conversations/4c5757e5-3059-4112-ad08-4178693bb697/tasks/256e1f19-6dc7-466b-936b-89472fdabc55/exports/d30f331a-0df6-4d05-94b8-4deca88377fb",
+      "status": 200,
+      "request": null,
+      "response": {
+        "active": false,
+        "job": {
+          "created_at": "2026-09-09T10:41:05.387833+00:00",
+          "error": null,
+          "format": "native",
+          "id": "d30f331a-0df6-4d05-94b8-4deca88377fb",
+          "result": {
+            "completed_at": "2026-09-09T10:41:05.395425+00:00",
+            "delivery": {
+              "bytes": 1397,
+              "id": "d30f331a-0df6-4d05-94b8-4deca88377fb",
+              "sha256": "23b271d2f514695eac7900654663370fcf832df22defff1afccc98469935298c"
+            },
+            "format": "native",
+            "output_path": "/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-zq1petcj/TEST-agent-ui-ae2ccd98-8a8c-483e-8c74-c11f65a46e55/exports/deliveries/d30f331a-0df6-4d05-94b8-4deca88377fb",
+            "report": {
+              "exported_count": 1,
+              "output_files": [
+                "/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-zq1petcj/TEST-agent-ui-ae2ccd98-8a8c-483e-8c74-c11f65a46e55/exports/deliveries/d30f331a-0df6-4d05-94b8-4deca88377fb/annotagent-native.json",
+                "/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-zq1petcj/TEST-agent-ui-ae2ccd98-8a8c-483e-8c74-c11f65a46e55/exports/deliveries/d30f331a-0df6-4d05-94b8-4deca88377fb/export-report.json"
+              ],
+              "skipped_count": 0,
+              "unsupported_task_kinds": [],
+              "warnings": []
+            },
+            "source_fingerprint": "89f3836b000ac4e6db4a3cf8f971496ecd9cadc8a079e5e3dbc3135aeb7ae176"
+          }
+        }
+      }
+    },
+    "export_download": {
+      "method": "GET",
+      "path": "/api/projects/TEST-agent-ui-ae2ccd98-8a8c-483e-8c74-c11f65a46e55/exports/d30f331a-0df6-4d05-94b8-4deca88377fb/download",
+      "status": 200,
+      "request": null,
+      "response": {
+        "bytes": 1397,
+        "content_type": "application/zip"
+      }
+    }
+  },
+  "limitations": [
+    "No universal assistant chat message; structured model decisions and system receipts are separate.",
+    "No universal cancelled/unknown resume or automatic queue dispatcher.",
+    "Fixture inference is not live model quality or billing evidence.",
+    "Restart HTTP check covers settled work; prior B3 fault-point tests cover Batch and answer outbox recovery."
+  ]
+}

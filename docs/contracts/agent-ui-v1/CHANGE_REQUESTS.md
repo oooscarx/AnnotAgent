@@ -10,3 +10,10 @@
 - CR-B08 Queue 是持久、有序、显式授权 POST 驱动。恢复 saved authorization 后用相同原请求继续；不会因 GET/重连后台自动批量派发，也不新增常驻 scheduler。
 
 这些是实际支持边界，不修改 SHARED_CONTRACT。若集成要求跨所有实体的统一有序事件或统一会计分页，需要另行设计现有账本的聚合，不在 JSX 中补虚构状态。
+
+## 联调支持交付（2026-09-09）
+
+- CR-B09 已完成：显式 TEST HTTP 启动器，复用现有外部模型 fixture + 真实 Server/SQLite/CSRF/授权/停止/恢复。生产 Registry 不新增 Mock。命令见 INTEGRATION_ENVIRONMENT.md。
+- CR-B10 已完成：HTTP_ADAPTER.md 按 UI 字段逐项映射，明确 Send GET wrapper、Queue 内层 sequence、Run history wrapper、Stop 顶层回执及实际 credential POST。批准不是通用 token，revision/command ID 分实体保存。
+- CR-B11 确认保留：Thread 只有真实用户消息；模型结构化决策与系统回执不是通用助手聊天消息。前端无需也不得编造完成话术。
+- 本轮没有产品功能扩展、队列 scheduler/统一账本/Agent 架构改动；完成交接后只响应前端的具体集成问题。唯一合并和接线由视觉通过后的前端 Agent 在独立集成分支执行。
