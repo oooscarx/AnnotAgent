@@ -5,6 +5,17 @@ const project = { project_id: "TEST-alpha", project_owner_id: "owner-a", title: 
 const settings = { revision: "revision-1", sections: { data_privacy: { workspace_id: "TEST-workspace" }, usage_budget: { future_run_budget: { max_requests: 10, max_cost: "2.50" } } } };
 const navTask = (id: string) => ({ task_id: id, title: `TEST ${id}`, schema_revision: "schema-1", project_owner_id: "owner-a", conversation_id: "conversation-a", state: "idle" });
 const root = "/api/projects/TEST-alpha/conversations/conversation-a/tasks";
+it("loads before/after from the exact repair request, not an unrelated older sample",async()=>{
+  const record=(id:string)=>({sample_test:{id,project_id:project.project_id,draft_id:id+"-draft",draft_revision:1,inputs:[],report:{samples:[]}}});
+  const {transport,paths}=mockTransport({
+    [`${root}/t1/workspace`]:{project_id:project.project_id,project_owner_id:project.project_owner_id,conversation_id:project.conversation_id,task:{input:{id:"t1",schema_revision:"schema-1"}},agent_model:{revision:0,model_profile_id:null},actions:{},queue:[],calls:[],human_requests:[{input:{id:"repair",image_id:"image-uuid",sample_test_id:"source"},status:"applied"}],sample_operations:[{id:"source",draft_id:"source-draft",status:"succeeded",created_at:"2026-09-08"},{id:"unrelated",draft_id:"unrelated-draft",status:"succeeded",created_at:"2026-09-09"},{id:"new",draft_id:"new-draft",status:"succeeded",created_at:"2026-09-10"}],journey_consents:[{record:{consent:{id:"journey",sample_operation_id:"new",repair:{request_id:"repair"}}}}]},
+    "/api/workflow-drafts/new-draft/sample-test?test_id=new":record("new"),
+    "/api/workflow-drafts/source-draft/sample-test?test_id=source":record("source"),
+  });
+  const adapter=new HttpAdapter(transport);await adapter.refresh();await adapter.loadTask(project.project_id,"t1");
+  expect(adapter.snapshot().tasks.find(t=>t.id==="t1")?.beforeRepair?.sample).toBe("source");
+  expect(paths.some(p=>p.includes("unrelated-draft"))).toBe(false);
+});
 it("shows the latest successful sample instead of an older pending review after repair",async()=>{
   const {transport,paths}=mockTransport({
     [`${root}/t1/workspace`]:{project_id:project.project_id,project_owner_id:project.project_owner_id,conversation_id:project.conversation_id,task:{input:{id:"t1",schema_revision:"schema-1"}},agent_model:{revision:0,model_profile_id:null},actions:{},queue:[],calls:[],human_requests:[{input:{id:"old-review",image_id:"image-uuid",sample_test_id:"old"},status:"pending"}],sample_operations:[{id:"old",draft_id:"old-draft",status:"succeeded",created_at:"2026-09-09"},{id:"new",draft_id:"new-draft",status:"succeeded",created_at:"2026-09-10"}]},
