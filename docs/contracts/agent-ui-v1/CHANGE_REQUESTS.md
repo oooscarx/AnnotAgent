@@ -33,3 +33,7 @@ PATCH `/api/model-profiles/:id` accepts optional `expected_revision`; atomic sta
 ## UIAPI-012 installation command recovery
 
 POST /api/model-installations adds optional command_id; first admission202, exact replay200 with original operation, changed selection/directory409 model_install_command_conflict. GET /api/model-installations/commands/{command_id} is read-only and never dispatches. Receipts add command_id/scope and unknown status for orphan in-flight work. Full contract, migration0060, compatibility and tests: [UIAPI-012_INSTALL_COMMANDS.md](UIAPI-012_INSTALL_COMMANDS.md).
+
+## UIAPI-013 static Workflow validation
+
+GET `/api/workflow-drafts/{id}?project_id=...` returns the persisted Draft. POST `/api/workflow-drafts/{id}/validate` takes `{project_id,expected_revision}` and returns `{project_id,draft_id,revision,content_hash,validation_kind:"static",validation:WorkflowValidationReport}`. Wrong owner404, stale revision409, invalid request types422; blocking static issues remain200 with `validation.valid=false`. Metadata-only Core checks do not resolve credentials, instantiate Provider/HTTP Worker clients, call plugins, execute samples or mutate publication. Exact adapter mapping and boundary: [UIAPI-013_STATIC_VALIDATION.md](UIAPI-013_STATIC_VALIDATION.md).
