@@ -7,7 +7,8 @@ import urllib.parse
 from http_smoke import uid
 
 
-def seed_bbox(c, root, provider):
+def seed_bbox(c, root, provider, image_count=1):
+    assert 1 <= image_count <= 3
     model = c.post("/api/model-profiles", {"provider_id": provider["id"], "display_name": "TEST bbox geometry", "remote_model_id": "e2e-conversation-bbox-feedback-clarify", "input_modalities": ["text", "image"], "task_capabilities": ["text_generation", "vision_language", "image_classification"], "protocol_features": {"tool_calls": True, "structured_output": True}})
     c.post(f"/api/providers/{provider['id']}/active-probe", {"model_profile_id": model["id"], "confirmed_billable": True})
     project = "TEST-agent-ui-bbox-" + uid()
@@ -16,7 +17,9 @@ def seed_bbox(c, root, provider):
     c.request("PUT", p + "/model-bindings", {"bindings": [{"capability": "vision_language", "role": "detection", "match_kind": "capability", "model_profile_id": model["id"], "locked": False}]})
     png = (root / "examples/robocup/images/synthetic-robocup.png").read_bytes()
     width, height = struct.unpack(">II", png[16:24])
-    c.request("POST", p + "/image-upload?name=TEST-bbox.png", png)
+    for index in range(image_count):
+        # Distinct TEST file identities; valid PNG decoders ignore trailing fixture bytes.
+        c.request("POST", p + f"/image-upload?name=TEST-bbox-{index}.png", png + f"TEST-image-{index}".encode())
     conversation = c.post(p + "/conversations")["conversation_id"]
     cr = p + "/conversations/" + conversation
     preference = c.get(cr + "/agent-model")
@@ -42,7 +45,7 @@ def seed_bbox(c, root, provider):
     c.request("PATCH", "/api/workflow-drafts/" + draft_id, draft, extra_headers={"if-match": str(draft["revision"])})
     preview = c.get(tr + "/sample-preview?" + urllib.parse.urlencode({"draft_id": draft_id, "request_id": uid()}))
     budget = preview["conversation_budget"]
-    sample = c.post(p + "/sample-operations", {"request_id": preview["request_id"], "draft_id": draft_id, "expected_revision": preview["revision"], "image_indices": [0], "authorization_fingerprint": preview["authorization_fingerprint"], "conversation": {"conversation_id": conversation, "task_id": task, **{key: budget[key] for key in ["previous_grant_id", "scope_hash", "expires_at"]}, "allow_unknown_cost": True, "human_review": True}})
+    sample = c.post(p + "/sample-operations", {"request_id": preview["request_id"], "draft_id": draft_id, "expected_revision": preview["revision"], "image_indices": list(range(image_count)), "authorization_fingerprint": preview["authorization_fingerprint"], "conversation": {"conversation_id": conversation, "task_id": task, **{key: budget[key] for key in ["previous_grant_id", "scope_hash", "expires_at"]}, "allow_unknown_cost": True, "human_review": True}})
     c.poll(p + "/sample-operations/" + sample["id"], lambda v: v["status"] == "succeeded" and (v.get("assistance") or {}).get("status") == "completed")
     sample_url = f"/api/workflow-drafts/{draft_id}/sample-test?test_id={sample['id']}"
     record = c.get(sample_url)["sample_test"]
@@ -72,4 +75,4 @@ def seed_bbox(c, root, provider):
     assert pending["status"] == "pending" and pending.get("answer") is None
     c.get(tr + "/workspace")
     browser_answer = {**answer, "revision_id": uid(), "sequence": answer["sequence"] + 1, "note": "TEST browser bbox correction", "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
-    return {"project": project, "conversation_id": conversation, "task_id": task, "task_root": tr, "sample_url": sample_url, "sample_test_id": record["id"], "draft_id": record["draft_id"], "candidate_id": candidate["outcome"]["id"], "source_artifact_id": candidate["source_artifact_id"], "terminal_candidate": candidate, "projection_group": "review_candidates" if any(item["candidate"]["outcome"]["id"] == candidate["outcome"]["id"] for item in projection["review_candidates"]) else "final_candidates", "image_id": image["image_id"], "content_hash": image["content_hash"], "image_dimensions": {"width": width, "height": height}, "feedback_url": feedback_url, "feedback_revision_id": answer["revision_id"], "feedback_sequence": answer["sequence"], "pending_request_id": pending_input["id"], "answer_url": tr + "/human-requests/" + pending_input["id"] + "/answer", "answer_example": {"answer": browser_answer}, "normalized_rect_order": "x,y,width,height; unit interval; Rust f32 rounding"}
+    return {"answered_request_id": human["input"]["id"], "model_profile_id": model["id"], "schema_id": schema["id"], "schema_revision": schema["revision"], "project": project, "conversation_id": conversation, "task_id": task, "task_root": tr, "sample_url": sample_url, "sample_test_id": record["id"], "draft_id": record["draft_id"], "candidate_id": candidate["outcome"]["id"], "source_artifact_id": candidate["source_artifact_id"], "terminal_candidate": candidate, "projection_group": "review_candidates" if any(item["candidate"]["outcome"]["id"] == candidate["outcome"]["id"] for item in projection["review_candidates"]) else "final_candidates", "image_id": image["image_id"], "content_hash": image["content_hash"], "image_dimensions": {"width": width, "height": height}, "feedback_url": feedback_url, "feedback_revision_id": answer["revision_id"], "feedback_sequence": answer["sequence"], "pending_request_id": pending_input["id"], "answer_url": tr + "/human-requests/" + pending_input["id"] + "/answer", "answer_example": {"answer": browser_answer}, "normalized_rect_order": "x,y,width,height; unit interval; Rust f32 rounding"}

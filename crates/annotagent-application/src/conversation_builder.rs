@@ -433,14 +433,16 @@ impl LocalApplication {
         {
             cancellation.cancel();
         }
-        let metered = self.conversation_text_provider(
-            project,
-            execution.conversation_id,
-            execution.task_id,
-            &execution.scope_hash,
-            &selected.model.remote_model_id,
-            provider,
-        )?;
+        let metered = self
+            .conversation_text_provider(
+                project,
+                execution.conversation_id,
+                execution.task_id,
+                &execution.scope_hash,
+                &selected.model.remote_model_id,
+                provider,
+            )?
+            .for_builder_operation(execution.operation_id);
         if cancellation.is_cancelled() {
             bail!("Builder cancelled before execution");
         }

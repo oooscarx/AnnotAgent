@@ -92,6 +92,30 @@ fn step(
     }
 }
 
+/// Recognize the existing bounded pass only for the selected feedback labels.
+/// Its graph is still statically validated before the Builder may retain it.
+pub(crate) fn existing_candidate(
+    original: &WorkflowDraft,
+    labels: &BTreeSet<String>,
+) -> Option<WorkflowDraft> {
+    let composition = original.label_pipeline.as_ref()?;
+    let matching = composition.label_pipelines.iter().any(|pipeline| {
+        labels.contains(pipeline.target_label.as_str())
+            && pipeline.steps.iter().any(|step| {
+                step.id.contains(".localization_repair.")
+                    && step.node_type == annotagent_runtime::CORE_PROMPT_COVERAGE_GATE
+                    && step
+                        .parameters
+                        .get("recovery_route_policy")
+                        .is_some_and(|policy| {
+                            policy["maximum_attempts"] == 1
+                                && policy["allow_uncertain_refinement"] == false
+                        })
+            })
+    });
+    matching.then(|| original.clone())
+}
+
 /// Compose on a clone. Requires the existing typed detection -> segment -> geometry -> review
 /// route and reuses its exact models. Unsupported authored topology is left unchanged.
 pub(crate) fn candidate(

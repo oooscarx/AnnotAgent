@@ -41,6 +41,111 @@ fn read(
     .transpose()
 }
 
+/// A narrow pending-human exception for calls made by the already reserved repair
+/// operation. Revalidate durable ownership, exact Applied answer/copy and Schema
+/// in the model-call admission transaction. This does not grant any calls itself.
+pub(crate) fn applied_repair_call(
+    db: &rusqlite::Connection,
+    project: &str,
+    task: Uuid,
+    operation: Uuid,
+    scope_hash: &str,
+) -> Result<bool, StorageError> {
+    let Some(operation) = read(db, operation)? else {
+        return applied_repair_sample(db, project, task, operation, scope_hash);
+    };
+    let Some(evidence) = operation.evidence else {
+        return Ok(false);
+    };
+    if operation.task_id != task
+        || operation.status != "reserved"
+        || evidence["call_scope_hash"] != scope_hash
+        || evidence["repair_source"]["kind"] != "human_request"
+    {
+        return Ok(false);
+    }
+    crate::conversation_stop::require_admission_clear(db, task, &operation.id.to_string(), true)?;
+    applied_source(db, project, task, &evidence)
+}
+fn applied_source(
+    db: &rusqlite::Connection,
+    project: &str,
+    task: Uuid,
+    evidence: &serde_json::Value,
+) -> Result<bool, StorageError> {
+    let repair: crate::ConversationBuilderRepair =
+        serde_json::from_value(evidence["repair_source"]["reference"].clone())?;
+    let human = crate::conversation_human_requests::read(db, project, repair.request_id)?;
+    if human.input.task_id != task
+        || human.status != crate::ConversationHumanRequestStatus::Applied
+        || human.resume_error.is_some()
+        || human.resume_draft_id.as_deref() != Some(repair.draft_id.as_str())
+        || human.input.resume_checkpoint_ref.to_string() != repair.draft_id
+    {
+        return Ok(false);
+    }
+    let Some(answer) = human.answer else {
+        return Ok(false);
+    };
+    let row: Option<(String,String,String,String)> = db.query_row("SELECT d.project_id,d.draft_json,r.sample_test_id,r.feedback_json FROM workflow_drafts d JOIN sample_plan_revisions r ON r.draft_id=d.id AND r.project_id=d.project_id WHERE d.id=?1 AND d.deleted_at IS NULL AND d.archived_at IS NULL AND d.status NOT IN ('published','archived')",[&repair.draft_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?;
+    let Some((draft_project, draft, test, feedback)) = row else {
+        return Ok(false);
+    };
+    if test != human.input.sample_test_id
+        || serde_json::from_str::<Vec<crate::SampleFeedbackRevision>>(&feedback)? != vec![answer]
+    {
+        return Ok(false);
+    }
+    let draft: annotagent_core::WorkflowDraft = serde_json::from_str(&draft)?;
+    let Some((schema_id, revision)) = schema_pair(Some(evidence))? else {
+        return Ok(false);
+    };
+    let schema = crate::conversation_schema::read(db, project, schema_id, Some(revision))?;
+    Ok(schema.task_id == task
+        && draft.project_id == draft_project
+        && draft
+            .annotation_schema
+            .as_ref()
+            .is_some_and(|b| b.schema_draft_id == schema_id.to_string() && b.revision == revision))
+}
+
+fn applied_repair_sample(
+    db: &rusqlite::Connection,
+    project: &str,
+    task: Uuid,
+    operation: Uuid,
+    scope_hash: &str,
+) -> Result<bool, StorageError> {
+    // A running sample must be the current exact sample grant, not merely a
+    // historical repair copy. Existing sample seals validate model/image scope.
+    // Its exclusive lease permits the existing preparation step to advance the
+    // revision while preventing a concurrent editor from replacing the scope.
+    let row: Option<(String,String,String)> = db.query_row("SELECT s.request_json,d.draft_json,r.request_id FROM sample_operations s JOIN workflow_drafts d ON d.id=s.draft_id AND d.project_id=s.project_id JOIN conversation_resume_results r ON r.draft_id=d.id JOIN conversation_human_requests h ON h.id=r.request_id AND h.task_id=?2 JOIN conversation_call_grants g ON g.id=s.id AND g.task_id=h.task_id JOIN management_entity_leases l ON l.project_id=s.project_id AND l.object_id=d.id AND l.object_kind='workflow_draft' AND l.lease_kind='sample_test' AND l.owner=s.id WHERE l.expires_at>?4 AND s.id=?1 AND s.status='running' AND g.scope_hash=?3 AND h.status='applied' AND d.deleted_at IS NULL AND d.archived_at IS NULL",params![operation.to_string(),task.to_string(),scope_hash,chrono::Utc::now().to_rfc3339()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
+    let Some((request, draft, human)) = row else {
+        return Ok(false);
+    };
+    let request: serde_json::Value = serde_json::from_str(&request)?;
+    let draft: annotagent_core::WorkflowDraft = serde_json::from_str(&draft)?;
+    if request["conversation"]["task_id"] != task.to_string()
+        || request["conversation"]["scope_hash"] != scope_hash
+        || request["execution"]["expected_revision"]
+            .as_u64()
+            .is_none_or(|revision| revision == 0 || revision > draft.revision)
+    {
+        return Ok(false);
+    }
+    let Some(binding) = draft.annotation_schema.as_ref() else {
+        return Ok(false);
+    };
+    crate::conversation_stop::require_admission_clear(db, task, &operation.to_string(), true)?;
+    applied_source(
+        db,
+        project,
+        task,
+        &serde_json::json!({"schema_id":binding.schema_draft_id,"schema_revision":binding.revision,"repair_source":{"reference":{"request_id":human,"draft_id":draft.id,"revision":draft.revision,"content_hash":draft.content_hash}}}),
+    )
+}
+
 fn schema_pair(evidence: Option<&serde_json::Value>) -> Result<Option<(Uuid, u64)>, StorageError> {
     let Some(evidence) = evidence else {
         return Ok(None);
@@ -196,8 +301,10 @@ impl SqliteStore {
             }
             let collision: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM workflow_drafts WHERE id=?1 UNION ALL SELECT 1 FROM agent_sessions WHERE id=?1 UNION ALL SELECT 1 FROM conversation_model_calls WHERE id=?1)",[id.to_string()],|row|row.get(0))?;
             if collision { return Err(StorageError::InvalidConversation("Builder operation ID is already used by another object".into())); }
+            let call_scope: Option<String> = tx.query_row("SELECT scope_hash FROM conversation_call_grants WHERE task_id=?1",[task.to_string()],|r|r.get(0)).optional()?;
             let evidence=schema.map(|(schema_id,revision)| {
                 let mut evidence=serde_json::json!({"schema_id":schema_id,"schema_revision":revision});
+                if let Some(scope)=call_scope {evidence["call_scope_hash"]=serde_json::json!(scope);}
                 if let Some(source)=source {evidence["repair_source"]=source.clone();}
                 evidence.to_string()
             });

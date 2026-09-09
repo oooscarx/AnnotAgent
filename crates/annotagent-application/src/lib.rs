@@ -13025,6 +13025,12 @@ impl LocalApplication {
                 &suggestion.draft,
                 &localization_repair::affected_labels(evidence, observations),
             )
+            .or_else(|| {
+                localization_repair::existing_candidate(
+                    &suggestion.draft,
+                    &localization_repair::affected_labels(evidence, observations),
+                )
+            })
         {
             normalize_profile_compatibility_bindings(&mut repaired, &models)?;
             let report = self.validate_workflow_draft(&repaired, settings, false)?;
@@ -27073,6 +27079,21 @@ export:
         assert_eq!(repaired.annotation_schema, original.annotation_schema);
         assert_eq!(repaired.id, original.id);
         assert_eq!(repaired.runtime_policies, original.runtime_policies);
+        assert_eq!(
+            localization_repair::existing_candidate(&repaired, &BTreeSet::from(["ball".into()])),
+            Some(repaired.clone())
+        );
+        assert!(
+            localization_repair::existing_candidate(&original, &BTreeSet::from(["ball".into()]))
+                .is_none()
+        );
+        assert!(
+            localization_repair::existing_candidate(
+                &repaired,
+                &BTreeSet::from(["unrelated".into()])
+            )
+            .is_none()
+        );
         assert!(
             localization_repair::candidate(&repaired, &BTreeSet::from(["ball".into()])).is_none()
         );

@@ -13,6 +13,7 @@ pub struct ConversationVisionCalls {
     project: String,
     task: Uuid,
     scope: String,
+    sample_operation: Option<Uuid>,
 }
 
 impl crate::LocalApplication {
@@ -44,11 +45,19 @@ impl crate::LocalApplication {
             project: owner,
             task,
             scope: scope.into(),
+            sample_operation: None,
         })
     }
 }
 
 impl ConversationVisionCalls {
+    /// Carries the already validated sample operation; never creates permission.
+    #[must_use]
+    pub fn for_sample_operation(mut self, id: Uuid) -> Self {
+        self.sample_operation = Some(id);
+        self
+    }
+
     pub(crate) fn require_owner(&self, owner: &str) -> anyhow::Result<()> {
         if self.project != owner {
             anyhow::bail!("Sample budget does not belong to this Project");
@@ -72,7 +81,14 @@ impl ConversationVisionCalls {
         let id = Uuid::new_v4();
         let admission = self
             .store
-            .reserve_conversation_call(&self.project, self.task, id, &self.scope, &hash)
+            .reserve_conversation_operation_call(
+                &self.project,
+                self.task,
+                id,
+                &self.scope,
+                &hash,
+                self.sample_operation,
+            )
             .map_err(|error| CoreError::Validation(error.to_string()))?;
         if admission != ConversationCallAdmission::Admitted {
             return Err(CoreError::Validation(
@@ -156,6 +172,7 @@ mod tests {
             )
             .unwrap();
         ConversationVisionCalls {
+            sample_operation: None,
             store,
             project,
             task,
@@ -249,6 +266,7 @@ mod tests {
             ConversationCallStatus::InDoubt
         );
         let restored = ConversationVisionCalls {
+            sample_operation: None,
             store,
             project,
             task,
