@@ -5,11 +5,11 @@ const project = { project_id: "TEST-alpha", project_owner_id: "owner-a", title: 
 const settings = { revision: "revision-1", sections: { data_privacy: { workspace_id: "TEST-workspace" }, usage_budget: { future_run_budget: { max_requests: 10, max_cost: "2.50" } } } };
 const navTask = (id: string) => ({ task_id: id, title: `TEST ${id}`, schema_revision: "schema-1", project_owner_id: "owner-a", conversation_id: "conversation-a", state: "idle" });
 const root = "/api/projects/TEST-alpha/conversations/conversation-a/tasks";
-it.each(["running","settled"])("shows the real journey dispatch %s instead of declaring builder completion as sample success",async(status)=>{
+it.each(["running","settled","budget"])("shows the real journey dispatch %s instead of declaring builder completion as sample success",async(status)=>{
   const {transport}=mockTransport({[`${root}/t1/workspace`]:{
     project_id:project.project_id,project_owner_id:project.project_owner_id,conversation_id:project.conversation_id,
     task:{input:{id:"t1",schema_revision:"schema-1"}},agent_model:{revision:0,model_profile_id:null},actions:{},queue:[],calls:[],
-    journey_consents:[{record:{consent:{id:"journey"}},dispatch:{status,error:status==="settled"?"No inference was started":null}}],
+    journey_consents:[{record:{consent:{id:"journey"}},dispatch:{status:status==="budget"?"settled":status,error:status==="settled"?"No inference was started":null},builder:{evidence:{outcome:status==="budget"?"budget_exceeded":undefined}}}],
   }});
   const adapter=new HttpAdapter(transport);await adapter.refresh();await adapter.loadTask(project.project_id,"t1");
   const task=adapter.snapshot().tasks.find(t=>t.id==="t1")!;

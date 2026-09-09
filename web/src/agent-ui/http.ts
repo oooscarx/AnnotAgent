@@ -33,6 +33,12 @@ type SafeSettings = { revision: string; sections: { data_privacy: { workspace_id
 export type Transport = <T>(path: string, init?: RequestInit) => Promise<T>;
 const esc = encodeURIComponent;
 const unsupported = (detail: string): never => { throw new Error(`尚未接通：${detail}。没有执行操作，也没有回退到演示结果。`); };
+function journeyReceipt(j: NonNullable<Workspace["journey_consents"]>[number]) {
+  const outcome=j.builder?.evidence?.outcome;
+  const detail=j.dispatch?.error || (outcome==="budget_exceeded" ? "规划调用额度已用尽，草稿已保留；样例未完成。" : outcome==="failed" ? "方案构建未完成，样例未执行；请查看模型调用回执。" : undefined);
+  const active=j.dispatch?.status==="running";
+  return {id:j.record.consent.id,title:"规划与样例执行",status:j.dispatch?.error?"failed":active?"running":j.sample?.status || (detail?"failed":"等待后续操作"),detail,finishedAt:active?undefined:j.dispatch?.updated_at};
+}
 const initialSettings: Settings = { revision: "", theme: "system", language: "zh", font: "标准", density: "舒适", collapsed: false, providers: [], defaultModel: "", plugins: [], allowExternal: false, cache: 0, budget: "", range: "未来 Run 默认预算" };
 
 /** Only this boundary knows HTTP routes. Reads never create conversations, tasks or execution. */
@@ -220,7 +226,7 @@ export class HttpAdapter implements WorkspaceAdapter {
         ...(ws?.calls || []).map(c=>({id:c.id,title:"模型结构化决策",status:c.status==="completed" && (c.failure || c.evidence?.decision?.Err) ? "invalid_result" : c.status,detail:failureDetail(c.failure) || c.evidence?.decision?.Ok?.rationale || c.evidence?.decision?.Err || c.evidence?.error,startedAt:c.started_at || undefined,finishedAt:c.completed_at || undefined,durationMs:c.duration_ms ?? undefined,stage:callStage(c.stage)})),
         ...(ws?.builder_operations?.items || []).map(b=>({id:b.operation.id,title:"方案构建回执",status:b.operation.status,detail:b.operation.evidence?.error || b.operation.evidence?.outcome})),
         ...(ws?.sample_operations || []).map(s=>({id:s.id,title:"样例测试回执",status:s.status,detail:s.error})),
-        ...(ws?.journey_consents || []).filter(j=>j.dispatch).map(j=>({id:j.record.consent.id,title:"规划与样例执行",status:j.dispatch!.error?"failed":j.dispatch!.status==="running"?"running":j.sample?.status || (j.builder?.evidence?.outcome==="failed"?"failed":"等待后续操作"),detail:j.dispatch!.error || (j.builder?.evidence?.outcome==="failed"?"方案构建未完成，样例未执行；请查看模型调用回执。":undefined),finishedAt:j.dispatch!.status==="running"?undefined:j.dispatch!.updated_at})),
+        ...(ws?.journey_consents || []).filter(j=>j.dispatch).map(journeyReceipt),
       ];
       const active = ws?.calls.some(c=>c.status==="reserved") || ws?.journey_consents?.some(j=>j.dispatch?.status==="running") || ws?.sample_operations?.some(s=>["running","queued","cancelling"].includes(s.status)) || result.processing?.some(p=>["pending","running","pausing"].includes(p.status));
       const phase: Phase = stop?.normalized_state || (active ? "running" : ws?.calls.some(c=>c.status==="in_doubt") ? "outcome_unknown" : human ? "waiting_for_human" : "idle");
