@@ -74,3 +74,13 @@ Queue preview/POST 现在对 pending human 返回 409 `human_input_pending`（Sc
 验证：Core/Application/Storage/Server 515 passed、0 failed、3原有ignored；全workspace all-targets严格Clippy与fmt通过。专项测试保存重读typed候选，materialize保留Profile/ModelInstance ID及Geometry Safety；禁用segmenter后候选仍变为不可用。真实隔离HTTP seed278请求通过，实际classification与VLM Detection Builder草稿均保留LabelPipeline。native是测试manifest合同验证，不冒充真实安装权重推理。
 
 契约/边界：UIAPI-011_BUILDER.md、UIAPI-011_TRACE.json。无SQL迁移；旧candidate缺字段仍为null，不伪造旧DAG projection。现有refinement生成器只对精确单label目标参与，本轮不扩多label调度。集成端负责新的精确授权与真实VLM+SAM验证；此后端未读改真实workspace/旧Draft，未安装/付费/操作8787或8788/推送/合并前端。最终SHA在交付回复固定。
+
+## UIAPI-011 round 2: salvage scope repair
+
+Conversation supplies Schema-only target and admitted Registry through input, but outer target=None. Discovery-limit refresh replaced that with global project input, skipping deterministic refinement synthesis. Refresh now retains admitted Schema/goal/task/label/constraints and intersects fresh Registry identities with the admitted sets. Fresh availability still governs; no model identity is invented or newly authorized.
+
+The isolated regression saves a real Conversation Schema, runs a scripted four-turn planning-only Builder without path-discovery calls, and checks actual segmentation binding, LabelPipeline, Schema preservation and static validation. Removing the preservation call reproduces the missing-segmenter failure. Contract and integration boundary: docs/contracts/agent-ui-v1/UIAPI-011_SALVAGE_SCOPE.md. Real VLM/SAM inference remains the integration owner's verification; no paid call or service update was performed here.
+
+Per the integration owner's priority message, UIAPI-009 is paused with uncommitted implementation/tests/migration0059 preserved and excluded from this delivery. UIAPI-010 CAS remains separately committed as 210091a17b1d4ff7b5fe0a306cb9100f1b548aea. Final isolated test totals and delivery SHA are reported in the delivery response.
+
+Isolated delivery-only worktree verification: Application 158 passed / 0 failed / 1 existing ignored; workspace all-target Clippy with `-D warnings`, fmt and diff checks passed. Pre-fix regression failed specifically because the segmenter node was absent.

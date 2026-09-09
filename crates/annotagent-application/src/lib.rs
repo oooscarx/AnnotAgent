@@ -2075,6 +2075,39 @@ fn persist_discovered_conversion_fragments(
     Ok(())
 }
 
+/// Refresh availability without widening the admitted Conversation/Builder input.
+/// Conversation targets can exist only in the approved Schema, not project.yaml.
+fn preserve_builder_input_scope(fresh: &mut WorkflowAdvisorInput, admitted: &WorkflowAdvisorInput) {
+    fresh.project_schema.clone_from(&admitted.project_schema);
+    fresh.target_task_id.clone_from(&admitted.target_task_id);
+    fresh.target_label.clone_from(&admitted.target_label);
+    fresh.constraints.clone_from(&admitted.constraints);
+    fresh.model_profiles.retain(|model| {
+        admitted
+            .model_profiles
+            .iter()
+            .any(|allowed| allowed.id == model.id)
+    });
+    fresh.provider_profiles.retain(|provider| {
+        admitted
+            .provider_profiles
+            .iter()
+            .any(|allowed| allowed.id == provider.id)
+    });
+    fresh.expert_models.retain(|model| {
+        admitted
+            .expert_models
+            .iter()
+            .any(|allowed| allowed.model_id == model.model_id)
+    });
+    fresh.model_registry.retain(|model| {
+        admitted
+            .model_registry
+            .iter()
+            .any(|allowed| allowed.id == model.id)
+    });
+}
+
 fn persist_registry_conversion_fragments(
     session: &mut AgentSession,
     input: &WorkflowAdvisorInput,
@@ -13006,13 +13039,14 @@ impl LocalApplication {
                         reasons.join("; "),
                     );
                 } else {
-                    let fresh_input = self.workflow_advisor_input_for_label(
+                    let mut fresh_input = self.workflow_advisor_input_for_label(
                         project_id,
                         settings,
                         constraints.clone(),
                         target.map(|(task_id, _)| task_id),
                         target.map(|(_, label)| label),
                     )?;
+                    preserve_builder_input_scope(&mut fresh_input, &input);
                     // A capable model may never call the exact path-discovery tool before the
                     // bounded discovery phase ends. The Runtime still owns deterministic graph
                     // composition: derive typed fragments from the live Registry, then rank the
@@ -26062,6 +26096,243 @@ export:
             Some(annotagent_core::BuilderSalvageOutcome::RunnableDraftMaterialized)
         );
         assert!(report.validation.is_some_and(|report| report.valid));
+    }
+
+    #[tokio::test]
+    async fn conversation_salvage_preserves_schema_target_and_admitted_registry() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "conversation-salvage-scope",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("RoboCup Project");
+        let settings = load_settings(None).expect("settings");
+        let selected_model =
+            register_pipeline_builder_model(&application, "scripted-no-path-discovery");
+        let detector = register_available_vision_model(
+            &application,
+            &selected_model,
+            "ready-runtime-detector",
+            [
+                ModelCapability::VisionLanguage,
+                ModelCapability::ObjectDetection,
+            ],
+        );
+        let segmenter = register_available_vision_model(
+            &application,
+            &selected_model,
+            "ready-runtime-segmenter",
+            [ModelCapability::PromptedSegmentation],
+        );
+        let mut registry_provider = application
+            .store
+            .get_provider_profile(selected_model.provider.id)
+            .expect("Provider Profile");
+        registry_provider.adapter = ProviderAdapterKind::OpenAiCompatible;
+        registry_provider.credential_ref = Some(CredentialReference {
+            provider_id: registry_provider.id,
+            source: CredentialSource::EnvironmentVariable,
+            locator: "BUILDER_RUNTIME_SYNTHESIS_FIXTURE_KEY".to_owned(),
+        });
+        application
+            .store
+            .save_provider_profile(&registry_provider)
+            .expect("non-Mock Registry Provider");
+
+        let constraints = WorkflowConstraints::default();
+        let mut input = application
+            .workflow_advisor_input_for_label(
+                "conversation-salvage-scope",
+                &settings,
+                constraints.clone(),
+                None,
+                None,
+            )
+            .unwrap();
+        input
+            .model_profiles
+            .retain(|profile| profile.id == detector.id || profile.id == segmenter.id);
+        // A persisted Conversation Schema absent from project.yaml; target lives only in input.
+        let project = "conversation-salvage-scope";
+        let conversation = application.create_project_conversation(project).unwrap();
+        let owner = application.conversation_project_identity(project).unwrap();
+        let sent = application
+            .store
+            .send_conversation_message(
+                &owner,
+                conversation,
+                &annotagent_storage::ConversationSendInput {
+                    message: annotagent_storage::ConversationMessageInput {
+                        id: uuid::Uuid::new_v4(),
+                        text: "TEST refine cups with the approved prompted segmenter".into(),
+                        image: None,
+                        reference: None,
+                    },
+                    task_id: None,
+                    schema_revision: application.project_goal(project).unwrap()["revision"]
+                        .as_str()
+                        .unwrap()
+                        .into(),
+                    mode: Some(annotagent_storage::ConversationSendMode::Plan),
+                    agent_model: None,
+                },
+            )
+            .unwrap();
+        let schema = application
+            .save_human_conversation_schema_draft(
+                project,
+                conversation,
+                sent.task_id,
+                uuid::Uuid::new_v4(),
+                &crate::ConversationSchemaDecision::Draft {
+                    kind: crate::ConversationOutputKind::BoundingBox,
+                    labels: vec!["cup".into()],
+                    multi_label: false,
+                    attributes: BTreeMap::new(),
+                    boundary_rules: vec!["Keep geometry review".into()],
+                    rationale: "TEST human definition".into(),
+                },
+            )
+            .unwrap();
+        let binding = annotagent_core::WorkflowSchemaBinding {
+            schema_draft_id: schema.id.to_string(),
+            revision: schema.revision,
+            goal: schema.definition.goal,
+            task: schema.definition.task,
+            boundary_rules: schema.definition.boundary_rules,
+        };
+        binding.apply_to(&mut input.project_schema);
+        input.target_task_id = Some(binding.task.id.clone());
+        input.target_label = Some(LabelId::from("cup"));
+        let mut seed = application
+            .suggest_label_pipeline_preview(
+                "conversation-salvage-scope",
+                &settings,
+                "objects",
+                "ball",
+                &constraints,
+            )
+            .unwrap();
+        let composition = controlled_label_composition(
+            &input.project_schema,
+            binding.task.id.as_str(),
+            "cup",
+            &constraints,
+            &ModelRegistry::new(),
+        )
+        .unwrap();
+        seed.draft = composition.compile_draft(
+            "conversation-salvage-scope",
+            "TEST scoped seed",
+            input.project_schema.project.enabled_skill_versions(),
+            chrono::Utc::now(),
+        );
+        bind_available_registry_models(&mut seed.draft, &input);
+        seed.draft.annotation_schema = Some(binding.clone());
+        // Fresh global Registry includes a model never admitted to this call.
+        let outsider = register_available_vision_model(
+            &application,
+            &selected_model,
+            "unapproved-segmenter",
+            [ModelCapability::PromptedSegmentation],
+        );
+        let mut refreshed = application
+            .workflow_advisor_input_for_label(
+                "conversation-salvage-scope",
+                &settings,
+                constraints.clone(),
+                None,
+                None,
+            )
+            .unwrap();
+        preserve_builder_input_scope(&mut refreshed, &input);
+        assert_eq!(refreshed.target_task_id, input.target_task_id);
+        assert_eq!(refreshed.project_schema, input.project_schema);
+        assert!(
+            !refreshed
+                .model_profiles
+                .iter()
+                .any(|model| model.id == outsider.id)
+        );
+        let provider = MockVisionProvider::new(MockScript {
+            steps: (0..4)
+                .map(|_| MockStep {
+                    expect_task: Some("pipeline_builder".into()),
+                    expect_message_contains: None,
+                    response: MockResponseSpec::ToolCall {
+                        name: "get_pipeline_builder_context".into(),
+                        arguments: json!({}),
+                    },
+                    usage: MockUsage {
+                        input_tokens: 10,
+                        output_tokens: 10,
+                    },
+                })
+                .collect(),
+        });
+        let report = application
+            .run_workflow_advisor_loop(
+                "conversation-salvage-scope",
+                &settings,
+                &constraints,
+                None,
+                input,
+                seed,
+                &provider,
+                Some(&selected_model),
+                None,
+                PipelineBuilderConstraints {
+                    planning_only: true,
+                    maximum_agent_turns: 4,
+                    maximum_dry_runs: 0,
+                    ..PipelineBuilderConstraints::default()
+                },
+                annotagent_core::PipelineBuildMode::FromScratch,
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(
+            !report
+                .session
+                .steps
+                .iter()
+                .any(|step| step.tool_name == "find_geometry_refinement_path")
+        );
+        let draft = report.suggestion.unwrap().draft;
+        assert_eq!(draft.annotation_schema, Some(binding.clone()));
+        let segment = draft
+            .nodes
+            .iter()
+            .find(|node| node.node_type == "capability.segment")
+            .expect("deterministic prompted segmenter despite no discovery tool");
+        assert_eq!(
+            segment
+                .model_profile_binding
+                .as_ref()
+                .unwrap()
+                .model_profile_id,
+            segmenter.id
+        );
+        let composition = draft
+            .label_pipeline
+            .as_ref()
+            .expect("executable projection");
+        assert_eq!(
+            composition.label_pipelines[0].target_task_id.as_str(),
+            binding.task.id.as_str()
+        );
+        assert_eq!(composition.label_pipelines[0].target_label.as_str(), "cup");
+        assert!(
+            composition.label_pipelines[0]
+                .steps
+                .iter()
+                .any(|step| step.node_type == "capability.segment")
+        );
+        assert!(report.validation.unwrap().valid);
     }
 
     #[tokio::test]
