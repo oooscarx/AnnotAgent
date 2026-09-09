@@ -7,6 +7,10 @@ import { HistoryBoundary } from "./HistoryBoundary";
 import type { HistoryScope, historyScopeApi } from "./historyScope";
 export type TrashService = LifecycleService & Pick<typeof api,"trash"> & {historyScope:typeof historyScopeApi};
 const keyOf = (entry:TrashEntry) => `${entry.object.kind}:${entry.object.id}:${entry.object.version??""}`;
+export function trashTargets(entries:TrashEntry[]) {
+  const parents=new Set(entries.filter(e=>e.object.kind==="pipeline").map(e=>e.object.id));
+  return entries.filter(e=>!(["workflow_draft","workflow_version"].includes(e.object.kind)&&parents.has(e.object.id))).map(e=>e.object);
+}
 export function TrashManagement({projectId,workspaceId,service}:{projectId:string;workspaceId:string;service:TrashService}) {
   return <HistoryBoundary workspaceId={workspaceId} service={service.historyScope}>{scope=><ScopedTrash key={`${projectId}:${scope.id}`} projectId={projectId} workspaceId={workspaceId} service={service} scope={scope}/>}</HistoryBoundary>;
 }
@@ -35,9 +39,9 @@ function ScopedTrash({projectId,workspaceId,service,scope}:{projectId:string;wor
   const targets=(items||[]).filter(item=>selected.has(keyOf(item)));
   const open=(action:"restore"|"purge",entries=targets)=>{
     if(!entries.length||pending)return;
-    setOperation({project_id:projectId,history_scope:scope.id,objects:entries.map(e=>e.object),action,idempotency_key:crypto.randomUUID()});
+    setOperation({project_id:projectId,history_scope:scope.id,objects:trashTargets(entries),action,idempotency_key:crypto.randomUUID()});
   };
-  return <section className="native-project-manager"><h1>项目回收站</h1><p>恢复删除的记录，或显式清理符合条件的记录。原图、已确认标注、模型和凭证不在这里删除。</p><a href={`/projects/${encodeURIComponent(projectId)}/work`}>返回 Agent</a>
+  return <section className="native-project-manager native-history"><h1>项目回收站</h1><p>恢复删除的记录，或显式清理符合条件的记录。原图、已确认标注、模型和凭证不在这里删除。</p><a href={`/projects/${encodeURIComponent(projectId)}/work`}>返回 Agent</a>
     {error&&<p role="alert" className="error">{error}</p>}
     {pending&&<div className="notice"><p>有已提交操作需要核实。刷新不会重复执行。</p><button onClick={()=>setOperation(pending)}>查看原操作</button></div>}
     {receipt&&<section aria-label="管理操作回执"><p role="status">操作状态：{receipt.status} · {receipt.action}</p>{receipt.error&&<p role="alert">{receipt.error}</p>}<Disclosure title="操作记录与清理报告"><p>{receipt.operation_id}</p>{receipt.purge&&<><p>移除 {receipt.purge.database_rows_removed} 条数据库记录、{receipt.purge.files_removed} 个文件；实际回收 {receipt.purge.bytes_reclaimed} bytes</p><p>保留标注 {receipt.purge.retained_annotation_records} 条；调用账本 {receipt.purge.retained_usage_records} 条</p>{receipt.purge.failed_items.map((item,i)=><p key={i}>{item}</p>)}{receipt.purge.retained_reasons.map((reason,i)=><p key={i}>{reason}</p>)}</>}</Disclosure>{!["completed","failed"].includes(receipt.status)&&<button onClick={()=>void service.managementOperation(projectId,receipt.operation_id).then(setReceipt).catch(e=>setError(e.message))}>刷新回执</button>}</section>}

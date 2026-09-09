@@ -2,6 +2,7 @@ import { api, ApiRequestError, request, type JourneyPreview, type JourneyConsent
 import type { ImageItem, ProviderProfile, RegistryModelProfile, GlobalModelDefaults, ExpertPluginRegistry, InstalledModelInstance, ConversationSchemaPreview, ConversationCallReceipt, ConversationBuilderItem, WorkflowSampleTestRecord, SampleFeedbackRevision, ExportReadiness, ProjectExportResult } from "../types";
 import { terminalSampleAnnotations } from "../sampleAnnotations";
 import { historyScopeApi } from "./historyScope";
+import { historyManagementApi } from "./HistoryManagement";
 import { sampleFeedbackOverlay } from "../sampleFeedbackOverlay";
 import { callStage, failureDetail } from "./ExecutionProgress";
 import type { HumanRequest } from "../conversation-human-api";
@@ -66,6 +67,7 @@ export class HttpAdapter implements WorkspaceAdapter {
   get runtimeSettingsManagement() { return this.transport === request ? api : undefined; }
   get projectManagement() { return this.transport === request ? api : undefined; }
   get trashManagement() { return this.transport === request ? nativeTrashService : undefined; }
+  get historyManagement() { return this.transport === request ? historyManagementApi : undefined; }
   get reviewManagement() { return this.transport === request ? api : undefined; }
   get runDetail() { return this.transport === request ? api : undefined; }
   get batchDetail() { return this.transport === request ? api : undefined; }

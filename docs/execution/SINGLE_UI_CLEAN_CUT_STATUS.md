@@ -1,5 +1,15 @@
 # Single UI Clean Cut
 
+## Native scoped Pipeline / Run / Batch indexes
+
+Project `/manage/pipelines` and `/manage/runs` now mount new Agent UI, not the legacy root. Project menu links directly to these indexes. Added actual scoped pagination, Pipeline Draft/Version links, archive/unarchive, display rename, default-version actions, page selection with parent/child deduplication, Run/Batch detail links and lifecycle confirmation/recovery. Native Trash uses the same scope and now deduplicates same-identity Pipeline children before impact preview; the strict preview identity check remains. Scoped history layout uses aligned compact rows instead of Settings' two-column form grid.
+
+Verified on a freshly created isolated TEST HTTP workspace at8794 with external-model-only fixture: passive refresh/cancel zero establishments; lost establishment response after server commit recovers by GET without second POST; old Draft direct read unchanged; all three native index routes have zero old `.sidebar`; newly created TEST Draft selected/deleted/restored through scoped management HTTP. Initial restore failed due to parent/child normalized preview mismatch; fixed and regression passed. A subsequent assertion accidentally included document URLs; corrected to assert API requests only. Final post-cutover case passed on corrected build. First establishment case passed separately on fresh scope; it intentionally requires a fresh fixture. No claim of the older full management suite passing after this cutover.
+
+320 unit tests passed, one cutover TODO; typecheck, production build and cargo build -p annotagent passed. Screenshot `/tmp/annotagent-native-history-populated.png`: actual new React UI, TEST HTTP,1440×960,DPR1,light, URL `/projects/TEST-agent-ui-b2f0578b-1248-434f-b9be-941d560d6529/manage/pipelines`, source ce5247d plus this commit's changes. Viewed and fixed checkbox/row alignment before final capture. `/tmp/annotagent-native-history-dist` served by owned fixture; user8787/8788, real workspace and real web/dist unchanged. Owned service stopped; no push or paid call.
+
+Remaining: native version copy/publication/full snapshot, batch-child normalization across mixed Trash selection, richer history filtering and active polling, old Provider/other capability parity, removal of old App/styles/compatibility code, complete regression and screenshots. Old root still emitted; complete removal goal remains active.
+
 ## Server history scope integrated; native Trash now fails closed
 
 Integrated inspected backend delivery dbe4faef as d768dc4. Conflicts were documentation-only: retained implemented UIAPI-009 contract, kept obsolete gap document deleted, and did not import claims about unrelated backend localization changes. Independently ran three storage history-scope regressions and the server HTTP confirmation/restart/list/management regression: four passed. cargo fmt --all --check passed. These tests use temporary isolated data, not the real workspace.
