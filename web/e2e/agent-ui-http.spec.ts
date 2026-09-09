@@ -160,3 +160,73 @@ test("d: saved interrupted state cannot become a fictional resume; paused Batch 
   for(const id of before.batch.child_run_ids)expect(after.batch.child_run_ids).toContain(id);
   expect(after.batch.child_run_ids).toHaveLength(3);
 });
+
+test("production routes reject foreign tasks and preserve management return without an old global sidebar",async({page,request})=>{
+  const {p,tasks}=await identity(request);
+  await page.goto(`/projects/not-this-project/work?task=${tasks[0].task_id}`);
+  await expect(page.getByText("找不到这个任务",{exact:true})).toBeVisible();
+  await expect(page.locator(".user-message")).toHaveCount(0);
+  await page.goto(`/projects/${p.project_id}/work?task=${tasks[0].task_id}&pane=image`);
+  await expect(page.locator("svg image")).toBeVisible();
+  await expect(page.locator(".sidebar,.agent-conversation-navigation")).toHaveCount(0);
+  await expect(page.locator(".project-sidebar")).toHaveCount(1);
+  await page.getByLabel("项目管理菜单").click();
+  await page.getByRole("link",{name:"项目管理 →",exact:true}).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${p.project_id}\\?return_task=`));
+  await expect(page.locator(".sidebar,.agent-conversation-navigation")).toHaveCount(0);
+  await page.goBack();await expect(page.locator(".ui-app")).toHaveAttribute("data-adapter","http");
+  await expect(page).toHaveURL(new RegExp(`task=${tasks[0].task_id}`));
+  await expect(page.locator("svg image")).toBeVisible();
+});
+
+test("b: Provider metadata and future budget persist through real server writes",async({page,request})=>{
+  const {tasks}=await identity(request);
+  page.on("dialog",dialog=>void dialog.accept());
+  await page.goto(`/?task=${tasks[0].task_id}&settings=providers`);
+  await page.getByRole("button",{name:"编辑",exact:true}).first().click();
+  await page.getByLabel("显示名称",{exact:true}).fill("TEST HTTP edited provider");
+  await page.getByRole("button",{name:"保存账户",exact:true}).click();
+  await expect(page.getByRole("status")).toContainText("已保存");
+  const providers=await(await request.get("/api/providers")).json();
+  expect(providers.providers.some((p:{display_name:string})=>p.display_name==="TEST HTTP edited provider")).toBe(true);
+  await page.reload();await expect(page.getByText("TEST HTTP edited provider",{exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"用量与预算",exact:true}).click();
+  const budget=await page.getByLabel("预算上限",{exact:true}).inputValue()==="9.25"?"9.26":"9.25";
+  await page.getByLabel("预算上限",{exact:true}).fill(budget);
+  await page.getByRole("button",{name:"保存设置",exact:true}).click();
+  await expect(page.getByRole("status")).toContainText("已保存");
+  const settings=await(await request.get("/api/settings?view=agent-ui")).json();
+  expect(settings.sections.usage_budget.future_run_budget.max_cost).toBe(budget);
+  await page.reload();await expect(page.getByLabel("预算上限",{exact:true})).toHaveValue(budget);
+});
+
+test("d: saved supplement waits for its own explicit text-only authorization",async({page,request})=>{
+  const {p,root}=await identity(request);
+  await page.goto(`/projects/${p.project_id}/work`);
+  await page.getByRole("textbox",{name:"给 AnnotAgent 的需求"}).fill("TEST initial goal for a fresh queue task");
+  await page.getByRole("button",{name:"↑ 发送",exact:true}).click();
+  await expect(page.locator(".user-message")).toContainText("TEST initial goal");
+  const task=new URL(page.url()).searchParams.get("task");
+  const before=await(await request.get(`${root}/tasks/${task}/workspace`)).json();
+  await page.getByRole("textbox",{name:"给 AnnotAgent 的需求"}).fill("TEST queued supplement classify indoor versus outdoor");
+  await page.getByRole("button",{name:"↑ 发送",exact:true}).click();
+  await expect(page.locator(".user-message").last()).toContainText("TEST queued supplement");
+  const after=await(await request.get(`${root}/tasks/${task}/workspace`)).json();expect(after.calls).toHaveLength(before.calls.length);
+  await page.locator(".queue summary").click();
+  await page.getByRole("button",{name:"查看此输入的规划范围",exact:true}).last().click();
+  await expect(page.locator(".plan-block").filter({hasText:"批准此补充输入"})).toContainText("不派发剩余队列");
+  await page.getByRole("button",{name:"查看并确认授权"}).click();
+  await page.getByRole("button",{name:"接受未知费用并执行此范围"}).click();
+  await expect.poll(async()=>{const w=await(await request.get(`${root}/tasks/${task}/workspace`)).json();return w.queue.find((q:{input:{message:{text:string}}})=>q.input.message.text==="TEST queued supplement classify indoor versus outdoor")?.status;}).toBe("completed");
+});
+
+test("a: explicit image upload uses the server importer and survives refresh",async({page,request})=>{
+  const {p}=await identity(request);
+  await page.goto(`/projects/${p.project_id}/work`);
+  const imported=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().includes("/image-upload?"));
+  await page.locator('input[type="file"]').setInputFiles("../examples/robocup/images/synthetic-robocup.png");
+  const receipt=await imported;expect(receipt.ok()).toBe(true);
+  await expect(page.locator("svg image")).toHaveAttribute("href",/^\/api\//);
+  await page.reload();await expect(page.locator("svg image")).toHaveAttribute("href",/^\/api\//);
+  await expect(page.getByText("内存预览，未上传；刷新后需重新选择")).toHaveCount(0);
+});

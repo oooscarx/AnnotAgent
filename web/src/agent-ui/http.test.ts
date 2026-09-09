@@ -65,4 +65,15 @@ describe("HTTP UI read boundary (synthetic transport tests, not HTTP E2E)", () =
     const { transport } = mockTransport({ "/api/navigation?limit=100": { items: [project], next_cursor: "owner-a" }, "/api/navigation?limit=100&cursor=owner-a": { items: [], next_cursor: "owner-a" } });
     await expect(new HttpAdapter(transport).refresh()).rejects.toThrow("游标重复");
   });
+  it("preserves typing while a task's late evidence read settles",async()=>{
+    let finish!:(v:unknown)=>void;
+    const pending=new Promise(r=>{finish=r;});
+    const {transport,paths}=mockTransport({[`${root}/t1/exports`]:()=>pending});
+    const adapter=new HttpAdapter(transport);await adapter.refresh();
+    const reading=adapter.loadTask("TEST-alpha","t1");
+    for(let i=0;i<30&&!paths.includes(`${root}/t1/exports`);i++)await Promise.resolve();
+    expect(paths).toContain(`${root}/t1/exports`);
+    adapter.saveDraft("t1","输入不能被旧请求清空");finish([]);await reading;
+    expect(adapter.snapshot().tasks.find(t=>t.id==="t1")?.draft).toBe("输入不能被旧请求清空");
+  });
 });

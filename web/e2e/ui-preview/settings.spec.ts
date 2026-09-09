@@ -133,13 +133,13 @@ test("privacy cleanup preserves protected reference amount; usage unknown is not
   ).toBeVisible();
 });
 test("preview pages never request business or external APIs", async ({
-  page,
+  page, baseURL,
 }) => {
   const requests: string[] = [];
   page.on("request", (r) => {
     if (
       r.url().includes("/api/") ||
-      !r.url().startsWith("http://127.0.0.1:5174")
+      new URL(r.url()).origin !== new URL(baseURL!).origin
     )
       requests.push(r.url());
   });

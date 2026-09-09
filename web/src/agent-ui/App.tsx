@@ -374,7 +374,7 @@ export function AgentPreviewApp({
                   </details>
                 </>
               )}
-              <span className="preview-chip">{fixture ? "UI Preview" : "服务器工作区"}</span>
+              <span className="preview-chip">{fixture ? "UI Preview" : state.testOnly ? "TEST · 真实 HTTP / 测试模型" : "服务器工作区"}</span>
             </div>
           </header>
           {(error || state.error) && (

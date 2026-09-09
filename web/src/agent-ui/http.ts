@@ -55,6 +55,12 @@ export class HttpAdapter implements WorkspaceAdapter {
     return this.dimensions.get(src)!;
   }
   constructor(private transport: Transport = request, private storage?: Storage) {}
+  private async testEnvironment() {
+    if(this.transport!==request)return false;
+    const response=await fetch("/api/health",{credentials:"same-origin"});
+    if(!response.ok)throw new Error(`服务器健康检查失败 (${response.status})`);
+    return response.headers.get("x-annotagent-fixture")==="external-model-only";
+  }
   snapshot = () => this.state;
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   private emit(patch: Partial<Snapshot>) { this.state = { ...this.state, ...patch }; this.listeners.forEach(fn => fn()); }
@@ -86,15 +92,16 @@ export class HttpAdapter implements WorkspaceAdapter {
     const seq = ++this.navigationSequence;
     this.emit({ loading: true, error: undefined });
     try {
-      const [nav, safe, providers, profiles, defaults, plugins, instances] = await Promise.all([
+      const [nav, safe, providers, profiles, defaults, plugins, instances, testOnly] = await Promise.all([
         this.pages<Project>("/api/navigation"), this.transport<SafeSettings>("/api/settings?view=agent-ui"),
         this.transport<{ providers: ProviderProfile[] }>("/api/providers"), this.transport<{ models: RegistryModelProfile[] }>("/api/model-profiles"),
         this.transport<GlobalModelDefaults>("/api/agent-model-bindings"), this.transport<ExpertPluginRegistry>("/api/plugins"), this.transport<{instances: InstalledModelInstance[]}>("/api/model-instances"),
+        this.testEnvironment(),
       ]);
       const rows = await Promise.all(nav.map(async p => ({ p, tasks: p.conversation_id ? await this.pages<NavigationTask>(`/api/projects/${esc(p.project_id)}/conversations/${esc(p.conversation_id)}/task-navigation`) : [] })));
       if (seq !== this.navigationSequence) return;
       this.projects = new Map(nav.map(p => [p.project_id, p])); this.safeSettings = safe; this.defaults = defaults;
-      this.state = { ...this.state, workspaceId: safe.sections.data_privacy.workspace_id };
+      this.state = { ...this.state, workspaceId: safe.sections.data_privacy.workspace_id, testOnly };
       const prefs = this.stored<Partial<Settings>>("preferences", {});
       const models = profiles.models.map(m => {
         const p = providers.providers.find(p => p.id === m.provider_id);
@@ -195,15 +202,15 @@ export class HttpAdapter implements WorkspaceAdapter {
       ];
       const active = ws?.calls.some(c=>c.status==="reserved") || ws?.sample_operations?.some(s=>["running","queued","cancelling"].includes(s.status)) || result.processing?.some(p=>["pending","running","pausing"].includes(p.status));
       const phase: Phase = stop?.normalized_state || (ws?.calls.some(c=>c.status==="in_doubt") ? "outcome_unknown" : active ? "running" : human ? "waiting_for_human" : "idle");
-      this.emit({ error: undefined, artifacts, tasks: this.state.tasks.map(t => t.id !== id ? t : { ...current,
+      this.emit({ error: undefined, artifacts, tasks: this.state.tasks.map(t => t.id !== id ? t : { ...t,
         items: thread.map(t => ({ id: t.id, role: "user", text: t.message.input.text })),
-        ...result, approval:pendingApproval?.view || current.approval, actions: {...ws?.actions || current.actions,answer:{available:!!result.human && ["classification","bounding_box"].includes(result.human.kind),reason:"仅保存当前人工作答的样例修正"}}, model: ws?.agent_model.model_profile_id || this.defaults.pipeline_builder || current.model,
+        ...result, approval:pendingApproval?.view || t.approval, actions: {...ws?.actions || t.actions,answer:{available:!!result.human && ["classification","bounding_box"].includes(result.human.kind),reason:"仅保存当前人工作答的样例修正"}}, model: ws?.agent_model.model_profile_id || this.defaults.pipeline_builder || t.model,
         image: human?.input.image_id || artifacts[0]?.id || "", editBoxes: this.stored(`edits.${id}`, {}),
         phase, receipts, humanQuestion:human?.input.question,
         stopTargets:stop?.status==="needs_selection"?stop.targets.map(t=>({id:`${t.kind}:${t.id}`,label:`${t.kind} · ${t.state}`})):[],
         resumeTargets:ws?.resume_actions?.filter(a=>a.available).map(a=>({id:`${a.kind}:${a.id}`,label:a.kind,reason:a.reason})),
         queue: ws?.queue.filter(q => ["waiting_for_dispatch","authorized","running","in_doubt"].includes(q.status)).map(q => q.input.message.text) || [],
-        queueEntries: ws?.queue.map(q=>({id:q.input.message.id,text:q.input.message.text,status:q.status,canCancel:["waiting_for_dispatch","authorized","in_doubt"].includes(q.status),canPlan:q.status==="waiting_for_dispatch"&&!q.planning_call_id})),
+        queueEntries: ws?.queue.map(q=>({id:q.input.message.id,text:q.input.message.text,status:q.status,canCancel:["waiting_for_dispatch","authorized","in_doubt"].includes(q.status),canPlan:!human&&q.status==="waiting_for_dispatch"&&!q.planning_call_id})),
       }) });
     } catch (e) { if (seq !== this.sequence || ctrl.signal.aborted) return; this.emit({ error: (e as Error).message, artifacts: [] }); throw e; }
   };

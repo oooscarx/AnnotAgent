@@ -10,6 +10,16 @@ UIAPI-002 verified: backend `4676652` merged at `ac54a92`; own port regression `
 
 Sent message `01a085e7-8460-7091-aad2-eb3423e58a58` to fixed backend UUID. Integration base `ac54a92`. Current main fixture emits classification terminal results and a classification HumanRequest; it cannot verify pixel→normalized bbox saving. Need committed TEST bbox candidate + pending HumanRequest (image dimensions, candidate ID, feedback revision) and existing delayed/failure Provider procedure for real stop transitions / unknown outcome. Asked backend to change only its fixture/support ownership, not production model behavior. Awaiting delivery; frontend continues unrelated work. Do not fabricate JSON/browser responses to satisfy this evidence.
 
+### UIAPI-004 — preview admits a pending-human queue grant that execution rejects (P2)
+
+Sent `01a085f1-2af1-7b10-bde2-912c23455971`, integration `a8a2c47`. With pending HumanRequest, supplement Send succeeds; queue schema-preview returns a grant scope; schema-proposals records authorized/planning_call_id but rejects with `Task is waiting for human input; no model call was admitted review_request_or_reload_scope`. No call ran. Frontend now suppresses new queue planning while a pending human question exists, retains the exact unknown/failed grant for explicit recovery and does not pretend the queue completed. Requested backend preview/admission consistency and a documented same-ID recovery contract. Fresh-task queue text planning is separately verified through actual HTTP; not an automatic dispatcher.
+
+### Frontend defects caught by HTTP regression
+
+- A late evidence read spread an earlier Task snapshot over newly typed input; fixed by merging onto the current Task at emission. Added a delayed-read regression.
+- Existing management canonicalization discarded typed return_task/image/pane keys; now preserves validated same-project keys across canonicalization and management navigation. Foreign owner and arbitrary external return parameters are rejected. Browser entry/Back and route unit tests cover this.
+- Preview network-isolation assertion hardcoded 5174; now compares against configured same-origin baseURL, allowing independent 5176 tests without reusing the user's approved preview server.
+
 Current test service: `http://127.0.0.1:8796`, marked workspace `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-2ul2_zxk`. Runtime backend base recorded as `ac54a92`; UI served from production build, not old dist-integration. Fixture model accuracy is not Live accuracy.
 
 ## Frozen inputs (2026-09-09)

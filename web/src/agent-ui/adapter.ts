@@ -108,6 +108,7 @@ export type Snapshot = {
   loading?: boolean;
   error?: string;
   workspaceId?: string;
+  testOnly?: boolean;
   artifacts: {
     id: ImageId;
     project?: string;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isAgentEntry, routeProject, taskLocation } from "./routes";
+import { isAgentEntry, routeProject, taskLocation, managementReturn, retainManagementContext } from "./routes";
 const url = (path: string) => new URL(path, "http://localhost");
 describe("production Agent routes and retained management", () => {
   it("uses the approved UI for normal entry, not only preview", () => {
@@ -13,5 +13,14 @@ describe("production Agent routes and retained management", () => {
     expect(routeProject(url("/projects/%broken/work"))).toBe("invalid-project-id");
     expect(taskLocation(url("/projects/old/work?task=t&pane=image"), "new").pathname).toBe("/projects/new/work");
     expect(taskLocation(url("/agent-integration.html?task=t"),"p").pathname).toBe("/agent-integration.html");
+  });
+  it("retains only typed same-owner management return keys through canonicalization",()=>{
+    const id="6754265a-0cb2-4df3-96e5-ca67fe63e4ab";
+    const source=url(`/projects/p?return_task=${id}&return_pane=image&return_to=https://evil.invalid`);
+    const canonical=retainManagementContext(url("/projects/p"),source);
+    expect(canonical.searchParams.get("return_task")).toBe(id);
+    expect(canonical.searchParams.has("return_to")).toBe(false);
+    expect(managementReturn(url("/projects/p/work"),canonical).searchParams.get("task")).toBe(id);
+    expect(managementReturn(url("/projects/p/work"),url(`/projects/p-other?return_task=${id}`)).search).toBe("");
   });
 });
