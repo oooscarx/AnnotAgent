@@ -418,3 +418,48 @@ Still pending: Composer mode/Registry picker and frozen turn configuration, queu
 full stop/checkpoint continuation trace, new real object UI and final six states. This does
 not claim full Plan protection across all Project APIs or completion of M2/M3. No push,
 remote change, real workspace write or deployment restart.
+
+## M3 foundation — durable conversation Agent-model preference
+
+Previous goal turn was progress: committed/tested Plan policy and exact model authorization
+in 5812fbf. This turn inspected the real Registry and conversation coordinator. There was
+no independent persisted conversation Agent-model selection; Project/global defaults were
+the only selection source. Added the minimal preference contract, not another Registry.
+
+Migration 0054 stores the selected Model Profile ID and a monotonic revision per owned
+conversation, with immutable command inputs for retries. Null explicitly means use the
+existing default resolver. GET is passive and does not create a selection or trigger probes.
+POST requires expected_revision and request_id; stale multi-tab writes and changed replay
+payloads fail. Exact old retries return current selection without rolling it back. This
+preference is NOT an execution grant, plan approval, Model Profile revision snapshot or
+authorization to send history to another Provider.
+
+Application validates that the Registry profile/provider exists and the profile declares
+text generation, tool calls and structured output. Unknown health is preserved, not probed
+or relabeled Available. Actual invocation must still apply the existing availability and
+credential checks. Selection does not rewrite global/project defaults or Workflow bindings.
+An admitted selection command remains safely readable after capabilities change; a new
+incompatible choice is rejected. Endpoints reuse existing project owner resolution and
+same-origin-protected workspace router at conversations/:id/agent-model.
+
+Verification in isolated temporary workspaces:
+
+- Storage ownership/CAS/restart/old retry test passed initially (48335); no task, model-call
+  receipt or grant created. A first compilation caught unsupported rusqlite u64 conversions;
+  changed to checked i64 database conversion, keeping the public u64 revision.
+- Application Registry/unknown-health/unchanged-default/no-session/no-Run test passed
+  (29230). Initial test incorrectly changed model capabilities at the same revision;
+  fixed the fixture to create a new revision, preserving immutable Registry semantics.
+- HTTP GET/POST/duplicate/stale-version/foreign-conversation/no-session test passed (59569).
+- Strict Clippy passed (62527) before the final HTTP test addition; final recheck recorded
+  below after completion. No Web changes or new browser evidence in this backend slice.
+
+Not yet connected: Composer picker, frozen send configuration, invocation consumption of
+this preference, Provider-switch consent and active-request invariance trace. The endpoint
+currently saves a preference only; it MUST NOT be represented as a working model switch in
+the UI until those consumers and tests are connected. Plan/Execute selector and queue still
+remain. Goal/M3 incomplete; no push, remote changes, real workspace writes or paid calls.
+
+Final current-source Storage regression passed (70787); Storage/Application/Server strict
+all-target/all-feature Clippy and cargo fmt --all --check passed (77699). git diff --check
+also passed. This is targeted backend verification, not a full workspace or Web regression.

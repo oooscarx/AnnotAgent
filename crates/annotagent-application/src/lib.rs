@@ -9449,6 +9449,56 @@ impl LocalApplication {
         Ok(self.store.project_conversation(&owner)?)
     }
 
+    pub fn project_conversation_agent_model(
+        &self,
+        project_id: &str,
+        conversation: uuid::Uuid,
+    ) -> Result<annotagent_storage::ConversationAgentModel> {
+        let owner = self.conversation_project_identity(project_id)?;
+        Ok(self.store.conversation_agent_model(&owner, conversation)?)
+    }
+
+    /// Save a next-request preference, not a call grant. Resolution is passive;
+    /// invocation must still freeze and authorize its actual Model/Provider scope.
+    pub fn select_project_conversation_agent_model(
+        &self,
+        project_id: &str,
+        conversation: uuid::Uuid,
+        input: &annotagent_storage::SelectConversationAgentModel,
+    ) -> Result<annotagent_storage::ConversationAgentModel> {
+        let owner = self.conversation_project_identity(project_id)?;
+        self.store.conversation_agent_model(&owner, conversation)?;
+        if self.store.conversation_agent_model_command_exists(
+            &owner,
+            conversation,
+            input.request_id,
+        )? {
+            return Ok(self
+                .store
+                .select_conversation_agent_model(&owner, conversation, input)?);
+        }
+        if let Some(id) = input.model_profile_id {
+            let model = self.store.get_model_profile(id, None)?;
+            self.store.get_provider_profile(model.provider_id)?;
+            if !model.input_modalities.contains(&InputModality::Text)
+                || !model
+                    .task_capabilities
+                    .contains(&ModelCapability::TextGeneration)
+                || !model.protocol_features.tool_calls
+                || !model.protocol_features.structured_output
+            {
+                bail!(
+                    "Agent model preference requires text generation, ToolCalls and StructuredOutput"
+                );
+            }
+            // Unknown health is not a failed probe. Selection is allowed, while
+            // invocation still performs the existing live availability checks.
+        }
+        Ok(self
+            .store
+            .select_conversation_agent_model(&owner, conversation, input)?)
+    }
+
     /// Read an owned admission receipt without repeating a command or granting execution.
     pub fn project_conversation_send_receipt(
         &self,
@@ -25135,6 +25185,98 @@ export:
         let restored = app.store.get_agent_session(report.session.id).unwrap();
         assert_eq!(restored.builder_proposal, report.suggestion);
         assert!(restored.builder_constraints.unwrap().planning_only);
+    }
+
+    #[test]
+    fn conversation_agent_model_preference_validates_registry_without_changing_bindings() {
+        let temporary = tempfile::tempdir().unwrap();
+        let app = LocalApplication::new(temporary.path()).unwrap();
+        app.create_project("TEST-model-choice", GENERIC_CLASSIFICATION_PROJECT)
+            .unwrap();
+        app.create_project("TEST-other-choice", GENERIC_CLASSIFICATION_PROJECT)
+            .unwrap();
+        let conversation = app
+            .create_project_conversation("TEST-model-choice")
+            .unwrap();
+        let selected = register_pipeline_builder_model(&app, "TEST-next-agent");
+        let before = app
+            .resolve_pipeline_builder_model("TEST-model-choice", None)
+            .unwrap();
+        let choice = annotagent_storage::SelectConversationAgentModel {
+            request_id: uuid::Uuid::new_v4(),
+            expected_revision: 0,
+            model_profile_id: Some(selected.model.id),
+        };
+        assert!(
+            app.select_project_conversation_agent_model("TEST-other-choice", conversation, &choice)
+                .is_err()
+        );
+        assert!(
+            app.select_project_conversation_agent_model(
+                "TEST-model-choice",
+                conversation,
+                &annotagent_storage::SelectConversationAgentModel {
+                    model_profile_id: Some(ModelProfileId::new()),
+                    ..choice.clone()
+                }
+            )
+            .is_err()
+        );
+        let mut unknown = selected.model.clone();
+        unknown.status = ModelProfileStatus::Unknown;
+        app.store.save_model_profile(&unknown).unwrap();
+        let saved = app
+            .select_project_conversation_agent_model("TEST-model-choice", conversation, &choice)
+            .unwrap();
+        assert_eq!(saved.model_profile_id, Some(selected.model.id));
+        assert_eq!(saved.revision, 1);
+        assert_eq!(
+            app.store
+                .get_model_profile(selected.model.id, None)
+                .unwrap()
+                .status,
+            ModelProfileStatus::Unknown
+        );
+        app.store.save_model_profile(&selected.model).unwrap();
+        assert_eq!(
+            app.resolve_pipeline_builder_model("TEST-model-choice", None)
+                .unwrap()
+                .model
+                .id,
+            before.model.id
+        );
+        assert!(
+            app.list_agent_sessions("TEST-model-choice")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(app.list_runs().unwrap().is_empty());
+        let mut incompatible = selected.model.clone();
+        incompatible.revision += 1;
+        incompatible.protocol_features.tool_calls = false;
+        app.store.save_model_profile(&incompatible).unwrap();
+        assert_eq!(
+            app.select_project_conversation_agent_model("TEST-model-choice", conversation, &choice)
+                .unwrap(),
+            saved
+        );
+        assert!(
+            app.select_project_conversation_agent_model(
+                "TEST-model-choice",
+                conversation,
+                &annotagent_storage::SelectConversationAgentModel {
+                    request_id: uuid::Uuid::new_v4(),
+                    expected_revision: 1,
+                    ..choice
+                }
+            )
+            .is_err()
+        );
+        assert_eq!(
+            app.project_conversation_agent_model("TEST-model-choice", conversation)
+                .unwrap(),
+            saved
+        );
     }
 
     #[tokio::test]

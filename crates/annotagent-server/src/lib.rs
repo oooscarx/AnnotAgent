@@ -15266,6 +15266,64 @@ export:
     }
 
     #[tokio::test]
+    async fn conversation_agent_model_http_is_passive_owned_and_versioned() {
+        let temp = tempfile::tempdir().unwrap();
+        let application = Arc::new(LocalApplication::new(temp.path()).unwrap());
+        application.create_project("TEST-model-pref", "version: 1\nproject:\n  name: TEST Model preference\ndataset:\n  root: images\nruntime: {}\ntasks:\n  - id: scene\n    kind: classification\n    labels: [day, night]\n    required: true\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n").unwrap();
+        let conversation = application
+            .create_project_conversation("TEST-model-pref")
+            .unwrap();
+        let service = router(
+            test_state(
+                application.clone(),
+                Arc::new(InMemorySecretStore::default()),
+            )
+            .await,
+            None,
+        );
+        let path =
+            format!("/api/projects/TEST-model-pref/conversations/{conversation}/agent-model");
+        let initial = request(&service, axum::http::Method::GET, &path, None).await;
+        assert_eq!(initial.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(initial).await,
+            json!({"revision":0,"model_profile_id":null})
+        );
+        let input = json!({"request_id":uuid::Uuid::new_v4(),"expected_revision":0,"model_profile_id":null});
+        let result = request(
+            &service,
+            axum::http::Method::POST,
+            &path,
+            Some(input.clone()),
+        )
+        .await;
+        assert_eq!(result.status(), StatusCode::OK);
+        assert_eq!(response_json(result).await["revision"], 1);
+        let duplicate = request(&service, axum::http::Method::POST, &path, Some(input)).await;
+        assert_eq!(response_json(duplicate).await["revision"], 1);
+        let stale = request(&service, axum::http::Method::POST, &path, Some(json!({"request_id":uuid::Uuid::new_v4(),"expected_revision":0,"model_profile_id":null}))).await;
+        assert_eq!(stale.status(), StatusCode::BAD_REQUEST);
+        let foreign = request(
+            &service,
+            axum::http::Method::GET,
+            &format!(
+                "/api/projects/TEST-model-pref/conversations/{}/agent-model",
+                uuid::Uuid::new_v4()
+            ),
+            None,
+        )
+        .await;
+        assert!(!foreign.status().is_success());
+        assert!(
+            application
+                .list_agent_sessions("TEST-model-pref")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(application.list_runs().unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn label_pipeline_http_advisor_dry_run_inspector_and_replay_are_real() {
         let temp = tempfile::tempdir().expect("temp");
         let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));

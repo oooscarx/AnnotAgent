@@ -2,6 +2,29 @@
 use super::*;
 use annotagent_storage::{ConversationMessage, ConversationMessageInput};
 
+pub(super) async fn agent_model(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation)): AxumPath<(String, uuid::Uuid)>,
+) -> ApiResult<Json<annotagent_storage::ConversationAgentModel>> {
+    state
+        .application
+        .project_conversation_agent_model(&project, conversation)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
+pub(super) async fn select_agent_model(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation)): AxumPath<(String, uuid::Uuid)>,
+    Json(input): Json<annotagent_storage::SelectConversationAgentModel>,
+) -> ApiResult<Json<annotagent_storage::ConversationAgentModel>> {
+    state
+        .application
+        .select_project_conversation_agent_model(&project, conversation, &input)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
 pub(super) async fn call_limit(
     State(state): State<ServerState>,
     AxumPath(project): AxumPath<String>,

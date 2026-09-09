@@ -30,6 +30,7 @@ use super::{
 pub(super) fn routes() -> Router<ServerState> {
     Router::new()
         .route("/api/projects/{project_id}/conversations/{conversation_id}/send", post(super::conversations::send))
+        .route("/api/projects/{project_id}/conversations/{conversation_id}/agent-model", get(super::conversations::agent_model).post(super::conversations::select_agent_model))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/send/{message_id}", get(super::conversations::send_receipt))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/stop-requests", post(super::conversation_stop::begin))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/stop-requests/{message_id}", get(super::conversation_stop::get))
