@@ -64,6 +64,7 @@ export class HttpAdapter implements WorkspaceAdapter {
   get projectManagement() { return this.transport === request ? api : undefined; }
   get trashManagement() { return this.transport === request ? api : undefined; }
   get reviewManagement() { return this.transport === request ? api : undefined; }
+  get runDetail() { return this.transport === request ? api : undefined; }
   get exportManagement() { return this.transport === request ? api : undefined; }
   private async testEnvironment() {
     if(this.transport!==request)return false;

@@ -43,6 +43,16 @@ Committed visual evidence: `single-ui-clean-cut/m0/disclosure-expanded.png` (144
 
 ## Remaining
 
+### Native Run result deep links
+
+Added `agent-ui/RunDetail.tsx` via the real adapter and `/projects/:projectId/manage/runs/:runId`. Source link from native Review now reaches this page. Run, summary and annotation owner IDs must agree; orphan/mismatched IDs are rejected rather than replaced with another project. Uses actual original image and formal annotations, with separate result/review/no-target/failure counts and frozen bindings. Original/result mode and selected annotation persist in the URL. This direct lookup intentionally remains available for current-task references; it does not implement the still-pending scoped history list.
+
+Status is serially polled for active Runs. Buttons require server controllability plus valid state; resume asks about continuing existing authorized work/cost, never creates another Run. A preflight rereads state before control. Failed control is not automatically retried. Reused AnnotationCanvas in read-only result mode; editing is via native Review. Node Artifact/Replay and complete batch/history management are not yet migrated.
+
+Verification: typecheck/build, 289 unit tests (one cutover TODO), seven isolated HTTP management E2E passed. New E2E opens actual completed TEST Run, switches original mode, reloads, rejects project-ID mismatch and observes zero writes. Active pause/resume/cancel execution and complete candidate/debug display still require verification. Screenshot `m2/native-run.png`: actual React TEST HTTP8794, 1440×900 DPR1 light, frontend `2936576` plus this slice. Fixture manifest stamped backend `25ea0ef`; backend worktree advanced during this run to `210091a` (Model CAS), so this is not claimed as a pristine fixed-backend build. Reverify final integration against a pinned build.
+
+Backend CAS delivery commit `210091a` now exists; not integrated or accepted as verified in this slice. Next integration must inspect it and its contract/tests. No main Rust edits, paid calls, user service/dist updates, real workspace changes or push. Full removal is still incomplete.
+
 ### Model lifecycle, probe consent and quality evidence
 
 New native ModelProfileActions exposes lock/unlock, typed-name delete confirmation, explicitly confirmed billable connectivity test, saved probe usage, operation-scoped quality contracts and generation/limit details. It reuses existing endpoints and privileged protection; refresh/Disclosure expansion never sends a probe. Model/provider preflight rejects observed configuration changes before a mutation. This remains client preflight, not backend atomic CAS. Failed/unknown probe confirmation cannot immediately resubmit; the user must inspect records. Connectivity success is explicitly not geometry accuracy or comprehensive capability verification. Zero usage cost is labeled unverified, not free.

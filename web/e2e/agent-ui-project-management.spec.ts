@@ -1,6 +1,24 @@
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
+test("native Run deep links preserve ownership and refresh without execution",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const runs=await(await request.get("/api/runs?limit=100")).json();
+  const run=runs.runs.find((r:{project_name:string})=>r.project_name==="TEST Agent UI HTTP fixture");expect(run).toBeTruthy();
+  const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});
+  const href=`/projects/${run.project_id}/manage/runs/${run.id}`;
+  await page.goto(href);await expect(page.getByRole("heading",{name:"运行结果",exact:true})).toBeVisible();
+  await expect(page.locator(".native-review svg image")).toHaveAttribute("href",/^\/api\//);
+  await expect(page.getByRole("button",{name:"继续运行",exact:true})).toHaveCount(0);
+  await page.getByRole("button",{name:"查看原图",exact:true}).click();
+  await expect(page.getByRole("button",{name:"显示标注",exact:true})).toBeVisible();
+  await page.reload();await expect(page.locator(".workspace-header")).toContainText(run.project_name);
+  await expect(page.getByRole("button",{name:"显示标注",exact:true})).toBeVisible();
+  const other=runs.runs.find((r:{project_id:string})=>r.project_id!==run.project_id);expect(other).toBeTruthy();
+  await page.goto(`/projects/${other.project_id}/manage/runs/${run.id}`);
+  await expect(page.getByRole("alert")).toContainText("不属于当前项目");
+  await expect(page.locator(".native-review svg image")).toHaveCount(0);expect(writes).toEqual([]);
+});
 test("native model management locks, unlocks and explicitly deletes only a TEST profile",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
   const models=await(await request.get("/api/model-profiles")).json();
