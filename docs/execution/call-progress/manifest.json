@@ -1,0 +1,26 @@
+[
+  {
+    "file": "legacy-restored-1440.png",
+    "sha": "90fa84c063fee0526e11aa00c4f20e96834668b2",
+    "url": "http://127.0.0.1:8788/projects/robocup-ball/work?task=9effd264-f22f-491a-8a06-b4600825126e",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "dpr": 1,
+    "status": "Live workspace; read-only verification; no new model request",
+    "writes": 0
+  },
+  {
+    "file": "legacy-restored-390.png",
+    "sha": "90fa84c063fee0526e11aa00c4f20e96834668b2",
+    "url": "http://127.0.0.1:8788/projects/robocup-ball/work?task=9effd264-f22f-491a-8a06-b4600825126e",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "dpr": 1,
+    "status": "Live workspace; read-only verification; no new model request",
+    "writes": 0
+  }
+]
