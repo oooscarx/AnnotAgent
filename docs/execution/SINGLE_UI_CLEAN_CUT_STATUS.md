@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Native Pipeline step configuration
+
+Added a focused native step dialog for existing shared stages and Label Pipelines. Model options come from the actual catalog (expert models require available state); source selectors preserve typed shared/local references and filter by Artifact kind. Existing routed/any-of/unknown sources remain intact until explicitly changed. Parameters and human-review gate edit the authoritative composition, and apply checks the current step fingerprint/identity before changing only the unsaved Draft. Model changes never call providers or alter in-flight requests. Invalid parameter JSON remains in the dialog with an error; cancel confirms unapplied changes.
+
+Verification: 309 unit tests plus one cutover TODO passed. Initial build caught an intentionally partial test fixture cast that TypeScript rejected; corrected its explicit unknown cast and production build/typecheck passed. New tests verify exact parent/source references and that stale/foreign step edits fail without mutating original composition. Browser dialog/save tests, actual Registry model choice, screenshots and full keyboard/dirty navigation verification are not yet executed for this slice. Type filtering does not prove graph acyclicity or full static validity. DAG structured edge UI, validators/refiners/resource/fallback controls (still accessible via advanced JSON), static validation, publication and final legacy removal remain. No real workspace or user service changes, no paid calls, no push. Goal active.
+
 ## Registry node catalog migration
 
 Native advanced editor now reads the actual project Workflow Catalog, shows shared stages and per-Label pipelines with real model binding IDs, and inserts registered nodes into the selected authoritative composition (or plain DAG). New nodes use catalog ports/defaults, remain explicitly unconnected, and do not invent model bindings or auto-wire a plausible-looking route. Duplicate IDs/foreign catalogs/unknown nodes are rejected. Invalid unsaved JSON is preserved and blocks catalog mutations rather than being discarded. Rich port linking and per-field model/parameter forms still remain; this is not complete editor parity.

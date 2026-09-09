@@ -3,6 +3,7 @@ import type {api} from "../api";
 import type {WorkflowCatalog,WorkflowDraft,PipelineStep,WorkflowNodePort} from "../types";
 import {pipelineNodeKind} from "../pipelinePresentation";
 import {Disclosure} from "./Disclosure";
+import {PipelineStepEditor,type StepLocation} from "./PipelineStepEditor";
 export type WorkflowCatalogService=Pick<typeof api,"workflowCatalog">;
 export function appendCatalogNode(draft:WorkflowDraft,catalog:WorkflowCatalog,descriptorId:string,target:string,id:string):WorkflowDraft {
   if(catalog.project_id!==draft.project_id)throw new Error("节点目录归属不同");
@@ -24,10 +25,12 @@ export function appendCatalogNode(draft:WorkflowDraft,catalog:WorkflowCatalog,de
 }
 export function WorkflowCatalogEditor({service,draft,disabled,onChange}:{service:WorkflowCatalogService;draft:WorkflowDraft;disabled:boolean;onChange:(draft:WorkflowDraft)=>void}) {
   const [catalog,setCatalog]=useState<WorkflowCatalog>();const [error,setError]=useState("");const [node,setNode]=useState("");const [target,setTarget]=useState("");
+  const [editing,setEditing]=useState<StepLocation>();
   useEffect(()=>{let current=true;void service.workflowCatalog(draft.project_id).then(value=>{if(!current)return;if(value.project_id!==draft.project_id)throw new Error("目录不属于当前项目");setCatalog(value);}).catch(e=>{if(current)setError(e.message);});return()=>{current=false;};},[service,draft.project_id]);
   const descriptor=catalog?.node_catalog.find(d=>d.id===node);
   return <section aria-label="真实节点目录"><h2>步骤与节点目录</h2>{error&&<p role="alert">{error}</p>}
-    {draft.label_pipeline&&<><h3>共享阶段</h3>{draft.label_pipeline.shared_stages.map(group=><Disclosure key={group.id} title={group.name}>{group.steps.map(step=><p key={step.id}>{step.node_type} · {step.id} · 模型 {step.model_binding?.model_id||"未绑定模型"}</p>)}</Disclosure>)}<h3>Label Pipelines</h3>{draft.label_pipeline.label_pipelines.map(group=><Disclosure key={group.id} title={`${group.target_task_id} · ${group.target_label}`}>{group.steps.map(step=><p key={step.id}>{step.node_type} · {step.id} · 模型 {step.model_binding?.model_id||"未绑定模型"}</p>)}</Disclosure>)}</>}
+    {editing&&catalog&&<PipelineStepEditor draft={draft} location={editing} catalog={catalog} onApply={onChange} onClose={()=>setEditing(undefined)}/>}
+    {draft.label_pipeline&&<><h3>共享阶段</h3>{draft.label_pipeline.shared_stages.map(group=><Disclosure key={group.id} title={group.name}>{group.steps.map(step=><div key={step.id}><p>{step.node_type} · {step.id} · 模型 {step.model_binding?.model_id||"未绑定模型"}</p><button type="button" disabled={disabled||!catalog} onClick={()=>setEditing({kind:"shared",group:group.id,step:step.id})}>编辑步骤</button></div>)}</Disclosure>)}<h3>Label Pipelines</h3>{draft.label_pipeline.label_pipelines.map(group=><Disclosure key={group.id} title={`${group.target_task_id} · ${group.target_label}`}>{group.steps.map(step=><div key={step.id}><p>{step.node_type} · {step.id} · 模型 {step.model_binding?.model_id||"未绑定模型"}</p><button type="button" disabled={disabled||!catalog} onClick={()=>setEditing({kind:"label",group:group.id,step:step.id})}>编辑步骤</button></div>)}</Disclosure>)}</>}
     {!catalog?<p role="status">读取 Registry 节点目录…</p>:<><label>添加 Registry 节点<select disabled={disabled} value={node} onChange={e=>setNode(e.target.value)}><option value="">选择节点</option>{catalog.node_catalog.map(item=><option key={item.id} value={item.id}>{item.display_name} · {item.id}</option>)}</select></label>
       {draft.label_pipeline&&<label>添加到哪个阶段<select disabled={disabled} value={target} onChange={e=>setTarget(e.target.value)}><option value="">选择阶段</option>{draft.label_pipeline.shared_stages.map(g=><option value={`shared:${g.id}`} key={`s:${g.id}`}>共享 · {g.name}</option>)}{draft.label_pipeline.label_pipelines.map(g=><option value={`label:${g.id}`} key={`l:${g.id}`}>{g.target_task_id} · {g.target_label}</option>)}</select></label>}
       {descriptor&&<p>输入：{descriptor.input_ports.map(p=>`${p.name}: ${p.artifact_type}${p.required?"（必需）":""}`).join(" · ")||"无"}；输出：{descriptor.output_ports.map(p=>`${p.name}: ${p.artifact_type}`).join(" · ")}。模型能力：{descriptor.required_model_capability||"无要求"}。</p>}
