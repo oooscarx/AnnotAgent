@@ -37,6 +37,7 @@ export type DeliveryPackageStart = { job: DeliveryPackageStatus; active: boolean
 
 /** Explicit commands retain caller-owned idempotency keys; reads never start jobs. */
 export interface DeliveryService {
+  pendingPackage(project:string,task:string):DeliveryPackageInput|undefined;
   history(project: string, task: string, before?:string, signal?:AbortSignal): Promise<{items:{id:string;created_at:string}[];next_cursor:string|null}>;
   image(project: string, task: string, image: string, run: string | null, signal?: AbortSignal): Promise<DeliveryImageView>;
   confirmImage(project: string, task: string, input: DeliveryReviewInput): Promise<DeliveryReview>;

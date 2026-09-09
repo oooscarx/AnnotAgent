@@ -158,6 +158,14 @@ Remaining M1/M3: natural-language slot extraction and ambiguity handling, explic
 
 ## Not complete / not executed
 
+### Pending admission recovery (after `7bf888a`)
+
+HttpAdapter persists the exact package admission body before sending, namespaced by server workspace ID, Project and Task. Storage errors block sending. Corrupt data is rejected, an unrelated command cannot replace a still-unresolved request, and only a matching successful POST receipt or owned GET receipt reconciles the browser record. Recreating the adapter restores the same command without sending it. The same-chat card shows the original revision/image count and offers read-only verification or an explicit original-scope retry; a newer edited intake is not substituted. Recovery data is not server authorization or evidence of success. Definitively abandoning a request for which no authoritative receipt can be obtained is still conservative/limited; no automatic replacement command is generated.
+
+Web typecheck/build and 78 unit files (324 passed, 1 todo) passed; production bundle warning remains. Adapter recreation tests cover persisted uncertainty, no POST on refresh/load, replacement rejection and exact retry. Storage tests cover corrupt records, quota failures and clearing only the matching command. Three Chromium TEST component checks passed, including restoring an old pending scope while the displayed current scope differs. These are not yet the complete real HTTP browser flow.
+
+The existing isolated HTTP fixture launcher accepts `--target-dir`, allowing reuse of `/tmp/annotagent-dataset-delivery-target` instead of creating another multi-GB build cache in the worktree. Its 3 existing port-safety tests passed. This reuses the existing TEST server/model harness and adds no production worker.
+
 ### Same-chat package history, explicit local admission and download card (after `19e9b5d`)
 
 `DeliveryPackage` now uses the real HttpAdapter to read current whole-image receipt snapshots, list this Task's existing Export records, explicitly admit a frozen package, poll owned status, cancel, and link the controlled ready-only download. Incomplete images open the same-chat image review. No source is inferred from sample overlays. Range checking is sequential bounded read-only work, not inference; all exact review revisions are revalidated by Rust at admission. Historical package identity lives in `delivery_package` URL state, remains accessible after intake changes, and renders the frozen receipt rather than current form labels. Mount, Back, refresh, state polling and history listing never dispatch packaging. Interrupted jobs do not present a fake resume or success. Exact repeated clicks retain one command within the mounted component; pending admission body recovery across a full refresh is still outstanding.

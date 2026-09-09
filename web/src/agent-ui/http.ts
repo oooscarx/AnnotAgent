@@ -9,6 +9,7 @@ import type { QueueConsent, QueuePreview } from "../conversation-queue-api";
 import type { SendCommand, SendReceipt } from "../conversation-send";
 import type { StopRequestRecord } from "../conversation-stop-api";
 import type { WorkspaceAdapter, Snapshot, Task, Command, Settings, ImageId, Box, Phase, Action } from "./adapter";
+import {readPendingDelivery,rememberPendingDelivery,clearPendingDelivery} from "./pendingDelivery";
 
 type Page<T> = { items: T[]; next_cursor: string | number | null };
 type Project = { project_id: string; project_owner_id: string; title: string; conversation_id: string | null };
@@ -42,17 +43,37 @@ export class HttpAdapter implements WorkspaceAdapter {
     return this.taskRoot(task);
   }
   readonly delivery: import("./deliveryService").DeliveryService = {
+    pendingPackage: (project,task)=>{this.deliveryRoot(project,task);return this.storage?readPendingDelivery(this.storage,this.deliveryPendingKey(project,task)):undefined;},
     history: async(project,task,before,signal)=>{
       const rows=await this.transport<{id:string;created_at:string;format:string}[]>(`${this.deliveryRoot(project,task)}/exports?limit=100${before?`&before=${esc(before)}`:""}`,{signal});
       return {items:rows.filter(r=>r.format==="ultralytics_yolo_detection").map(r=>({id:r.id,created_at:r.created_at})),next_cursor:rows.length===100?rows.at(-1)!.id:null};
     },
     image: (project, task, image, run, signal) => this.transport(`${this.deliveryRoot(project,task)}/delivery-images/${esc(image)}${run === null ? "" : `?source_run_id=${esc(run)}`}`, { signal }),
     confirmImage: (project, task, input) => this.transport(`${this.deliveryRoot(project,task)}/delivery-images/${esc(input.image_id)}`, { method: "POST", body: JSON.stringify(input) }),
-    startPackage: (project, task, input) => this.transport(`${this.deliveryRoot(project,task)}/delivery-packages`, { method: "POST", body: JSON.stringify(input) }),
-    packageStatus: (project, task, id, signal) => this.transport(`${this.deliveryRoot(project,task)}/delivery-packages/${esc(id)}`, { signal }),
+    startPackage: async(project, task, input) => {
+      const root=this.deliveryRoot(project,task);
+      if(!this.storage)throw new Error("无法持久保存打包命令；没有发送请求。");
+      const key=this.deliveryPendingKey(project,task);
+      rememberPendingDelivery(this.storage,key,input);
+      const result=await this.transport<import("./deliveryService").DeliveryPackageStart>(`${root}/delivery-packages`, { method: "POST", body: JSON.stringify(input) });
+      if(result.job.id!==input.command_id)throw new Error("打包回执身份不匹配；原请求已保留，请核实状态。");
+      // Cleanup failure must not turn a confirmed server receipt into a failed command.
+      try{clearPendingDelivery(this.storage,key,input.command_id);}catch{/* next read can reconcile the exact command */}
+      return result;
+    },
+    packageStatus: async(project, task, id, signal) => {
+      const result=await this.transport<import("./deliveryService").DeliveryPackageRead>(`${this.deliveryRoot(project,task)}/delivery-packages/${esc(id)}`, { signal });
+      if(result.job.id!==id)throw new Error("打包状态身份不匹配，未恢复其他数据包。");
+      if(this.storage)try{clearPendingDelivery(this.storage,this.deliveryPendingKey(project,task),id);}catch{/* the server receipt remains authoritative */}
+      return result;
+    },
     cancelPackage: (project, task, id) => this.transport(`${this.deliveryRoot(project,task)}/delivery-packages/${esc(id)}/cancel`, { method: "POST", body: JSON.stringify({ confirmed: true }) }),
     downloadUrl: (project, task, id) => `${this.deliveryRoot(project,task)}/delivery-packages/${esc(id)}/download`,
   };
+  private deliveryPendingKey(project:string,task:string) {
+    if(!this.state.workspaceId)throw new Error("工作区身份尚未读取，不能恢复或发送打包命令。");
+    return this.key(`delivery-package.pending.${esc(project)}.${esc(task)}`);
+  }
   readonly deliveryIntake: import("./DeliveryIntake").DeliveryIntakeService = {
     read: (project, id, signal) => { const task = this.task(id); if (task.project !== project) throw new Error("任务不属于此项目"); return this.transport(`${this.taskRoot(task)}/delivery-intent`, { signal }); },
     save: (project, id, input) => { const task = this.task(id); if (task.project !== project) throw new Error("任务不属于此项目"); return this.transport(`${this.taskRoot(task)}/delivery-intent`, { method: "POST", body: JSON.stringify(input) }); },

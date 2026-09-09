@@ -1,5 +1,25 @@
 import {test,expect} from "@playwright/test";
 import {resolve} from "node:path";
+test("restored pending admission stays read-only until an explicit exact-scope retry",async({page})=>{
+  await page.goto("/ui-preview?task=new");
+  await page.evaluate(async path=>{
+    const {React,createRoot,DeliveryPackage}=await import(path);const host=document.createElement("main");document.body.replaceChildren(host);
+    const original={command_id:"pending-original",intent_revision:1,intent_sha256:"old-frozen-scope",image_reviews:{oldImage:3},confirmed:true};
+    const state={posts:[] as unknown[],pending:original as unknown,received:false};Object.assign(window,{pendingPackageTest:state});
+    const service={history:async()=>({items:[],next_cursor:null}),pendingPackage:()=>state.pending,
+      packageStatus:async()=>{if(!state.received)throw new Error("TEST no authoritative receipt yet");return {job:{id:"pending-original",phase:"cancelled",intent_revision:1,result:null},active:false,interrupted:false};},
+      startPackage:async(_p:string,_t:string,input:unknown)=>{state.posts.push(input);state.received=true;state.pending=undefined;return {job:{id:"pending-original",phase:"cancelled",intent_revision:1,result:null},active:false,dispatched:false};}};
+    createRoot(host).render(React.createElement(DeliveryPackage,{service,project:"TEST",task:"TASK",scope:{revision:2,content_sha256:"new-scope",image_ids:["differentImage"]},onInspect:()=>{}}));
+  },`/@fs/${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`);
+  await expect(page.getByText("恢复了一个尚未核实回执",{exact:false})).toContainText("revision 1");
+  expect(await page.evaluate(()=>(window as unknown as {pendingPackageTest:{posts:unknown[]}}).pendingPackageTest.posts)).toEqual([]);
+  await page.getByRole("button",{name:"核实原打包请求",exact:true}).click();
+  expect(await page.evaluate(()=>(window as unknown as {pendingPackageTest:{posts:unknown[]}}).pendingPackageTest.posts)).toEqual([]);
+  await page.getByRole("button",{name:"按原范围和命令重试",exact:true}).click();
+  expect(await page.evaluate(()=>(window as unknown as {pendingPackageTest:{posts:unknown[]}}).pendingPackageTest.posts)).toEqual([{command_id:"pending-original",intent_revision:1,intent_sha256:"old-frozen-scope",image_reviews:{oldImage:3},confirmed:true}]);
+  await expect(page.getByText("已取消",{exact:true})).toBeVisible();
+  await expect(page.getByRole("link",{name:"下载数据集 ZIP"})).toHaveCount(0);
+});
 test("package card uses owned persisted status and never packages on mount or status retry",async({page})=>{
   await page.goto("/ui-preview?task=new");
   await page.evaluate(async path=>{

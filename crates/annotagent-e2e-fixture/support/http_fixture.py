@@ -44,6 +44,7 @@ def main():
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--provider-port", type=int, default=0)
     parser.add_argument("--web-dist", type=Path, help="Optional existing build to serve on the same origin; never built or edited")
+    parser.add_argument("--target-dir", type=Path, help="Existing isolated Cargo build directory; defaults to this worktree target")
     parser.add_argument("--smoke", action="store_true", help="Seed, verify, then stop owned servers")
     args = parser.parse_args()
     workspace = (args.workspace or Path(tempfile.mkdtemp(prefix="TEST-agent-ui-"))).resolve()
@@ -67,7 +68,8 @@ def main():
         parser.error("API and provider ports must differ")
     # Allowlist build essentials; no inherited provider tokens or credential env.
     env = {key: os.environ[key] for key in ("PATH", "HOME", "USER", "TMPDIR", "RUSTUP_HOME", "CARGO_HOME", "SDKROOT", "DEVELOPER_DIR") if key in os.environ}
-    env["CARGO_TARGET_DIR"] = str(ROOT / "target")
+    target_dir = (args.target_dir or ROOT / "target").resolve()
+    env["CARGO_TARGET_DIR"] = str(target_dir)
     build = subprocess.run(["cargo", "test", "-p", "annotagent-server", "--lib", "--offline", "--no-run", "--message-format=json"], cwd=ROOT, env=env, stdout=subprocess.PIPE, text=True, check=True)
     artifacts = [json.loads(line) for line in build.stdout.splitlines() if line.startswith("{")]
     executable = next(item["executable"] for item in artifacts if item.get("reason") == "compiler-artifact" and item.get("profile", {}).get("test") and item.get("target", {}).get("name") == "annotagent_server" and item.get("executable"))
@@ -78,7 +80,7 @@ def main():
     logs = []
     try:
         for name, command, extra in [
-            ("provider", [str(ROOT / "target/debug/annotagent-e2e-fixture")], {"ANNOTAGENT_E2E_WORKER_PORT": str(provider_port)}),
+            ("provider", [str(target_dir / "debug/annotagent-e2e-fixture")], {"ANNOTAGENT_E2E_WORKER_PORT": str(provider_port)}),
             ("server", [executable, "--exact", "tests::integration_http_fixture", "--ignored", "--nocapture"], {"ANNOTAGENT_TEST_HTTP_FIXTURE": json.dumps({"enabled": True, "workspace": str(workspace), "port": api_port, "provider_port": provider_port, "web_dist": str(args.web_dist.resolve()) if args.web_dist else None})}),
         ]:
             log = (workspace / f"{name}.log").open("a")

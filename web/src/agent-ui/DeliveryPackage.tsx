@@ -14,15 +14,17 @@ export function DeliveryPackage({service,project,task,scope,locked=false,onInspe
   const [reviews,setReviews]=useState<Record<string,number>>();
   const [missing,setMissing]=useState<string[]>();
   const [refresh,setRefresh]=useState(0);
+  const [recovery,setRecovery]=useState<DeliveryPackageInput>();
   const pending=useRef(false);
   const retry=useRef<DeliveryPackageInput | undefined>(undefined);
   const select=(next:string)=>{setId(next);const url=new URL(location.href);url.searchParams.set("delivery_package",next);window.history.pushState(window.history.state,"",url);};
   useEffect(()=>{const back=()=>setId(new URL(location.href).searchParams.get("delivery_package")||"");window.addEventListener("popstate",back);return()=>window.removeEventListener("popstate",back);},[]);
   useEffect(()=>{setReviews(undefined);setMissing(undefined);retry.current=undefined;},[scope.revision,scope.content_sha256]);
+  useEffect(()=>{try{const saved=service.pendingPackage?.(project,task);setRecovery(saved);if(saved)setId(current=>current||saved.command_id);}catch(e){setError((e as Error).message);}},[service,project,task,refresh]);
   useEffect(()=>{const ctrl=new AbortController();void service.history(project,task,undefined,ctrl.signal).then(page=>{if(!ctrl.signal.aborted){setHistory(page.items);setCursor(page.next_cursor);}}).catch(e=>{if(!ctrl.signal.aborted)setError(e.message);});return()=>ctrl.abort();},[service,project,task,refresh]);
   useEffect(()=>{
     const ctrl=new AbortController();let timer:ReturnType<typeof setTimeout>|undefined;setJob(undefined);
-    const read=async()=>{try{const value=await service.packageStatus(project,task,id,ctrl.signal);if(ctrl.signal.aborted)return;setJob(value);if(value.active&&!value.interrupted)timer=setTimeout(()=>void read(),1500);}catch(e){if(!ctrl.signal.aborted)setError((e as Error).message);}};
+    const read=async()=>{try{const value=await service.packageStatus(project,task,id,ctrl.signal);if(ctrl.signal.aborted)return;setJob(value);setRecovery(current=>current?.command_id===id?undefined:current);if(value.active&&!value.interrupted)timer=setTimeout(()=>void read(),1500);}catch(e){if(!ctrl.signal.aborted)setError((e as Error).message);}};
     if(id&&!busy)void read();return()=>{ctrl.abort();clearTimeout(timer);};
   },[service,project,task,id,refresh,busy]);
   const act=async(fn:()=>Promise<void>)=>{if(pending.current)return;pending.current=true;setBusy(true);setError("");try{await fn();}catch(e){setError((e as Error).message);}finally{pending.current=false;setBusy(false);}};
@@ -36,7 +38,7 @@ export function DeliveryPackage({service,project,task,scope,locked=false,onInspe
     setMissing(unresolved);if(!unresolved.length)setReviews(map);
   });
   const start=()=>void act(async()=>{
-    if(!reviews||locked)return;
+    if(!reviews||locked||recovery)return;
     const body={intent_revision:scope.revision,intent_sha256:scope.content_sha256,image_reviews:reviews,confirmed:true};
     if(!retry.current||JSON.stringify({...retry.current,command_id:undefined})!==JSON.stringify(body))retry.current={...body,command_id:crypto.randomUUID()};
     const input=retry.current;select(input.command_id);
@@ -46,10 +48,11 @@ export function DeliveryPackage({service,project,task,scope,locked=false,onInspe
   const receipt=job?.job.result;
   return <section className="delivery-package" aria-label="训练数据包交付">
     <h3>交付训练数据包</h3><p>当前范围 {scope.image_ids.length} 张。完整正样本、明确负样本与排除原因都需要当前版本的整图决定。此处仅本地打包，不新增模型调用。</p>
+    {recovery&&<div className="notice"><p>恢复了一个尚未核实回执的打包命令：交付 revision {recovery.intent_revision}，{Object.keys(recovery.image_reviews).length} 张图片。仅恢复请求，不代表服务器已接收。</p><button disabled={busy} onClick={()=>{select(recovery.command_id);setRefresh(v=>v+1);}}>核实原打包请求</button><button disabled={busy||locked} onClick={()=>void act(async()=>{const original=recovery;select(original.command_id);const result=await service.startPackage(project,task,original);setJob({...result,interrupted:false});setRecovery(undefined);setRefresh(v=>v+1);})}>按原范围和命令重试</button></div>}
     <button disabled={busy||locked} onClick={check}>检查当前打包范围</button>
     {missing&&<p role="status">{missing.length?`还有 ${missing.length} 张未完成当前整图确认。`:"整图决定齐全；划分、类别和原图仍需打包器独立校验。"}</p>}
     {!!missing?.length&&<Disclosure title="查看未完成图片">{missing.map((image,index)=><button key={image} disabled={busy} onClick={()=>onInspect(image)}>检查图片 {index+1}</button>)}</Disclosure>}
-    {reviews&&<div className="notice"><p>确认按交付 revision {scope.revision} 的全部图片及整图决定打包，包含明确排除记录。旧包不会被覆盖。</p><button disabled={busy||locked} onClick={start}>确认并生成训练数据包</button></div>}
+    {reviews&&<div className="notice"><p>确认按交付 revision {scope.revision} 的全部图片及整图决定打包，包含明确排除记录。旧包不会被覆盖。</p><button disabled={busy||locked||!!recovery} onClick={start}>确认并生成训练数据包</button></div>}
     {error&&<p role="alert" className="error">{error} 不会自动重试或显示完成。</p>}
     {!!history.length&&<label>本任务已保存的数据包<select aria-label="本任务已保存的数据包" value={id} onChange={e=>select(e.target.value)}><option value="">选择数据包</option>{history.map(item=><option key={item.id} value={item.id}>{item.created_at} · {item.id.slice(0,8)}</option>)}</select></label>}
     {cursor&&<button disabled={busy} onClick={()=>void act(async()=>{const page=await service.history(project,task,cursor);setHistory(old=>[...old,...page.items.filter(p=>!old.some(o=>o.id===p.id))]);setCursor(page.next_cursor);})}>更早的数据包</button>}

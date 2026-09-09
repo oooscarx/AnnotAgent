@@ -5,6 +5,31 @@ const project = { project_id: "TEST-alpha", project_owner_id: "owner-a", title: 
 const settings = { revision: "revision-1", sections: { data_privacy: { workspace_id: "TEST-workspace" }, usage_budget: { future_run_budget: { max_requests: 10, max_cost: "2.50" } } } };
 const navTask = (id: string) => ({ task_id: id, title: `TEST ${id}`, schema_revision: "schema-1", project_owner_id: "owner-a", conversation_id: "conversation-a", state: "idle" });
 const root = "/api/projects/TEST-alpha/conversations/conversation-a/tasks";
+function memoryStorage():Storage {
+  const values=new Map<string,string>();
+  return {get length(){return values.size;},clear:()=>values.clear(),getItem:key=>values.get(key)??null,setItem:(key,value)=>{values.set(key,String(value));},removeItem:key=>{values.delete(key);},key:index=>[...values.keys()][index]??null};
+}
+it("pending package admission survives a new adapter and only explicit retry reuses the original command",async()=>{
+  const storage=memoryStorage();const reads=mockTransport();const posts:unknown[]=[];let received=false;
+  const input={command_id:"uncertain",intent_revision:3,intent_sha256:"saved-scope",image_reviews:{one:2},confirmed:true};
+  const transport:Transport=async<T>(path:string,init?:RequestInit)=>{
+    if(path.endsWith("/delivery-packages")&&init?.method==="POST"){
+      posts.push(JSON.parse(String(init.body)));if(!received)throw new Error("TEST connection lost");
+      return {job:{id:"uncertain",phase:"exporting"},active:true,dispatched:false} as T;
+    }
+    return reads.transport<T>(path,init);
+  };
+  const first=new HttpAdapter(transport,storage);await first.refresh();await first.loadTask("TEST-alpha","t1");
+  await expect(first.delivery.startPackage("TEST-alpha","t1",input)).rejects.toThrow("connection lost");
+  const restored=new HttpAdapter(transport,storage);await restored.refresh();await restored.loadTask("TEST-alpha","t1");
+  expect(posts).toHaveLength(1);
+  expect(restored.delivery.pendingPackage("TEST-alpha","t1")).toEqual(input);
+  expect(restored.delivery.pendingPackage("TEST-alpha","t2")).toBeUndefined();
+  await expect(restored.delivery.startPackage("TEST-alpha","t1",{...input,command_id:"replacement"})).rejects.toThrow("待核实");
+  expect(posts).toHaveLength(1);
+  received=true;await restored.delivery.startPackage("TEST-alpha","t1",restored.delivery.pendingPackage("TEST-alpha","t1")!);
+  expect(posts).toEqual([input,input]);expect(restored.delivery.pendingPackage("TEST-alpha","t1")).toBeUndefined();
+});
 it("training package history restores without interpreting its receipt as a legacy export report",async()=>{
   const packageRow={id:"package",format:"ultralytics_yolo_detection",created_at:"TEST",result:{images:11,objects:20,sha256:"frozen",bytes:500}};
   const reads=mockTransport({[`${root}/t1/exports`]:[packageRow],[`${root}/t1/exports?limit=100`]:[packageRow]});
@@ -23,7 +48,7 @@ it("formal delivery reads never dispatch and commands retain frozen scope across
     if (failure) throw new Error("TEST stale whole-image snapshot");
     return {job:{id:"package",phase:"validating"},active:false,interrupted:true} as T;
   };
-  const adapter = new HttpAdapter(transport);
+  const adapter = new HttpAdapter(transport,memoryStorage());
   await adapter.refresh(); await adapter.loadTask("TEST-alpha","t1");
   expect(calls).toEqual([]);
   const ctrl = new AbortController();
