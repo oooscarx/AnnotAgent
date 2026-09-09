@@ -180,7 +180,7 @@ struct Journey {
 }
 
 /// No history limits: every query belongs to the caller's single transaction snapshot.
-fn discover(
+pub(crate) fn discover(
     db: &Connection,
     project: &str,
     conversation: Uuid,

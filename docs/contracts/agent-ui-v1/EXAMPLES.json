@@ -1,0 +1,84 @@
+{
+  "fixture": true,
+  "notice": "TEST only; placeholders are not runnable approvals",
+  "send": {
+    "message": {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "text": "TEST plan only",
+      "image": null
+    },
+    "task_id": null,
+    "schema_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "agent_model": {
+      "revision": 0,
+      "model_profile_id": null
+    },
+    "mode": "plan"
+  },
+  "select_agent_model": {
+    "request_id": "00000000-0000-4000-8000-000000000002",
+    "expected_revision": 0,
+    "model_profile_id": null
+  },
+  "legacy_error": {
+    "error": "TEST invalid owner",
+    "status": 400
+  },
+  "unknown_cost": null,
+  "stop": {
+    "id": "00000000-0000-4000-8000-000000000003",
+    "text": "stop",
+    "image": null,
+    "reference": {
+      "scope": "stop_request",
+      "task_id": "00000000-0000-4000-8000-000000000004"
+    }
+  },
+  "select_stop": {
+    "target": {
+      "kind": "call",
+      "id": "00000000-0000-4000-8000-000000000005",
+      "task_id": "00000000-0000-4000-8000-000000000004"
+    }
+  },
+  "schema_consent": {
+    "call_id": "00000000-0000-4000-8000-000000000005",
+    "model_id": "00000000-0000-4000-8000-000000000006",
+    "scope_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "expires_at": "2026-09-09T12:00:00Z",
+    "allow_unknown_cost": true
+  },
+  "budget_patch": {
+    "expected_revision": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "budget": {
+      "max_requests": 7,
+      "max_cost": "2.00"
+    }
+  },
+  "call_limit": {
+    "id": "00000000-0000-4000-8000-000000000007",
+    "expected_revision": 0,
+    "maximum_calls": 100
+  },
+  "navigation": {
+    "workspace_id": "00000000-0000-4000-8000-000000000001",
+    "items": [
+      {
+        "project_id": "TEST-project",
+        "project_owner_id": "00000000-0000-4000-8000-000000000002",
+        "title": "TEST project",
+        "group_id": null,
+        "conversation_id": "00000000-0000-4000-8000-000000000003"
+      }
+    ],
+    "next_cursor": null
+  },
+  "event_gap": {
+    "error": "Event cursor is absent from this Run; reload the snapshot",
+    "status": 409,
+    "code": "event_cursor_gap",
+    "suggested_action": "reload_snapshot",
+    "snapshot_url": "/api/runs/00000000-0000-4000-8000-000000000005",
+    "history_url": "/api/runs/00000000-0000-4000-8000-000000000005/events"
+  }
+}

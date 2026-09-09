@@ -14,7 +14,7 @@ pub(super) async fn defer(
         .application
         .set_conversation_human_deferral(&project, conversation, task, id, &input)
         .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::conversation)
 }
 
 pub(super) async fn cancel(
@@ -25,7 +25,7 @@ pub(super) async fn cancel(
         .application
         .cancel_conversation_human_request(&project, conversation, task, id)
         .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::conversation)
 }
 
 pub(super) async fn list(
@@ -36,7 +36,7 @@ pub(super) async fn list(
         .application
         .conversation_human_requests(&project, conversation, task)
         .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::conversation)
 }
 
 pub(super) async fn create(
@@ -53,7 +53,7 @@ pub(super) async fn create(
         .application
         .create_conversation_human_request(&project, &input)
         .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::conversation)
 }
 
 #[derive(Deserialize)]
@@ -74,7 +74,7 @@ pub(super) async fn answer(
         let consent = state
             .application
             .conversation_journey_consent(&project, conversation, task, consent_id)
-            .map_err(ApiError::bad_request)?
+            .map_err(ApiError::conversation)?
             .ok_or_else(|| ApiError::bad_request("Journey consent not found"))?;
         if consent
             .consent
@@ -98,11 +98,11 @@ pub(super) async fn answer(
             &input.answer,
             input.journey_consent_id,
         )
-        .map_err(ApiError::bad_request)?;
+        .map_err(ApiError::conversation)?;
     let saved = state
         .application
         .continue_conversation_correction(&project, conversation, task, id)
-        .map_err(ApiError::bad_request)?;
+        .map_err(ApiError::conversation)?;
     deliver_saved_answer(
         state,
         project,
@@ -159,10 +159,10 @@ pub(super) async fn resume(
     let consent = state
         .application
         .conversation_answer_consent(&project, conversation, task, id)
-        .map_err(ApiError::bad_request)?;
+        .map_err(ApiError::conversation)?;
     let saved = state
         .application
         .continue_conversation_correction(&project, conversation, task, id)
-        .map_err(ApiError::bad_request)?;
+        .map_err(ApiError::conversation)?;
     deliver_saved_answer(state, project, conversation, task, saved, consent).await
 }

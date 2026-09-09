@@ -29,6 +29,15 @@ fn view(
         .map_err(ApiError::bad_request)?;
     let mut response = serde_json::to_value(record).map_err(ApiError::internal)?;
     response["observation"] = json!(observation);
+    response["normalized_state"] = json!(match observation.as_ref().map(|v| v.state) {
+        Some("cancel_pending") => Some("stopping"),
+        Some("unknown") => Some("outcome_unknown"),
+        Some("cancelled") => Some("interrupted"),
+        // "finished" does not prove success; keep the terminal outcome unspecified.
+        Some("finished") => None,
+        _ => Some("idle"),
+    });
+    response["resume"] = json!({"available":false,"reason":"A stop receipt is not a resumable checkpoint. Use the exact paused Run/Batch or saved HumanRequest; never automatically resend an unknown Provider call."});
     response["dispatch_error"] = dispatch_error.map_or(Value::Null, Value::String);
     Ok(Json(response))
 }

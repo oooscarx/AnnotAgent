@@ -669,7 +669,7 @@ impl SqliteStore {
             let sequence: i64 = transaction.query_row("SELECT COALESCE(MAX(sequence), 0) FROM sample_feedback_revisions WHERE sample_test_id = ?1 AND image_id = ?2", params![feedback.sample_test_id, feedback.image_id], |row| row.get(0))?;
             let next = i64::try_from(feedback.sequence).map_err(|_| StorageError::InvalidEnum("Feedback sequence is too large".into()))?;
             if next != sequence + 1 {
-                return Err(StorageError::InvalidEnum("Feedback changed in another window; reload before saving".into()));
+                return Err(StorageError::FeedbackRevisionConflict { current: u64::try_from(sequence).unwrap_or_default() });
             }
             transaction.execute("INSERT INTO sample_feedback_revisions VALUES (?1, ?2, ?3, ?4, ?5)", params![feedback.revision_id, feedback.sample_test_id, feedback.image_id, next, json])?;
             }

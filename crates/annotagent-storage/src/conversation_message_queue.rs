@@ -43,9 +43,19 @@ pub(crate) fn require_task(
         |row| row.get(0),
     )?;
     if !owned {
-        return Err(invalid(
-            "Queued message task is missing or belongs to another conversation",
-        ));
+        let exists: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM conversation_tasks WHERE id=?1)",
+            [task.to_string()],
+            |row| row.get(0),
+        )?;
+        return Err(StorageError::ConversationContract {
+            code: if exists {
+                "owner_mismatch"
+            } else {
+                "not_found"
+            },
+            message: "Queued message task is missing or belongs to another conversation".into(),
+        });
     }
     Ok(())
 }

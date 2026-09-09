@@ -1,5 +1,6 @@
 //! `SQLite` persistence for projects, auditable runs, revisions, and correction memory.
 
+mod agent_ui;
 mod batch;
 mod conversation_builder;
 mod conversation_calls;
@@ -9,6 +10,7 @@ mod conversation_feedback_scope;
 mod conversation_future_schema;
 mod conversation_future_schema_proposal;
 mod conversation_image_class;
+mod event_replay;
 pub use conversation_exports::{ConversationExport, ConversationExportEvent};
 pub use conversation_future_schema_proposal::{
     ConversationFutureSchemaProposalAuthorizationRecord, ConversationFutureSchemaProposalSource,
@@ -153,6 +155,10 @@ const PIPELINE_LIFECYCLE_MIGRATION: &str =
 
 #[derive(Debug, Error)]
 pub enum StorageError {
+    #[error("Feedback changed in another window; reload before saving")]
+    FeedbackRevisionConflict { current: u64 },
+    #[error("invalid conversation operation: {message}")]
+    ConversationContract { code: &'static str, message: String },
     #[error(
         "Agent model choice changed before Send; review the current selection before sending this message"
     )]
