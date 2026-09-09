@@ -36,7 +36,7 @@ export function AgentComposer({ inputRef, value, disabled, inputLocked, onChange
         if (!disabled) onSubmit();
       }} />
     <div className="agent-composer-actions">
-      <label className="agent-composer-upload">Attach image
+      <label className="agent-composer-upload"><span aria-hidden="true">＋</span><span className="sr-only">Attach image</span>
         <input type="file" accept="image/png,image/jpeg" aria-label="Attach image to message" disabled={disabled||inputLocked||attachmentDisabled} onChange={event=>{const file=event.currentTarget.files?.[0];event.currentTarget.value="";if(file)onAttachImage(file);}}/>
       </label>
       <label className="agent-composer-mode"><span className="sr-only">Next message mode</span>
@@ -46,7 +46,6 @@ export function AgentComposer({ inputRef, value, disabled, inputLocked, onChange
       </label>
       {actions}
     </div>
-    <small id="agent-mode-scope">{mode==="plan" ? "Plan: text-model fees may apply. No image processing without separate approval." : "Execute: review model, data and cost approval before processing. Changing mode does not start or stop work."}</small>
-    <small>Attachments upload to this AnnotAgent server, not to a model. One image reference per message.</small>
+    <small id="agent-mode-scope">{mode==="plan" ? "Plan · LLM fees may apply; image processing needs separate approval." : "Execute only within approved model, data and budget scope."}</small>
   </form>;
 }

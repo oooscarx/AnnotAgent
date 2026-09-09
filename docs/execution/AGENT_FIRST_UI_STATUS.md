@@ -2,6 +2,11 @@
 
 ## UI convergence corrective pass — V0 (2026-09-09)
 
+Latest checkpoint: V1 committed (`06cef99`); V2 partially implemented and paused at
+the user's explicit "stop and push" request. V3 is not complete. This request
+authorizes pushing the existing local work to the configured remotes; no continued
+development is authorized until the user resumes it.
+
 The new user-supplied `design/annotagent-ui-convergence` instructions supersede
 the permanent 216px/100px task sidebar and its old acceptance tests. M3 backend
 queue expansion is paused. V0 baseline → V1 actual layout removal → V2 real Thread,
@@ -59,6 +64,36 @@ single Send, frozen attachment and lost-ack retry. Updated obsolete navigation u
 assertion after its expected initial failure (244 passed/1 old-contract failure).
 Full regression and V3 six final states have not run. V1 screenshots still show
 legacy budget/form presentation; V2 must address those, not claim visual completion.
+
+### V2 partial checkpoint — Composer, Picker and independent Stop
+
+Unified 14px Composer surface, borderless inner textarea, single scope line and
+compact image attachment. Empty conversation is vertically centered. Registry picker
+now renders searchable Provider groups and selectable buttons, not a native model
+select. Preference revision, frozen command retry, reload and next-request scope are
+unchanged. Escape/focus return and outside dismissal are wired without model probes.
+
+Budget moves to the Header management popover with a dirty-close guard. The existing
+authorization budget notice opens that same panel through a React context, preserving
+its cumulative-limit editor rather than duplicating it. Loaded empty Human Requests
+render nothing; failures and actual requests still render. The selected Schema card
+is adjacent to its source message; processing cards filter by the actual task owner.
+Sequence/goal-selection internals move into message details. Complete Thread object
+projection and compact Plan/progress/export presentation still need further work.
+
+AgentStopControl uses the existing stop API with a distinct persisted exact command,
+not Composer text. It leaves unsent text editable, shows Stopping until acknowledgement,
+and hands actual receipts to the existing StopCard for safe-boundary/unknown outcome
+and target selection. No fake continue or new backend scheduler was added.
+
+Validation: typecheck and production build passed; Web unit 245/245 (11767). Combined
+18-case E2E run (15775) had 17 passes and a new test race (asserted POST count before
+request reached its handler). Corrected that assertion to wait for the actual request;
+focused rerun plus budget retry/stale-revision case both passed (88192). Earlier
+seven-case layout/Picker/attachment run passed (55759). Latest changed budget return
+access and overall V2 state have not received full E2E/visual acceptance. Rust was not
+modified this pass; full workspace regression and six final actual screenshots remain
+unexecuted. No Live accuracy or human usability claim. User 8787 and data untouched.
 
 ## Current checkpoint — M3 queue/Builder integration in progress (2026-09-09)
 

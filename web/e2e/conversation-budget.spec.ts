@@ -7,6 +7,7 @@ test("Project conversation ceiling persists, retries exactly and rejects stale c
   expect((await request.post("/api/projects",{data:{id:project,yaml:"version: 1\nproject:\n  name: TEST Project call ceiling\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n"}})).ok()).toBe(true);
   const path=`/api/projects/${project}/conversation-call-limit`;
   await page.goto(`/projects/${project}/work`);
+  await page.getByRole("button",{name:"Project menu",exact:true}).click();
   await page.getByText("Project call limit",{exact:true}).click();
   const card=page.getByRole("region",{name:"Project call limit",exact:true});
   await expect(card).toContainText("No Project conversation ceiling configured");
@@ -22,7 +23,7 @@ test("Project conversation ceiling persists, retries exactly and rejects stale c
   await expect(card.getByRole("button",{name:"Retry saving Project limit",exact:true})).toBeVisible();
   await card.getByRole("button",{name:"Retry saving Project limit",exact:true}).click();
   await expect(card).toContainText("0 cumulative maximum · Revision 1");
-  await page.reload();await page.getByText("Project call limit",{exact:true}).click();
+  await page.reload();await page.getByRole("button",{name:"Project menu",exact:true}).click();await page.getByText("Project call limit",{exact:true}).click();
   await expect(card).toContainText("0 cumulative maximum · Revision 1");
   expect(await (await request.get(path)).json()).toEqual({revision:1,maximum_calls:0,reserved_calls:0});
   const next={id:randomUUID(),expected_revision:1,maximum_calls:3};

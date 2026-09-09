@@ -99,6 +99,42 @@ test("standalone stop in an empty conversation does not create an annotation goa
   expect(await (await request.get(`${root}/tasks`)).json()).toEqual([]);
 });
 
+test("Composer stop stays independent of unsent text and waits for server acknowledgement", async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const state = await schemaFixture(request, 1), task = state.tasks[0];
+  await page.goto(`${state.url}&task=${task.id}`);
+  const input = page.getByLabel("Your message", { exact: true });
+  await input.fill("TEST keep this next instruction while stopping");
+  await expect(page.getByRole("button", { name: "Stop task", exact: true })).toBeEnabled();
+  const execution = startSchema(request, task);
+  await expect.poll(async () => (await call(request, task))?.status).toBe("reserved");
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let stopWrites = 0;
+  await page.route(`**${state.root}/stop-requests`, async route => {
+    stopWrites++;
+    // Perform the real cancellation, then delay only its network acknowledgement.
+    const response = await fetchWithinMutationLimit(route);
+    await held;
+    await route.fulfill({ response });
+  });
+  await page.getByRole("button", { name: "Stop task", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Stopping…", exact: true })).toBeDisabled();
+  await expect(input).toHaveValue("TEST keep this next instruction while stopping");
+  await expect(input).toBeEnabled();
+  try { await expect.poll(()=>stopWrites).toBe(1); }
+  finally { release(); }
+  await expect(page.getByRole("region", { name: "Stop request", exact: true })).toContainText(/unknown/i);
+  await execution;
+  expect((await call(request, task)).status).toBe("in_doubt");
+  await expect(input).toHaveValue("TEST keep this next instruction while stopping");
+  await input.fill("");
+  await page.reload();
+  await expect(page.getByRole("region", { name: "Stop request", exact: true })).toContainText(/unknown/i);
+  expect(stopWrites).toBe(1);
+  expect((await (await request.get(`${task.taskRoot}/budget`)).json()).total_reserved_calls).toBe(1);
+});
+
 test("chat stop cancels the actual reserved Schema call once and restores without another POST", async ({ page, request }) => {
   test.setTimeout(180_000);
   const state = await schemaFixture(request, 1), task = state.tasks[0];

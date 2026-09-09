@@ -18,10 +18,21 @@ export function AgentModelPicker({ project, conversation, onConversation, onSett
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState(false);
+  const [open, setOpen] = useState(false);
   const command = useRef<Command | undefined>(undefined);
   const alive = useRef(true);
   const details = useRef<HTMLDetailsElement>(null);
   const summary = useRef<HTMLElement>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    searchInput.current?.focus();
+    const outside = (event: PointerEvent) => {
+      if (!details.current?.contains(event.target as Node) && details.current) details.current.open = false;
+    };
+    document.addEventListener("pointerdown", outside);
+    return () => document.removeEventListener("pointerdown", outside);
+  }, [open]);
   useEffect(() => {
     alive.current = true;
     onPreference(undefined);
@@ -66,26 +77,44 @@ export function AgentModelPicker({ project, conversation, onConversation, onSett
     finally { if (alive.current) setBusy(false); }
   }
   const query = search.trim().toLocaleLowerCase();
-  return <details ref={details} className="agent-model-picker" onKeyDown={event => {
+  return <details ref={details} className="agent-model-picker" onToggle={event=>setOpen(event.currentTarget.open)} onKeyDown={event => {
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); }
-    if (event.key === "Enter" && event.target instanceof HTMLInputElement && !event.nativeEvent.isComposing) { event.preventDefault(); event.stopPropagation(); }
+    if (event.key === "Enter" && event.target instanceof HTMLInputElement) { event.preventDefault(); event.stopPropagation(); }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      const choices = Array.from(details.current?.querySelectorAll<HTMLButtonElement>("button[data-model-choice]:not(:disabled)") ?? []);
+      if (!choices.length) return;
+      event.preventDefault();
+      const index = choices.indexOf(document.activeElement as HTMLButtonElement);
+      choices[(index + (event.key === "ArrowDown" ? 1 : -1) + choices.length) % choices.length]?.focus();
+    }
   }}>
     <summary ref={summary} aria-label="Choose Agent model">{selected ? `${selected.display_name} · ${providers.find(provider => provider.id === selected.provider_id)?.display_name ?? "Missing Provider"}` : (preference?.model_profile_id ? "Unavailable model reference" : "Project Agent default")}</summary>
-    <section aria-label="Agent model selection" className="agent-model-panel">
-      <strong>Agent model · next authorization</strong>
-      <p>Sent message scopes, authorized requests and image-model bindings stay unchanged. A new request still requires its own data and cost authorization.</p>
-      <label>Search models<input type="search" value={search} onChange={event => setSearch(event.target.value)} /></label>
-      <label>Provider / account and model<select aria-label="Agent model" disabled={!preference || busy || pending} value={preference?.model_profile_id ?? ""} onChange={event => void choose(event.target.value || null)}>
-        <option value="">Use Project Agent default</option>
-        {preference?.model_profile_id && !selected && <option value={preference.model_profile_id} disabled>Saved model is no longer in Registry</option>}
-        {providers.map(provider => <optgroup key={provider.id} label={`${provider.display_name} · ${provider.id.slice(0,8)}`}>
-          {models.filter(model => model.provider_id === provider.id && (model.id === preference?.model_profile_id || `${provider.display_name} ${model.display_name} ${model.remote_model_id}`.toLocaleLowerCase().includes(query))).map(model => <option key={model.id} value={model.id} disabled={!compatible(model) || !model.enabled || !provider.enabled || provider.adapter === "mock"}>{model.display_name} · {model.status}{compatible(model) ? " · text/tools" : " · incompatible Agent capabilities"}</option>)}
-        </optgroup>)}
-      </select></label>
-      {selected && <small>{providers.find(provider => provider.id === selected.provider_id)?.endpoint_summary} · {selected.remote_model_id} · {selected.status}</small>}
-      <span role="status">{busy ? "Saving selection…" : preference ? `Selection revision ${preference.revision}` : "Loading Registry…"}</span>
+    {open && <section aria-label="Agent model selection" className="agent-model-panel">
+      <strong>Agent model · next request</strong>
+      <label><span className="sr-only">Search models</span><input ref={searchInput} type="search" placeholder="Search models" value={search} onChange={event => setSearch(event.target.value)} /></label>
+      <button type="button" data-model-choice aria-pressed={!preference?.model_profile_id} disabled={!preference || busy || pending} onClick={()=>void choose(null)}>Use Project Agent default{!preference?.model_profile_id && <span aria-hidden="true">✓</span>}</button>
+      {providers.map(provider => {
+        const visible=models.filter(model=>model.provider_id===provider.id && `${provider.display_name} ${model.display_name} ${model.remote_model_id}`.toLocaleLowerCase().includes(query));
+        if (!visible.length) return null;
+        return <section className="agent-model-group" key={provider.id} aria-label={provider.display_name}>
+          <h3>{provider.display_name}</h3>
+          {visible.map(model=>{
+            const reason=!compatible(model) ? "Requires text, tools and structured output" : !model.enabled ? "Model disabled" : !provider.enabled ? "Provider disabled" : provider.adapter==="mock" ? "Test-only Provider" : model.status==="unavailable" || model.status==="disabled" ? "Model unavailable" : undefined;
+            return <button key={model.id} type="button" data-model-choice aria-label={model.display_name} aria-pressed={preference?.model_profile_id===model.id} disabled={!preference||busy||pending||Boolean(reason)} onClick={()=>void choose(model.id)}>
+              <span>{model.display_name}<small>{reason ?? (model.status==="available" ? "Text · tools" : "Not verified · no probe on selection")}</small></span>
+              {preference?.model_profile_id===model.id && <span aria-hidden="true">✓</span>}
+            </button>;
+          })}
+        </section>;
+      })}
+      {query && !models.some(model=>`${providers.find(provider=>provider.id===model.provider_id)?.display_name} ${model.display_name} ${model.remote_model_id}`.toLocaleLowerCase().includes(query)) && <p>No matching models.</p>}
+      {preference?.model_profile_id && !selected && <p role="alert">Saved model is no longer in Registry.</p>}
+      {(busy || !preference) && <span role="status">{busy ? "Saving selection…" : "Loading Registry…"}</span>}
       {error && <div role="alert"><p>{error}</p><div className="button-row">{pending && <button type="button" disabled={busy} onClick={() => void choose(null)}>Retry same selection</button>}<button type="button" disabled={busy} onClick={() => void reload()}>Reload saved selection</button></div></div>}
+      <p className="agent-model-scope">Next Agent request only. Existing requests and Workflow image models stay unchanged; data and cost approval still applies.</p>
+      <details className="agent-model-details"><summary>Selection details</summary><small>Selection revision {preference?.revision ?? "unknown"} · {selected?.remote_model_id ?? "Project default"} · {providers.find(provider=>provider.id===selected?.provider_id)?.endpoint_summary}</small></details>
       <div className="button-row"><button type="button" onClick={onSettings}>Manage models</button><button type="button" onClick={close}>Close</button></div>
-    </section>
+    </section>}
   </details>;
 }

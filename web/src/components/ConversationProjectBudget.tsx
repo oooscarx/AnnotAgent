@@ -2,7 +2,7 @@ import {useEffect,useRef,useState} from "react";
 import {api} from "../api";
 
 /** A cumulative ceiling only; phase-specific model/data consent is still required. */
-export function ConversationProjectBudget({project,onDirtyChange}:{project:string;onDirtyChange:(value:boolean)=>void}){
+export function ConversationProjectBudget({project,onDirtyChange,initiallyOpen=false}:{project:string;onDirtyChange:(value:boolean)=>void;initiallyOpen?:boolean}){
   const [saved,setSaved]=useState<Awaited<ReturnType<typeof api.projectCallLimit>>>();
   const [maximum,setMaximum]=useState("");
   const [confirmed,setConfirmed]=useState(false);
@@ -32,7 +32,7 @@ export function ConversationProjectBudget({project,onDirtyChange}:{project:strin
     catch(failure){if(alive.current)setError((failure as Error).message);}
     finally{if(alive.current)setBusy(false);}
   }
-  return <details className="conversation-project-budget"><summary>Project call limit</summary><section className="conversation-consent" aria-label="Project call limit">
+  return <details open={initiallyOpen || undefined} className="conversation-project-budget"><summary>Project call limit</summary><section className="conversation-consent" aria-label="Project call limit">
     <p>This limit is shared by every conversation task and its confirmed dataset processing in this Project. It counts reserved calls, including failed or unknown outcomes—not tokens or money. Other legacy workflows are outside this conversation limit.</p>
     {saved&&!loading?<p role="status">{saved.reserved_calls} calls reserved · {saved.maximum_calls===null?"No Project conversation ceiling configured":`${saved.maximum_calls} cumulative maximum`} · Revision {saved.revision} · Saved snapshot; reload for current usage.</p>:<p role="status">Loading saved Project limit…</p>}
     <label>Cumulative maximum calls<input type="number" min={saved?.reserved_calls??0} step="1" value={maximum} disabled={!saved||busy||loading||Boolean(frozen.current)} onChange={event=>{setMaximum(event.target.value);setConfirmed(false);}}/></label>

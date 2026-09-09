@@ -48,21 +48,34 @@
 .conversation-messages { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 16px; }
 .conversation-messages > li { display: grid; gap: 8px; padding-block: 12px; overflow-wrap: anywhere; }
 .conversation-messages p { white-space: pre-wrap; }
+.conversation-messages .agent-user-message { justify-self: end; max-width: 92%; padding: 12px 16px; border-radius: 10px; background: var(--aa-surface-muted); line-height: 1.65; }
+.agent-message-details { justify-self: end; font-size: 11px; color: var(--aa-text-muted); max-width: 100%; }
+.agent-message-details summary { cursor: pointer; }
+.agent-message-details > small { display: block; margin-block: 8px; }
+.agent-stop-control { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.agent-stop-control > button { min-height: 32px; }
+.agent-stop-control p { max-width: 30ch; font-size: 12px; }
 .conversation-messages button { text-align: start; white-space: normal; overflow-wrap: anywhere; }
-.conversation-composer { display: grid; gap: 10px; margin-top: auto; }
+.conversation-composer { display: grid; gap: 10px; margin-top: 0; padding: 14px; border: 1px solid var(--aa-border-strong); background: var(--aa-surface); border-radius: 14px; }
+.conversation-panel[data-empty=true] { justify-content: center; }
+.conversation-panel[data-empty=true] > .conversation-history { flex: 0 1 auto; margin-bottom: 12px; }
 .agent-composer-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-start; }
 .agent-composer-actions > button[type=submit] { margin-inline-start: auto; }
 .agent-composer-actions > small { flex-basis: 100%; }
 .agent-composer-actions > .agent-composer-mode { flex: 0 0 auto; width: auto; margin: 0; }
 .agent-composer-mode select { min-width: 7rem; width: auto; }
-.agent-composer-upload { position: relative; display: inline-flex; align-items: center; min-height: 44px; padding: 6px 10px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-sm); cursor: pointer; }
+.agent-composer-upload { position: relative; display: inline-flex; justify-content: center; align-items: center; min-height: 36px; min-width: 32px; border-radius: var(--aa-radius-sm); cursor: pointer; }
 .agent-composer-upload input { position: absolute; inset: 0; opacity: 0; width: 100%; cursor: pointer; }
 .agent-composer-upload:focus-within { outline: 2px solid var(--aa-primary); outline-offset: 2px; }
 .agent-composer-upload:has(input:disabled) { opacity: .55; cursor: default; }
 .agent-composer-image { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-width: 0; }
 .agent-composer-image img { width: 56px; height: 56px; object-fit: contain; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-sm); }
 .agent-composer-image span { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; }
-.conversation-composer textarea { width: 100%; min-width: 0; resize: vertical; }
+.conversation-composer textarea { width: 100%; min-width: 0; resize: vertical; min-height: 64px; max-height: 160px; border: 0; border-radius: 0; background: transparent; padding: 0; box-shadow: none; }
+.conversation-composer:focus-within { border-color: var(--aa-accent); }
+.conversation-composer textarea:focus-visible { outline: 1px solid var(--aa-accent); outline-offset: 4px; }
+.conversation-composer > small { color: var(--aa-text-muted); font-size: 11px; }
+.conversation-panel > .agent-message-queue { flex: 0 1 auto; max-height: 35dvh; overflow-y: auto; padding-block: 6px; font-size: 12px; }
 .conversation-composer small { overflow-wrap: anywhere; }
 .conversation-composer button { justify-self: end; }
 .conversation-candidate-reference { display: grid; gap: 8px; min-width: 0; padding: 12px; border-inline-start: 3px solid var(--aa-primary); background: var(--aa-surface-muted); overflow-wrap: anywhere; }

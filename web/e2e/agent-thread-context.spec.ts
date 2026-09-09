@@ -20,19 +20,18 @@ test("selected goal is context, not a redundant action; other goals remain reach
   await expect(messages).toContainText("Current annotation goal");
   await expect(page.getByRole("heading",{name:"What would you like to annotate?"})).toHaveCount(0);
   await expect(page.getByRole("button",{name:"Use message 2 as annotation goal",exact:true})).toHaveCount(0);
-  await page.getByRole("button",{name:"Use message 1 as annotation goal",exact:true}).click();
+  await page.getByRole("button",{name:"Choose task",exact:true}).click();
+  await page.getByRole("region",{name:"Task selection",exact:true}).getByRole("button",{name:"TEST find cups",exact:true}).click();
   await expect.poll(()=>new URL(page.url()).searchParams.get("task")).toBe(tasks[0]);
   await expect(page.getByRole("button",{name:"Use message 1 as annotation goal",exact:true})).toHaveCount(0);
-  await expect(page.getByRole("button",{name:"Use message 2 as annotation goal",exact:true})).toBeEnabled();
+  await expect(page.getByRole("button",{name:"Use message 2 as annotation goal",exact:true})).not.toBeVisible();
   const writes:string[]=[];
   page.on("request",req=>{if(req.method()!=="GET")writes.push(req.url());});
   await page.reload();
   await expect(page.getByRole("button",{name:"Use message 1 as annotation goal",exact:true})).toHaveCount(0);
   await expect(messages).toContainText("Current annotation goal");
   const requests=page.getByRole("region",{name:"Human requests",exact:true});
-  await expect(requests).toHaveAttribute("data-empty","true");
-  await requests.getByRole("button",{name:"Refresh requests",exact:true}).click();
-  await expect(requests).toContainText("No outstanding visual requests for this goal.");
+  await expect(requests).toHaveCount(0);
   expect(writes).toEqual([]);
   for(const width of [1440,1024,390]){
     await page.setViewportSize({width,height:900});

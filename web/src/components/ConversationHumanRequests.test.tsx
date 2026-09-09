@@ -44,9 +44,7 @@ it("keeps deferred work unfinished and provides an explicit reopen action",()=>{
 const actions={onRefresh:()=>{},onOpen:()=>{},onCancel:async()=>{},onRetry:async()=>{},onInspect:()=>{}};
 it("only compacts an actually loaded empty request list",()=>{
   const empty=renderToStaticMarkup(<ConversationHumanRequests {...actions} requests={[]} ready taskId="TEST-task"/>);
-  expect(empty).toContain('data-empty="true"');
-  expect(empty).toContain("Refresh requests");
-  expect(empty).toContain("No outstanding visual requests for this goal.");
+  expect(empty).toBe("");
   const failed=renderToStaticMarkup(<ConversationHumanRequests {...actions} requests={[]} ready={false} loadError="TEST read failed"/>);
   expect(failed).toContain('data-empty="false"');
   expect(failed).toContain('role="alert"');
