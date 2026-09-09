@@ -365,6 +365,7 @@ impl LocalApplication {
         provider: &dyn VisionModelProvider,
         cancellation: CancellationToken,
     ) -> Result<ConversationBuilderOperation> {
+        self.require_delivery_intake(project, execution.conversation_id, execution.task_id)?;
         if [
             execution.repair.is_some(),
             execution.image_class_repair.is_some(),

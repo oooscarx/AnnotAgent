@@ -496,6 +496,7 @@ impl crate::LocalApplication {
         cancellation: CancellationToken,
     ) -> Result<annotagent_storage::ConversationCallReceipt> {
         use annotagent_storage::{ConversationCallAdmission, ConversationCallStatus};
+        self.require_delivery_intake(project_id, execution.conversation_id, execution.task_id)?;
         let owner = self.conversation_project_identity(project_id)?;
         let task = self
             .conversation_tasks(project_id, execution.conversation_id)?

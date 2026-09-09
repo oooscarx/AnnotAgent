@@ -231,6 +231,10 @@ pub(super) fn preview_scope(
     task: uuid::Uuid,
     model_id: Option<ModelProfileId>,
 ) -> ApiResult<(PipelineBuilderModelRuntime, Value)> {
+    state
+        .application
+        .require_delivery_intake(project, conversation, task)
+        .map_err(ApiError::bad_request)?;
     let task_record = state
         .application
         .conversation_tasks(project, conversation)

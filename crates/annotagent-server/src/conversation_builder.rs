@@ -93,6 +93,10 @@ pub(super) fn scope(
     previous: AuthorizationBase,
 ) -> ApiResult<(PipelineBuilderModelRuntime, Value)> {
     selection.validate_source()?;
+    state
+        .application
+        .require_delivery_intake(project, conversation, task)
+        .map_err(ApiError::bad_request)?;
     let mut budget = state
         .application
         .optional_conversation_builder_budget(project, conversation, task)

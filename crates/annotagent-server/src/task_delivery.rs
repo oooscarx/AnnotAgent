@@ -68,6 +68,20 @@ mod tests {
             json!(["dataset_scope", "training_target"])
         );
         assert_eq!(saved["execution_authorized"], false);
+        let planning_uri = uri.replace("delivery-intent", "schema-preview");
+        let blocked = request(&service, Method::GET, &planning_uri, None).await;
+        assert!(!blocked.status().is_success());
+        assert!(
+            response_json(blocked)
+                .await
+                .to_string()
+                .contains("Complete delivery information")
+        );
+        assert!(
+            app.conversation_schema_calls("TEST-intake", conversation, sent.task_id)
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(
             saved,
             response_json(request(&service, Method::POST, &uri, Some(input.clone())).await).await

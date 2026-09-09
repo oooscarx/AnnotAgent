@@ -68,6 +68,12 @@ Checks: Web typecheck passed; production build passed in this isolated worktree 
 
 Remaining M1 work: natural-language known-slot filling, Schema/Builder context and exact-revision authorization gating, image split/group metadata discovery and the single primary continuation action. Currently saving this card does not yet affect Builder; do not treat the existing generic action buttons as delivery-bound execution. The UI card requires a persisted Task, so the pre-task first-message path also remains to integrate. Full package readiness/download is still unimplemented.
 
+### M1 admission guards and selected samples
+
+UI commit: `f5aca7a`. Added server/Application intake checks before Schema/Builder planning admission: an opted-in delivery Task with missing slots, unsupported target or stale/removed selected images cannot proceed. Non-delivery Tasks retain their existing behavior. Extended the real HTTP regression to prove missing slots block Schema preview before a model call is recorded. Existing journey data-scope regression passed. Automatic journey samples now filter by the saved selected image IDs before applying the existing three-image maximum; the new sample selection regression proves that selecting later images does not silently sample the first Project images.
+
+This is not yet a frozen execution contract: delivery revision/context must still be bound to the actual Schema/Builder request and authorization, including concurrent edits and old receipts. The full task→Schema→Workflow→Exporter→validator capability chain is also pending. Do not claim a complete delivery execution based on these admission checks alone. No paid provider calls were made.
+
 ## Not complete / not executed
 
 The inline three-slot card, typed persistence and HTTP admission exist, but delivery intent is not yet wired to Builder or authorization. No complete training ZIP has been generated. Whole-image confirmation, explicit negatives/exclusions, exact-scope authorization and automatic authorized packaging remain to implement. Browser screenshots, end-to-end HTTP delivery, official loader smoke, two-path extraction, full workspace checks and live model quality evaluation have not run. No completed delivery or cost is claimed.

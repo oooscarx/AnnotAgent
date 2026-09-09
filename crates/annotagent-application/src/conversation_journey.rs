@@ -325,6 +325,7 @@ impl LocalApplication {
         schema_revision: u64,
         selections: &[String],
     ) -> Result<ConversationJourneyDataScope> {
+        let delivery = self.require_delivery_intake(project, conversation, task)?;
         if !self
             .conversation_tasks(project, conversation)?
             .iter()
@@ -371,6 +372,9 @@ impl LocalApplication {
         let images = self
             .list_project_image_summaries(project)?
             .into_iter()
+            .filter(|image| {
+                crate::task_delivery::selected_delivery_image(delivery.as_ref(), image.image_id)
+            })
             .take(3)
             .map(|image| JourneyImageScope {
                 image_id: image.image_id.0,

@@ -33,7 +33,46 @@ pub struct TaskDeliveryView {
     pub execution_authorized: bool,
 }
 
+pub(crate) fn selected_delivery_image(
+    delivery: Option<&TaskDeliveryRevision>,
+    image: ImageId,
+) -> bool {
+    delivery.is_none_or(|value| {
+        value
+            .intent
+            .dataset_scope
+            .as_ref()
+            .is_some_and(|scope| scope.iter().any(|selected| selected.image_id == image))
+    })
+}
+
 impl LocalApplication {
+    /// Opt-in delivery Tasks must resolve all slots before planning admission.
+    /// Existing non-delivery Tasks retain their existing workflow semantics.
+    pub fn require_delivery_intake(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+    ) -> Result<Option<TaskDeliveryRevision>> {
+        let view = self.task_delivery_intent(project, conversation, task)?;
+        if view.saved.is_some() {
+            if !view.missing_slots.is_empty() {
+                bail!(
+                    "Complete delivery information before planning: {:?}",
+                    view.missing_slots
+                );
+            }
+            if !view.blockers.is_empty() {
+                bail!(
+                    "Delivery information cannot be used: {}",
+                    view.blockers.join("; ")
+                );
+            }
+        }
+        Ok(view.saved)
+    }
+
     pub fn task_delivery_intent(
         &self,
         project: &str,
@@ -132,5 +171,32 @@ impl LocalApplication {
         self.store
             .save_task_delivery_intent(input.command_id, input.expected_revision, &intent)?;
         self.task_delivery_intent(project, conversation, task)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn samples_are_selected_from_the_delivery_scope_not_first_project_images() {
+        let ids = (0..6).map(|_| ImageId::new()).collect::<Vec<_>>();
+        let intent: TaskDeliveryIntent = serde_json::from_value(serde_json::json!({
+            "version":1,"project_id":Uuid::new_v4(),"conversation_id":Uuid::new_v4(),"task_id":Uuid::new_v4(),
+            "dataset_scope":ids[3..].iter().map(|id| serde_json::json!({"image_id":id,"content_sha256":"a".repeat(64),"content_revision":"1","existing_split":null,"group_ids":[]})).collect::<Vec<_>>(),
+            "label_spec":null,"training_target":null,"split_policy":{"train_percent":80,"seed":0,"preserve_existing":true,"keep_known_groups_together":true},"review_policy":"human_whole_image"
+        })).unwrap();
+        let delivery = TaskDeliveryRevision {
+            revision: 1,
+            content_sha256: "b".repeat(64),
+            intent,
+        };
+        let selected = ids
+            .iter()
+            .copied()
+            .filter(|id| selected_delivery_image(Some(&delivery), *id))
+            .take(3)
+            .collect::<Vec<_>>();
+        assert_eq!(selected, ids[3..]);
+        assert!(ids.iter().all(|id| selected_delivery_image(None, *id)));
     }
 }
