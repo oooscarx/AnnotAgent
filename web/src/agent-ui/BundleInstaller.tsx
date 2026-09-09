@@ -3,17 +3,20 @@ import type { api } from "../api";
 import type { ModelCatalogEntry, ModelInstallOperation } from "../types";
 import { Disclosure } from "./Disclosure";
 import { Dialog } from "./Dialog";
+import { bundleInstallKey, preserveBundleInstall } from "./bundleInstallRecovery";
 export type BundleInstallerService = Pick<typeof api,"compatibleModelBundles"|"modelInstallOperations"|"acceptModelBundleLicense"|"startModelInstallOperation">;
-export function BundleInstaller({service,pluginId,version}:{service:BundleInstallerService;pluginId:string;version:string}) {
+export function BundleInstaller({service,pluginId,version,workspaceId}:{service:BundleInstallerService;pluginId:string;version:string;workspaceId?:string}) {
+  const recoveryKey=workspaceId?bundleInstallKey(workspaceId,pluginId,version):undefined;
   const [catalog,setCatalog]=useState<Awaited<ReturnType<BundleInstallerService["compatibleModelBundles"]>>>();
   const [operations,setOperations]=useState<ModelInstallOperation[]>([]);const [error,setError]=useState("");const [selection,setSelection]=useState<ModelCatalogEntry>();const [accepted,setAccepted]=useState(false);const [busy,setBusy]=useState(false);const [reload,setReload]=useState(0);const [uncertain,setUncertain]=useState(false);
   const pending=useRef(false);const alive=useRef(true);
+  useEffect(()=>{const restore=()=>{try{setUncertain(!recoveryKey||localStorage.getItem(recoveryKey)!==null);}catch{setUncertain(true);setError("无法读取安装恢复记录，不能安全启动安装。");}};restore();window.addEventListener("storage",restore);return()=>window.removeEventListener("storage",restore);},[recoveryKey]);
   useEffect(()=>{alive.current=true;let current=true;let timer:ReturnType<typeof setTimeout>|undefined;
     const read=async()=>{try{const [compatible,records]=await Promise.all([service.compatibleModelBundles(pluginId,version),service.modelInstallOperations()]);if(!current)return;setCatalog(compatible);const owned=records.operations.filter(o=>o.plugin_id===pluginId&&o.plugin_version===version);setOperations(owned);if(owned.some(o=>o.status==="running"))timer=setTimeout(()=>void read(),1500);}catch(e){if(current)setError((e as Error).message);}};
     void read();return()=>{current=false;alive.current=false;clearTimeout(timer);};
   },[service,pluginId,version,reload]);
   const install=async()=>{
-    if(!selection?.catalog_id||!accepted||pending.current||uncertain)return;
+    if(!selection?.catalog_id||!accepted||pending.current||uncertain||!recoveryKey)return;
     pending.current=true;setBusy(true);setError("");const selected=selection;
     try{
       const fresh=await service.compatibleModelBundles(pluginId,version);
@@ -24,15 +27,18 @@ export function BundleInstaller({service,pluginId,version}:{service:BundleInstal
       if(active)throw new Error("此插件已有进行中的安装，请查看执行记录。");
       if(selected.license_summary.requires_acceptance)await service.acceptModelBundleLicense(selected.bundle_id,selected.bundle_version,selected.license_summary.license_digest);
       // A lost POST response is not a safe signal to initiate another download.
-      setUncertain(true);
-      const operation=await service.startModelInstallOperation({catalog_id:selected.catalog_id!,bundle_id:selected.bundle_id,bundle_version:selected.bundle_version,plugin_id:pluginId,plugin_version:version});
+      const request={catalog_id:selected.catalog_id!,bundle_id:selected.bundle_id,bundle_version:selected.bundle_version,plugin_id:pluginId,plugin_version:version};
+      preserveBundleInstall(localStorage,recoveryKey,request);setUncertain(true);
+      const operation=await service.startModelInstallOperation(request);
       if(operation.plugin_id!==pluginId||operation.plugin_version!==version||operation.bundle_id!==selected.bundle_id||operation.bundle_version!==selected.bundle_version)throw new Error("安装回执归属不匹配");
+      localStorage.removeItem(recoveryKey);
       if(alive.current){setUncertain(false);setSelection(undefined);setReload(n=>n+1);}
     }catch(e){if(alive.current){setError(`${(e as Error).message}。没有自动重新安装；请查看服务器安装记录。`);setSelection(undefined);setReload(n=>n+1);}}
     finally{pending.current=false;if(alive.current)setBusy(false);}
   };
   return <section aria-label="兼容模型安装">
     <p>从服务器目录安装此插件的兼容模型包。下载、磁盘占用、启动插件及样例推理均需本次明确确认。</p>
+    {!workspaceId&&<p role="alert">缺少服务器 workspace 身份，安装不可用。</p>}
     {error&&<p role="alert">{error}</p>}{uncertain&&<p role="alert">安装结果尚未核实。本页禁止再次启动安装，请先查看以下记录；刷新不会自动执行安装。</p>}
     <button disabled={busy} onClick={()=>setReload(n=>n+1)}>读取目录与安装记录</button>
     {!catalog?<p role="status">读取兼容目录…</p>:<><p>插件运行状态：{catalog.plugin_runtime_status}</p>{!catalog.available.length&&<p>服务器未提供兼容目录项。没有伪造可安装模型。</p>}{catalog.available.map(entry=>{

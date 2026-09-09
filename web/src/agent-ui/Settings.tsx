@@ -497,7 +497,7 @@ export function SettingsView({
                 </>
               )}
               {(section === "agent" || section === "vision") && !fixture && adapter.modelProfileManagement && <ModelProfiles service={adapter.modelProfileManagement} />}
-              {section === "vision" && !fixture && adapter.pluginManagement && <PluginSettings service={adapter.pluginManagement} />}
+              {section === "vision" && !fixture && adapter.pluginManagement && <PluginSettings service={adapter.pluginManagement} workspaceId={state.workspaceId} />}
               {section === "vision" && !fixture && adapter.visionWorkerManagement && <Disclosure title="HTTP Vision 协议绑定"><VisionWorkers service={adapter.visionWorkerManagement} /></Disclosure>}
               {section === "vision" && (fixture || !adapter.pluginManagement) && (
                 <>

@@ -5,7 +5,7 @@ import { Disclosure } from "./Disclosure";
 import { Dialog } from "./Dialog";
 import { BundleInstaller } from "./BundleInstaller";
 
-export function PluginSettings({ service }: { service: PluginManagement }) {
+export function PluginSettings({ service, workspaceId }: { service: PluginManagement; workspaceId?: string }) {
   const [data, setData] = useState<{ registry: ExpertPluginRegistry; instances: InstalledModelInstance[]; bundles: InstalledModelBundle[] }>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -64,7 +64,7 @@ export function PluginSettings({ service }: { service: PluginManagement }) {
               <button disabled={busy || plugin.references.length > 0} onClick={() => ask("卸载插件", `仅卸载 ${id}@${version}。已有引用由服务端保护；这不是删除项目或标注。`, () => service.uninstallExpertPlugin(id, version))}>卸载</button>
             </div>
             {plugin.references.length > 0 && <p>存在引用，不能在此直接卸载。</p>}
-            <Disclosure title="安装兼容模型与查看进度"><BundleInstaller service={service} pluginId={id} version={version}/></Disclosure>
+            <Disclosure title="安装兼容模型与查看进度"><BundleInstaller service={service} pluginId={id} version={version} workspaceId={workspaceId}/></Disclosure>
           </div>
         </article>;
       })}

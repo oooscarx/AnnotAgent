@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Installation recovery safety continuation
+
+Native bundle start now persists the exact pending request under server workspace/plugin/version identity before POST. Missing workspace identity or unavailable/unwritable browser storage fails closed. Existing pending markers survive refresh and prevent another start; storage events synchronize the guard. Only a matching actual POST receipt removes the marker. This is a retry guard, not a fabricated server receipt; there is deliberately no dismiss-and-retry button for unknown outcomes. Unit tests cover isolation, persistent same-key rejection and failed persistence. Typecheck and 301 unit tests (one final-cutover TODO) passed. Real browser lost-response installation remains unverified.
+
+Backend UIAPI-012 sent to fixed Backend UUID; queue receipt `01a086ed-9105-7aa2-b5c8-4fd2ae1ce06a`. Existing installation POST has no client command ID and GET list cannot prove which operation belongs to a lost response, so requested server idempotent command/scope + lookup and concurrent/changed-scope tests. A browser storage marker is **not** an atomic cross-tab/backend lock. Until delivery, recovery cannot safely release an unknown marker or offer a reliable retry. This is a local capability limitation, not a blocker to the many remaining UI migrations. Also reported verified UIAPI-010 completion; UIAPI-009 still outstanding. No backend Rust changes, real installations, paid calls, user workspace edits or push.
+
 ## Native compatible-bundle installer (verification incomplete)
 
 Added `BundleInstaller` under each native installed-plugin row. Reuses compatible catalog, license digest acceptance and server installation operation APIs. Confirmation includes exact publisher/source/hash, download/install sizes, platform requirements, license restrictions and real execution scope. Server blockers disable installation. Catalog and active operations are rechecked before POST; a lost POST response does not automatically start another download. Operation polling shows actual stage/bytes/errors/instance IDs, not fake percentages or Ready claims. No whole legacy page imported.
