@@ -5,6 +5,17 @@ const project = { project_id: "TEST-alpha", project_owner_id: "owner-a", title: 
 const settings = { revision: "revision-1", sections: { data_privacy: { workspace_id: "TEST-workspace" }, usage_budget: { future_run_budget: { max_requests: 10, max_cost: "2.50" } } } };
 const navTask = (id: string) => ({ task_id: id, title: `TEST ${id}`, schema_revision: "schema-1", project_owner_id: "owner-a", conversation_id: "conversation-a", state: "idle" });
 const root = "/api/projects/TEST-alpha/conversations/conversation-a/tasks";
+it("delivery labels display names without rewriting IDs and ignore older name revisions",async()=>{
+  const reads=mockTransport();let revision=2;
+  const transport:Transport=async<T>(path:string,init?:RequestInit)=>path.endsWith("/delivery-intent")?{saved:{revision,intent:{label_spec:[{stable_id:"stable-label",display_name:revision===2?"足球":"旧名称"}]}},missing_slots:[],blockers:[]} as T:reads.transport<T>(path,init);
+  const adapter=new HttpAdapter(transport);await adapter.refresh();await adapter.loadTask("TEST-alpha","t1");
+  const before=adapter.snapshot().tasks.find(t=>t.id==="t1")!.boxes;
+  await adapter.deliveryIntake.read("TEST-alpha","t1");
+  expect(adapter.snapshot().tasks.find(t=>t.id==="t1")!.labelNames).toEqual({"stable-label":"足球"});
+  revision=1;await adapter.deliveryIntake.read("TEST-alpha","t1");
+  const after=adapter.snapshot().tasks.find(t=>t.id==="t1")!;
+  expect(after.labelNames).toEqual({"stable-label":"足球"});expect(after.boxes).toEqual(before);
+});
 function memoryStorage():Storage {
   const values=new Map<string,string>();
   return {get length(){return values.size;},clear:()=>values.clear(),getItem:key=>values.get(key)??null,setItem:(key,value)=>{values.set(key,String(value));},removeItem:key=>{values.delete(key);},key:index=>[...values.keys()][index]??null};

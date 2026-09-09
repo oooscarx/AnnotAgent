@@ -14,8 +14,8 @@ export function PlanBlock({
     <section className="plan-block">
       <strong><Icon name="plan" />标注计划</strong>
       <ol>
-        {plan.steps.map((step) => (
-          <li key={step}>{step}</li>
+        {plan.steps.map((step,index) => (
+          <li key={`${index}:${step}`}>{step}</li>
         ))}
       </ol>
       <small>{plan.destination} · {plan.budget ?? "费用未知"}{fixture ? "（演示不收费）" : ""}</small>

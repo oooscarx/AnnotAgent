@@ -6,13 +6,16 @@ import {join} from "node:path";
 // Adjudications below are explicit operator decisions from inspected originals,
 // not model ground truth, a fixture, or a measured detection accuracy claim.
 test("LIVE formal correction, scoped exclusions and portable training ZIP",async({page,request},info)=>{
-  test.skip(process.env.LIVE_DELIVERY_COMPLETE!=="1","Requires explicit permission and isolated LIVE scene");
+  const filming=process.env.LIVE_VIDEO_FINISH==="1";
+  test.skip(process.env.LIVE_DELIVERY_COMPLETE!=="1"&&!filming,"Requires explicit permission and isolated LIVE scene");
   const root=process.env.LIVE_RECORDING_WORKSPACE!;
   expect(root).toMatch(/^\/tmp\/AnnotAgent-LIVE-recording-/);
   expect(JSON.parse(readFileSync(join(root,"LIVE_RECORDING.json"),"utf8")).synthetic_model).toBe(false);
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBeUndefined();
-  const scene=JSON.parse(readFileSync(join(root,"journey.json"),"utf8"));
-  expect(scene.project).toBe("live-robocup-delivery");
+  const sceneFile=join(root,filming?"video-journey.json":"journey.json");
+  const scene=JSON.parse(readFileSync(sceneFile,"utf8"));
+  expect(scene.project).toBe(filming?"live-robocup-video":"live-robocup-delivery");
+  const robotLabel=scene.delivery.intent.label_spec.find((l:any)=>l.display_name==="机器人").stable_id;
   const audit:{at:number;action:string;details?:unknown}[]=[];const started=Date.now();
   const mark=(action:string,details?:unknown)=>{audit.push({at:Date.now()-started,action,details});writeFileSync(info.outputPath("actions.json"),JSON.stringify(audit,null,2));};
   page.on("response",async response=>{if(response.request().method()==="POST"){const path=new URL(response.url()).pathname;if(path.startsWith("/api/")&&!path.endsWith("/session"))mark("HTTP receipt",{path,status:response.status()});}});
@@ -43,6 +46,25 @@ test("LIVE formal correction, scoped exclusions and portable training ZIP",async
       await expect(review).toContainText("此快照已有整图决定：excluded");mark("Explicitly excluded unresolved image",{name});continue;
     }
     if(name==="color_548575.png"){
+      if(filming){
+        // Correct the visibly offset main robot before adding the two omitted sideline robots.
+        const main=state.snapshot.annotations.findIndex((a:any)=>a.source!=="human"&&a.label===robotLabel);
+        if(main>=0&&state.snapshot.annotations[main].review_status!=="human_accepted"){
+          const toggle=review.getByRole("button",{name:/Annotation list|标注列表/});if(await toggle.getAttribute("aria-expanded")==="false")await toggle.click();
+          await review.locator(".canvas-annotation-list li button").nth(main).click();
+          const svg=review.locator("svg.annotation-canvas");await svg.scrollIntoViewIfNeeded();
+          const frame=await svg.boundingBox(),box=await review.locator(".annotation-shape.selected rect.aa-annotation-shape").boundingBox();
+          const [,,w,h]=state.snapshot.annotations[main].value.rect;
+          await page.mouse.move(box!.x+box!.width/2,box!.y+box!.height/2);await page.mouse.down();
+          await page.mouse.move(frame!.x+(310/544+w/2)*frame!.width,frame!.y+(151/448+h/2)*frame!.height,{steps:22});await page.mouse.up();
+          const handle=await review.getByRole("button",{name:"Resize bounding box from se corner",exact:true}).boundingBox();
+          await page.mouse.move(handle!.x+handle!.width/2,handle!.y+handle!.height/2);await page.mouse.down();
+          await page.mouse.move(frame!.x+375/544*frame!.width,frame!.y+265/448*frame!.height,{steps:22});await page.mouse.up();
+          await review.getByLabel("检查备注／排除原因").fill("人工检查机器人轮廓，修正偏移的正式框；样例修正没有静默覆盖正式标注。");
+          await page.waitForTimeout(1200);await review.getByRole("button",{name:"保存对象修改",exact:true}).click();await expect(review).toContainText("对象决定已保存");mark("Visible formal boundary correction saved",{name});
+          await toggle.click();
+        }
+      }
       const additions=[[61,185,51,71],[106,181,44,68]];
       for(const pixels of additions){
         // Do not duplicate an already-saved human correction when recovering this rehearsal.
@@ -50,7 +72,7 @@ test("LIVE formal correction, scoped exclusions and portable training ZIP",async
         const manual=state.snapshot.annotations.filter((a:any)=>a.source==="human");
         if(manual.length>additions.indexOf(pixels))continue;
         await review.getByRole("button",{name:"新增漏标目标框",exact:true}).click();
-        await review.getByLabel("对象类别",{exact:true}).selectOption("robot");
+        await review.getByLabel("对象类别",{exact:true}).selectOption(robotLabel);
         const svg=review.locator("svg.annotation-canvas");await svg.scrollIntoViewIfNeeded();
         const rect=review.locator(".annotation-shape.selected rect.aa-annotation-shape");
         const start=await rect.boundingBox();const frame=await svg.boundingBox();expect(start&&frame).toBeTruthy();
@@ -86,9 +108,9 @@ test("LIVE formal correction, scoped exclusions and portable training ZIP",async
   mark("Actual package scope confirmation");await page.waitForTimeout(1600);
   await delivery.getByRole("button",{name:"确认并生成训练数据包",exact:true}).click();
   const link=delivery.getByRole("link",{name:"下载数据集 ZIP",exact:true});await expect(link).toBeVisible({timeout:30_000});
-  await expect(delivery).toContainText("已纳入 2 张原图、5 个正式对象");await expect(delivery).toContainText("排除 3");
+  await expect(delivery).toContainText("已纳入 2 张原图、5 个正式对象");await expect(delivery).toContainText(filming?"排除 0":"排除 3");
   mark("Package Ready with explicit exclusions",{url:page.url()});await page.screenshot({path:info.outputPath("package-ready.png")});
   await page.reload();await expect(link).toBeVisible();
   const download=page.waitForEvent("download");await link.click();const file=await download;await file.saveAs(info.outputPath("live-robocup-training.zip"));expect(await file.failure()).toBeNull();
-  mark("Browser downloaded real ZIP",{filename:file.suggestedFilename()});await page.waitForTimeout(2000);
+  mark("Browser downloaded real ZIP",{filename:file.suggestedFilename()});if(filming){scene.final_package_url=page.url();scene.download_path=info.outputPath("live-robocup-training.zip");writeFileSync(sceneFile,JSON.stringify(scene,null,2),{mode:0o600});}await page.waitForTimeout(2000);
 });

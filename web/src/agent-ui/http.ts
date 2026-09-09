@@ -77,11 +77,15 @@ export class HttpAdapter implements WorkspaceAdapter {
     return this.key(`delivery-package.pending.${esc(project)}.${esc(task)}`);
   }
   readonly deliveryIntake: import("./DeliveryIntake").DeliveryIntakeService = {
-    read: (project, id, signal) => { const task = this.task(id); if (task.project !== project) throw new Error("任务不属于此项目"); return this.transport(`${this.taskRoot(task)}/delivery-intent`, { signal }); },
-    save: (project, id, input) => { const task = this.task(id); if (task.project !== project) throw new Error("任务不属于此项目"); return this.transport(`${this.taskRoot(task)}/delivery-intent`, { method: "POST", body: JSON.stringify(input) }); },
+    read: async (project, id, signal) => { const task = this.task(id); if (task.project !== project) throw new Error("任务不属于此项目"); const view=await this.transport<import("./DeliveryIntake").IntakeView>(`${this.taskRoot(task)}/delivery-intent`, { signal });if(!signal?.aborted)this.rememberLabelNames(project,id,view);return view; },
+    save: async (project, id, input) => { const task = this.task(id); if (task.project !== project) throw new Error("任务不属于此项目"); const view=await this.transport<import("./DeliveryIntake").IntakeView>(`${this.taskRoot(task)}/delivery-intent`, { method: "POST", body: JSON.stringify(input) });this.rememberLabelNames(project,id,view);return view; },
     prepare: async (project,id,input)=>{const task=this.task(id);if(task.project!==project)throw new Error("任务不属于此项目");const result=await this.transport<{id:string;revision:number}>(`${this.taskRoot(task)}/delivery-schema`,{method:"POST",body:JSON.stringify(input)});await this.reloadCurrent(task);return result;},
   };
   readonly kind = "http" as const;
+  private rememberLabelNames(project:string,id:string,view:import("./DeliveryIntake").IntakeView) {
+    const revision=view.saved?.revision||0;
+    this.emit({tasks:this.state.tasks.map(t=>t.id===id&&t.project===project&&revision>=(t.labelNamesRevision||0)?{...t,labelNamesRevision:revision,labelNames:Object.fromEntries((view.saved?.intent.label_spec||[]).map(l=>[l.stable_id,l.display_name]))}:t)});
+  }
   private state: Snapshot = { loading: true, projects: [], tasks: [], models: [], artifacts: [], usage: [], knownCost: "", protectedCache: 0, settings: initialSettings };
   private listeners = new Set<() => void>();
   private projects = new Map<string, Project>();
@@ -225,7 +229,9 @@ export class HttpAdapter implements WorkspaceAdapter {
       const proposal=ws?.builder_operations?.items.find(item=>item.session?.builder_proposal)?.session?.builder_proposal;
       if(proposal) {
         const steps=proposal.draft.label_pipeline ? [...proposal.draft.label_pipeline.shared_stages.flatMap(s=>s.steps),...proposal.draft.label_pipeline.label_pipelines.flatMap(p=>p.steps)] : [];
-        result.plan={revision:String(proposal.draft.revision),steps:steps.length ? steps.map(s=>`${s.node_type}${s.model_binding?` · ${s.model_binding.model_id}`:""}`) : proposal.draft.nodes.map(n=>n.id),images:0,models:steps.flatMap(s=>s.model_binding?[s.model_binding.model_id]:[]),destination:"已保存的 Builder proposal（不是新推理）",budget:null};
+        const modelName=(selection:string)=>this.state.models.find(m=>m.id===selection.replace(/^model-profile:/,""))?.name||this.state.settings.plugins.find(p=>p.id===selection.replace(/^model-instance:/,""))?.name||selection;
+        const nodeModel=(n:typeof proposal.draft.nodes[number])=>n.model_profile_binding?modelName(n.model_profile_binding.model_profile_id):n.model_binding?modelName(n.model_binding):"";
+        result.plan={revision:String(proposal.draft.revision),steps:steps.length ? steps.map(s=>`${s.node_type}${s.model_binding?` · ${modelName(s.model_binding.model_id)}`:""}`) : proposal.draft.nodes.map(n=>`${n.node_type}${nodeModel(n)?` · ${nodeModel(n)}`:""}`),images:0,models:[...new Set(proposal.draft.nodes.map(nodeModel).filter(Boolean))],destination:"已保存的 Builder proposal（不是新推理）",budget:null};
       }
       if(ws) {
         const jobs=await this.transport<{id:string;format?:string;result?:ProjectExportResult;error?:string}[]>(`${this.taskRoot(task)}/exports`,{signal:ctrl.signal});

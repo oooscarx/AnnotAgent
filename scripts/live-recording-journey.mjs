@@ -22,7 +22,16 @@ async function request(method,path,data){
 function save(){writeFileSync(record,JSON.stringify(state,null,2)+'\n',{mode:0o600});}
 csrf=(await request('GET','/api/session')).csrf_token;
 const get=p=>request('GET',p),post=(p,b)=>request('POST',p,b);
-if(stage==='prepare'){
+if(stage==='video-project'){
+  assert.ok(!state.video_project,'Do not duplicate the recording project');
+  state.video_project='live-robocup-video';save();
+  const p='/api/projects/'+state.video_project;
+  await post('/api/projects',{id:state.video_project,yaml:'version: 1\nproject:\n  name: 足球与机器人 · 实录\ndataset:\n  root: images\nruntime:\n  max_parallel_images: 1\ntasks: []\nreview:\n  auto_accept_confidence: 0.99\n  force_review_below: 0.95\nexport:\n  formats: [native]\n'});
+  await request('PUT',p+'/model-bindings',{bindings:[{capability:'vision_language',role:'detection',match_kind:'capability',model_profile_id:state.vision,locked:false}]});
+  const cr=p+'/conversations/'+(await post(p+'/conversations')).conversation_id;
+  const preference=await get(cr+'/agent-model');await post(cr+'/agent-model',{request_id:uuid(),expected_revision:preference.revision,model_profile_id:state.planner});
+  console.log('Empty recording Project configured. No image upload, model call, task or annotation created.');
+}else if(stage==='prepare'){
   assert.ok(!state.project,'Existing recording project: inspect it instead of creating duplicates.');
   state.project='live-robocup-delivery';save();const p='/api/projects/'+state.project;
   await post('/api/projects',{id:state.project,yaml:'version: 1\nproject:\n  name: 足球与机器人 · 训练数据交付\ndataset:\n  root: images\nruntime:\n  max_parallel_images: 1\ntasks: []\nreview:\n  auto_accept_confidence: 0.99\n  force_review_below: 0.95\nexport:\n  formats: [native]\n'});

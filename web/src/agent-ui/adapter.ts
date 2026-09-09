@@ -63,6 +63,8 @@ export type Task = {
   model: string;
   operationModel?: string;
   boxes: Box[];
+  labelNames?: Record<string,string>;
+  labelNamesRevision?: number;
   image: ImageId;
   editBoxes?: Record<ImageId, Box[]>;
   boxesByImage?: Record<ImageId, Box[]>;

@@ -12,6 +12,7 @@ interface Props {
   annotations: Annotation[];
   selectedId?: string;
   visualContext?: AnnotationVisualContext;
+  labelNames?: Record<string,string>;
   onSelect: (id: string) => void;
   onChange: (annotation: Annotation) => void;
   onEditStart?: () => void;
@@ -29,6 +30,7 @@ export function AnnotationCanvas({
   annotations,
   selectedId,
   visualContext,
+  labelNames,
   onSelect,
   onChange,
   onEditStart,
@@ -221,7 +223,7 @@ export function AnnotationCanvas({
       {listOpen && <ul className="canvas-annotation-list" aria-label={t("Annotations on canvas")}>
         {annotations.map((annotation) => {
           const visual = annotationVisual(annotation, visualContext);
-          return <li key={annotation.id}><button aria-pressed={annotation.id === selectedId} onClick={() => onSelect(annotation.id)}><i aria-hidden="true" style={{ borderColor: annotationColor(visual.slot) }} /><span><strong>{annotation.label ?? annotation.task_id}</strong><small>{annotation.value.kind.replaceAll("_", " ")} · {annotation.confidence == null ? t("Score not provided") : `${Math.round(annotation.confidence * 100)}%`}</small>{typeof annotation.provenance.addition_id === "string" ? <small>{t("Human sample example")}</small> : annotation.provenance.human_corrected === true && <small>{t("Human sample correction")}</small>}</span></button></li>;
+          return <li key={annotation.id}><button aria-pressed={annotation.id === selectedId} onClick={() => onSelect(annotation.id)}><i aria-hidden="true" style={{ borderColor: annotationColor(visual.slot) }} /><span><strong>{labelNames?.[annotation.label??annotation.task_id]??annotation.label??annotation.task_id}</strong><small>{annotation.value.kind.replaceAll("_", " ")} · {annotation.confidence == null ? t("Score not provided") : `${Math.round(annotation.confidence * 100)}%`}</small>{typeof annotation.provenance.addition_id === "string" ? <small>{t("Human sample example")}</small> : annotation.provenance.human_corrected === true && <small>{t("Human sample correction")}</small>}</span></button></li>;
         })}
         {annotations.length === 0 && <li className="canvas-annotation-empty">{t("No annotations selected")}</li>}
       </ul>}
@@ -276,6 +278,7 @@ export function AnnotationCanvas({
             <AnnotationShape
               key={annotation.id}
               annotation={annotation}
+              displayLabel={labelNames?.[annotation.label??annotation.task_id]}
               canvasWidth={width}
               canvasHeight={height}
               visual={annotationVisual(annotation, visualContext)}
@@ -333,6 +336,7 @@ export function AnnotationCanvas({
 
 function AnnotationShape({
   annotation,
+  displayLabel,
   canvasWidth,
   canvasHeight,
   visual,
@@ -346,6 +350,7 @@ function AnnotationShape({
   onBboxResize,
 }: {
   annotation: Annotation;
+  displayLabel?: string;
   canvasWidth: number;
   canvasHeight: number;
   visual: ReturnType<typeof annotationVisual>;
@@ -365,7 +370,7 @@ function AnnotationShape({
   const strokeWidth = selected ? 2.6 : 2;
   const strokeDasharray = !selected && visual.pattern === "dashed-box" ? "12 8" : undefined;
   const fill = visual.pattern === "diagonal-fill" ? `url(#aa-diagonal-${visual.slot})` : color;
-  const label = `${annotation.label ?? annotation.task_id} ${annotation.confidence ? `${Math.round(annotation.confidence * 100)}%` : ""}`;
+  const label = `${displayLabel ?? annotation.label ?? annotation.task_id} ${annotation.confidence ? `${Math.round(annotation.confidence * 100)}%` : ""}`;
   const vertices = (points: Point[], ring = 0) => readOnly ? [] :
     points.map(([x, y], index) => (
       <circle
