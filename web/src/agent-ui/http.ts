@@ -26,7 +26,7 @@ type Workspace = {
   sample_operations?: {id:string;draft_id:string;status:string;error?:string}[];
   resume_actions?: {id:string;kind:string;available:boolean;reason:string;url:string;method:string}[];
   processing_operations?: ProcessingReceipt[];
-  journey_consents?: {record:{consent:{id:string}},dispatch?:{status:string;error?:string|null;updated_at?:string}|null,sample?:{status:string}|null}[];
+  journey_consents?: {record:{consent:{id:string}},dispatch?:{status:string;error?:string|null;updated_at?:string}|null,sample?:{status:string}|null,builder?:{evidence?:{outcome?:string}}|null}[];
 };
 type Thread = { id: string; role: "user"; task_id: string; project_owner_id: string; conversation_id: string; message: { input: { text: string; reference?:{scope:string} } } };
 type SafeSettings = { revision: string; sections: { data_privacy: { workspace_id: string }; usage_budget: { future_run_budget: Record<string, unknown> & { max_cost?: string } } } };
@@ -220,7 +220,7 @@ export class HttpAdapter implements WorkspaceAdapter {
         ...(ws?.calls || []).map(c=>({id:c.id,title:"模型结构化决策",status:c.status==="completed" && (c.failure || c.evidence?.decision?.Err) ? "invalid_result" : c.status,detail:failureDetail(c.failure) || c.evidence?.decision?.Ok?.rationale || c.evidence?.decision?.Err || c.evidence?.error,startedAt:c.started_at || undefined,finishedAt:c.completed_at || undefined,durationMs:c.duration_ms ?? undefined,stage:callStage(c.stage)})),
         ...(ws?.builder_operations?.items || []).map(b=>({id:b.operation.id,title:"方案构建回执",status:b.operation.status,detail:b.operation.evidence?.error || b.operation.evidence?.outcome})),
         ...(ws?.sample_operations || []).map(s=>({id:s.id,title:"样例测试回执",status:s.status,detail:s.error})),
-        ...(ws?.journey_consents || []).filter(j=>j.dispatch).map(j=>({id:j.record.consent.id,title:"规划与样例执行",status:j.dispatch!.error?"failed":j.dispatch!.status==="running"?"running":j.sample?.status || "等待后续操作",detail:j.dispatch!.error || undefined,finishedAt:j.dispatch!.status==="running"?undefined:j.dispatch!.updated_at})),
+        ...(ws?.journey_consents || []).filter(j=>j.dispatch).map(j=>({id:j.record.consent.id,title:"规划与样例执行",status:j.dispatch!.error?"failed":j.dispatch!.status==="running"?"running":j.sample?.status || (j.builder?.evidence?.outcome==="failed"?"failed":"等待后续操作"),detail:j.dispatch!.error || (j.builder?.evidence?.outcome==="failed"?"方案构建未完成，样例未执行；请查看模型调用回执。":undefined),finishedAt:j.dispatch!.status==="running"?undefined:j.dispatch!.updated_at})),
       ];
       const active = ws?.calls.some(c=>c.status==="reserved") || ws?.journey_consents?.some(j=>j.dispatch?.status==="running") || ws?.sample_operations?.some(s=>["running","queued","cancelling"].includes(s.status)) || result.processing?.some(p=>["pending","running","pausing"].includes(p.status));
       const phase: Phase = stop?.normalized_state || (active ? "running" : ws?.calls.some(c=>c.status==="in_doubt") ? "outcome_unknown" : human ? "waiting_for_human" : "idle");
@@ -326,6 +326,11 @@ export class HttpAdapter implements WorkspaceAdapter {
         if(!schema)throw new Error("模型已有规划回执，但目标草稿尚未保存；没有重新调用模型，请核对草稿保存结果。");
         if(schema.task_id!==task.id)throw new Error("目标草稿不属于当前任务");
         query.set("schema_id",schema.id);query.set("schema_revision",String(schema.revision));
+        if(task.model)query.set("planner_model_id",task.model);
+      } else if(task.plan) {
+        const schemas=await this.transport<{id:string;task_id:string;revision:number}[]>(`${root}/human-schema-drafts`);
+        if(schemas.length!==1 || schemas[0].task_id!==task.id)throw new Error("需要明确选择本任务的目标草稿，不能自动重建初始授权。");
+        query.set("schema_id",schemas[0].id);query.set("schema_revision",String(schemas[0].revision));
         if(task.model)query.set("planner_model_id",task.model);
       } else query.set("schema_call_id",crypto.randomUUID());
       const p = await this.transport<JourneyPreview>(`${root}/journey-preview?${query}`);

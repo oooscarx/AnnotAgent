@@ -67,16 +67,11 @@ async fn propose_future_schema(
     let mut tool = crate::conversation_schema::output_tool();
     tool.name = "propose_future_annotation_schema".into();
     tool.description = "Suggest future-only annotation semantics or one necessary clarification. No Schema, workflow, annotation or permission is changed by this proposal.".into();
-    for branch in tool.parameters["oneOf"]
+    tool.parameters["required"]
         .as_array_mut()
-        .context("Schema output contract missing")?
-    {
-        branch["required"]
-            .as_array_mut()
-            .context("Schema required fields missing")?
-            .push(json!("goal"));
-        branch["properties"]["goal"] = json!({"type":"string","minLength":1,"maxLength":4000});
-    }
+        .context("Schema required fields missing")?
+        .push(json!("goal"));
+    tool.parameters["properties"]["goal"] = json!({"type":"string","minLength":1,"maxLength":4000});
     Ok(provider.complete(ModelRequest {
         model: remote_model.into(), task_id: "conversation_future_schema_proposal".into(),
         messages: vec![
