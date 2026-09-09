@@ -20,6 +20,8 @@ Initial broad concurrent browser runs hit the unchanged global 120-mutations/min
 
 Final management evidence is cumulative, not a single green aggregate: all 51 distinct management cases have passing executions across the paced fresh-service batch and explicit reruns. Seven early Schema cases hit the shared minute guard in that batch and subsequently passed together on the idle first service; the Batch/child Trash case requires the earlier history cutover/sample suite and passed on that first service. Corrected ID/port/clone cases pass on the fresh service. Exact lost-response Trash retry passes separately with the query-aware interceptor. Core HTTP adds 16 cases, history adds 2, delivery adds 3, and unique-panel recovery passes again after the key fix. No skipped or environment-mismatched case is relabeled as a successful single-suite run. All test mutations are confined to the two marked TEST workspaces.
 
+Local main integration completed: merge commit `0cccdac5209f732c45637c4b7b9574845a54ca39` has both fixed inputs as parents, and main was fast-forwarded from `32db263` to that tested tree in `AnnotAgent-main-delivery-merge`. The main and delivery worktrees were clean after removing only the temporary dependency symlink. The original repository remains on the other developer's task-history branch, with its edits untouched; all 66 original untracked product files passed hash comparison. A documentation-only follow-up records this completion. No push or deployment/restart of the user's running application was performed. The two owned regression services are stopped after testing, with their TEST evidence retained.
+
 ### Recording follow-up and explicit paid-model authorization
 
 #### Finished video delivered (2026-09-10)
