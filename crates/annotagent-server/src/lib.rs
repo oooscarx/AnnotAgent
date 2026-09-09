@@ -4741,10 +4741,43 @@ async fn archive_workflow_draft(
     Ok(Json(json!(draft)))
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CloneWorkflowRequest {
+    command_id: uuid::Uuid,
+    project_id: String,
+    source_snapshot_hash: String,
+}
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum WorkflowCloneBody {
+    Exact(CloneWorkflowRequest),
+    Legacy(EmptyWorkflowPublication),
+}
+
 async fn clone_workflow_version(
     State(state): State<ServerState>,
     AxumPath((workflow_id, version)): AxumPath<(String, u32)>,
+    request: Option<Json<WorkflowCloneBody>>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
+    if let Some(Json(WorkflowCloneBody::Exact(request))) = request {
+        state
+            .application
+            .project_path(&request.project_id)
+            .map_err(ApiError::not_found)?;
+        let draft = state
+            .application
+            .store()
+            .clone_workflow_version_command(&annotagent_storage::WorkflowCloneCommand {
+                command_id: request.command_id,
+                project_id: request.project_id,
+                workflow_id,
+                version,
+                source_snapshot_hash: request.source_snapshot_hash,
+            })
+            .map_err(|e| publication_error(e.into()))?;
+        return Ok((StatusCode::CREATED, Json(json!(draft))));
+    }
     let draft = state
         .application
         .clone_workflow_version(&workflow_id, version)
@@ -16283,6 +16316,39 @@ export:
             .0,
             StatusCode::NOT_FOUND
         );
+        // Exact clone has its own durable command; publication replay must not be
+        // confused with cloning a second editable copy.
+        let clone_uri = format!(
+            "/api/workflows/{}/versions/{}/clone",
+            draft.id, frozen["version"]
+        );
+        let clone_body = json!({"command_id":uuid::Uuid::new_v4(),"project_id":"TEST-publish-owner","source_snapshot_hash":frozen["content_hash"]});
+        let mut wrong_clone = clone_body.clone();
+        wrong_clone["project_id"] = json!("TEST-publish-other");
+        assert_eq!(
+            call_json(&service, axum::http::Method::POST, &clone_uri, wrong_clone)
+                .await
+                .0,
+            StatusCode::NOT_FOUND
+        );
+        wrong_clone = clone_body.clone();
+        wrong_clone["source_snapshot_hash"] = json!("wrong");
+        let (status, error) =
+            call_json(&service, axum::http::Method::POST, &clone_uri, wrong_clone).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(error["code"], "workflow_clone_source_conflict");
+        let (status, cloned) = call_json(
+            &service,
+            axum::http::Method::POST,
+            &clone_uri,
+            clone_body.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let mut edited: annotagent_core::WorkflowDraft =
+            serde_json::from_value(cloned.clone()).unwrap();
+        edited.name = "TEST edited after lost clone response".into();
+        app.store().save_workflow_draft(&edited).unwrap();
         let mut copy = app
             .clone_workflow_version(
                 &draft.id,
@@ -16304,6 +16370,34 @@ export:
             call_json(&service2, axum::http::Method::POST, &uri, body.clone()).await,
             (StatusCode::OK, frozen.clone())
         );
+        assert_eq!(
+            call_json(
+                &service2,
+                axum::http::Method::POST,
+                &clone_uri,
+                clone_body.clone()
+            )
+            .await,
+            (StatusCode::CREATED, cloned.clone())
+        );
+        assert_eq!(
+            app.store()
+                .get_workflow_draft(cloned["id"].as_str().unwrap())
+                .unwrap()
+                .name,
+            "TEST edited after lost clone response"
+        );
+        let mut changed_clone = clone_body;
+        changed_clone["source_snapshot_hash"] = json!("changed");
+        let (status, error) = call_json(
+            &service2,
+            axum::http::Method::POST,
+            &clone_uri,
+            changed_clone,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(error["code"], "workflow_clone_command_conflict");
         wrong = body;
         wrong["expected_revision"] = json!(saved.revision + 1);
         let (status, error) = call_json(&service2, axum::http::Method::POST, &uri, wrong).await;

@@ -47,3 +47,8 @@ See `docs/contracts/agent-ui-v1/UIAPI-009_HISTORY_SCOPE.md` for the executable c
 ## UIAPI-014 native frozen versions and exact publication
 
 Implemented owned `GET /api/projects/{project_id}/workflows/{workflow_id}/versions/{version}` returning the actual complete frozen version. Existing Draft publish accepts exact `{command_id,project_id,expected_revision,expected_content_hash}` and atomically saves publication plus replay receipt; no new inference/Run. Additive migration0061; old Published snapshots remain unchanged. Full API/field/error/migration contract: `docs/contracts/agent-ui-v1/UIAPI-014_PUBLICATION.md`. This is separate from repair admission commit220576f.
+
+
+## UIAPI-016 exact clone
+
+Existing version clone POST now accepts complete `{project_id,source_snapshot_hash,command_id}`. First/replay201 return the same original creation Draft receipt; GET its ID for current edits. Owner/hash/scope checks and atomic durable receipt prevent duplicate copies. No Published/default changes or inference. Additive0062. Full contract and tests: `docs/contracts/agent-ui-v1/UIAPI-016_CLONE.md`. This supersedes the legacy-clone recovery gap recorded in UIAPI-015; empty-body legacy calls still lack recovery.
