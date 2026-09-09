@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Native exact publication confirmation
+
+Added WorkflowPublication to native owned Draft editor. Exact request freezes command/project/revision/content_hash and persists before POST, keyed by workspace/project/Draft. UI states publication updates the Project default but does not execute a Run, refresh samples, call a model or accept annotation outputs. Dirty/saving editor blocks fresh confirmation; known revision/hash rejection permits a new review, uncertain errors retain the original request and explicit replay action. Refresh/mount never publish. Success validates source/revision/hash and switches the editor to the returned published read-only Draft, linking the frozen version. No empty-body legacy publish is used.
+
+323 unit tests (one cutover TODO), typecheck/isolated build passed. Real TEST HTTP browser regression passed: cancel zero publish calls; another writer changes Draft after confirmation; exact old request rejected with revision conflict; refresh no repeated publication. Successful publication and lost-response full UI replay still need browser evidence; prior Rust transaction/replay regressions are not substituted for that UI proof. No real workspace/service/dist modifications or paid calls. Owned fixture stopped, no push. Native version copy/compare, remaining old pages/root/styles removal and full regressions remain; goal active.
+
 ## Full immutable Workflow version reads integrated
 
 Reviewed complete7c7c8df publication storage/server/application changes and integrated as b5232b2. Documentation conflicts resolved to retain only this publication delivery, excluding unrelated repair admission claims. Independent isolated Rust tests: three publication-command storage regressions and owned-publication HTTP regression passed. Covers exact revision/hash/owner rejection, one-version concurrent replay, transaction rollback, persisted replay after restart, immutable old snapshot after clone edits, and no new model connection/Sample/Run during publication. Formatting passed. Backend native publish contract is available, but frontend publication confirmation is not yet wired.

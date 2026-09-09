@@ -786,6 +786,12 @@ export interface FrozenWorkflowVersion {
   draft: WorkflowDraft;
   snapshot: {schema_version:number;draft:WorkflowDraft|null;models:unknown[];model_profiles:unknown[];plugin_models:unknown[];enabled_skills:unknown;prompt_resources:unknown;safety_compatibility:string};
 }
+export interface ExactPublicationRequest {
+  command_id:string;
+  project_id:string;
+  expected_revision:number;
+  expected_content_hash:string;
+}
 
 export interface WorkflowVersion {
   workflow_id: string;

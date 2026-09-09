@@ -4,7 +4,8 @@ import type {WorkflowDraft,StaticWorkflowValidation} from "../types";
 import {Disclosure} from "./Disclosure";
 import {agentPath} from "./navigationContract";
 import {WorkflowCatalogEditor,type WorkflowCatalogService} from "./WorkflowCatalogEditor";
-export type WorkflowEditorService=Pick<typeof api,"workflowDraft"|"validateWorkflowDraft"|"saveWorkflowDraft"> & WorkflowCatalogService;
+import {WorkflowPublication,type PublicationService} from "./WorkflowPublication";
+export type WorkflowEditorService=Pick<typeof api,"workflowDraft"|"validateWorkflowDraft"|"saveWorkflowDraft"> & WorkflowCatalogService & PublicationService;
 export function verifyStaticValidation(base:WorkflowDraft,result:StaticWorkflowValidation) {
   if(result.validation_kind!=="static"||result.project_id!==base.project_id||result.draft_id!==base.id||result.revision!==base.revision||result.content_hash!==base.content_hash)throw new Error("校验回执不属于当前已保存版本，请重新读取草稿");
   return result;
@@ -22,7 +23,7 @@ export function workflowEdit(base:WorkflowDraft,name:string,text:string):Workflo
   for(const key of editableFields)delete (next as unknown as Record<string,unknown>)[key];
   return {...next,...fields} as WorkflowDraft;
 }
-export function WorkflowEditor({service,projectId,draftId}:{service:WorkflowEditorService;projectId:string;draftId:string}) {
+export function WorkflowEditor({service,projectId,draftId,workspaceId}:{service:WorkflowEditorService;projectId:string;draftId:string;workspaceId?:string}) {
   const [validation,setValidation]=useState<StaticWorkflowValidation>();const [validating,setValidating]=useState(false);const checking=useRef(false);
   const [base,setBase]=useState<WorkflowDraft>();const [name,setName]=useState("");const [text,setText]=useState("");const [error,setError]=useState("");const [message,setMessage]=useState("");const [busy,setBusy]=useState(false);const [reload,setReload]=useState(0);const pending=useRef(false);const lifetime=useRef<AbortController|undefined>(undefined);
   const dirty=!!base&&(name!==base.name||text!==JSON.stringify(editableWorkflow(base),null,2));
@@ -50,6 +51,7 @@ export function WorkflowEditor({service,projectId,draftId}:{service:WorkflowEdit
       <section aria-label="静态校验"><h2>静态校验</h2><p>仅检查已保存的节点类型、模型绑定与安全约束，不调用模型、不创建样本或发布版本。通过不代表实际推理质量。</p><button disabled={busy||dirty||validating} onClick={()=>void validate()}>{validating?"校验中…":"校验已保存草稿"}</button>{dirty&&<p>请先保存修改，再校验当前版本。</p>}
       {validation&&!dirty&&validation.revision===base.revision&&validation.content_hash===base.content_hash&&<div role="status"><p>{validation.validation.valid?"静态校验通过":"静态校验未通过"} · revision {validation.revision}</p><ul>{validation.validation.issues.map((issue,index)=><li key={index}><strong>{issue.blocking?"阻止执行":"提示"}：{issue.message}</strong><p>{issue.path} · {issue.code}</p></li>)}</ul></div>}</section>
       <Disclosure title="已保存节点与实际绑定">{base.nodes.map(node=><article className="settings-row" key={node.id}><div><strong>{node.node_type} · {node.id}</strong><p>{node.model_binding||"无直接模型绑定"}</p><pre>{JSON.stringify(node.model_profile_binding??null,null,2)}</pre></div></article>)}</Disclosure>
+      {workspaceId&&<WorkflowPublication draft={base} workspaceId={workspaceId} disabled={busy||dirty||validating} service={service} onPublished={accept}/>}
     </>}
   </section>;
 }
