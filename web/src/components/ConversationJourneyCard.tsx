@@ -9,7 +9,7 @@ import { journeyModelSelection, MAX_JOURNEY_MODELS } from "../journey-model-sele
 
 type Choice={id:string;name:string};
 const active=(value?:JourneyStatus)=>value?.dispatch?.status==="running" || ["queued","running","cancelling"].includes(value?.sample?.status ?? "");
-const needsUpdate=(value?:JourneyStatus)=>active(value)||value?.sample?.assistance?.status==="waiting";
+const needsUpdate=(value?:JourneyStatus)=>active(value)||value?.sample?.assistance?.status==="waiting"||value?.answer_delivery?.status==="pending";
 
 /** One bounded consent, existing Builder/Sample services. Mount only reads saved work. */
 type JourneyCardProps = {
@@ -135,6 +135,8 @@ function JourneyCard({project,conversation,task,schema,repairRequest,pendingAnsw
       <details><summary>Saved authorization scope</summary><p>{saved.record.consent.images.length} images · Up to {saved.record.consent.maximum_builder_calls+(saved.record.consent.schema_proposal?1:0)} planning calls + {saved.record.consent.maximum_sample_calls} image-model calls · Cost unknown. Expires {new Date(saved.record.consent.expires_at).toLocaleString()}.</p><p>Exact permitted image-model selections (not today's defaults):</p><ul>{saved.record.consent.allowed_models.map(model=><li key={model.model_id}>{model.model_id}</li>)}</ul><p>This authorization does not publish a plan or accept annotations.</p></details>
       {running&&<><button disabled={busy||saved.record.revoked} onClick={()=>void stop()}>Stop build and sample task</button><p>Leaving this page does not stop the task. In-flight calls may still be billed.</p></>}
       {saved.dispatch?.error&&<p role="alert">{saved.dispatch.error}</p>}{saved.sample?.error&&<p role="alert">{saved.sample.error}</p>}
+      {saved.answer_delivery?.error&&<p role="alert">Correction saved; continuation needs attention: {saved.answer_delivery.error}</p>}
+      {saved.answer_delivery?.status==="pending"&&<p role="status">Correction and continuation request saved. Waiting for delivery; no additional permission has been granted.</p>}
       {saved.schema?.evidence?.error&&<p role="alert">{saved.schema.evidence.error}</p>}
       {saved.sample?.status==="succeeded"&&saved.sample.assistance?.status==="waiting"&&<p role="status">Preparing saved requests for human judgment. No additional inference is running.</p>}
       {saved.sample?.assistance?.status==="failed"&&<p role="alert">Review-request preparation failed: {saved.sample.assistance.error}. Saved sample results can still be opened.</p>}

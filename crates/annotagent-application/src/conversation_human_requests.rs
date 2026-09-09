@@ -397,6 +397,26 @@ impl LocalApplication {
         id: Uuid,
         answer: &SampleFeedbackRevision,
     ) -> Result<ConversationHumanRequest> {
+        self.answer_conversation_human_request_in_journey(
+            project,
+            conversation,
+            task,
+            id,
+            answer,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)] // Same owned answer boundary plus its explicit consent link.
+    pub fn answer_conversation_human_request_in_journey(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+        answer: &SampleFeedbackRevision,
+        consent_id: Option<Uuid>,
+    ) -> Result<ConversationHumanRequest> {
         let request = self
             .conversation_human_requests(project, conversation, task)?
             .into_iter()
@@ -406,13 +426,16 @@ impl LocalApplication {
             if saved != answer {
                 bail!("Human answer conflicts with the saved correction");
             }
-            return Ok(request);
+            let owner = self.conversation_project_identity(project)?;
+            return Ok(self
+                .store
+                .answer_conversation_human_request_in_journey(&owner, id, answer, consent_id)?);
         }
         self.validate_conversation_correction_subject(project, &request.input)?;
         let owner = self.conversation_project_identity(project)?;
         Ok(self
             .store
-            .answer_conversation_human_request(&owner, id, answer)?)
+            .answer_conversation_human_request_in_journey(&owner, id, answer, consent_id)?)
     }
 }
 

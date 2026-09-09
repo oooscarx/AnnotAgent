@@ -673,6 +673,8 @@ impl SqliteStore {
             transaction.execute_batch(include_str!("../../../migrations/0049_conversation_image_class.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0050_conversation_exports.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0051_conversation_export_events.sql"))?;
+            transaction.execute_batch(include_str!("../../../migrations/0052_conversation_answer_delivery.sql"))?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(52,'conversation_answer_delivery',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(51,'conversation_export_events',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(50,'conversation_exports',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(49,'conversation_image_class',?1)",[Utc::now().to_rfc3339()])?;

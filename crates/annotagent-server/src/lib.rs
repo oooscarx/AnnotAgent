@@ -874,6 +874,7 @@ pub async fn serve(
     web_dist: Option<&Path>,
 ) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(address).await?;
+    tokio::spawn(conversation_journey::recover_answers(state.clone()));
     axum::serve(listener, router(state, web_dist))
         .with_graceful_shutdown(shutdown_signal())
         .await?;

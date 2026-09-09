@@ -31,6 +31,147 @@ mod tests {
     use crate::{BeginConversationTask, ConversationMessageInput, SampleOperation};
 
     #[test]
+    fn answer_delivery_is_atomic_immutable_and_survives_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TEST-answer-outbox.db");
+        let store = SqliteStore::open(&path).unwrap();
+        let (owner, input, answer) = setup(&store);
+        store
+            .create_conversation_human_request(&owner, &input)
+            .unwrap();
+        assert!(
+            store
+                .answer_conversation_human_request_in_journey(
+                    &owner,
+                    input.id,
+                    &answer,
+                    Some(Uuid::new_v4())
+                )
+                .is_err()
+        );
+        assert!(
+            store
+                .sample_feedback(&input.sample_test_id, &input.image_id)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            store
+                .conversation_human_request(&owner, input.id)
+                .unwrap()
+                .answer
+                .is_none()
+        );
+        let (_, _, mut consent, _) = crate::conversation_journey::tests::setup(&store);
+        consent.task_id = input.task_id;
+        consent.repair_after_answer = Some(input.clone());
+        // Isolate answer/outbox atomicity; real envelope preview and ownership
+        // are covered by the journey and HTTP integration tests.
+        store.with_connection(|db| {
+            db.execute("INSERT INTO conversation_journey_consents(id,task_id,input_json,created_at,builder_operation_id,sample_operation_id) VALUES(?1,?2,?3,?4,?5,?6)",params![consent.id.to_string(),input.task_id.to_string(),serde_json::to_string(&consent)?,chrono::Utc::now().to_rfc3339(),consent.builder_operation_id.to_string(),consent.sample_operation_id.to_string()])?;
+            Ok(())
+        }).unwrap();
+        store
+            .answer_conversation_human_request_in_journey(
+                &owner,
+                input.id,
+                &answer,
+                Some(consent.id),
+            )
+            .unwrap();
+        assert!(
+            store
+                .pending_conversation_answer_deliveries()
+                .unwrap()
+                .is_empty()
+        );
+        let saved = store
+            .conversation_answer_delivery(&owner, input.conversation_id, input.task_id, consent.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved["status"], "pending");
+        assert_eq!(saved["feedback_revision_id"], answer.revision_id);
+        drop(store);
+        let store = SqliteStore::open(&path).unwrap();
+        store
+            .answer_conversation_human_request_in_journey(
+                &owner,
+                input.id,
+                &answer,
+                Some(consent.id),
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .sample_feedback(&input.sample_test_id, &input.image_id)
+                .unwrap(),
+            vec![answer.clone()]
+        );
+        assert_eq!(
+            store
+                .conversation_answer_delivery(
+                    &owner,
+                    input.conversation_id,
+                    input.task_id,
+                    consent.id
+                )
+                .unwrap(),
+            Some(saved)
+        );
+        let event = store
+            .pending_conversation_resumes(&owner, input.conversation_id, input.task_id)
+            .unwrap()
+            .remove(0);
+        store
+            .acknowledge_conversation_resume(&owner, &event)
+            .unwrap();
+        assert_eq!(
+            store.pending_conversation_answer_deliveries().unwrap(),
+            vec![(
+                "project-1".into(),
+                input.conversation_id,
+                input.task_id,
+                consent.id
+            )]
+        );
+        store
+            .fail_conversation_answer_delivery(consent.id, "TEST changed recipient")
+            .unwrap();
+        assert!(
+            store
+                .pending_conversation_answer_deliveries()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            store
+                .conversation_answer_delivery(
+                    &owner,
+                    input.conversation_id,
+                    input.task_id,
+                    consent.id
+                )
+                .unwrap()
+                .unwrap()["error"],
+            "TEST changed recipient"
+        );
+        store
+            .answer_conversation_human_request_in_journey(
+                &owner,
+                input.id,
+                &answer,
+                Some(consent.id),
+            )
+            .unwrap();
+        assert!(
+            store
+                .pending_conversation_answer_deliveries()
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn new_reference_answer_is_distinct_atomic_and_idempotent() {
         let temporary = tempfile::tempdir().unwrap();
         let path = temporary.path().join("TEST-reference.db");
@@ -1310,6 +1451,16 @@ impl SqliteStore {
         id: Uuid,
         answer: &SampleFeedbackRevision,
     ) -> Result<ConversationHumanRequest, StorageError> {
+        self.answer_conversation_human_request_in_journey(project, id, answer, None)
+    }
+
+    pub fn answer_conversation_human_request_in_journey(
+        &self,
+        project: &str,
+        id: Uuid,
+        answer: &SampleFeedbackRevision,
+        consent_id: Option<Uuid>,
+    ) -> Result<ConversationHumanRequest, StorageError> {
         let request = self.conversation_human_request(project, id)?;
         let input = &request.input;
         if answer.sample_test_id != input.sample_test_id
@@ -1324,6 +1475,22 @@ impl SqliteStore {
         }
         self.save_sample_feedback_with(answer, |tx| {
             let current=read(tx,project,id)?;
+            if let Some(consent_id) = consent_id {
+                let consent = crate::conversation_journey::read(tx,input.task_id,consent_id)?
+                    .ok_or_else(|| invalid("Answer continuation consent not found"))?;
+                if consent.consent.repair_after_answer.as_ref()!=Some(input) {
+                    return Err(invalid("Answer continuation does not match the saved request"));
+                }
+                let existing:Option<(String,String)>=tx.query_row("SELECT consent_id,feedback_revision_id FROM conversation_answer_delivery WHERE request_id=?1",[id.to_string()],|row|Ok((row.get(0)?,row.get(1)?))).optional()?;
+                if let Some(existing)=existing {
+                    if existing!=(consent_id.to_string(),answer.revision_id.clone()) {return Err(invalid("Answer continuation retry changed its original intent"));}
+                } else {
+                    if current.answer.is_some() { return Err(invalid("An already saved answer cannot acquire a new automatic continuation")); }
+                    let error = (consent.revoked || consent.consent.expires_at<=chrono::Utc::now())
+                        .then_some("Correction saved; continuation permission is revoked or expired");
+                    tx.execute("INSERT INTO conversation_answer_delivery(request_id,consent_id,feedback_revision_id,status,error,created_at) VALUES(?1,?2,?3,?4,?5,?6)",params![id.to_string(),consent_id.to_string(),answer.revision_id,if error.is_some(){"failed"}else{"pending"},error,chrono::Utc::now().to_rfc3339()])?;
+                }
+            }
             if let Some(saved)=current.answer { if saved==*answer { return Ok(()); } return Err(invalid("Human answer conflicts with an already saved answer")); }
             if current.status!=ConversationHumanRequestStatus::Pending || current.deferred { return Err(invalid("Human request is no longer pending or is deferred; reopen it before answering")); }
             tx.execute("UPDATE conversation_human_requests SET status='answered',answer_json=?2 WHERE id=?1",params![id.to_string(),serde_json::to_string(answer)?])?;

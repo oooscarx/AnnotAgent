@@ -17,6 +17,7 @@ export type JourneyConsent = {
   maximum_builder_calls:number; maximum_sample_calls:number; expires_at:string; allow_unknown_cost:boolean;
 };
 export type JourneyStatus = {
+  answer_delivery?:{request_id:string;feedback_revision_id:string;status:"pending"|"dispatched"|"failed";error:string|null}|null;
   record:{consent:JourneyConsent;resolved_consent?:JourneyConsent|null;revoked:boolean;sample:{draft_id:string;draft_revision:number}|null};
   schema?:import("./types").ConversationCallReceipt|null;
   clarification?:{schema_draft_id:string|null;schema_revision?:number|null;status:string}|null;

@@ -153,7 +153,7 @@ impl LocalApplication {
                 serde_json::json!(self.store.sample_assistance_status(&sample.id)?);
         }
         Ok(
-            serde_json::json!({"record":record,"schema":schema,"clarification":clarification_value,"builder":builder,"sample":sample_value,"dispatch":dispatch}),
+            serde_json::json!({"record":record,"schema":schema,"clarification":clarification_value,"builder":builder,"sample":sample_value,"dispatch":dispatch,"answer_delivery":self.store.conversation_answer_delivery(&owner,conversation,task,id)?}),
         )
     }
 

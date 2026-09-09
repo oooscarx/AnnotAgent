@@ -5240,3 +5240,39 @@ models prove interaction/protocol semantics only, not object-detection accuracy 
 model behavior. No real workspace or remote changes and no push. Still pending: durable
 answer-to-dispatch delivery/restart tests, pre-admission error persistence, complete
 combined regressions and the outstanding final acceptance audit.
+
+### 2026-09-09 — Transactional answer intent and startup admission recovery
+
+Migration 0052 adds one delivery intent per request/consent, referencing the real
+Sandbox feedback revision. Answer feedback, request state, local resume outbox and
+explicit continuation link now commit together. Unknown/mismatched links roll back
+the answer transaction. Duplicate answers cannot add or replace an automatic intent.
+Expired/revoked permission still allows the human correction to save, but records a
+failed continuation instead of silently renewing it.
+
+Claiming the existing journey worker atomically marks delivery dispatched. Startup
+(`serve`, after listener binding and Application local recovery) reads pending Applied
+answers in pages of 64 and attempts existing scope-validated execution. Any prior
+dispatch, including interrupted/in-doubt work, is excluded from automatic recovery.
+Pre-admission failure is persisted and requires explicit retry, not a startup loop.
+Late admission errors cannot overwrite dispatched intent. Status API and Journey card
+expose persisted delivery failure separately from the saved correction. No new executor
+or independent budget. A recovery result without worker admission is settled for
+attention to prevent unchanged-intent loops.
+
+Verification: temporary SQLite answer transaction test verifies bad-link rollback,
+one feedback revision, reopen/idempotence, eligibility only after local acknowledgment,
+and durable failure without automatic requeue. Extended journey test verifies worker
+claim consumes delivery and restart/late errors cannot make it pending again.
+11 Storage human-request tests + 10 journey tests pass (63109/16800), 48 server tests
+and 6 Application human-request tests pass (2080), server/storage clippy passes.
+Typecheck + 228 Web unit tests pass (49904). Existing 4 browser joint-repair cases pass
+(96998, 25.4s, isolated `/tmp/annotagent-guided-e2e-23276`). No real data/Provider or remote
+changes, no push. Browser execution preceded the final delivery-error display addition.
+
+Still not proven: an actual server process killed precisely between answer commit and
+worker admission, then restarted through `serve` and observed completing the same job.
+Database reopen tests are not a substitute for that test. Also inspect explicit local
+Draft-preparation retry: an Answered request whose first local resume failed has saved
+intent, but its manual preparation endpoint still needs to dispatch that intent after
+successful preparation. These remain required follow-up work, not completion claims.

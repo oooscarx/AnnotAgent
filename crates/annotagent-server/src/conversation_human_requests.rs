@@ -90,7 +90,14 @@ pub(super) async fn answer(
     }
     state
         .application
-        .answer_conversation_human_request(&project, conversation, task, id, &input.answer)
+        .answer_conversation_human_request_in_journey(
+            &project,
+            conversation,
+            task,
+            id,
+            &input.answer,
+            input.journey_consent_id,
+        )
         .map_err(ApiError::bad_request)?;
     let saved = state
         .application
@@ -101,14 +108,26 @@ pub(super) async fn answer(
         // Saving the answer succeeded. A continuation failure must not be
         // reported as if the human edit were lost or require rewriting it.
         result["journey_resume"] = match conversation_journey::execute(
-            State(state),
+            State(state.clone()),
             AxumPath((project, conversation, task, consent_id)),
             Json(conversation_journey::ExecuteJourney {}),
         )
         .await
         {
             Ok(value) => json!({"consent_id":consent_id,"status":value.0}),
-            Err(error) => json!({"consent_id":consent_id,"error":error.body["error"]}),
+            Err(error) => {
+                state
+                    .application
+                    .store()
+                    .fail_conversation_answer_delivery(
+                        consent_id,
+                        error.body["error"]
+                            .as_str()
+                            .unwrap_or("Continuation admission failed"),
+                    )
+                    .map_err(ApiError::internal)?;
+                json!({"consent_id":consent_id,"error":error.body["error"]})
+            }
         };
     }
     Ok(Json(result))

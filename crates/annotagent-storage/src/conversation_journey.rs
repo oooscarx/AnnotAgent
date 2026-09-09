@@ -251,7 +251,7 @@ fn owned(
     }
     Ok(())
 }
-fn read(
+pub(crate) fn read(
     db: &rusqlite::Connection,
     task: Uuid,
     id: Uuid,
@@ -272,6 +272,42 @@ fn read(
 }
 
 impl SqliteStore {
+    pub fn pending_conversation_answer_deliveries(
+        &self,
+    ) -> Result<Vec<(String, Uuid, Uuid, Uuid)>, StorageError> {
+        self.with_connection(|db| {
+            let mut statement=db.prepare("SELECT s.project_id,t.conversation_id,t.id,a.consent_id FROM conversation_answer_delivery a JOIN conversation_human_requests h ON h.id=a.request_id JOIN conversation_tasks t ON t.id=h.task_id JOIN sample_operations s ON s.id=json_extract(h.request_json,'$.sample_test_id') WHERE a.status='pending' AND h.status='applied' AND NOT EXISTS(SELECT 1 FROM conversation_journey_dispatch d WHERE d.consent_id=a.consent_id) ORDER BY a.created_at,a.request_id LIMIT 64")?;
+            let rows=statement.query_map([],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?)))?;
+            rows.map(|row|{let(project,conversation,task,id)=row?;let parse=|value:&str|Uuid::parse_str(value).map_err(|_|invalid("Invalid continuation identity"));Ok((project,parse(&conversation)?,parse(&task)?,parse(&id)?))}).collect()
+        })
+    }
+
+    pub fn fail_conversation_answer_delivery(
+        &self,
+        id: Uuid,
+        error: &str,
+    ) -> Result<(), StorageError> {
+        self.with_connection(|db| {
+            let bounded:String=error.chars().take(1600).collect();
+            db.execute("UPDATE conversation_answer_delivery SET status='failed',error=?2 WHERE consent_id=?1 AND status='pending'",params![id.to_string(),bounded])?;
+            Ok(())
+        })
+    }
+
+    pub fn conversation_answer_delivery(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+    ) -> Result<Option<serde_json::Value>, StorageError> {
+        self.with_connection(|db| {
+            owned(db,project,conversation,task)?;
+            read(db,task,id)?.ok_or_else(||invalid("Journey consent not found"))?;
+            Ok(db.query_row("SELECT request_id,feedback_revision_id,status,error FROM conversation_answer_delivery WHERE consent_id=?1",[id.to_string()],|row|Ok(serde_json::json!({"request_id":row.get::<_,String>(0)?,"feedback_revision_id":row.get::<_,String>(1)?,"status":row.get::<_,String>(2)?,"error":row.get::<_,Option<String>>(3)?}))).optional()?)
+        })
+    }
+
     pub fn conversation_journey_for_builder(
         &self,
         project: &str,
@@ -318,6 +354,9 @@ impl SqliteStore {
                 return Err(invalid("Journey is waiting for its exact acknowledged human answer"));
             }
             let changed = tx.execute("INSERT INTO conversation_journey_dispatch(consent_id,attempt_id,status,updated_at) VALUES(?1,?2,'running',?3) ON CONFLICT(consent_id) DO UPDATE SET attempt_id=excluded.attempt_id,status='running',error=NULL,updated_at=excluded.updated_at WHERE conversation_journey_dispatch.status!='running'",params![id.to_string(),attempt.to_string(),Utc::now().to_rfc3339()])?;
+            if changed == 1 {
+                tx.execute("UPDATE conversation_answer_delivery SET status='dispatched',error=NULL WHERE consent_id=?1",[id.to_string()])?;
+            }
             tx.commit()?;
             Ok(changed == 1)
         })
@@ -947,6 +986,10 @@ pub(crate) mod tests {
                     .resolve_conversation_journey_repair(&project, conversation, &changed)
                     .is_err()
             );
+            store.with_connection(|db| {
+                db.execute("INSERT INTO conversation_answer_delivery(request_id,consent_id,feedback_revision_id,status,created_at) VALUES(?1,?2,?3,'pending',?4)",params![request.id.to_string(),consent.id.to_string(),answer.revision_id,Utc::now().to_rfc3339()])?;
+                Ok(())
+            }).unwrap();
             assert!(
                 store
                     .claim_conversation_journey_dispatch(
@@ -957,6 +1000,34 @@ pub(crate) mod tests {
                         Uuid::new_v4()
                     )
                     .unwrap()
+            );
+            assert_eq!(
+                store
+                    .conversation_answer_delivery(
+                        &project,
+                        conversation,
+                        consent.task_id,
+                        consent.id
+                    )
+                    .unwrap()
+                    .unwrap()["status"],
+                "dispatched"
+            );
+            store.recover_conversation_journey_dispatches().unwrap();
+            store
+                .fail_conversation_answer_delivery(consent.id, "TEST late admission error")
+                .unwrap();
+            assert_eq!(
+                store
+                    .conversation_answer_delivery(
+                        &project,
+                        conversation,
+                        consent.task_id,
+                        consent.id
+                    )
+                    .unwrap()
+                    .unwrap()["status"],
+                "dispatched"
             );
         }
     }

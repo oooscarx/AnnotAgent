@@ -5,6 +5,50 @@ use conversation_builder::{AuthorizationBase, BuilderSelection};
 use futures::FutureExt;
 use std::panic::AssertUnwindSafe;
 
+/// Only explicit answer intents that never reached a worker claim are replayed.
+/// Application startup already recovered local Sandbox checkpoint delivery.
+pub(super) async fn recover_answers(state: ServerState) {
+    loop {
+        let deliveries = match state
+            .application
+            .store()
+            .pending_conversation_answer_deliveries()
+        {
+            Ok(items) => items,
+            Err(error) => {
+                eprintln!("could not read pending answer deliveries: {error}");
+                return;
+            }
+        };
+        if deliveries.is_empty() {
+            return;
+        }
+        for (project, conversation, task, id) in deliveries {
+            let result = execute(
+                State(state.clone()),
+                AxumPath((project, conversation, task, id)),
+                Json(ExecuteJourney {}),
+            )
+            .await;
+            let failure = match result {
+                Err(error) => Some(error.body["error"].as_str().unwrap_or("Continuation recovery admission failed").to_owned()),
+                Ok(value) if value.0["dispatch"].is_null() => Some("No continuation worker was admitted. Inspect saved state before explicit retry.".into()),
+                Ok(_) => None,
+            };
+            if let Some(error) = failure {
+                if let Err(save_error) = state
+                    .application
+                    .store()
+                    .fail_conversation_answer_delivery(id, &error)
+                {
+                    eprintln!("could not settle answer delivery {id}: {save_error}");
+                    return;
+                }
+            }
+        }
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct JourneySelection {
