@@ -1961,6 +1961,7 @@ async fn get_model_profile_quality_contracts(
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct UpdateModelProfileRequest {
+    expected_revision: Option<u64>,
     provider_id: Option<ProviderId>,
     display_name: Option<String>,
     remote_model_id: Option<String>,
@@ -1986,6 +1987,16 @@ async fn update_model_profile(
     let previous = store
         .get_model_profile(model_id, None)
         .map_err(ApiError::not_found)?;
+    if let Some(expected) = input.expected_revision
+        && expected != previous.revision
+    {
+        return Err(model_profile_cas_error(
+            annotagent_storage::StorageError::ModelProfileRevisionConflict {
+                expected,
+                current: previous.revision,
+            },
+        ));
+    }
     let mut profile = previous.clone();
     if let Some(value) = input.provider_id {
         store
@@ -2039,11 +2050,12 @@ async fn update_model_profile(
                 .any(|(requested, previous)| !requested.matches(previous))
     });
     let semantic_change = !profile.has_same_semantics(&previous) || quality_contracts_changed;
-    if semantic_change {
-        profile.revision = previous.revision.saturating_add(1);
-        if profile.enabled {
-            profile.status = ModelProfileStatus::Unverified;
-        }
+    profile.revision = previous
+        .revision
+        .checked_add(1)
+        .ok_or_else(|| ApiError::bad_request("Model revision exhausted"))?;
+    if semantic_change && profile.enabled {
+        profile.status = ModelProfileStatus::Unverified;
     }
     if let Some(contracts) = input.quality_contracts {
         if quality_contracts_changed {
@@ -2052,16 +2064,28 @@ async fn update_model_profile(
                 .map(|contract| contract.bind(profile.id, profile.revision))
                 .collect();
         }
-    } else if semantic_change {
-        for contract in &mut profile.quality_contracts {
-            contract.model_profile_revision = profile.revision;
-        }
+    }
+    for contract in &mut profile.quality_contracts {
+        contract.model_profile_revision = profile.revision;
     }
     profile.updated_at = Utc::now();
     store
-        .save_model_profile(&profile)
-        .map_err(ApiError::bad_request)?;
+        .save_model_profile_cas(&profile, previous.revision)
+        .map_err(model_profile_cas_error)?;
     Ok(Json(profile))
+}
+
+fn model_profile_cas_error(error: annotagent_storage::StorageError) -> ApiError {
+    if let annotagent_storage::StorageError::ModelProfileRevisionConflict { expected, current } =
+        error
+    {
+        ApiError {
+            status: StatusCode::CONFLICT,
+            body: json!({"status":409,"code":"model_profile_revision_conflict","expected_revision":expected,"current_revision":current,"error":"Model Profile changed; reload before saving","suggested_action":"reload_model_profile"}),
+        }
+    } else {
+        ApiError::bad_request(error)
+    }
 }
 
 async fn delete_model_profile(
@@ -12186,6 +12210,76 @@ export:
 
         let serialized = serde_json::to_string(&provider).expect("Provider JSON");
         assert!(!serialized.contains("draft-runtime-secret"));
+    }
+
+    #[tokio::test]
+    async fn model_profile_patch_cas_conflict_and_legacy_request() {
+        let temp = tempfile::tempdir().unwrap();
+        let app = Arc::new(LocalApplication::new(temp.path()).unwrap());
+        let service = router(
+            test_state(app, Arc::new(InMemorySecretStore::default())).await,
+            None,
+        );
+        let (status, provider) = call_json(&service, axum::http::Method::POST, "/api/providers", json!({
+            "display_name":"TEST CAS", "preset_id":"mock", "adapter":"mock", "base_url":"http://127.0.0.1"
+        })).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, model) = call_json(&service, axum::http::Method::POST, "/api/model-profiles", json!({
+            "provider_id":provider["id"], "display_name":"TEST model", "remote_model_id":"TEST-model",
+            "input_modalities":["text"], "task_capabilities":["text_generation"]
+        })).await;
+        assert_eq!(status, StatusCode::OK);
+        let uri = format!("/api/model-profiles/{}", model["id"].as_str().unwrap());
+        let (status, _) = call_json(
+            &service,
+            axum::http::Method::PATCH,
+            &uri,
+            json!({"revision":1,"display_name":"invalid"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        let (status, saved) = call_json(
+            &service,
+            axum::http::Method::PATCH,
+            &uri,
+            json!({"expected_revision":1,"display_name":"writer A"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(saved["revision"], 2);
+        let (status, conflict) = call_json(
+            &service,
+            axum::http::Method::PATCH,
+            &uri,
+            json!({"expected_revision":1,"display_name":"writer B"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(conflict["code"], "model_profile_revision_conflict");
+        assert_eq!(conflict["expected_revision"], 1);
+        assert_eq!(conflict["current_revision"], 2);
+        assert!(conflict.get("model").is_none());
+        let (status, fetched) =
+            call_json(&service, axum::http::Method::GET, &uri, Value::Null).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(fetched["model"]["display_name"], "writer A");
+        let (status, saved) = call_json(
+            &service,
+            axum::http::Method::PATCH,
+            &uri,
+            json!({"display_name":"legacy writer"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(saved["revision"], 3);
+        let (status, _) = call_json(
+            &service,
+            axum::http::Method::PATCH,
+            &uri,
+            json!({"expected_revision":2}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
     }
 
     #[tokio::test]

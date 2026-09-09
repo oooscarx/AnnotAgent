@@ -72,3 +72,7 @@ Queue schema-preview / schema-proposals 对 pending human input 返回 409 `huma
 ## UIAPI-008 receipt additions
 
 现有 `T/calls`、`T/workspace.calls[]`、Schema/queued Schema POST receipt 添加 nullable `started_at,completed_at,duration_ms,stage,failure`。端点、权限、审批 payload 与幂等规则不变。详情见 UIAPI-008_PROGRESS.md；迁移0058仅新增调用进度表，不补造历史结束时间或错误。
+
+## UIAPI-010 Model Profile CAS
+
+PATCH `/api/model-profiles/:id` accepts optional `expected_revision`; atomic stale edits return 409 `model_profile_revision_conflict` with expected/current revision. Every successful HTTP edit appends a revision, including metadata-only edits. Success remains an unwrapped ModelProfile. `revision` is still not a request field. Exact examples, compatibility and scope: [UIAPI-010_MODEL_CAS.md](UIAPI-010_MODEL_CAS.md).

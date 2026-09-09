@@ -62,3 +62,11 @@ Queue preview/POST 现在对 pending human 返回 409 `human_input_pending`（Sc
 迁移0058仅新建metadata表；旧call保留created_at但缺失end/failure为null，不能追回此前被丢弃的原因。未访问用户报告的robocup-ball数据库或调用。Provider没有现成文本/tool delta协议，本轮未新增streaming；stream:true在发送前拒绝，新增读取body阶段取消。详见 UIAPI-008_PROGRESS.md、UIAPI-008_EXAMPLES.json、UIAPI-008_TRACE.json。
 
 验证：563 passed、0 failed、3原有ignored（Core/Provider/Storage/Application/Server）；全workspace all-targets严格Clippy、fmt通过。隔离HTTP seed278请求，42个call回执观察/23个call身份，真实provider_request→settled/in_doubt、typed cancellation与计时验证通过。测试启动器已退出自有进程，数据保留。未接触8787/8788、真实密钥/服务/数据库、前端worktree；无push/merge。最终提交SHA在交付回复固定，继续接口支持状态。
+
+## UIAPI-010 Model Profile CAS delivery
+
+PATCH adds optional expected_revision and transaction-atomic compare/append. Stale edits return safe 409 expected/current revision; every successful HTTP PATCH advances revision, including metadata/no-op edits. Old revision and Published frozen snapshots remain unchanged. Legacy omitted-field requests remain accepted with no claim of stale-browser protection. No migration or frontend changes.
+
+Isolated tests: Storage/Server 243 passed, 0 failed, 2 existing ignored; includes independent-connection two-writer race, reopen/old revision/Published snapshot preservation, and HTTP contract/legacy requests. Workspace all-target Clippy with -D warnings, fmt check and diff check passed. Commands and exact contract: docs/contracts/agent-ui-v1/UIAPI-010_MODEL_CAS.md. No paid calls, keys, real workspace mutation, service restart, push or merge. Final SHA is in delivery response.
+
+UIAPI-009 remains blocked/unimplemented. Prior 8cccca5f4f45ba4203ae77c4d74c79a29fa86323 delivered a concrete gap specification only (UIAPI-009_GAP.md); no scope establishment or runtime acceptance is claimed.
