@@ -2669,10 +2669,30 @@ fn synthesize_registry_plan_candidates(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    if !refinement_fragments.is_empty()
-        && let (Some(task_id), Some(label)) =
-            (input.target_task_id.as_ref(), input.target_label.as_ref())
-    {
+    // Conversation schemas can contain several labels and intentionally have no
+    // single-label target. Refine their actual controlled routes, not an empty
+    // project template or an arbitrary first label.
+    let refinement_targets = match (&input.target_task_id, &input.target_label) {
+        (Some(task), Some(label)) => vec![(task.to_string(), label.to_string())],
+        _ => baseline
+            .draft
+            .label_pipeline
+            .as_ref()
+            .map(|composition| {
+                composition
+                    .label_pipelines
+                    .iter()
+                    .map(|pipeline| {
+                        (
+                            pipeline.target_task_id.to_string(),
+                            pipeline.target_label.to_string(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    };
+    if !refinement_fragments.is_empty() && !refinement_targets.is_empty() {
         let mut available_experts = input
             .expert_models
             .iter()
@@ -2716,40 +2736,50 @@ fn synthesize_registry_plan_candidates(
                 geometry_review_count: 1,
                 ..AgentDryRunSummary::default()
             };
-            if add_prompted_segmentation_revision(
-                &mut refined,
-                task_id.as_str(),
-                label.as_str(),
-                &selected_model_id,
-                &synthesis_evidence,
-            )? {
+            let mut changed = false;
+            for (task_id, label) in &refinement_targets {
+                changed |= add_prompted_segmentation_revision(
+                    &mut refined,
+                    task_id,
+                    label,
+                    &selected_model_id,
+                    &synthesis_evidence,
+                )?;
+            }
+            if changed {
+                refined
+                    .draft
+                    .annotation_schema
+                    .clone_from(&baseline.draft.annotation_schema);
                 bind_available_registry_models(&mut refined.draft, input);
                 if let Some(profile) = available_profiles
                     .iter()
                     .find(|profile| profile.id.to_string() == selected_model_id)
-                    && let Some(node) = refined
+                {
+                    for node in refined
                         .draft
                         .nodes
                         .iter_mut()
-                        .find(|node| node.node_type == "capability.segment")
-                {
-                    node.model_binding = Some(
-                        input
-                            .model_registry
-                            .iter()
-                            .find(|runtime| {
-                                runtime.id == profile.remote_model_id
-                                    || runtime.model == profile.remote_model_id
-                            })
-                            .map_or_else(
-                                || profile.remote_model_id.clone(),
-                                |runtime| runtime.id.clone(),
-                            ),
-                    );
-                    node.model_profile_binding = Some(annotagent_core::WorkflowModelBinding {
-                        model_profile_id: profile.id,
-                        locked: true,
-                    });
+                        .filter(|node| node.node_type == "capability.segment")
+                    {
+                        node.model_binding = Some(
+                            input
+                                .model_registry
+                                .iter()
+                                .find(|runtime| {
+                                    runtime.id == profile.remote_model_id
+                                        || runtime.model == profile.remote_model_id
+                                })
+                                .map_or_else(
+                                    || profile.remote_model_id.clone(),
+                                    |runtime| runtime.id.clone(),
+                                ),
+                        );
+                        node.model_profile_binding = Some(annotagent_core::WorkflowModelBinding {
+                            model_profile_id: profile.id,
+                            locked: true,
+                        });
+                    }
                 }
                 let fragment_ids = refinement_fragments
                     .iter()
@@ -26577,6 +26607,35 @@ export:
             annotagent_core::PipelineCandidateSource::RegistrySynthesis
         );
         assert!(session.plan_candidates[0].is_runnable());
+
+        // Whole-conversation planning has no explicit single-label target. The
+        // controlled routes must still be eligible for Registry refinement.
+        let mut conversation_input = input.clone();
+        conversation_input.target_task_id = None;
+        conversation_input.target_label = None;
+        conversation_input.workflow_templates.clear();
+        let mut conversation_session = session.clone();
+        conversation_session.plan_candidates.clear();
+        synthesize_registry_plan_candidates(
+            &mut conversation_session,
+            &safe_suggestion,
+            &conversation_input,
+            &feasibility,
+            annotagent_core::OptimizationPriority::Accurate,
+        )
+        .expect("conversation-wide refinement");
+        assert!(
+            conversation_session
+                .plan_candidates
+                .iter()
+                .any(|candidate| candidate.id.starts_with("registry-refinement-")
+                    && candidate.is_runnable()
+                    && candidate
+                        .node_blueprints
+                        .iter()
+                        .any(|node| node.node_type == "capability.segment")),
+            "Ready segmenter must not disappear when the single-label target is absent"
+        );
 
         let mut changed_input = input;
         let changed_segmenter = changed_input
