@@ -1,5 +1,13 @@
 # Single UI Clean Cut
 
+## Native Run inspection slice
+
+Run Detail now opens a new `RunInspector` through its real service boundary. It displays persisted node selection, input/output Artifacts, configuration, actual branch, duration, attempts, cache, usage and errors; no fake intermediate/final conversion. Project/Run ownership checks precede rendering, foreign responses fail closed, requests abort on context change, and node/view query restores on refresh. Closing details restores the same result view/selection in memory. Missing deep-linked nodes show an error instead of silently selecting another node. Run detail also listens for popstate.
+
+Verification: typecheck, 294 unit tests plus final-cutover TODO and isolated build passed; all ten management browser tests passed (nine real HTTP, one explicitly mocked Worker response test). Extended actual HTTP Run test selects a saved node, refreshes to the same selection, returns to the original result canvas, and checks that no mutations occurred. Inspected screenshot `/tmp/annotagent-native-run-inspector.png`: source `ec617fa` plus slice, URL `http://127.0.0.1:8794/projects/TEST-agent-ui-15eb0549-f44e-4ae1-81dd-0ebf67714eb2/manage/runs/4d348027-ff6e-4241-a46c-1c2b6c7aaaef?view=debug`, 1440×900/DPR1/light/TEST HTTP. Screenshot revealed excessive default paragraph margins inside the inspector; compact scoped margins were corrected afterward. Screenshot is pre-spacing-correction, not final visual approval.
+
+This is read-only evidence migration, not full Debug parity: visual intermediate overlay/crops, Artifact deep-link selection and Replay remain. Inspected backend Replay: live provider replay requires a current explicit binding and does not recover credentials from history. No unsupported resume/replay success was invented. Old root, styles and advanced management remain, so goal is active. No real workspace change or push; owned TEST instance stopped after verification.
+
 ## Native HTTP Vision binding controls
 
 Moved the old page's Worker binding inspection/discovery capability into new Settings → visual models/plugins → HTTP Vision protocol disclosure via a dedicated `VisionWorkerService` adapter boundary. Native rows show actual status, endpoint, capabilities, score semantics, identity, labels and declared price. Discovery is explicitly confirmed, preflight-rechecks the selected binding, validates response ownership, distinguishes discovery from inference, and never automatically retries or calls sample inference. Failure never renders a successful test. No old page/component/styles imported.

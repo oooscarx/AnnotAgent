@@ -1069,3 +1069,9 @@ caption {
 .ui-app .model-profile-editor .model-check input { width: auto; flex: 0 0 auto; }
 .ui-app section[aria-label="模型配置"] > label { display: grid; gap: 8px; max-width: 480px; margin-block: 16px; }
 .ui-app section[aria-label="模型配置"] .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 12px; }
+.native-run-inspector { min-width: 0; display: grid; gap: 12px; }
+.native-run-inspector label { display: grid; gap: 8px; }
+.native-run-inspector pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 360px; overflow: auto; }
+.native-run-inspector article { display: grid; gap: 12px; min-width: 0; }
+.native-run-inspector :is(p,h2,h3,h4) { margin: 0; }
+.native-run-inspector > button { justify-self: start; }

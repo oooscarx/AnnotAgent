@@ -4,8 +4,9 @@ import type { HistoryRun, ImageItem, RunAnnotationInspection, RunResultSummary }
 import { AnnotationCanvas } from "../components/AnnotationCanvas";
 import { Disclosure } from "./Disclosure";
 import { agentPath } from "./navigationContract";
+import { RunInspector, type RunInspectorService } from "./RunInspector";
 
-export type RunDetailService = Pick<typeof api,"run"|"runAnnotations"|"runResultSummary"|"images"|"control">;
+export type RunDetailService = Pick<typeof api,"run"|"runAnnotations"|"runResultSummary"|"images"|"control"> & RunInspectorService;
 export function assertRunOwner(run:HistoryRun,project:string,id:string):HistoryRun {
   if(run.id!==id||run.project_id!==project||run.ownership_status!=="resolved")throw new Error("运行记录不属于当前项目，未打开其他对象。");
   return run;
@@ -23,12 +24,17 @@ export function RunDetail({service,projectId,runId}:{service:RunDetailService;pr
   const [image,setImage]=useState<ImageItem>();
   const [selected,setSelected]=useState<string|undefined>(()=>new URL(location.href).searchParams.get("annotation")||undefined);
   const [original,setOriginal]=useState(()=>new URL(location.href).searchParams.get("view")==="original");
+  const [debug,setDebug]=useState(()=>new URL(location.href).searchParams.get("view")==="debug");
   const [error,setError]=useState("");
   const [message,setMessage]=useState("");
   const [busy,setBusy]=useState(false);
   const [reload,setReload]=useState(0);
   const pending=useRef(false);
   const lifetime=useRef<AbortController|undefined>(undefined);
+  useEffect(()=>{
+    const restore=()=>{const url=new URL(location.href);setDebug(url.searchParams.get("view")==="debug");setOriginal(url.searchParams.get("view")==="original");setSelected(url.searchParams.get("annotation")||undefined);};
+    window.addEventListener("popstate",restore);return()=>window.removeEventListener("popstate",restore);
+  },[]);
   const selectView=(raw:boolean,id?:string)=>{
     setOriginal(raw);setSelected(id);
     const url=new URL(location.href);url.searchParams.set("view",raw?"original":"results");
@@ -73,12 +79,14 @@ export function RunDetail({service,projectId,runId}:{service:RunDetailService;pr
     {error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}
     {!run&&!error&&<p role="status">读取运行与最终结果…</p>}
     {run&&<><p role="status">{run.status} · {run.current_node||"未记录当前节点"}</p>
+      <button aria-expanded={debug} onClick={()=>{const next=!debug;setDebug(next);const url=new URL(location.href);url.searchParams.set("view",next?"debug":original?"original":"results");history.replaceState(history.state,"",url);}}>{debug?"返回结果画布":"查看执行详情"}</button>
+      {debug&&<RunInspector key={runId} service={service} projectId={projectId} runId={runId}/>}
       {run.terminal_reason&&<p>{run.terminal_reason}</p>}
       <div className="actions"><button disabled={busy} onClick={()=>setReload(v=>v+1)}>重新读取状态</button>{runControls(run).map(action=><button key={action} disabled={busy} onClick={()=>void control(action)}>{action==="pause"?"暂停":action==="resume"?"继续运行":"取消运行"}</button>)}</div>
       {run.controllable&&<p>离开页面不会取消运行。停止请使用取消运行。</p>}
       {summary&&<p>结果 {summary.result_count} · 可交付 {summary.ready_count} · 待审核 {summary.needs_review_count} · 未找到 {summary.no_target_count} · 失败 {summary.failed_count}</p>}
-      <div className="actions"><button aria-pressed={original} onClick={()=>selectView(!original,selected)}>{original?"显示标注":"查看原图"}</button><span>{image?.name||"未找到对应原图"}</span></div>
-      {image?<AnnotationCanvas imageUrl={image.url} annotations={original?[]:annotations?.annotations||[]} selectedId={selected} onSelect={id=>selectView(original,id)} onChange={()=>{}} readOnly compactList/>:<p>没有用其他图片替代缺失的原图。</p>}
+      {!debug&&<div className="actions"><button aria-pressed={original} onClick={()=>selectView(!original,selected)}>{original?"显示标注":"查看原图"}</button><span>{image?.name||"未找到对应原图"}</span></div>}
+      {!debug&&(image?<AnnotationCanvas imageUrl={image.url} annotations={original?[]:annotations?.annotations||[]} selectedId={selected} onSelect={id=>selectView(original,id)} onChange={()=>{}} readOnly compactList/>:<p>没有用其他图片替代缺失的原图。</p>)}
       {annotations?.annotations.length===0&&<p>没有正式标注。待审候选、中间产物及失败原因不计为正式结果。</p>}
       <Disclosure title="正式标注列表">{annotations?.annotations.map(annotation=><article className="settings-row" key={annotation.id}><div><strong>{annotation.label||annotation.task_id}</strong><p>{annotation.review_status}</p></div><button onClick={()=>{selectView(false,annotation.id);}}>定位</button>{annotation.review_status==="needs_review"&&<a href={agentPath({kind:"detail",projectId,page:"review",objectId:annotation.id})}>审核这个对象</a>}</article>)}</Disclosure>
       <Disclosure title="运行来源与冻结绑定"><p>{run.workflow_name} · {run.workflow_version_id||run.workflow_version}</p><p>{run.created_at} — {run.updated_at}</p><p>tokens {run.input_tokens}/{run.output_tokens} · {Number(run.cost)>0?`服务器估算 $${run.cost}`:"费用未核实，零记录不代表免费"}</p><pre>{JSON.stringify(run.frozen_model_bindings,null,2)}</pre>{run.validation_issue_codes.map(code=><p key={code}>{code}</p>)}</Disclosure>

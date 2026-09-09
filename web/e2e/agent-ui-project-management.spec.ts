@@ -67,6 +67,16 @@ test("native Run deep links preserve ownership and refresh without execution",as
   await expect(page.getByRole("button",{name:"显示标注",exact:true})).toBeVisible();
   await page.reload();await expect(page.locator(".workspace-header")).toContainText(run.project_name);
   await expect(page.getByRole("button",{name:"显示标注",exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"查看执行详情",exact:true}).click();
+  const inspector=page.getByRole("region",{name:"节点与 Artifact 检查",exact:true});
+  await expect(inspector.getByLabel("选择实际执行节点")).toBeVisible();
+  const options=await inspector.getByLabel("选择实际执行节点").locator("option").evaluateAll(options=>options.map(o=>(o as HTMLOptionElement).value).filter(Boolean));
+  expect(options.length).toBeGreaterThan(0);
+  await inspector.getByLabel("选择实际执行节点").selectOption(options[0]);
+  await expect(inspector.getByText("节点配置",{exact:true})).toBeVisible();
+  await page.reload();await expect(inspector.getByLabel("选择实际执行节点")).toHaveValue(options[0]);
+  await page.getByRole("button",{name:"返回结果画布",exact:true}).click();
+  await expect(page.locator(".native-review svg image")).toBeVisible();
   const other=runs.runs.find((r:{project_id:string})=>r.project_id!==run.project_id);expect(other).toBeTruthy();
   await page.goto(`/projects/${other.project_id}/manage/runs/${run.id}`);
   await expect(page.getByRole("alert")).toContainText("不属于当前项目");
