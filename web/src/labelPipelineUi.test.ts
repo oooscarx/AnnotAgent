@@ -18,7 +18,7 @@ import {
   scoreSemanticsLabel,
   workflowNodeModelCapability,
   workflowNodeTitle,
-} from "./App";
+} from "./pipelinePresentation";
 import type { Annotation, PipelineArtifact, PipelineStep } from "./types";
 
 describe("Label Pipeline product helpers", () => {

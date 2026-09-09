@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { builderPlanSource, builderStopLabel, recoveryNodeIds } from "./pipelinePresentation";
 import { translate } from "./i18n";
 import type { WorkflowDraftNode, WorkflowEdge } from "./types";
@@ -10,6 +11,13 @@ function edge(from: string, to: string, port: string, route?: string): WorkflowE
   return { from_node: from, from_port: "output", to_node: to, to_port: port, route };
 }
 describe("Pipeline presentation", () => {
+  it("keeps geometry and artifact helpers independent of legacy pages and APIs", () => {
+    const source=readFileSync(new URL("./pipelinePresentation.ts",import.meta.url),"utf8");
+    const imports=[...source.matchAll(/from\s+["']([^"']+)["']/g)].map(match=>match[1]);
+    expect(imports.every(path=>["./types","./annotationVisuals","./skills/visualProfiles"].includes(path))).toBe(true);
+    const tests=readFileSync(new URL("./labelPipelineUi.test.ts",import.meta.url),"utf8");
+    expect(tests).not.toMatch(/from\s+["']\.\/App["']/);
+  });
   it("folds recovery descendants but retains the shared SAM and review merge", () => {
     const nodes = [node("image"), node("gate"), node("expand", ["image", "boxes"]), node("crop", ["image", "boxes"]), node("retry", ["image"]), node("sam", ["image", "prompts"]), node("review", ["boxes"])];
     const edges = [edge("image", "expand", "image"), edge("gate", "expand", "boxes", "relocalize"), edge("image", "crop", "image"), edge("expand", "crop", "boxes"), edge("crop", "retry", "image"), edge("image", "sam", "image"), edge("retry", "sam", "prompts"), edge("gate", "sam", "prompts", "refine"), edge("gate", "review", "boxes", "review"), edge("retry", "review", "boxes")];

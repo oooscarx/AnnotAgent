@@ -43,6 +43,12 @@ Committed visual evidence: `single-ui-clean-cut/m0/disclosure-expanded.png` (144
 
 ## Remaining
 
+### Legacy root dependency extraction
+
+Moved pure Workflow display/default helpers, model-input coordinate projection, COCO RLE validation/decoding, artifact boxes/crops/masks, evidence parsing and geometry/score semantics from old App into the existing `pipelinePresentation.ts` module. The existing recovery-node and Builder-plan helpers remain intact. Old App imports the shared helpers temporarily; `labelPipelineUi.test.ts` now tests the shared module directly, not the legacy React root. No old whole page was relocated or embedded. This removes a concrete deletion dependency without claiming route cutover is complete.
+
+Verification: typecheck, existing 286 unit tests and isolated production build passed after extraction. Added an explicit dependency guard prohibiting page/API imports from the helper module and old-App imports from geometry tests. Extraction was corrected for multiline type boundaries before validation. No runtime API, backend, user service/dist or workspace data changes. No screenshot is claimed for this behavior-preserving module move; existing geometric/evidence behavioral regressions are retained. Production still has the old root and styles, so final acceptance remains open.
+
 ### Model declaration/editor migration
 
 Expanded the new native ModelProfiles surface to create Registry profiles and edit Provider-associated identity, input modalities, all ten existing task capabilities, all seven protocol features, enabled state and five price fields. Search is available; the same component is mounted in Agent models and visual models Settings rather than separate implementations. New declarations start with unknown pricing and no asserted protocol features. Only editable fields are sent; availability/verification state is not invented. Existing locked profiles remain protected. Dirty guards, submit deduplication and revision preflight remain. Actual atomic CAS is not supported by the current backend (UIAPI-010 recorded separately).
