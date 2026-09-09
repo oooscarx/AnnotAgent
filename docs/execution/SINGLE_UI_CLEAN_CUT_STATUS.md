@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Actual HTTP excluded-candidate inspection and orphan CSS removal
+
+Real bbox TEST scenario saves an explicit exclude_target feedback revision through the API after cancelling only TEST pending assistance. Native main canvas has zero displayed candidate rects, while the lazily opened exclusion inspector shows the exact saved reason/candidate and a read-only image without edit controls. Closing and reloading produce zero browser writes; original Sample Test response stays identical. Finally appends a correction restoring the TEST candidate's prior visible geometry, retaining all feedback history. Corrected the initial test selector to measure actual main-canvas rects rather than an absent data attribute; rerun passed1.3s. This tests saved-exclusion inspection, not a newly migrated native exclusion-writing UI.
+
+Removed unreferenced components/conversation-feedback.css after source/scripts search found no imports. Native inspector/build remains sourcef6cb985 at /tmp/annotagent-native-excluded-candidates-dist; no production logic changed this slice. Old full SampleFeedbackEditor and HumanRequests/GeometrySafety operations still need migration. No true data, model calls, original image/Published, user service, Rust or remote changes; goal remains active.
+
 ## Native excluded-candidate inspection
 
 HttpAdapter now retains the excluded side of the existing sampleFeedbackOverlay result instead of dropping it, alongside the same owned/hash-checked sample/image. Native ArtifactPane mounts ExcludedCandidates on demand, with one read-only canvas, selection, explicit exclusion reason/note and source revision. No candidate is restored or written by inspection. Removed old SampleExcludedCandidates.tsx; the still-unmounted legacy SampleFeedbackEditor now refers to the single native inspector until its remaining operations migrate (not a second inspector implementation).
