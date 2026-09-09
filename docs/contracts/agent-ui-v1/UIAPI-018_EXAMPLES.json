@@ -1,0 +1,215 @@
+{
+  "archive": {
+    "archive_hash": "695ca7b60af8979bec44bea3555b0db7f0ad16cddfd7b19331d7ea00d83ffb8f",
+    "format": "annotagent.context",
+    "payload": {
+      "captured_at": "2026-09-09T22:35:02.904949+00:00",
+      "integrity": {
+        "all_messages": true,
+        "all_tasks": true,
+        "limitations": [
+          "raw_model_http_transcripts_not_persisted",
+          "hidden_reasoning_not_exported",
+          "external_resources_not_embedded",
+          "historical_authority_not_transferable"
+        ],
+        "missing_resources": [],
+        "redacted_fields": 0,
+        "snapshot": "sqlite_transaction",
+        "truncated": false
+      },
+      "records": [
+        {
+          "data": {
+            "conversation_id": "184e708a-bd0b-4c55-9f65-31923814dda3",
+            "created_at": "2026-09-09T22:35:02.892236+00:00",
+            "input": {
+              "id": "22ca2e2a-defa-4823-b114-de742ee34265",
+              "image": null,
+              "text": "TEST actual user text"
+            },
+            "message_id": "22ca2e2a-defa-4823-b114-de742ee34265",
+            "sequence": 1
+          },
+          "id": "22ca2e2a-defa-4823-b114-de742ee34265",
+          "kind": "messages"
+        }
+      ],
+      "resources": [],
+      "source": {
+        "conversation_id": "184e708a-bd0b-4c55-9f65-31923814dda3",
+        "project_id": "TEST-archive",
+        "project_owner_id": "db479eee-e124-5b45-892c-f04b42a59ad5"
+      }
+    },
+    "version": 1
+  },
+  "loaded": {
+    "archive": {
+      "archive_hash": "695ca7b60af8979bec44bea3555b0db7f0ad16cddfd7b19331d7ea00d83ffb8f",
+      "format": "annotagent.context",
+      "payload": {
+        "captured_at": "2026-09-09T22:35:02.904949+00:00",
+        "integrity": {
+          "all_messages": true,
+          "all_tasks": true,
+          "limitations": [
+            "raw_model_http_transcripts_not_persisted",
+            "hidden_reasoning_not_exported",
+            "external_resources_not_embedded",
+            "historical_authority_not_transferable"
+          ],
+          "missing_resources": [],
+          "redacted_fields": 0,
+          "snapshot": "sqlite_transaction",
+          "truncated": false
+        },
+        "records": [
+          {
+            "data": {
+              "conversation_id": "184e708a-bd0b-4c55-9f65-31923814dda3",
+              "created_at": "2026-09-09T22:35:02.892236+00:00",
+              "input": {
+                "id": "22ca2e2a-defa-4823-b114-de742ee34265",
+                "image": null,
+                "text": "TEST actual user text"
+              },
+              "message_id": "22ca2e2a-defa-4823-b114-de742ee34265",
+              "sequence": 1
+            },
+            "id": "22ca2e2a-defa-4823-b114-de742ee34265",
+            "kind": "messages"
+          }
+        ],
+        "resources": [],
+        "source": {
+          "conversation_id": "184e708a-bd0b-4c55-9f65-31923814dda3",
+          "project_id": "TEST-archive",
+          "project_owner_id": "db479eee-e124-5b45-892c-f04b42a59ad5"
+        }
+      },
+      "version": 1
+    },
+    "objects": [
+      {
+        "data": {
+          "conversation_id": "184e708a-bd0b-4c55-9f65-31923814dda3",
+          "created_at": "2026-09-09T22:35:02.892236+00:00",
+          "input": {
+            "id": "22ca2e2a-defa-4823-b114-de742ee34265",
+            "image": null,
+            "text": "TEST actual user text"
+          },
+          "message_id": "22ca2e2a-defa-4823-b114-de742ee34265",
+          "sequence": 1
+        },
+        "id": "4dd5adaf-8e59-4184-bfad-b66d986c19bc",
+        "kind": "messages",
+        "source_id": "22ca2e2a-defa-4823-b114-de742ee34265"
+      }
+    ],
+    "receipt": {
+      "archive_hash": "695ca7b60af8979bec44bea3555b0db7f0ad16cddfd7b19331d7ea00d83ffb8f",
+      "command_id": "7a857aab-bfe6-458b-aeba-a7b99842088f",
+      "context_id": "f1eca3d7-ffc9-446f-abd4-4102b33ad7fd",
+      "continuation": {
+        "available_actions": [
+          "view",
+          "export"
+        ],
+        "can_resume": false,
+        "reasons": [
+          "imported_history_is_inert",
+          "new_live_task_and_fresh_authorization_required"
+        ]
+      },
+      "created_at": "2026-09-09T22:35:02.908576+00:00",
+      "id_map": [
+        {
+          "id": "f1eca3d7-ffc9-446f-abd4-4102b33ad7fd",
+          "kind": "conversation",
+          "source_id": "184e708a-bd0b-4c55-9f65-31923814dda3"
+        },
+        {
+          "id": "4dd5adaf-8e59-4184-bfad-b66d986c19bc",
+          "kind": "messages",
+          "source_id": "22ca2e2a-defa-4823-b114-de742ee34265"
+        }
+      ],
+      "mode": "archive_only",
+      "preview_hash": "e3e2b0d37b9f08c75c97676a8b09dc6fa5b0ad8b6918e156d492faaf82709722",
+      "project_id": "TEST-archive",
+      "sequence": 1
+    },
+    "trust": "untrusted_import"
+  },
+  "preview": {
+    "archive_hash": "695ca7b60af8979bec44bea3555b0db7f0ad16cddfd7b19331d7ea00d83ffb8f",
+    "continuation": {
+      "available_actions": [
+        "view",
+        "export"
+      ],
+      "can_resume": false,
+      "reasons": [
+        "imported_history_is_inert",
+        "new_live_task_and_fresh_authorization_required"
+      ]
+    },
+    "counts": {
+      "messages": 1
+    },
+    "integrity": {
+      "all_messages": true,
+      "all_tasks": true,
+      "limitations": [
+        "raw_model_http_transcripts_not_persisted",
+        "hidden_reasoning_not_exported",
+        "external_resources_not_embedded",
+        "historical_authority_not_transferable"
+      ],
+      "missing_resources": [],
+      "redacted_fields": 0,
+      "snapshot": "sqlite_transaction",
+      "truncated": false
+    },
+    "mode": "archive_only",
+    "preview_hash": "e3e2b0d37b9f08c75c97676a8b09dc6fa5b0ad8b6918e156d492faaf82709722",
+    "target_project_id": "TEST-archive",
+    "trust": "untrusted_import",
+    "valid": true
+  },
+  "receipt": {
+    "archive_hash": "695ca7b60af8979bec44bea3555b0db7f0ad16cddfd7b19331d7ea00d83ffb8f",
+    "command_id": "7a857aab-bfe6-458b-aeba-a7b99842088f",
+    "context_id": "f1eca3d7-ffc9-446f-abd4-4102b33ad7fd",
+    "continuation": {
+      "available_actions": [
+        "view",
+        "export"
+      ],
+      "can_resume": false,
+      "reasons": [
+        "imported_history_is_inert",
+        "new_live_task_and_fresh_authorization_required"
+      ]
+    },
+    "created_at": "2026-09-09T22:35:02.908576+00:00",
+    "id_map": [
+      {
+        "id": "f1eca3d7-ffc9-446f-abd4-4102b33ad7fd",
+        "kind": "conversation",
+        "source_id": "184e708a-bd0b-4c55-9f65-31923814dda3"
+      },
+      {
+        "id": "4dd5adaf-8e59-4184-bfad-b66d986c19bc",
+        "kind": "messages",
+        "source_id": "22ca2e2a-defa-4823-b114-de742ee34265"
+      }
+    ],
+    "mode": "archive_only",
+    "preview_hash": "e3e2b0d37b9f08c75c97676a8b09dc6fa5b0ad8b6918e156d492faaf82709722",
+    "project_id": "TEST-archive",
+    "sequence": 1
+  }
+}

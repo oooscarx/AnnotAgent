@@ -103,3 +103,25 @@ Verification: publication/clone filter **10 passed**, existing legacy designer H
 ## UIAPI-017 bounded Replay delivery; live-binding gap remains
 
 Existing Replay path now has passive owned GET preview, exact scope-bound POST and durable GET command receipts. Core/frozen Mock sandbox only; live Provider/Plugin/current binding Replay explicitly refuses and remains a parity blocker. No automatic retry, source checkpoint/formal annotation/Published writes. Contract and bounded follow-up requirements: `docs/contracts/agent-ui-v1/UIAPI-017_REPLAY.md`. Additive0063.
+
+## UIAPI-018 — versioned context archive implemented
+
+Highest-priority history/context request delivered as real owned HTTP APIs and
+additive0064 isolated archive storage. One SQLite snapshot exports all saved messages
+and Tasks, observed calls/tool traces/Builder proposals, Schema/Draft/Sample/feedback
+and references. Explicit preview + command confirmation creates only a new inert
+context with local object IDs; durable replay/restart and project ownership guards
+apply. No live journal/grant/queue/outbox/Published/annotation mutation.
+
+Contract and actual TEST JSON: UIAPI-018_CONTEXT_ARCHIVE.md / UIAPI-018_EXAMPLES.json.
+Validation: full Application162 + Server65 + Storage186 =413 passed,3 existing ignored;
+final archive Storage7 regression pass after reference/redaction/order refinements;
+Server2 tests include actual random-port loopback HTTP session/CSRF/import/recovery.
+Strict selected clippy, fmt and diff checks passed. No network except TEST loopback,
+no paid model, credential resolution, installation, real workspace or user port access.
+
+Scope limits are explicit: imported contexts are inspection-only and cannot resume;
+fresh live task + fresh authorization is required. External bytes/Published/Run
+snapshots remain references; absent raw model HTTP transcripts are not reconstructed.
+1MiB/10000-record cap fails explicitly, no export truncation. Existing tool-result
+bounds remain observable as stored. No Web/package edits, push, merge or remote change.
