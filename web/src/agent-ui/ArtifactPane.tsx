@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { WorkspaceAdapter, Task, Box } from "./adapter";
+import type { WorkspaceAdapter, Task, Box, Snapshot } from "./adapter";
 import { command } from "./App";
 export function ArtifactPane({
   task,
@@ -9,6 +9,7 @@ export function ArtifactPane({
   image,
   onImage,
   onReference,
+  assets,
 }: {
   task: Task;
   adapter: WorkspaceAdapter;
@@ -17,7 +18,11 @@ export function ArtifactPane({
   image: number;
   onImage: (image: number) => void;
   onReference: (candidate: string, image: number) => void;
+  assets: Snapshot["artifacts"];
 }) {
+  const asset = assets.find((a) => a.id === image);
+  const width = asset?.width || 960,
+    height = asset?.height || 760;
   const initialImage = image;
   const [boxes, setBoxes] = useState(
     task.editBoxes?.[initialImage] || (initialImage === 1 ? task.boxes : []),
@@ -45,10 +50,10 @@ export function ArtifactPane({
       bs.map((b) => {
         if (b.id !== id) return b;
         const next = { ...b, ...changes };
-        next.x = Math.max(0, Math.min(952, next.x));
-        next.y = Math.max(0, Math.min(752, next.y));
-        next.w = Math.max(8, Math.min(960 - next.x, next.w));
-        next.h = Math.max(8, Math.min(760 - next.y, next.h));
+        next.x = Math.max(0, Math.min(width - 8, next.x));
+        next.y = Math.max(0, Math.min(height - 8, next.y));
+        next.w = Math.max(8, Math.min(width - next.x, next.w));
+        next.h = Math.max(8, Math.min(height - next.y, next.h));
         return next;
       }),
     );
@@ -59,7 +64,9 @@ export function ArtifactPane({
   return (
     <aside className="artifact-pane" aria-label="图片与标注">
       <div className="artifact-toolbar">
-        <strong>示意图片 · {image}/3</strong>
+        <strong>
+          示意图片 · {image}/{assets.length}
+        </strong>
         <button aria-pressed={original} onClick={() => setOriginal(!original)}>
           原图
         </button>
@@ -76,7 +83,7 @@ export function ArtifactPane({
         </button>
       </div>
       <div className="artifact-toolbar">
-        <small>still-life-{image}.png</small>
+        <small>{asset?.name || "图片不存在"}</small>
         <button
           onClick={() => {
             if (history.length) {
@@ -104,7 +111,7 @@ export function ArtifactPane({
       </div>
       <div className="canvas-region">
         <svg
-          viewBox="0 0 960 760"
+          viewBox={`0 0 ${width} ${height}`}
           aria-label="演示标注画布"
           style={{ width: `${zoom}%`, minWidth: `${zoom}%` }}
           onPointerMove={(e) => {
@@ -120,24 +127,20 @@ export function ArtifactPane({
                   : drag.resize
                     ? {
                         ...b,
-                        w: Math.max(8, Math.min(960 - b.x, drag.box.w + dx)),
-                        h: Math.max(8, Math.min(760 - b.y, drag.box.h + dy)),
+                        w: Math.max(8, Math.min(width - b.x, drag.box.w + dx)),
+                        h: Math.max(8, Math.min(height - b.y, drag.box.h + dy)),
                       }
                     : {
                         ...b,
-                        x: Math.max(0, Math.min(960 - b.w, drag.box.x + dx)),
-                        y: Math.max(0, Math.min(760 - b.h, drag.box.y + dy)),
+                        x: Math.max(0, Math.min(width - b.w, drag.box.x + dx)),
+                        y: Math.max(0, Math.min(height - b.h, drag.box.y + dy)),
                       },
               ),
             );
           }}
           onPointerUp={() => setDrag(null)}
         >
-          <image
-            href={`/assets/still-life-${image}.png`}
-            width="960"
-            height="760"
-          />
+          <image href={asset?.src} width={width} height={height} />
           {!original &&
             compare &&
             (image === 1 ? task.boxes : []).map((b) => (
@@ -214,14 +217,14 @@ export function ArtifactPane({
         示意图与手工框 · 非模型推理。杯柄边界待确认，语义得分不代表几何质量。
       </p>
       <div className="thumbnails">
-        {[1, 2, 3].map((n) => (
+        {assets.map((a) => (
           <button
-            key={n}
-            aria-label={`查看图片 ${n}`}
-            aria-pressed={n === image}
-            onClick={() => pickImage(n)}
+            key={a.id}
+            aria-label={`查看图片 ${a.id}`}
+            aria-pressed={a.id === image}
+            onClick={() => pickImage(a.id)}
           >
-            <img src={`/assets/still-life-${n}.png`} alt="" />
+            <img src={a.src} alt="" />
           </button>
         ))}
       </div>

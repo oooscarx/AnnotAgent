@@ -41,7 +41,7 @@ export function AgentPreviewApp({
   const state = useSyncExternalStore(adapter.subscribe, adapter.snapshot);
   const [url, setUrl] = useState(() => new URL(location.href));
   const [expanded, setExpanded] = useState(
-    state.settings.collapsed ? [] : ["products"],
+    state.settings.collapsed ? [] : state.projects.slice(0, 1).map((p) => p.id),
   );
   const [search, setSearch] = useState("");
   const [mobileNav, setMobileNav] = useState(false);
@@ -71,7 +71,7 @@ export function AgentPreviewApp({
   );
   const [busy, setBusy] = useState(false);
   const task = state.tasks.find(
-    (t) => t.id === (url.searchParams.get("task") || "new"),
+    (t) => t.id === (url.searchParams.get("task") || state.tasks[0]?.id),
   );
   const section = url.searchParams.get("settings") as Section | null;
   const pane = url.searchParams.get("pane") === "image";
@@ -230,7 +230,7 @@ export function AgentPreviewApp({
             href="?task=new"
             onClick={(e) => {
               e.preventDefault();
-              navigate({ settings: null, task: "new" });
+              navigate({ settings: null, task: state.tasks[0]?.id || null });
             }}
           >
             <img src="/assets/mark-ink.svg" alt="" />
@@ -242,7 +242,7 @@ export function AgentPreviewApp({
               void act(async () => {
                 if (!canNavigate()) return;
                 const id = await adapter.createTask(
-                  task?.project || "products",
+                  task?.project || state.projects[0]?.id,
                 );
                 navigate({ settings: null, task: id, pane: null }, true);
               })
@@ -742,15 +742,17 @@ export function AgentPreviewApp({
                   {!task.items.length && (
                     <div className="examples">
                       <div>
-                        {[1, 2, 3].map((n) => (
+                        {state.artifacts.map((asset) => (
                           <button
-                            key={n}
-                            onClick={() => navigate({ pane: "image" })}
+                            key={asset.id}
+                            onClick={() =>
+                              navigate({
+                                pane: "image",
+                                image: String(asset.id),
+                              })
+                            }
                           >
-                            <img
-                              src={`/assets/still-life-${n}.png`}
-                              alt={`示意图片 ${n}`}
-                            />
+                            <img src={asset.src} alt={asset.name} />
                           </button>
                         ))}
                         <small>
@@ -825,6 +827,7 @@ export function AgentPreviewApp({
                     key={`${task.id}:${url.searchParams.get("image") || "1"}`}
                     task={task}
                     adapter={adapter}
+                    assets={state.artifacts}
                     image={Math.max(
                       1,
                       Math.min(3, Number(url.searchParams.get("image")) || 1),

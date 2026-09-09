@@ -28,6 +28,19 @@ const newTask = (id: string, project: string, title = "新任务"): Task => ({
 });
 export function seed(): Snapshot {
   return {
+    artifacts: [1, 2, 3].map((id) => ({
+      id,
+      name: `still-life-${id}.png`,
+      src: `/assets/still-life-${id}.png`,
+      width: 960,
+      height: 760,
+    })),
+    usage: [
+      { id: "text", model: "规划模型 · 演示", tokens: "12,400", cost: "0.12" },
+      { id: "local", model: "本地视觉模型", tokens: "不适用", cost: null },
+    ],
+    knownCost: "0.12",
+    protectedCache: 24,
     projects: [
       { id: "products", title: "商品图片标注" },
       { id: "scenes", title: "场景分类" },
@@ -130,6 +143,11 @@ export class FixtureAdapter implements WorkspaceAdapter {
     try {
       this.state = saved ? JSON.parse(saved) : seed();
       if (!this.state.settings?.revision) throw Error();
+      const defaults = seed();
+      this.state.artifacts ??= defaults.artifacts;
+      this.state.usage ??= defaults.usage;
+      this.state.knownCost ??= defaults.knownCost;
+      this.state.protectedCache ??= defaults.protectedCache;
     } catch {
       this.state = seed();
     }

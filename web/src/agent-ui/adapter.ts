@@ -86,6 +86,16 @@ export type Settings = {
   range: string;
 };
 export type Snapshot = {
+  artifacts: {
+    id: number;
+    name: string;
+    src: string;
+    width: number;
+    height: number;
+  }[];
+  usage: { id: string; model: string; tokens: string; cost: string | null }[];
+  knownCost: string;
+  protectedCache: number;
   projects: { id: string; title: string }[];
   tasks: Task[];
   models: Model[];

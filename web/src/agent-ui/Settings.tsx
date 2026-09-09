@@ -557,9 +557,12 @@ export function SettingsView({
                       onClick={() =>
                         setConfirm({
                           title: "预览缓存清理范围",
-                          body: "128 MB 演示缓存中，24 MB 被引用保护。原图和已确认标注始终保留；此动作不删除真实文件。",
+                          body: `${draft.cache} MB 演示缓存中，${state.protectedCache} MB 被引用保护。原图和已确认标注始终保留；此动作不删除真实文件。`,
                           action: async () => {
-                            await save({ ...draft, cache: 24 });
+                            await save({
+                              ...draft,
+                              cache: state.protectedCache,
+                            });
                           },
                         })
                       }
@@ -610,27 +613,30 @@ export function SettingsView({
                         </tr>
                       </thead>
                       <tbody>
-                        <tr>
-                          <td>规划模型 · 演示</td>
-                          <td>12,400</td>
-                          <td>0.12（模拟）</td>
-                        </tr>
-                        <tr>
-                          <td>本地视觉模型</td>
-                          <td>不适用</td>
-                          <td>未知</td>
-                        </tr>
+                        {state.usage.map((row) => (
+                          <tr key={row.id}>
+                            <td>{row.model}</td>
+                            <td>{row.tokens}</td>
+                            <td>
+                              {row.cost === null
+                                ? "未知"
+                                : `${row.cost}（模拟）`}
+                            </td>
+                          </tr>
+                        ))}
                       </tbody>
                     </table>
                   </div>
                   <p
                     className={
-                      Number(draft.budget) <= 0.12 ? "error" : "notice"
+                      Number(draft.budget) <= Number(state.knownCost)
+                        ? "error"
+                        : "notice"
                     }
                   >
-                    {Number(draft.budget) < 0.12
+                    {Number(draft.budget) < Number(state.knownCost)
                       ? "演示用量超过预算"
-                      : Number(draft.budget) < 0.2
+                      : Number(draft.budget) * 0.8 <= Number(state.knownCost)
                         ? "演示用量接近预算"
                         : "部分模型费用未知，无法确认总费用。"}
                   </p>
