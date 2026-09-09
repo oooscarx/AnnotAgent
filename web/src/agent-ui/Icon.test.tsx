@@ -2,10 +2,18 @@ import { expect, it } from "vitest";
 import production from "../../public/brand/core/ui-icons.svg?raw";
 import preview from "../../ui-preview/public/brand/core/ui-icons.svg?raw";
 import css from "./ui.css?raw";
+import workspaceSource from "./App.tsx?raw";
+import paneSource from "./ArtifactPane.tsx?raw";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Icon, IconButton, iconNames, type IconName } from "./Icon";
 import { labelColor, annotationColor, annotationVisual } from "../annotationVisuals";
 import type { Annotation } from "../types";
+it("bounds initial dataset previews and defers offscreen image requests",()=>{
+  expect(workspaceSource).toContain("state.artifacts.slice(0, 3).map");
+  expect(workspaceSource).toContain("打开数据查看全部");
+  expect(paneSource).toContain('loading="lazy"');
+  expect(paneSource).toContain("assets.map");
+});
 it("uses only existing original sprite symbols in both production and Preview",()=>{
   expect(preview).toBe(production);
   for(const name of iconNames){expect(production).toContain(`id="aa-${name}"`);expect(renderToStaticMarkup(<Icon name={name}/>)).toContain('aria-hidden="true"');}

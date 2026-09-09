@@ -238,7 +238,7 @@ export function ArtifactPane({
             aria-pressed={a.id === image}
             onClick={() => pickImage(a.id)}
           >
-            <img src={a.src} alt="" />
+            <img src={a.src} alt="" loading="lazy" decoding="async" />
           </button>
         ))}
       </div>

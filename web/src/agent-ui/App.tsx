@@ -823,7 +823,7 @@ export function AgentPreviewApp({
                   {!task.items.length && (
                     <div className="examples">
                       <div>
-                        {state.artifacts.map((asset) => (
+                        {state.artifacts.slice(0, 3).map((asset) => (
                           <button
                             key={asset.id}
                             onClick={() =>
@@ -833,13 +833,13 @@ export function AgentPreviewApp({
                               })
                             }
                           >
-                            <img src={asset.src} alt={asset.name} />
+                            <img src={asset.src} alt={asset.name} loading="lazy" decoding="async" />
                           </button>
                         ))}
                         <small>
                           {fixture ? "3 张原创示意图" : `${state.artifacts.length} 张项目图片`}
                           <br />
-                          {fixture ? "不含真实模型输出" : "原始图片"}
+                          {fixture ? "不含真实模型输出" : state.artifacts.length > 3 ? "预览前 3 张 · 打开数据查看全部" : "原始图片"}
                         </small>
                       </div>
                       <button
