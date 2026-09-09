@@ -66,6 +66,7 @@ export class HttpAdapter implements WorkspaceAdapter {
   get trashManagement() { return this.transport === request ? api : undefined; }
   get reviewManagement() { return this.transport === request ? api : undefined; }
   get runDetail() { return this.transport === request ? api : undefined; }
+  get batchDetail() { return this.transport === request ? api : undefined; }
   get exportManagement() { return this.transport === request ? api : undefined; }
   private async testEnvironment() {
     if(this.transport!==request)return false;
@@ -185,7 +186,7 @@ export class HttpAdapter implements WorkspaceAdapter {
         result.processing=await Promise.all((ws.processing_operations||[]).filter(p=>p.batch_id).map(async p=>{
           const batch=await this.transport<{batch:{project_id:string;status:string}}>(`/api/batches/${esc(p.batch_id!)}`,{signal:ctrl.signal});
           if(batch.batch.project_id!==project)throw new Error("处理批次不属于当前项目");
-          return {id:p.id,batch:p.batch_id!,status:batch.batch.status,url:`/projects/${esc(project)}/batches/${esc(p.batch_id!)}`};
+          return {id:p.id,batch:p.batch_id!,status:batch.batch.status,url:`/projects/${esc(project)}/manage/batches/${esc(p.batch_id!)}`};
         }));
       }
       if(sampleId && draftId) {

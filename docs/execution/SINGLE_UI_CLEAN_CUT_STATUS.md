@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Native Batch detail and conversation links
+
+Added actual Batch detail at `/projects/:project/manage/batches/:batch`, using existing batch reads/control APIs and the Agent shell. Conversation processing result links now use this native route. Lists actual per-image statuses/counts/failures and owned native Run links; status query survives refresh. Pending/active/review/failed/cancelled counts remain distinct, prices unknown when not established. Pause/resume/cancel follow supported server states with explicit confirmation, latest-state preflight, duplicate-submit guard, read-only polling and no automatic control retry. Foreign ownership fails closed. Frozen source display is whitelisted rather than dumping the entire server settings snapshot.
+
+Verification: typecheck, 296 unit tests plus final-cutover TODO, isolated build, eleven browser tests passed (ten actual TEST HTTP and one explicit Worker response fixture). New Batch test checks native entry, persisted status filter, refresh, canonical child links when present, foreign project rejection and no writes. Actual control mutation, screenshot and Batch canvas continuity still need further E2E; no full Batch migration parity claimed. TEST service built from `9842337` plus this slice and served `/tmp/annotagent-native-batch-dist`; owned instance stopped, user services/data unchanged. Old Batch page code is not yet deleted because lifecycle management and full result canvas parity remain. Goal active, no push.
+
 ## Native Run inspection slice
 
 Run Detail now opens a new `RunInspector` through its real service boundary. It displays persisted node selection, input/output Artifacts, configuration, actual branch, duration, attempts, cache, usage and errors; no fake intermediate/final conversion. Project/Run ownership checks precede rendering, foreign responses fail closed, requests abort on context change, and node/view query restores on refresh. Closing details restores the same result view/selection in memory. Missing deep-linked nodes show an error instead of silently selecting another node. Run detail also listens for popstate.

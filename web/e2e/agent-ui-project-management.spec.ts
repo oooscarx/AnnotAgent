@@ -1,6 +1,20 @@
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
+test("native Batch detail keeps project ownership and passive refresh",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const batches=await(await request.get("/api/batches?limit=100")).json();const batch=batches.batches[0];expect(batch).toBeTruthy();
+  const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});
+  await page.goto(`/projects/${batch.project_id}/manage/batches/${batch.id}`);
+  await expect(page.getByRole("heading",{name:"批量处理",exact:true})).toBeVisible();
+  await expect(page.getByLabel("筛选图片状态")).toBeVisible();
+  await page.getByLabel("筛选图片状态").selectOption("all");await page.reload();
+  await expect(page.getByLabel("筛选图片状态")).toHaveValue("all");
+  const links=page.getByRole("link",{name:"查看图片结果",exact:true});
+  if(await links.count())await expect(links.first()).toHaveAttribute("href",new RegExp(`/projects/${batch.project_id}/manage/runs/`));
+  await page.goto(`/projects/wrong-owner/manage/batches/${batch.id}`);await expect(page.getByRole("alert")).toContainText("不属于当前项目");
+  await expect(page.getByLabel("筛选图片状态")).toHaveCount(0);expect(writes).toEqual([]);
+});
 test("native HTTP worker area reads the real empty registry without discovery", async ({page,request}) => {
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
   const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});

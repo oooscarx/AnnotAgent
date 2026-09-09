@@ -1,6 +1,7 @@
 /** The new workspace and existing management views share entities, not UI state. */
 export function isAgentEntry(url: URL): boolean {
   return url.pathname === "/" ||
+    /^\/projects\/[^/]+\/manage\/batches\/[^/]+$/.test(url.pathname) ||
     (url.pathname === "/projects" && url.searchParams.get("new") !== "1") ||
     /^\/projects\/[^/]+\/work\/?$/.test(url.pathname) ||
     url.pathname === "/settings" || url.pathname.startsWith("/settings/") ||
