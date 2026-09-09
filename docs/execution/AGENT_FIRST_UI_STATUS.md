@@ -109,3 +109,34 @@ Still open: Plan does not yet have the per-turn policy required here; do not pre
 existing grant checks as Plan-mode verification. Continuation and queued input remain
 work for M2/M3. The M0 entry test remains intentionally red until the actual new layout
 and unified server-resolved send contract are connected. No real workspace restarted.
+
+## M1 first layout slice — on-demand artifact surface
+
+Previous turn was progress: c3ae1fd fixed the stop-observation race with failing-then-passing
+tests. This turn begins the actual layout migration; it does not complete M1 or Plan.
+
+- The existing ConversationWorkspace now centers the thread when no images/results are
+  present. A visible Open data and results control opens the existing importer/canvas.
+- Expanded default is 54% conversation instead of 32%; separator range is 25–75, so an
+  explicit user adjustment can prioritize either side. This is not the final navigation
+  shell or token migration, and resized-width preference persistence is still outstanding.
+- Added typed `pane=thread|artifacts` to canonical route parsing/building, rejecting invalid
+  or duplicate values. It retains Project/task/image IDs and unchanged route focus key.
+  Setup-return context carries this pane value. Explicit new object links may open results.
+- The canvas stays mounted while hidden, preserving editors. Only the exact pane-toggle
+  navigation bypasses discard confirmation; other navigation keeps its original guard.
+- The first browser attempt correctly failed because the old dirty guard intercepted a
+  pane toggle with unsent text (27598 exit 1). Fixed the precise navigation boundary, not
+  the general guard. Pending sends, feedback or formal results are not re-executed.
+
+Tests: new route test failed before implementation (missing pane); Web typecheck and
+233 unit tests passed after implementation. Actual isolated browser test 71151 passed
+1/1 (6.7s), including same-object toggles retaining unsent text, default 54% separator,
+and open/closed URL restoration on reload. Production build ran in that test startup.
+The browser test intentionally clears unsent text before reload: cross-refresh unsent
+composer persistence is still required in M3 and is NOT claimed by this test.
+
+Outstanding M1: session navigation, extracted thread/composer, unified send, theme source
+migration, mobile/resize preferences, and dedicated object message presentation. The first
+M0 whole-entry acceptance case remains red for those unimplemented requirements; it was
+not weakened or marked as passed. Full Rust/browser regression remains for later stages.

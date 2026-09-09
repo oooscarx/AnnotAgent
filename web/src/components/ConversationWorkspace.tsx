@@ -28,7 +28,8 @@ import { imageClassApi, type ImageClassReview } from "../conversation-image-clas
 import { mergeImageClassReview } from "../conversation-image-class";
 
 /** The journal and image importer share the existing Project; neither starts inference. */
-export function ConversationWorkspace({ project, conversationId, imageId, draftId, sampleTestId, taskId, humanRequestId, classReviewId, referenceMessageId, processingOperationId, exportBefore, results, onNavigate, onNavigationGuardChange }: {
+export function ConversationWorkspace({ project, pane, conversationId, imageId, draftId, sampleTestId, taskId, humanRequestId, classReviewId, referenceMessageId, processingOperationId, exportBefore, results, onNavigate, onNavigationGuardChange }: {
+  pane?: "thread" | "artifacts";
   project: ProjectSummary; conversationId?: string; imageId?: string; draftId?:string; sampleTestId?:string;
   taskId?:string; humanRequestId?:string; classReviewId?:string; referenceMessageId?:string; processingOperationId?:string;
   results?: ConversationResultsContext;
@@ -80,8 +81,10 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
     if(saved.task_id!==task)throw new Error("A newer task selection was saved in another view. Reload before selecting the desired goal again; no model was called.");
     selectionCommand.current=undefined;
   }
-  const [mobileView, setMobileView] = useState("conversation");
-  const [width, setWidth] = useState(32);
+  const [mobileView, setMobileView] = useState(pane === "artifacts" ? "images" : "conversation");
+  useEffect(() => { if (pane) setMobileView(pane === "artifacts" ? "images" : "conversation"); }, [pane]);
+  const [width, setWidth] = useState(54);
+  const artifactsOpen = pane ? pane === "artifacts" : Boolean(images.length || imageId || sampleTestId || humanRequestId || classReviewId || results);
   const [requests,setRequests]=useState<HumanRequest[]>([]);
   const [processing,setProcessing]=useState<ProcessingReceipt[]>([]);
   const [requestsReady,setRequestsReady]=useState(false);
@@ -133,6 +136,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   const root = useRef<HTMLDivElement>(null);
   const pending = useRef(false);
   const selectingImage = useRef(false);
+  const changingPane = useRef(false);
   const sampleNavigation = useRef(0);
   const captureFeedbackNavigation = () => {
     const ticket = ++sampleNavigation.current;
@@ -148,7 +152,16 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
       setMobileView("images");
     };
   };
-  const navigationContext=projectWorkPath(project.id,{conversationId,taskId,imageId,draftId,sampleTestId,humanRequestId,classReviewId,referenceMessageId,processingOperationId,exportBefore,results});
+  const navigationContext=projectWorkPath(project.id,{pane,conversationId,taskId,imageId,draftId,sampleTestId,humanRequestId,classReviewId,referenceMessageId,processingOperationId,exportBefore,results});
+  function toggleArtifacts() {
+    const url = new URL(navigationContext, window.location.origin);
+    url.searchParams.set("pane", artifactsOpen ? "thread" : "artifacts");
+    // This exact change keeps every owned object and mounted editor unchanged.
+    // Do not ask to discard edits merely to hide their pane.
+    changingPane.current = true;
+    try { onNavigate(url.pathname + url.search); }
+    finally { changingPane.current = false; }
+  }
   useEffect(()=>{sampleNavigation.current++;},[navigationContext]);
   const unsent = useRef("");
   const schemaDirty = useRef(false);
@@ -182,7 +195,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
   const referenceImage = frozen.current ? images.find((image) => image.image_id === frozen.current?.image?.image_id) : results ? images.find(image=>image.image_id===results.imageId) : selected;
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
-    const guard = () => (!formalGuard.current || formalGuard.current()) && (selectingImage.current || (!pending.current && (!(unsent.current || schemaDirty.current || sampleDirty.current || budgetDirty.current || feedbackScopeDirty.current.size) || window.confirm("Leave with unsaved message, Schema, budget, scope answer or sample edits? Saved workspace data remains on the server."))));
+    const guard = () => changingPane.current || ((!formalGuard.current || formalGuard.current()) && (selectingImage.current || (!pending.current && (!(unsent.current || schemaDirty.current || sampleDirty.current || budgetDirty.current || feedbackScopeDirty.current.size) || window.confirm("Leave with unsaved message, Schema, budget, scope answer or sample edits? Saved workspace data remains on the server.")))));
     const unload = (event: BeforeUnloadEvent) => { if (pending.current || unsent.current || schemaDirty.current || sampleDirty.current || budgetDirty.current || feedbackScopeDirty.current.size) event.preventDefault(); };
     onNavigationGuardChange(guard);
     window.addEventListener("beforeunload", unload);
@@ -385,11 +398,12 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
     }catch(error){if(alive.current && request===sampleNavigation.current)setError((error as Error).message);}
   }
   return <section className="conversation-workspace" aria-label="Annotation workspace">
+    <div className="conversation-surface-controls"><button type="button" aria-expanded={artifactsOpen} aria-controls="conversation-artifacts" onClick={toggleArtifacts}>{artifactsOpen ? "Close data and results" : "Open data and results"}</button></div>
     <nav className="conversation-mobile-tabs" aria-label="Workspace panels">
       <button aria-pressed={mobileView === "conversation"} onClick={() => setMobileView("conversation")}>Conversation</button>
-      <button aria-pressed={mobileView === "images"} onClick={() => setMobileView("images")}>Images ({images.length})</button>
+      <button aria-pressed={mobileView === "images"} onClick={() => { setMobileView("images"); if (!artifactsOpen) toggleArtifacts(); }}>Images ({images.length})</button>
     </nav>
-    <div ref={root} className="conversation-split" data-mobile-view={mobileView} style={{ "--conversation-width": `${width}%` } as CSSProperties}>
+    <div ref={root} className="conversation-split" data-artifacts-open={artifactsOpen} data-mobile-view={mobileView} style={{ "--conversation-width": `${width}%` } as CSSProperties}>
       <section className="conversation-panel" aria-label="Project conversation">
         <div className="conversation-history">
         <h2>What would you like to annotate?</h2>
@@ -432,16 +446,16 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
           {stopComposer ? <button className="danger-button" disabled={!ready || busy} type="submit">{t(busy ? "Saving stop request…" : frozen.current ? "Retry same stop request" : taskId ? "Stop selected task" : "Stop active work")}</button> : !goalMessage&&!pinnedSelection&&!frozen.current ? <><button className="primary" disabled={!ready||busy||!text.trim()} type="submit">Save goal and prepare labels</button><button disabled={!ready||busy||!text.trim()} type="button" onClick={()=>void send(false)}>Save message</button><small>Preparing labels opens the model and data authorization. It does not call a model or publish a workflow.</small></> : <button className="primary" disabled={!ready || busy || !text.trim()} type="submit">{busy ? "Saving…" : frozen.current ? "Retry saving message" : "Save message"}</button>}
         </form>
       </section>
-      <div className="conversation-divider" role="separator" aria-label="Resize conversation panel" aria-orientation="vertical" tabIndex={0} aria-valuemin={25} aria-valuemax={50} aria-valuenow={width} aria-valuetext={`${width}% conversation panel`}
+      <div className="conversation-divider" role="separator" aria-label="Resize conversation panel" aria-orientation="vertical" tabIndex={0} aria-valuemin={25} aria-valuemax={75} aria-valuenow={width} aria-valuetext={`${width}% conversation panel`}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
           if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
           event.preventDefault();
-          setWidth(current => event.key === "Home" ? 25 : event.key === "End" ? 50 : Math.max(25, Math.min(50, current + (event.key === "ArrowRight" ? 2 : -2))));
+          setWidth(current => event.key === "Home" ? 25 : event.key === "End" ? 75 : Math.max(25, Math.min(75, current + (event.key === "ArrowRight" ? 2 : -2))));
         }}
         onPointerDown={(event) => event.currentTarget.setPointerCapture(event.pointerId)}
-        onPointerMove={(event) => { if (!event.currentTarget.hasPointerCapture(event.pointerId)) return; const bounds = root.current?.getBoundingClientRect(); if (bounds) setWidth(Math.round(Math.max(25, Math.min(50, (event.clientX - bounds.left) / bounds.width * 100)))); }} />
-      <section className="conversation-image-panel" aria-label="Project images">
+        onPointerMove={(event) => { if (!event.currentTarget.hasPointerCapture(event.pointerId)) return; const bounds = root.current?.getBoundingClientRect(); if (bounds) setWidth(Math.round(Math.max(25, Math.min(75, (event.clientX - bounds.left) / bounds.width * 100)))); }} />
+      <section id="conversation-artifacts" className="conversation-image-panel" aria-label="Project images">
         {referenceMessageId && !referenceMatches ? <p role={ready ? "alert" : "status"}>{ready ? "The message reference does not match this conversation, task, image or sample. No other result was substituted." : "Loading the saved message reference…"}</p> : results ? <><div className="conversation-image-tools"><h2>Dataset results</h2><button onClick={()=>showResults()}>Return to sample canvas</button></div>{!requestsReady ? <p role="status">Loading saved processing tasks…</p> : processing.some(operation=>operation.batch_id===results.batchId) ? <ConversationBatchResults key={results.batchId} project={project} context={results} returnPath={projectWorkPath(project.id,{conversationId:conversation,imageId,draftId,sampleTestId,taskId,humanRequestId,processingOperationId,exportBefore,results})} onSelect={showResults} onNavigate={onNavigate} onNavigationGuardChange={formalGuardChange} /> : <p role="alert">This Batch is not linked to this conversation. No other result was substituted.</p>}</> : <>
         {activeRequest && (requestRelation==="baseline" || requestRelation==="comparison") && <aside className="conversation-consent" aria-label="Sample origin"><p>{requestRelation==="comparison" ? "Sample from the revised plan. The original correction remains separate; improvement has not been established." : "Another image from the original sample. The requested correction belongs to a different image."}</p><button onClick={()=>void openRequest(activeRequest)}>Return to original correction</button></aside>}
         <div className="conversation-image-tools"><h2>{images.length ? `${images.length} images` : "Your images"}</h2><label className="conversation-upload">Add images<input type="file" accept="image/png,image/jpeg" multiple disabled={busy || !ready} onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; void upload(files); }} /></label></div>

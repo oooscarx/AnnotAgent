@@ -1,5 +1,10 @@
 .conversation-workspace { min-width: 0; width: 100%; }
 .conversation-split { display: grid; grid-template-columns: minmax(0,var(--conversation-width)) 12px minmax(0,1fr); min-height: 65vh; }
+.conversation-surface-controls { display: flex; justify-content: end; padding: 8px 16px; }
+.conversation-split[data-artifacts-open=false] { grid-template-columns: minmax(0,1fr); }
+.conversation-split[data-artifacts-open=false] > .conversation-divider,
+.conversation-split[data-artifacts-open=false] > .conversation-image-panel { display: none; }
+.conversation-split[data-artifacts-open=false] > .conversation-panel { width: min(100%, 768px); margin-inline: auto; }
 .conversation-panel, .conversation-image-panel { min-width: 0; padding: clamp(12px,2vw,24px); }
 .conversation-panel { display: flex; flex-direction: column; gap: 12px; }
 .conversation-panel > * { flex-shrink: 0; }

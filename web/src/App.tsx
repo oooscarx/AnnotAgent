@@ -709,7 +709,7 @@ export function App() {
           />
         )}
         {loaded && route.kind === "conversation" && (
-          selectedProject ? <ConversationWorkspace key={route.projectId} project={selectedProject} classReviewId={route.classReviewId} referenceMessageId={route.referenceMessageId} conversationId={route.conversationId} imageId={route.imageId} draftId={route.draftId} sampleTestId={route.sampleTestId} taskId={route.taskId} humanRequestId={route.humanRequestId} processingOperationId={route.processingOperationId} exportBefore={route.exportBefore} results={route.results} onNavigate={navigate} onNavigationGuardChange={setNavigationGuard} />
+          selectedProject ? <ConversationWorkspace key={route.projectId} project={selectedProject} pane={route.pane} classReviewId={route.classReviewId} referenceMessageId={route.referenceMessageId} conversationId={route.conversationId} imageId={route.imageId} draftId={route.draftId} sampleTestId={route.sampleTestId} taskId={route.taskId} humanRequestId={route.humanRequestId} processingOperationId={route.processingOperationId} exportBefore={route.exportBefore} results={route.results} onNavigate={navigate} onNavigationGuardChange={setNavigationGuard} />
             : <NotFoundPage invalidPath={route.canonicalPath} onNavigate={navigate} />
         )}
         {loaded && route.kind === "journey" && (

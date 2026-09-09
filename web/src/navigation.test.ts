@@ -14,6 +14,13 @@ import {
 } from "./navigation";
 
 describe("guided workspace routing", () => {
+  it("restores the optional artifact pane without changing task identity or focus", () => {
+    const route = parseWorkspaceRoute("/projects/p/work", "?conversation=c&task=t&image=i&pane=thread");
+    expect(route).toMatchObject({ kind: "conversation", pane: "thread", imageId: "i", taskId: "t" });
+    expect(route.canonicalPath).toContain("pane=thread");
+    expect(routeFocusKey(route)).toBe("conversation:p");
+    expect(parseWorkspaceRoute("/projects/p/work", "?pane=external")).toMatchObject({ kind: "notFound" });
+  });
   it("restores the owned export-history cursor without changing task or image",()=>{
     const exportBefore="01234567-89ab-4cde-8fab-0123456789ab";
     const path=projectWorkPath("project",{conversationId:"conversation",taskId:"task",imageId:"image",exportBefore});
