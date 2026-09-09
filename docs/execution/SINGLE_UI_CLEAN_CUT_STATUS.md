@@ -1,5 +1,15 @@
 # Single UI Clean Cut
 
+## User-prioritized Agent history and portable context (in progress)
+
+User requested Agent multi-turn/task history, observable execution traces and JSON save/load before the remaining legacy-operation migration, followed by a normal local main merge. Baseline main was 32db263: prior completed native migrations already belong to main. Created codex/agent-task-history from that exact commit. Existing untracked product assets are preserved; no remote, real workspace or user-service change.
+
+Native project menu now exposes Agent task history, not a new global functional sidebar. Owned saved tasks are searchable; original task links and selected-task URL survive reload/back. Trace reads every task-thread page, checks ownership and non-advancing cursors, and shows observable messages, model receipts, Builder tool arguments/results, samples, processing, human requests and queue evidence. It does not invent hidden reasoning or an unsupported global event ordering.
+
+UIAPI-018 sent to the fixed authorized Backend UUID 01a0855e-9c39-7c33-9f18-93e084d14816 (queue receipt 01a08839-a0b4-7d32-94e4-70df5fa905f4). Backend supplied a draft context-archive contract: transactional persisted-context export, preview, explicit idempotent archive-only import and read-only restore. Frontend wiring is prepared, awaiting implementation SHA and real HTTP verification. No claim of complete save/load yet. Loaded historical authority cannot be resumed; external resources/raw unpersisted model transcripts are explicitly outside the archive. Original single-UI removal goal remains incomplete.
+
+Current checks: typecheck, 327 unit tests across101 files; isolated production build /tmp/annotagent-task-history-dist. Actual HTTP task-history reload case passed (1.2s), no browser writes. JSON roundtrip E2E written but not yet run against implemented backend. No paid API or live-quality claim. Local main merge pending completed integration, no push.
+
 ## Actual HTTP excluded-candidate inspection and orphan CSS removal
 
 Real bbox TEST scenario saves an explicit exclude_target feedback revision through the API after cancelling only TEST pending assistance. Native main canvas has zero displayed candidate rects, while the lazily opened exclusion inspector shows the exact saved reason/candidate and a read-only image without edit controls. Closing and reloading produce zero browser writes; original Sample Test response stays identical. Finally appends a correction restoring the TEST candidate's prior visible geometry, retaining all feedback history. Corrected the initial test selector to measure actual main-canvas rects rather than an absent data attribute; rerun passed1.3s. This tests saved-exclusion inspection, not a newly migrated native exclusion-writing UI.
