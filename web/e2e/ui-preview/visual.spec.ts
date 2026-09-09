@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-const dir = "ui-preview/evidence";
+const dir = process.env.UI_SCREENSHOT_DIR || "ui-preview/evidence";
 async function scenario(page: Page, label: string) {
   await page.getByText("演示场景", { exact: true }).click();
   await page.getByRole("button", { name: label, exact: true }).click();
@@ -40,6 +40,8 @@ test("capture actual React preview pages and evidence metadata", async ({
       sha,
       url: page.url(),
       viewport: page.viewportSize(),
+      dpr: await page.evaluate(()=>devicePixelRatio),
+      cssZoom: await page.evaluate(()=>getComputedStyle(document.body).zoom),
       theme: await page.locator("html").getAttribute("data-aa-theme"),
       status: "UI Preview / Fixture; no Live Provider",
       capturedAt: new Date().toISOString(),
@@ -109,6 +111,18 @@ test("capture actual React preview pages and evidence metadata", async ({
   await shot("16-mobile-canvas");
   await page.goto("/ui-preview?task=new&settings=general");
   await shot("17-mobile-settings");
+  if(process.env.UI_SCREENSHOT_DIR){
+    await page.setViewportSize({width:1440,height:960});
+    await page.goto("/ui-preview?icons=1");
+    for(const theme of ["light","dark"]){
+      if(theme==="dark")await page.getByRole("button",{name:"切换浅色 / 深色"}).click();
+      await page.getByRole("button",{name:"plus active",exact:true}).focus();
+      await page.getByRole("button",{name:"folder active",exact:true}).hover();
+      await shot(`icons-${theme}`);
+    }
+    await page.evaluate(()=>{document.body.style.zoom="2";});
+    await shot("icons-css-200-not-native");
+  }
   writeFileSync(`${dir}/manifest.json`, JSON.stringify(records, null, 2));
 });
 for (const size of [
