@@ -975,3 +975,30 @@ repository's explicit collection initialization style. No model traffic or user 
 mutation. This is source preflight, not yet wired Workflow modification: admission,
 atomic working-copy creation and existing Builder dispatch still need integration.
 Full goal remains active; no push or remote change.
+
+## M3 atomic queued Workflow working copy — 2026-09-09
+
+Migration 0057 and the storage copy command bind one distinct copy identity to the
+exact queued message/source. Draft, saved sample-feedback reference metadata and
+copy receipt are inserted in one transaction. INSERT is intentional: an existing
+Draft id cannot be overwritten. Source ownership, availability, revision, hash,
+Schema task and evidence digest are checked inside the transaction. Nodes, bindings,
+policies and semantic binding are preserved; the copy starts Editing, not Published.
+Retries return the current saved copy, retaining later human edits even if the source
+changed. A cancelled message cannot create a new copy. Receipt tombstones survive
+explicit copy purge without a blocking Draft FK, preventing retry resurrection.
+
+Evidence: Application source/copy lifecycle test passed (74636): unchanged original,
+preserved nodes/policies/Schema, foreign owner and retarget rejection, edited-copy
+retry, changed-source and cancelled-source rejection, restart. Storage injected
+receipt-write failure and id collision tests passed (74607); full Storage 161/161
+passed (89890). Final focused test also verifies feedback-reference transaction
+rollback/copy and purge-without-resurrection (51103). Strict Storage/Application
+all-target/all-feature Clippy passed (79024). Test setup initially used a non-UUID
+owner and test-module placement violated lint; corrected before final verification.
+Synthetic feedback-reference metadata is explicitly TEST, not measured model output.
+
+This remains an internal copy primitive, not a new executor or a user-visible claim
+that an instruction was applied. Next integration must use explicit Builder consent,
+reuse this copy as the existing Builder's working Draft, and preserve cumulative
+budget and model scope. No live Provider calls, real workspace changes or push.

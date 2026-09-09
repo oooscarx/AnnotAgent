@@ -29,17 +29,7 @@ pub use annotagent_storage::ConversationBuilderRepair;
 
 /// Exact editable-plan source for an ordinary queued supplement. Unlike human
 /// repair provenance, this does not claim a correction or quality measurement.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct QueuedWorkflowSource {
-    pub message_id: Uuid,
-    pub draft_id: String,
-    pub revision: u64,
-    pub content_hash: String,
-    pub schema_id: Uuid,
-    pub schema_revision: u64,
-    pub evidence_hash: Option<String>,
-}
+pub use annotagent_storage::QueuedWorkflowSource;
 
 struct BuilderGuard<'a> {
     app: &'a LocalApplication,
@@ -819,6 +809,45 @@ mod tests {
             original
         );
         let mut edited = original.clone();
+        let copy_request = annotagent_storage::QueuedWorkflowCopy {
+            conversation_id: conversation,
+            task_id: task,
+            copy_id: Uuid::new_v4(),
+            source: source.clone(),
+        };
+        let copied = app
+            .store
+            .copy_queued_workflow(&owner, project, &copy_request)
+            .unwrap();
+        assert_eq!(copied.nodes, original.nodes);
+        assert_eq!(copied.runtime_policies, original.runtime_policies);
+        assert_eq!(copied.annotation_schema, original.annotation_schema);
+        assert_eq!(
+            app.store.get_workflow_draft(&original.id).unwrap(),
+            original
+        );
+        assert!(
+            app.store
+                .copy_queued_workflow("foreign", project, &copy_request)
+                .is_err()
+        );
+        let mut manual_copy = copied.clone();
+        manual_copy.name = "TEST edited working copy".into();
+        app.store.save_workflow_draft(&manual_copy).unwrap();
+        let saved_copy = app.store.get_workflow_draft(&copied.id).unwrap();
+        assert_eq!(
+            app.store
+                .copy_queued_workflow(&owner, project, &copy_request)
+                .unwrap(),
+            saved_copy
+        );
+        let mut retargeted = copy_request.clone();
+        retargeted.source.content_hash = "b".repeat(64);
+        assert!(
+            app.store
+                .copy_queued_workflow(&owner, project, &retargeted)
+                .is_err()
+        );
         edited.name = "TEST manually revised after approval".into();
         app.store.save_workflow_draft(&edited).unwrap();
         assert!(
@@ -829,11 +858,44 @@ mod tests {
             .queued_workflow_source(project, conversation, task, message.message.id, &draft.id)
             .unwrap();
         assert_ne!(updated.content_hash, source.content_hash);
+        assert_eq!(
+            app.store
+                .copy_queued_workflow(&owner, project, &copy_request)
+                .unwrap(),
+            saved_copy,
+            "retry must not recopy a newer source"
+        );
+        let another = annotagent_storage::QueuedWorkflowCopy {
+            copy_id: Uuid::new_v4(),
+            ..copy_request.clone()
+        };
+        assert!(
+            app.store
+                .copy_queued_workflow(&owner, project, &another)
+                .is_err()
+        );
         app.cancel_project_queued_message(project, conversation, task, message.message.id)
             .unwrap();
         assert!(
             app.load_queued_workflow_source(project, conversation, task, &updated)
                 .is_err()
+        );
+        let cancelled = annotagent_storage::QueuedWorkflowCopy {
+            source: updated,
+            ..another
+        };
+        assert!(
+            app.store
+                .copy_queued_workflow(&owner, project, &cancelled)
+                .is_err()
+        );
+        drop(app);
+        let app = LocalApplication::new(temp.path()).unwrap();
+        assert_eq!(
+            app.store
+                .copy_queued_workflow(&owner, project, &copy_request)
+                .unwrap(),
+            saved_copy
         );
     }
 
