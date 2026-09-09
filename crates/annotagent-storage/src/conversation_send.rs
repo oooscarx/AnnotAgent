@@ -7,6 +7,15 @@ use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Requested behavior for this message, not an execution grant. Actual model and
+/// mutation operations still require their separately scoped authorizations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationSendMode {
+    Plan,
+    Execute,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConversationSendInput {
@@ -16,6 +25,9 @@ pub struct ConversationSendInput {
     /// Optional observed preference for CAS admission; absent for older clients.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_model: Option<crate::ConversationAgentModel>,
+    /// Missing means a legacy command, not implicit execution permission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<ConversationSendMode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,6 +46,8 @@ pub struct ConversationSendReceipt {
     /// None means a historical receipt predating model snapshots, not default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_model: Option<crate::ConversationAgentModel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<ConversationSendMode>,
 }
 
 fn invalid(message: &str) -> StorageError {
@@ -97,7 +111,7 @@ impl SqliteStore {
             if disposition==ConversationSendDisposition::NewTask {
                 tx.execute("INSERT INTO conversation_tasks(id,conversation_id,source_message_id,schema_revision,created_at) VALUES(?1,?2,?3,?4,?5)",params![task_id.to_string(),conversation.to_string(),message.input.id.to_string(),input.schema_revision,chrono::Utc::now().to_rfc3339()])?;
             }
-            let receipt=ConversationSendReceipt{message,task_id,disposition,agent_model:Some(agent_model)};
+            let receipt=ConversationSendReceipt{message,task_id,disposition,agent_model:Some(agent_model),mode:input.mode};
             tx.execute("INSERT INTO conversation_send_receipts(conversation_id,message_id,input_json,receipt_json) VALUES(?1,?2,?3,?4)",params![conversation.to_string(),input.message.id.to_string(),serde_json::to_string(input)?,serde_json::to_string(&receipt)?])?;
             tx.commit()?;
             Ok(receipt)
@@ -108,6 +122,71 @@ impl SqliteStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn send_mode_is_immutable_per_message_and_survives_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TEST-send-mode.db");
+        let store = SqliteStore::open(&path).unwrap();
+        let owner = Uuid::new_v4().to_string();
+        let conversation = store.create_conversation(&owner).unwrap();
+        let mut command = input();
+        command.mode = Some(ConversationSendMode::Plan);
+        let receipt = store
+            .send_conversation_message(&owner, conversation, &command)
+            .unwrap();
+        assert_eq!(receipt.mode, Some(ConversationSendMode::Plan));
+        let mut changed = command.clone();
+        changed.mode = Some(ConversationSendMode::Execute);
+        assert!(
+            store
+                .send_conversation_message(&owner, conversation, &changed)
+                .is_err()
+        );
+        let mut next = changed.clone();
+        next.message.id = Uuid::new_v4();
+        next.task_id = Some(receipt.task_id);
+        assert_eq!(
+            store
+                .send_conversation_message(&owner, conversation, &next)
+                .unwrap()
+                .mode,
+            Some(ConversationSendMode::Execute)
+        );
+        drop(store);
+        let store = SqliteStore::open(&path).unwrap();
+        assert_eq!(
+            store
+                .send_conversation_message(&owner, conversation, &command)
+                .unwrap(),
+            receipt
+        );
+        assert_eq!(
+            store
+                .conversation_messages(&owner, conversation, 0, 100)
+                .unwrap()
+                .len(),
+            2
+        );
+        let mut legacy = serde_json::to_value(&command).unwrap();
+        legacy.as_object_mut().unwrap().remove("mode");
+        assert_eq!(
+            serde_json::from_value::<ConversationSendInput>(legacy.clone())
+                .unwrap()
+                .mode,
+            None
+        );
+        legacy["mode"] = serde_json::json!("unrestricted");
+        assert!(serde_json::from_value::<ConversationSendInput>(legacy).is_err());
+        let mut legacy_receipt = serde_json::to_value(&receipt).unwrap();
+        legacy_receipt.as_object_mut().unwrap().remove("mode");
+        assert_eq!(
+            serde_json::from_value::<ConversationSendReceipt>(legacy_receipt)
+                .unwrap()
+                .mode,
+            None
+        );
+    }
+
     #[test]
     fn send_freezes_model_and_stale_choice_rolls_back_before_message_admission() {
         let dir = tempfile::tempdir().unwrap();
@@ -188,6 +267,7 @@ mod tests {
             task_id: None,
             schema_revision: "a".repeat(64),
             agent_model: None,
+            mode: None,
         }
     }
 

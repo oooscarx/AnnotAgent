@@ -647,3 +647,49 @@ the scoped transition into execution, and compact real Plan/approval objects. Th
 default-path change does not establish that all Plan permissions or the complete
 Agent-first goal are finished. No push, remote change, user workspace cleanup or
 Published Version mutation occurred.
+
+## M2/M3 continuation — frozen message mode, 2026-09-09
+
+Previous goal turn made verified progress in c4c4c5e. This continuation retains that
+planning-first entry and adds `ConversationSendMode` (`plan` / `execute`) to the
+atomic Send input and receipt. The existing SQLite JSON receipt transaction stores
+it with message/task/model scope; no new executor or preference database was added.
+Changing the mode under the same message ID is rejected, and server restart preserves
+the original receipt. Missing legacy mode stays missing, not fabricated execution
+authority. Unknown enum values fail deserialization.
+
+Composer defaults to Plan and exposes an accessible next-message selector. It freezes
+the selected mode synchronously with the message before asynchronous work, persists
+it in the retry envelope, disables edits to that uncertain command and checks the
+returned mode. Definitive model-conflict replacement retains the original mode.
+Changing the selector itself has no HTTP effect and does not interrupt ongoing work.
+
+Initial goal restoration reads the server Send receipt: Plan uses standalone text
+planning; an explicit Execute message offers the existing combined authorization.
+It does not execute on mount/Send. Separate exact operation grants remain mandatory.
+Existing saved authorizations/Journeys take precedence over this entry preference.
+The selector is **requested behavior**, not a wildcard grant or proof of a complete
+per-turn capability middleware. Follow-up queue dispatch/policy and the complete
+Plan mutation-permission audit remain unfinished; no in-flight turn is rewritten.
+
+Verification:
+
+- Storage Send 4/4 (17519), including mode conflict rollback, independent next-message
+  mode, restart, legacy omission and invalid enum; fmt check passed (36157).
+- Web 240 unit tests / 49 files (19934). Typecheck initially found a stale inline
+  POST receipt type; switched it to the shared SendReceipt type, then typecheck passed.
+- Picker + Plan entry + Send 6/6 (30897), isolated
+  `/tmp/annotagent-guided-e2e-66716`, including actual in-flight model switching.
+- Expanded Plan/Execute + frozen retry + Stop browser suite 16/16 (49959), isolated
+  `/tmp/annotagent-guided-e2e-66929`: Execute Send and reload yield zero authorized
+  and reserved calls; later Plan selection does not rewrite its receipt or entry;
+  an altered-mode retry is rejected; uncertain Execute send restores as Execute.
+  Plan goal stays text-only after selecting Execute for the next message. All ten
+  existing Stop/selection/lost-ack/composition/independent-task tests passed.
+- Strict Storage/Application/Server all-target/all-feature Clippy passed (17475).
+  Browser production build passed with the existing large-chunk warning. Only the
+  local TEST protocol fixture was invoked, not a paid model or accuracy evaluation.
+
+No user workspace cleanup, Published Version modification, remote change or push.
+Full Agent-first completion, six final screenshots, queue/continuation, compact thread
+objects, native zoom across the complete flow and live/human validation remain open.

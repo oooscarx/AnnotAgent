@@ -635,7 +635,7 @@ export const api = {
   conversationSendReceipt: (projectId: string, conversationId: string, messageId: string, signal?: AbortSignal) =>
     request<{input:import("./conversation-send").SendCommand;receipt:import("./conversation-send").SendReceipt} | null>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/send/${encodeURIComponent(messageId)}`, {signal}),
   submitConversationMessage: (projectId: string, conversationId: string, input: import("./conversation-send").SendCommand) =>
-    request<{ message: import("./types").ConversationMessage; task_id: string; disposition: "new_task" | "task_message" | "candidate_feedback" }>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/send`, { method: "POST", body: JSON.stringify(input) }),
+    request<import("./conversation-send").SendReceipt>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/send`, { method: "POST", body: JSON.stringify(input) }),
   projectGoal: (projectId: string, signal?: AbortSignal) => request<{
     revision: string; goal: string; kind: string | null; labels: string[] | null; editable: boolean;
   }>(`/api/projects/${encodeURIComponent(projectId)}/goal`, { signal }),

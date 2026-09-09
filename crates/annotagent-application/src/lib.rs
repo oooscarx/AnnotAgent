@@ -28256,6 +28256,7 @@ export:
             task_id: None,
             schema_revision: "0".repeat(64),
             agent_model: None,
+            mode: None,
         };
         assert!(
             app.send_project_conversation_message("TEST-send", conversation, &command)

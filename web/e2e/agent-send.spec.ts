@@ -48,15 +48,20 @@ for (const admitted of [true, false]) test(`pending send refresh reads receipt w
   });
   await page.goto(`/projects/${project}/work`);
   const input = page.getByRole("textbox", { name: "Your message", exact: true });
+  const mode=page.getByRole("combobox",{name:"Next message mode",exact:true});
+  await mode.selectOption("execute");
   await input.fill("TEST original frozen target");
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expect(page.getByRole("button", { name: "Retry same send", exact: true })).toBeEnabled();
+  await expect(mode).toBeDisabled();
   await page.reload();
   if (admitted) {
     await expect(input).toHaveValue("");
     await expect(page.getByRole("list", { name: "Saved messages", exact: true })).toContainText("TEST original frozen target");
     expect(commands).toHaveLength(1);
   } else {
+    await expect(mode).toHaveValue("execute");
+    await expect(mode).toBeDisabled();
     await expect(input).toHaveValue("TEST original frozen target");
     await expect(page.getByRole("button", { name: "Retry same send", exact: true })).toBeEnabled();
     expect(commands).toHaveLength(1);

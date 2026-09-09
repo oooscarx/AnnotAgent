@@ -63,7 +63,8 @@ pub use conversation_human_requests::{
 };
 pub use conversation_schema::{ConversationSchemaDefinition, ConversationSchemaDraft};
 pub use conversation_send::{
-    ConversationSendDisposition, ConversationSendInput, ConversationSendReceipt,
+    ConversationSendDisposition, ConversationSendInput, ConversationSendMode,
+    ConversationSendReceipt,
 };
 pub use conversation_task_selection::{ConversationTaskSelection, SelectConversationTask};
 mod conversations;

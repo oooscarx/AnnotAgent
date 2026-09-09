@@ -1,5 +1,36 @@
 import { expect, test } from "./fixtures";
 
+test("Execute is a frozen request for approval, not permission to run on Send or reload", async ({page,request})=>{
+  const project=`TEST-execute-entry-${Date.now()}`;
+  expect((await request.post("/api/projects",{data:{id:project,yaml:"version: 1\nproject:\n  name: TEST Execute entry\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n"}})).ok()).toBe(true);
+  await page.goto(`/projects/${project}/work`);
+  const mode=page.getByRole("combobox",{name:"Next message mode",exact:true});
+  await expect(mode).toHaveValue("plan");
+  await mode.selectOption("execute");
+  await page.getByRole("textbox",{name:"Your message",exact:true}).fill("TEST execute cups after reviewing authorization");
+  await page.getByRole("button",{name:"Send",exact:true}).click();
+  const panel=page.getByRole("region",{name:"Build and test annotation plan",exact:true});
+  await expect(panel).toBeVisible();
+  const conversation=(await (await request.get(`/api/projects/${project}/conversations`)).json()).conversation_id;
+  const root=`/api/projects/${project}/conversations/${conversation}`;
+  const tasks=await (await request.get(`${root}/tasks`)).json();
+  expect(tasks).toHaveLength(1);
+  const saved=await (await request.get(`${root}/send/${tasks[0].input.source_message_id}`)).json();
+  expect(saved.receipt.mode).toBe("execute");
+  await mode.selectOption("plan");
+  await expect(panel).toBeVisible();
+  const writes:string[]=[];
+  page.on("request",req=>{if(req.method()!=="GET")writes.push(req.url());});
+  await page.reload();
+  await expect(panel).toBeVisible();
+  expect(writes).toEqual([]);
+  const budget=await (await request.get(`${root}/tasks/${tasks[0].input.id}/budget`)).json();
+  expect(budget.total_reserved_calls).toBe(0);
+  expect(budget.total_authorized_calls).toBe(0);
+  expect((await request.post(`${root}/send`,{data:{...saved.input,mode:"plan"}})).ok()).toBe(false);
+  expect(await (await request.get(`${root}/messages`)).json()).toHaveLength(1);
+});
+
 test("new Agent goal starts with text-only planning and restores without image authorization", async ({page,request}) => {
   const project = `TEST-plan-entry-${Date.now()}`;
   expect((await request.post("/api/projects", {data:{id:project,yaml:"version: 1\nproject:\n  name: TEST Plan entry\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n"}})).ok()).toBe(true);
@@ -17,6 +48,7 @@ test("new Agent goal starts with text-only planning and restores without image a
   page.on("request",req=>{if(req.method()!=="GET")mutations.push(new URL(req.url()).pathname);});
   await page.getByRole("textbox",{name:"Your message",exact:true}).fill("TEST find cups, exclude bottles");
   await page.getByRole("button",{name:"Send",exact:true}).click();
+  await expect(page.getByRole("combobox",{name:"Next message mode",exact:true})).toHaveValue("plan");
   // This is an existing div with an accessible label, not a synthetic panel.
   const authorization=page.locator('[aria-label="Schema model authorization"]');
   await expect(authorization).toBeVisible();
@@ -24,6 +56,10 @@ test("new Agent goal starts with text-only planning and restores without image a
   await authorization.screenshot({path:"/tmp/annotagent-agent-plan-entry.png"});
   await expect(page.getByText("Planning may use a paid text model. Image processing requires a separate authorization.")).toBeVisible();
   expect(mutations.every(path=>path.endsWith("/send")||path.endsWith("/task-selection")),JSON.stringify(mutations)).toBe(true);
+  const beforeModeChange=mutations.length;
+  await page.getByRole("combobox",{name:"Next message mode",exact:true}).selectOption("execute");
+  await expect(authorization).toBeVisible();
+  expect(mutations).toHaveLength(beforeModeChange);
   await authorization.getByRole("checkbox").check();
   await authorization.getByRole("button",{name:"Generate label proposal",exact:true}).click();
   await expect(page.getByRole("button",{name:"Review Builder authorization",exact:true})).toBeEnabled();
@@ -33,6 +69,9 @@ test("new Agent goal starts with text-only planning and restores without image a
   const tasks=await (await request.get(`${root}/tasks`)).json();
   expect(tasks).toHaveLength(1);
   const taskRoot=`${root}/tasks/${tasks[0].input.id}`;
+  const savedSend=await (await request.get(`${root}/send/${tasks[0].input.source_message_id}`)).json();
+  expect(savedSend.receipt.mode).toBe("plan");
+  expect(savedSend.input.mode).toBe("plan");
   expect((await (await request.get(`${taskRoot}/budget`)).json()).total_reserved_calls).toBe(1);
   expect(mutations.filter(path=>!path.endsWith("/send")&&!path.endsWith("/task-selection")&&!path.endsWith("/schema-proposals")),JSON.stringify(mutations)).toEqual([]);
   const count=mutations.length;

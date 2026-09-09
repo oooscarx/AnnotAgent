@@ -29,7 +29,7 @@ import { mergeImageClassReview } from "../conversation-image-class";
 import { ConversationNavigation } from "./ConversationNavigation";
 import { AgentComposer } from "./AgentComposer";
 import { AgentModelPicker } from "./AgentModelPicker";
-import { parsePendingSend, sameSendCommand, type SendModel } from "../conversation-send";
+import { parsePendingSend, sameSendCommand, type SendModel, type SendMode } from "../conversation-send";
 
 /** The journal and image importer share the existing Project; neither starts inference. */
 export function ConversationWorkspace({ project, pane, conversationId, imageId, draftId, sampleTestId, taskId, humanRequestId, classReviewId, referenceMessageId, processingOperationId, exportBefore, results, onNavigate, onNavigationGuardChange }: {
@@ -44,6 +44,8 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
   const [conversation, setConversation] = useState<string>();
   const [agentChoice, setAgentChoice] = useState<SendModel>();
   const frozenAgentChoice = useRef<SendModel | undefined>(undefined);
+  const [sendMode,setSendMode]=useState<SendMode>("plan");
+  const frozenMode=useRef<SendMode>("plan");
   const [rejectedModelSend, setRejectedModelSend] = useState(false);
   const [revisedSend, setRevisedSend] = useState(false);
   const [modelPickerGeneration, setModelPickerGeneration] = useState(0);
@@ -244,6 +246,7 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
         const previous = parsePendingSend(sessionStorage.getItem(sendStorageKey));
         if (previous && previous.conversation === current.conversation_id && !pending.current && (!frozen.current || frozen.current.id === previous.input.message.id) && (!unsent.current || unsent.current === previous.input.message.text)) {
           frozenSend.current = previous; frozen.current = previous.input.message;
+          setSendMode(previous.input.mode??"plan");
           frozenTask.current = {id:previous.input.task_id,revision:previous.input.schema_revision};
           unsent.current = previous.input.message.text; setText(previous.input.message.text);
           setStatus("Checking the original send receipt. Refresh does not resend the command.");
@@ -312,6 +315,7 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
     if(!frozen.current) {
       if (!isStopCommand(text) && !agentChoice) { setError("Wait for the saved Agent model selection before sending."); return; }
       frozenAgentChoice.current = agentChoice ? {...agentChoice} : undefined;
+      frozenMode.current=sendMode;
       if (taskId && !referenceTask && !isStopCommand(text)) { setError("Wait for the selected task to load before sending."); return; }
       const intent = composerIntent(text, false);
       frozenTask.current = pinnedSelection?.input.reference?.scope === "sample_candidate" ? {id:pinnedSelection.input.reference.task_id,revision:pinnedSelection.input.reference.project_schema_revision} : {id:referenceTask?.id ?? null,revision:referenceTask?.schema_revision};
@@ -339,13 +343,13 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
         if (alive.current) acceptStop(record);
         return;
       }
-      if (!frozenSend.current) frozenSend.current = {conversation:id,input:{message:input,task_id:frozenTask.current.id,schema_revision:frozenTask.current.revision ?? (await api.projectGoal(project.id)).revision,agent_model:frozenAgentChoice.current}};
+      if (!frozenSend.current) frozenSend.current = {conversation:id,input:{message:input,task_id:frozenTask.current.id,schema_revision:frozenTask.current.revision ?? (await api.projectGoal(project.id)).revision,agent_model:frozenAgentChoice.current,mode:frozenMode.current}};
       // Persist before POST. If storage is unavailable, do not send a command that
       // the browser cannot recover after a lost acknowledgement and refresh.
       sessionStorage.setItem(sendStorageKey, JSON.stringify(frozenSend.current));
       const receipt = await api.submitConversationMessage(project.id, frozenSend.current.conversation, frozenSend.current.input);
       const saved = receipt.message;
-      if (saved.input.id !== input.id || saved.conversation_id !== id) throw new Error("Send receipt does not match the frozen command.");
+      if (saved.input.id !== input.id || saved.conversation_id !== id || receipt.mode!==frozenSend.current.input.mode) throw new Error("Send receipt does not match the frozen command.");
       messageSaved=true;
       if (!alive.current) return;
       setConversation(id); setMessages((items) => mergeConversationMessages(items, [saved], id));
@@ -500,7 +504,7 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
         {conversation && taskId && !goalMessage && <p role="status">{requestsReady ? "The selected annotation task is not available in this conversation. Select a saved message; no other task was substituted." : "Loading the selected annotation task…"}</p>}
         {activeRequest && ((activeRequest.status==="applied" && activeRequest.resume_draft_id) || (activeRequest.status==="pending"&&!activeRequest.deferred)) && <ConversationRepairCard key={activeRequest.input.id} project={project.id} request={activeRequest} editing={repairEditing} onPendingConsent={id=>setRequests(items=>items.some(item=>item.input.id===activeRequest.input.id && item.authorized_journey_id!==id) ? items.map(item=>item.input.id===activeRequest.input.id ? {...item,authorized_journey_id:id} : item) : items)} onAssistance={assistanceChanged} onSample={(draft,test,image)=>void openSample(draft,test,image)} />}
         </div>
-        <AgentComposer inputRef={messageInput} value={text} disabled={!ready || busy} inputLocked={Boolean(frozen.current)}
+        <AgentComposer inputRef={messageInput} value={text} disabled={!ready || busy} inputLocked={Boolean(frozen.current)} mode={sendMode} onModeChange={setSendMode}
           onChange={value=>{unsent.current=value;setText(value);}}
           onCompositionChange={value=>{composing.current=value;}}
           onSubmit={()=>{void send();}}

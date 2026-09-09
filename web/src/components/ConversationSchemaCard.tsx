@@ -11,9 +11,9 @@ import type { OpenConversationSample } from "./ConversationSampleCard";
 /** Restores server objects; mounting never creates a task or invokes a model. */
 export function ConversationSchemaCard({ project, conversation, message, onDirtyChange, onSample, onAssistance, onSetup,prepareRequested }: { prepareRequested?:boolean; project: string; conversation: string; message: string; onDirtyChange: (dirty: boolean) => void; onAssistance?:()=>void; onSample: OpenConversationSample; onSetup?:(task?:string)=>void }) {
   const [task, setTask] = useState<ConversationTask>();
-  // New goals start with text-only planning. A combined image authorization is
-  // restored only when that task actually has a saved Journey, never inferred
-  // from the absence of previous calls.
+  // New goals default to text-only planning. Combined authorization is offered
+  // only for an explicit Execute Send or a saved Journey, never inferred merely
+  // from the absence of previous calls. Neither path grants permission on mount.
   const [initialJourney,setInitialJourney]=useState(false);
   const [initialPrepare,setInitialPrepare]=useState(false);
   const [journeyActive,setJourneyActive]=useState(false);
@@ -48,13 +48,15 @@ export function ConversationSchemaCard({ project, conversation, message, onDirty
       const human = current ? await api.humanConversationSchemas(project,conversation,current.input.id,controller.signal) : [];
       const authorization=current ? await api.pendingSchemaAuthorization(project,conversation,current.input.id,controller.signal) : null;
       const journeys=current ? await api.journeyHistory(project,conversation,current.input.id,controller.signal) : {items:[]};
+      const sent=await api.conversationSendReceipt(project,conversation,message,controller.signal);
       if (controller.signal.aborted) return;
       const id = calls[0]?.id ?? authorization?.call_id ?? cancellations.at(-1)?.call_id ?? "";
       setSavedConsent(authorization??undefined);frozen.current=authorization??undefined;
       setTask(current); setReceipt(calls[0]); setCallId(id); setCancelled(cancellations.some((item) => item.call_id === id)); setReady(true);
       setHumanSchema(human[0]?.id); setManual(human.length>0);
       const initial=journeys.items.find(item=>item.record.consent.schema_proposal);
-      setInitialJourney(Boolean(initial && (!initial.schema || initial.schema.status!=="completed")));
+      setInitialJourney(Boolean(initial ? !initial.schema || initial.schema.status!=="completed"
+        : sent?.receipt.mode==="execute"&&!calls.length&&!authorization&&!human.length&&!cancellations.length));
     }).catch((error: Error) => { if (!controller.signal.aborted) setError(error.message); });
     return () => { active.current = false; controller.abort(); };
   }, [project, conversation, message,prepareRequested]);
