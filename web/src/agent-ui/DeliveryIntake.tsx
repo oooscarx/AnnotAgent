@@ -9,8 +9,9 @@ export type DeliveryLabel = { stable_id: string; display_name: string; aliases: 
 type Target = { annotation_kind: string; framework: string; export_profile: string; profile_revision: number };
 export type DeliveryProposal={call_id:string;question:string|null;semantics:{labels:(Omit<DeliveryLabel,"stable_id">&{existing_id:string|null})[];training_target:Target|null}};
 type Split = { train_percent: number; seed: number; preserve_existing: boolean; keep_known_groups_together: boolean };
-export type IntakeInput = { command_id: string; expected_revision: number; image_ids: string[] | null; label_spec: DeliveryLabel[] | null; training_target: Target | null; split_policy: Split };
-export type IntakeView = { saved: null | { revision: number; content_sha256: string; intent: { dataset_scope: null | { image_id: string }[]; label_spec: DeliveryLabel[] | null; training_target: Target | null; split_policy: Split } }; missing_slots: string[]; blockers: string[]; maximum_sample_images: number; execution_authorized: boolean;proposals?:DeliveryProposal[] };
+type ImageMetadata={existing_split:"train"|"val"|"test"|null;group_ids:string[]};
+export type IntakeInput = { command_id: string; expected_revision: number; image_ids: string[] | null; label_spec: DeliveryLabel[] | null; training_target: Target | null; split_policy: Split;image_metadata?:Record<string,ImageMetadata> };
+export type IntakeView = { saved: null | { revision: number; content_sha256: string; intent: { dataset_scope: null | ({ image_id: string }&Partial<ImageMetadata>)[]; label_spec: DeliveryLabel[] | null; training_target: Target | null; split_policy: Split } }; missing_slots: string[]; blockers: string[]; maximum_sample_images: number; execution_authorized: boolean;proposals?:DeliveryProposal[] };
 export interface DeliveryIntakeService {
   read(project: string, task: string, signal?: AbortSignal): Promise<IntakeView>;
   save(project: string, task: string, input: IntakeInput): Promise<IntakeView>;
@@ -40,6 +41,7 @@ export function DeliveryIntake({ service, delivery, project, task, images, locke
   const [labels, setLabels] = useState<DeliveryLabel[]>([]);
   const [newLabels,setNewLabels]=useState("");
   const [splitPolicy,setSplitPolicy]=useState<Split>(split);
+  const [imageMetadata,setImageMetadata]=useState<Record<string,ImageMetadata>>({});
   const [selectedTarget, setTarget] = useState<Target | null>(null);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -58,6 +60,7 @@ export function DeliveryIntake({ service, delivery, project, task, images, locke
     setView(value); setIds(value.saved?.intent.dataset_scope?.map(i => i.image_id) || []);
     setLabels(value.saved?.intent.label_spec || []);setNewLabels("");
     setSplitPolicy(value.saved?.intent.split_policy || split);
+    setImageMetadata(Object.fromEntries((value.saved?.intent.dataset_scope||[]).map(image=>[image.image_id,{existing_split:image.existing_split??null,group_ids:image.group_ids||[]}])));
     setTarget(value.saved?.intent.training_target || null); setDirty(false);
   };
   useEffect(() => {
@@ -74,8 +77,9 @@ export function DeliveryIntake({ service, delivery, project, task, images, locke
   const save = async () => {
     if (!view || inFlight.current || locked || objectEditing) return;
     inFlight.current = true; setBusy(true); setError("");
-    const signature = JSON.stringify([view.saved?.revision || 0, ids, labels, newLabels, selectedTarget,splitPolicy]);
-    if (retry.current?.signature !== signature) {const next=[...labels,...intakeLabels(newLabels,[])];retry.current = { signature, input: { command_id: crypto.randomUUID(), expected_revision: view.saved?.revision || 0, image_ids: ids.length ? ids : null, label_spec: next.length?next:null, training_target: selectedTarget, split_policy:splitPolicy } };}
+    const metadata=Object.fromEntries(ids.map(id=>{const value=imageMetadata[id]||{existing_split:null,group_ids:[]};return [id,{...value,group_ids:[...new Set(value.group_ids.map(s=>s.trim()).filter(Boolean))]}];}));
+    const signature = JSON.stringify([view.saved?.revision || 0, ids, labels, newLabels, selectedTarget,splitPolicy,metadata]);
+    if (retry.current?.signature !== signature) {const next=[...labels,...intakeLabels(newLabels,[])];retry.current = { signature, input: { command_id: crypto.randomUUID(), expected_revision: view.saved?.revision || 0, image_ids: ids.length ? ids : null, label_spec: next.length?next:null, training_target: selectedTarget, split_policy:splitPolicy,image_metadata:metadata } };}
     try { apply(await service.save(project, task, retry.current.input)); retry.current = null; }
     catch (e) { setError((e as Error).message); }
     finally { inFlight.current = false; setBusy(false); }
@@ -124,6 +128,13 @@ export function DeliveryIntake({ service, delivery, project, task, images, locke
         <small>改名称和规则保留类别身份；排序决定新包的 class_id。保存后产生新交付版本，不更改旧 Run 或旧数据包。</small>
       </fieldset>
       <label>训练什么任务？<select aria-label="训练什么任务？" disabled={busy} value={selectedTarget ? supportedTarget ? target.export_profile : "unsupported" : ""} onChange={e => { setTarget(e.target.value ? target : null); setDirty(true); }}><option value="">请选择任务和训练格式</option><option value="ultralytics_yolo_detection">框出目标 · Ultralytics YOLO Object Detection</option>{selectedTarget && !supportedTarget && <option disabled value="unsupported">{selectedTarget.annotation_kind} · {selectedTarget.export_profile}（尚无完整交付预设）</option>}</select></label>
+      <Disclosure title="已有数据划分与来源组">
+        <p>仅填写已知信息，不从文件名推断真值。相同内容和同一来源组不能跨 split；冲突会阻止打包。</p>
+        {ids.map((id,index)=>{const metadata=imageMetadata[id]||{existing_split:null,group_ids:[]};const change=(value:ImageMetadata)=>{setImageMetadata(current=>({...current,[id]:value}));setDirty(true);};return <fieldset key={id} disabled={busy} className="delivery-label-edit"><legend>{index+1} · {images.find(image=>image.id===id)?.name||id}</legend>
+          <label>已有划分 {index+1}<select aria-label={`已有划分 ${index+1}`} value={metadata.existing_split||""} onChange={e=>change({...metadata,existing_split:(e.target.value||null) as ImageMetadata["existing_split"]})}><option value="">无预设，由打包器分组划分</option><option value="train">train</option><option value="val">val</option><option value="test">test</option></select></label>
+          <label>已知来源组 {index+1}<textarea value={metadata.group_ids.join("\n")} placeholder="每行一个拍摄组或原图来源标识；未知可留空" onChange={e=>change({...metadata,group_ids:e.target.value.split("\n")})}/></label>
+        </fieldset>;})}
+      </Disclosure>
       <p>本预设交付目标框，不会把分类或分割需求自动改成检测。建议按图片组划分训练/验证 {splitPolicy.train_percent}/{100-splitPolicy.train_percent}；整图需人工确认，模型未检出不等于确认负样本。</p>
       <Disclosure title="调整数据划分"><label>训练集比例（百分比）<input disabled={busy} type="number" min={1} max={99} step={1} required value={splitPolicy.train_percent} onChange={e=>{setSplitPolicy(current=>({...current,train_percent:Number(e.target.value)}));setDirty(true);}}/></label><p>保留已有划分和已知来源组，不拆组凑比例；实际数量在打包检查报告中展示。仅修改比例，保留当前 seed 与其他约束。</p></Disclosure>
       {view.blockers.map((b, i) => <p role="alert" key={i}>{b}</p>)}

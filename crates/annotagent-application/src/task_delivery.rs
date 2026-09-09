@@ -23,6 +23,16 @@ pub struct SaveTaskDeliveryIntent {
     pub label_spec: Option<Vec<DeliveryLabel>>,
     pub training_target: Option<TrainingTarget>,
     pub split_policy: DeliverySplitPolicy,
+    /// Explicit source metadata, not inferred from filenames or label folders.
+    #[serde(default)]
+    pub image_metadata: std::collections::BTreeMap<ImageId, DeliveryImageMetadata>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeliveryImageMetadata {
+    pub existing_split: Option<annotagent_core::dataset_delivery::DatasetSplit>,
+    pub group_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -429,8 +439,21 @@ impl LocalApplication {
     ) -> Result<TaskDeliveryView> {
         let owner = self.conversation_project_identity(project)?;
         // Check task ownership even on an empty or malicious image scope.
-        self.store
+        let previous = self
+            .store
             .task_delivery_intent(&owner, conversation, task)?;
+        for (id, metadata) in &input.image_metadata {
+            if !input.image_ids.as_ref().is_some_and(|ids| ids.contains(id)) {
+                bail!("Image metadata must belong to the explicitly selected scope");
+            }
+            if metadata.group_ids.len() > 32
+                || metadata.group_ids.iter().any(|s| {
+                    s.trim().is_empty() || s.len() > 128 || s.chars().any(char::is_control)
+                })
+            {
+                bail!("Invalid source group metadata");
+            }
+        }
         let dataset_scope = if let Some(ids) = input.image_ids {
             if ids.len() > 100_000 {
                 bail!("Delivery image scope is too large");
@@ -444,12 +467,27 @@ impl LocalApplication {
                     .ok_or_else(|| {
                         anyhow::anyhow!("Selected image does not belong to this Project")
                     })?;
+                let saved_metadata = previous
+                    .as_ref()
+                    .and_then(|saved| saved.intent.dataset_scope.as_ref())
+                    .and_then(|images| {
+                        images
+                            .iter()
+                            .find(|i| i.image_id == id && i.content_sha256 == image.content_hash)
+                    });
+                let metadata = input.image_metadata.get(&id);
                 images.push(DeliveryImage {
                     image_id: id,
                     content_sha256: image.content_hash.clone(),
                     content_revision: image.content_hash.clone(),
-                    existing_split: None,
-                    group_ids: vec![],
+                    existing_split: metadata.map_or_else(
+                        || saved_metadata.and_then(|m| m.existing_split),
+                        |m| m.existing_split,
+                    ),
+                    group_ids: metadata
+                        .map(|m| m.group_ids.clone())
+                        .or_else(|| saved_metadata.map(|m| m.group_ids.clone()))
+                        .unwrap_or_default(),
                 });
             }
             Some(images)

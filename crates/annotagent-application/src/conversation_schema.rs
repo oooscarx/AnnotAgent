@@ -1016,6 +1016,7 @@ mod tests {
             conversation,
             task,
             crate::SaveTaskDeliveryIntent {
+                image_metadata: BTreeMap::new(),
                 command_id: Uuid::new_v4(),
                 expected_revision: 0,
                 image_ids: None,

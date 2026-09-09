@@ -172,6 +172,7 @@ mod tests {
             "label_spec":[{"stable_id":"TEST-target","display_name":"TEST target","aliases":[],"include":"","exclude":""}],
             "training_target":{"annotation_kind":"bounding_box","framework":"ultralytics","export_profile":"ultralytics_yolo_detection","profile_revision":1},
             "split_policy":{"train_percent":80,"seed":0,"preserve_existing":true,"keep_known_groups_together":true}});
+        intent["image_metadata"] = json!({image.to_string():{"existing_split":"train","group_ids":["TEST-capture-group"]}});
         let saved = request(
             &service,
             Method::POST,
@@ -325,6 +326,7 @@ mod tests {
         // New delivery semantics invalidate current confirmation; old receipts stay immutable.
         intent["command_id"] = json!(uuid::Uuid::new_v4());
         intent["expected_revision"] = json!(1);
+        intent.as_object_mut().unwrap().remove("image_metadata");
         intent["label_spec"][0]["display_name"] = json!("TEST changed target");
         assert_eq!(
             request(
@@ -338,6 +340,24 @@ mod tests {
             StatusCode::OK
         );
         let current = response_json(request(&service, Method::GET, &image_uri, None).await).await;
+        let current_intent = response_json(
+            request(
+                &service,
+                Method::GET,
+                &format!("{root}/delivery-intent"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            current_intent["saved"]["intent"]["dataset_scope"][0]["existing_split"],
+            "train"
+        );
+        assert_eq!(
+            current_intent["saved"]["intent"]["dataset_scope"][0]["group_ids"],
+            json!(["TEST-capture-group"])
+        );
         assert_eq!(current["confirmation_current"], false);
         assert!(current["review"].is_null());
         assert!(
@@ -440,6 +460,18 @@ mod tests {
             response_json(request(&service, Method::GET, &uri, None).await).await
         );
         let mut changed = input.clone();
+        let mut outsider = input.clone();
+        outsider["command_id"] = json!(uuid::Uuid::new_v4());
+        outsider["expected_revision"] = json!(1);
+        outsider["image_metadata"] = json!({uuid::Uuid::new_v4().to_string():{"existing_split":"train","group_ids":["foreign"]}});
+        let rejected = request(&service, Method::POST, &uri, Some(outsider)).await;
+        assert!(!rejected.status().is_success());
+        assert!(
+            response_json(rejected)
+                .await
+                .to_string()
+                .contains("explicitly selected scope")
+        );
         changed["label_spec"][0]["display_name"] = json!("瓶子");
         assert!(
             !request(&service, Method::POST, &uri, Some(changed))

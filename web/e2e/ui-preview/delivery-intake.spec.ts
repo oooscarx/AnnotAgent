@@ -22,6 +22,9 @@ test("intake label rename preserves identity and rules, split edits and failed r
   await page.getByLabel("类别 1 名称",{exact:true}).fill("水杯");
   await page.getByText("调整数据划分",{exact:true}).click();
   await page.getByLabel("训练集比例（百分比）").fill("70");
+  await page.getByText("已有数据划分与来源组",{exact:true}).click();
+  await page.getByLabel("已有划分 1",{exact:true}).selectOption("val");
+  await page.getByLabel("已知来源组 1",{exact:true}).fill("TEST capture\nTEST origin\n");
   await page.getByRole("button",{name:"保存交付信息",exact:true}).click();
   await expect(page.getByRole("alert")).toContainText("TEST save unavailable");
   await expect(page.getByLabel("类别 1 名称",{exact:true})).toHaveValue("水杯");
@@ -31,6 +34,7 @@ test("intake label rename preserves identity and rules, split edits and failed r
   expect(commands[0].expected_revision).toBe(2);
   expect(commands[0].label_spec).toEqual([{stable_id:"cup-stable",display_name:"水杯",aliases:["cup"],include:"完整杯子",exclude:"图片上的图案"}]);
   expect(commands[0].split_policy).toEqual({train_percent:70,seed:71,preserve_existing:true,keep_known_groups_together:true});
+  expect(commands[0].image_metadata).toEqual({i:{existing_split:"val",group_ids:["TEST capture","TEST origin"]}});
   await page.getByRole("button",{name:"取消修改",exact:true}).click();
   await expect(page.getByLabel("类别 1 名称",{exact:true})).toHaveValue("杯子");
   await expect(page.getByLabel("训练集比例（百分比）")).toHaveValue("80");
