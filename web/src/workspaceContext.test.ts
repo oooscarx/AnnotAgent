@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HistoryRun, ProjectSummary, ReviewItem } from "./types";
-import { projectForReview, projectForRun, resolvedRunProjectId, runsForContext } from "./workspaceContext";
+import { projectForReview, projectForRun, resolvedReviewProjectId, resolvedRunProjectId, runsForContext } from "./workspaceContext";
 
 const project = { id: "ball", project_id: "ball", name: "Ball Project" } as ProjectSummary;
 const other = { id: "other", project_id: "other", name: "Other Project" } as ProjectSummary;
@@ -9,6 +9,11 @@ const running = { id: "run-2", project_id: project.project_id, project_name: pro
 const foreign = { id: "run-3", project_id: other.project_id, project_name: other.name, status: "completed" } as HistoryRun;
 
 describe("workspace Project context", () => {
+  it("resolves Review ownership outside the inventory without guessing orphan owners", () => {
+    expect(resolvedReviewProjectId({project_id:"outside-page",project_name:"Old name"} as ReviewItem)).toBe("outside-page");
+    expect(resolvedReviewProjectId({project_id:"legacy-orphan:run-1"} as ReviewItem)).toBeUndefined();
+    expect(resolvedReviewProjectId(undefined)).toBeUndefined();
+  });
   it("resolves a Run route from server ownership without a dashboard page or name match", () => {
     expect(resolvedRunProjectId({...run, ownership_status:"resolved",project_id:"outside-page",project_scope_id:"stable-uuid"})).toBe("outside-page");
     expect(resolvedRunProjectId({...run,ownership_status:"legacy_orphan"})).toBeUndefined();

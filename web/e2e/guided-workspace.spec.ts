@@ -993,6 +993,11 @@ test("Run URL refresh restores its one stable image and node context", async ({ 
 });
 
 test("Review to Run to Review navigation is bidirectional", async ({ page, request }) => {
+  await page.route("**/api/projects", async route => {
+    const response = await route.fetch();
+    const data = await response.json();
+    await route.fulfill({response,json:{...data,projects:data.projects.filter((project:{id:string})=>project.id!==projectId)}});
+  });
   const reviews = await request.get("/api/reviews");
   expect(reviews.ok()).toBeTruthy();
   reviewId = (await reviews.json()).reviews.find(
@@ -1002,6 +1007,7 @@ test("Review to Run to Review navigation is bidirectional", async ({ page, reque
   await page.goto(`/review/${reviewId}?view=audit`);
   await page.evaluate(() => window.localStorage.removeItem("annotagent.reviewInspectorCollapsed"));
   await page.reload();
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/review/${reviewId}\\?view=audit`));
   await expect(page.getByRole("button", { name: "Accept and next" })).toBeVisible();
   await expect(page.getByLabel("Review progress")).toContainText("0 of 1 results reviewed");
   await expect(page.getByRole("button", { name: "Save changes" })).toHaveCount(0);

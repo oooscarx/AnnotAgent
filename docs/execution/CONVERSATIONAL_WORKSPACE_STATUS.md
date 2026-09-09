@@ -48,9 +48,11 @@ revoked or changed binding still blocks inference without discarding the saved c
 
 Latest production code is 2502ab3. Full Rust fmt/clippy/test/build process 6393 exited 0
 (713 tests passed, 6 explicitly ignored); see `/tmp/annotagent-rust-post-binding-20260909.log`.
-Web typecheck, 231 unit tests and production build passed. The current 178-case browser sweep
-37872 remains in progress, logged to `/tmp/annotagent-web-combined-20260909.log`; its terminal
-result must not be inferred from individual passing cases. The earlier run numbers and counts
+Web typecheck, 231 unit tests and production build passed. The 178-case browser sweep
+37872 exited 1: 156 passed, one Review ownership failure, 21 serial cases did not run.
+Log: `/tmp/annotagent-web-combined-20260909.log`. The Review pagination repair passed Web
+typecheck, 232 unit tests, build and all 36 Guided browser cases (57939). A fresh full
+combination remains necessary; no all-green declaration. The earlier run numbers and counts
 below are historical, not the current final result.
 
 Default-goal discovery now uses one bounded owned query rather than downloading the full
@@ -5625,3 +5627,29 @@ page key API sent Meta-plus, but read-only viewport measurements stayed `innerWi
 inference or modifying user tabs. Existing reflow/keyboard automation remains distinct from
 native browser zoom, native IME and assistive-technology validation. Full browser 37872
 continues against unchanged assets; its final result is still pending.
+
+### 2026-09-09 — Full sweep found Review inventory dependency; repair verified
+
+37872 exited 1 after 23.5m: **156 passed, 1 failed, 21 serial cases did not run**.
+The failed Review→Run→Review test expected its Project's 0/1 progress but saw global
+3/4 progress. Review detail did not canonicalize when its owner was outside the paged
+Project inventory, matching the earlier Run inventory dependency. Both Review server
+serializers already resolve stored ownership to a canonical `project_id`; unresolved
+historical ownership uses `legacy-orphan:`. No new ownership API or name inference is needed.
+
+Added `resolvedReviewProjectId`, excluding that orphan marker, and use it for detail
+canonicalization and queue links independently of inventory availability. Existing scoped
+Project summary loading and server ownership checks remain in place. Added the helper unit
+regression and strengthened the real browser round-trip by removing the owner only from the
+inventory response, requiring the canonical audit URL and the same exact 0/1 progress.
+Failure screenshot, error context and trace were copied before runner cleanup to
+`/tmp/annotagent-review-owner-failure-20260909/`.
+
+57939 **exited 0**: typecheck, **232 unit tests**, production build and **36/36 Guided
+browser tests** (43.7s). This includes the previously skipped management, lifecycle,
+recovery, keyboard, reflow, Review and export cases, against an isolated fresh workspace
+`/tmp/annotagent-guided-e2e-33144`. Evidence: `/tmp/annotagent-review-owner-verified`.
+The production bundle still emits the existing >500 kB chunk warning; not a build failure.
+Rust sources were unchanged since the full 713-pass verification. The complete browser
+combination must still be rerun against this latest Web code. No Live calls, real user data
+changes, push or remote edits.

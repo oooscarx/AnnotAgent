@@ -29,7 +29,7 @@ import {
 import { visualProfilesForSkills } from "./skills/visualProfiles";
 import { annotationColor, annotationVisual, type LabelVisualMapping } from "./annotationVisuals";
 import { deriveProjectRunView } from "./runState";
-import { projectForReview, projectForRun, resolvedRunProjectId, runsForContext } from "./workspaceContext";
+import { projectForReview, projectForRun, resolvedReviewProjectId, resolvedRunProjectId, runsForContext } from "./workspaceContext";
 import {
   parseWorkspaceRoute,
   projectBuildPath,
@@ -9258,7 +9258,7 @@ function ReviewPage({
   const scopedProject = route.projectId
     ? projects.find((candidate) => candidate.id === route.projectId) ?? project
     : undefined;
-  const routeReviewProject = projectForReview(projects, routeReview);
+  const routeReviewProjectId = resolvedReviewProjectId(routeReview);
   const visibleReviews = scopedProject
     ? reviews.filter(
         (review) => review.project_id === scopedProject.project_id,
@@ -9273,26 +9273,23 @@ function ReviewPage({
       visibleReviews[0];
   const reviewProject = projectForReview(projects, selected) ?? scopedProject;
   const reviewHref = (reviewId: string, item?: ReviewItem) => {
-    const owner = projectForReview(
-      projects,
-      item ?? reviews.find((review) => review.id === reviewId),
-    );
-    if (owner) return projectReviewPath(owner.id, reviewId, route.view);
+    const owner = resolvedReviewProjectId(item ?? reviews.find((review) => review.id === reviewId));
+    if (owner) return projectReviewPath(owner, reviewId, route.view);
     if (route.projectId) return projectReviewPath(route.projectId, reviewId, route.view);
     return `/review/${encodeURIComponent(reviewId)}`;
   };
   useEffect(() => {
     if (
       route.reviewItemId &&
-      routeReviewProject &&
+      routeReviewProjectId &&
       (route.kind !== "projectReview" ||
-        route.projectId !== routeReviewProject.id)
+        route.projectId !== routeReviewProjectId)
     )
       onNavigate(
-        projectReviewPath(routeReviewProject.id, route.reviewItemId, route.view),
+        projectReviewPath(routeReviewProjectId, route.reviewItemId, route.view),
         true,
       );
-  }, [route.kind, route.reviewItemId, route.projectId, routeReviewProject?.id]);
+  }, [route.kind, route.reviewItemId, route.projectId, routeReviewProjectId]);
   const refresh = (offset = 0, append = false) => {
     const generation = ++queueLoadGeneration.current;
     const priorDetailSequence = detailResponse.current.sequence;
