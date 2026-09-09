@@ -379,6 +379,34 @@ test("native export creates a real download and refresh never repeats export",as
   await expect(link).toHaveAttribute("href",href!);expect(exports).toBe(2);
   await expect(generate).toBeDisabled();
 });
+test("native review submits an enabled Skill taxonomy through real HTTP",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const runs=await(await request.get("/api/runs?limit=50")).json();const run=runs.runs.find((r:{project_name:string})=>r.project_name==="TEST Agent UI HTTP fixture");expect(run).toBeTruthy();
+  const headers={"x-annotagent-csrf":(await(await request.get("/api/session")).json()).csrf_token};
+  const summary=await(await request.get(`/api/projects/${run.project_id}/summary`)).json();const originalSkills=summary.project.enabled_skills.map((s:{id:string;version:string})=>({id:s.id,version:s.version}));
+  const registry=await(await request.get("/api/skills")).json();const skill=registry.find((s:{id:string})=>s.id==="robocup.ball");expect(skill.correction_taxonomy).toContain("inaccurate_ball_bbox");
+  const skillsUrl=`/api/projects/${run.project_id}/skills`;
+  try{
+    const enabled=await request.post(skillsUrl,{headers,data:{enabled_skills:[...originalSkills.filter((s:{id:string})=>s.id!==skill.id),{id:skill.id,version:skill.version}]}});expect(enabled.ok(),await enabled.text()).toBeTruthy();
+    const base=(await(await request.get(`/api/runs/${run.id}/annotations`)).json()).annotations[0];const id=randomUUID();
+    const created=await request.post(`/api/runs/${run.id}/annotations`,{headers,data:{annotation:{...base,id,label:`${base.label} TEST`,source:"human",review_status:"needs_review",created_at:new Date().toISOString()}}});expect(created.ok(),await created.text()).toBeTruthy();
+    const queue=await(await request.get(`/api/projects/${run.project_id}/reviews`)).json();const item=queue.reviews.find((r:{annotation_id:string})=>r.annotation_id===id);expect(item).toBeTruthy();
+    await page.goto(`/projects/${run.project_id}/manage/review/${item.review_id}`);await page.getByText("审核问题与备注",{exact:true}).click();
+    await page.getByLabel("拒绝原因",{exact:true}).selectOption(JSON.stringify([skill.id,"inaccurate_ball_bbox"]));
+    await page.getByLabel("审核备注",{exact:true}).fill("TEST enabled taxonomy");page.on("dialog",d=>d.accept());await page.reload();await page.getByText("审核问题与备注",{exact:true}).click();
+    await expect(page.getByLabel("拒绝原因",{exact:true})).toHaveValue(JSON.stringify([skill.id,"inaccurate_ball_bbox"]));
+    const removed=await request.post(skillsUrl,{headers,data:{enabled_skills:originalSkills.filter((s:{id:string})=>s.id!==skill.id)}});expect(removed.ok(),await removed.text()).toBeTruthy();
+    await page.reload();await page.getByText("审核问题与备注",{exact:true}).click();await expect(page.getByLabel("拒绝原因",{exact:true})).toHaveValue(JSON.stringify([skill.id,"inaccurate_ball_bbox"]));await expect(page.getByRole("button",{name:"拒绝并下一项",exact:true})).toBeDisabled();
+    const reenabled=await request.post(skillsUrl,{headers,data:{enabled_skills:[...originalSkills.filter((s:{id:string})=>s.id!==skill.id),{id:skill.id,version:skill.version}]}});expect(reenabled.ok(),await reenabled.text()).toBeTruthy();
+    await page.reload();await expect(page.getByRole("button",{name:"拒绝并下一项",exact:true})).toBeEnabled();
+    const sent=page.waitForRequest(r=>r.url().endsWith("/reject-and-next")&&r.method()==="POST");await page.getByRole("button",{name:"拒绝并下一项",exact:true}).click();
+    expect((await sent).postDataJSON()).toMatchObject({decision:"reject",reason_code:"inaccurate_ball_bbox",skill_id:skill.id,note:"TEST enabled taxonomy"});
+    await expect.poll(async()=>(await(await request.get(`/api/projects/${run.project_id}/reviews/${item.review_id}`)).json()).annotation.review_status).toBe("rejected");
+  }finally{
+    const restored=await request.post(skillsUrl,{headers,data:{enabled_skills:originalSkills}});expect(restored.ok(),await restored.text()).toBeTruthy();
+    const after=await(await request.get(`/api/projects/${run.project_id}/summary`)).json();expect(after.project.available_workflow_versions).toEqual(summary.project.available_workflow_versions);
+  }
+});
 test("native review preserves failed edits and advances only after a saved decision",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
   const runs=await(await request.get("/api/runs?limit=50")).json();
