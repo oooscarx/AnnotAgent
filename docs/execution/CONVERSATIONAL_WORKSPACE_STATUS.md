@@ -49,18 +49,24 @@ revoked or changed binding still blocks inference without discarding the saved c
 Last fully Rust-verified production code is befcaa0. Full Rust fmt/clippy/test/build process
 26940 exited 0 (714 tests passed, 6 explicitly ignored); see
 `/tmp/annotagent-rust-export-schema-final.log`.
-Web typecheck, 231 unit tests and production build passed. The 178-case browser sweep
-37872 exited 1: 156 passed, one Review ownership failure, 21 serial cases did not run.
-Log: `/tmp/annotagent-web-combined-20260909.log`. The Review pagination repair passed Web
-typecheck, 232 unit tests, build and all 36 Guided browser cases (57939). A fresh full
-combination remains necessary; no all-green declaration. The earlier run numbers and counts
-below are historical, not the current final result.
+Latest Web typecheck, 232 unit tests and production build passed. Process 12822 passed all
+50 targeted browser cases for repair, samples, archive semantics and management. The preceding
+combined run 66282 had 158 passes, two test-fixture failures and 18 serial cases not run;
+both fixtures were corrected and passed that targeted sweep. Current full browser process
+78366 runs all 178 cases against 370b763; log `/tmp/annotagent-complete-export-schema.log`,
+evidence `/tmp/annotagent-complete-export-schema`. Its terminal result remains pending.
+Older run numbers/counts below are historical, not the current final result.
 
 Default-goal discovery now uses one bounded owned query rather than downloading the full
 message journal (6eee1e0). Dataset metadata still uses a full index; visible thumbnails and
 decoded browse previews are bounded. New Draft review boundaries retain explicit task/label
 identity through export (e4d1659, eba14b0, 2502ab3); historical immutable exports are not rewritten.
 Run ownership no longer depends on the Project inventory's current page (909980d).
+Review has the same ownership independence (f4b1eb1). Exports recover frozen task definitions
+from source Runs (87b63e1) and new cleanup provenance (befcaa0), with conflicting task
+definitions rejected. Old tombstones are not retroactively populated; their limitations are
+recorded below. Fresh bbox and classification native archives were read and verified after
+the fix, not merely observed as successful download cards.
 
 Remaining verification: terminal full-browser result and consolidated requirement/evidence
 audit. Actual 200% browser zoom, native IME and assistive-technology checks are unverified;
