@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Calibration node eligibility corrected against actual frozen TEST data
+
+Actual TEST published versions contain classification nodes, not a detection pipeline. Audit of geometry_calibration_key requires a revisioned model_profile_binding present in snapshot.model_profiles; legacy model_binding alone is insufficient. Native selection now requires that frozen binding and a geometry-capable output contract (detection/mask/polygon/candidate set), excluding classification-only outputs and unfrozen models. This fixes the prior overly broad model_binding selector rather than using a classifier to fabricate positive geometry evidence.
+
+321 unit tests, typecheck/build passed. Actual HTTP frozen-detail test passed (zero writes): the classification-only version explicitly states no eligible geometry node and disables creation. It still reads actual policies/calibration evidence. Positive calibration creation/receipt loss remains unverified and requires an actual TEST geometry Workflow/Run; neither a fake successful API response nor a classifier calibration was substituted. Sourcea12a489 plus slice, /tmp/annotagent-native-calibration-create-dist, ownedTEST8794/8795. Goal remains active, no true workspace/Provider/Published/user-service/Rust/remote mutations.
+
 ## Native calibration creation boundary
 
 Inspected application create_geometry_calibration end to end: it resolves Project, exact published snapshot, bounding-box task/label, model/node calibration key and each explicitly selected Run's immutable version/hash, then evaluates existing saved correction/acceptance evidence and persists a report. It does not run inference. Server POST currently has no client idempotency key.
