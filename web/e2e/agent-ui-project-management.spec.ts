@@ -10,6 +10,20 @@ test("production rejects every old page through native UI without loading legacy
   await page.reload();await expect(page.getByRole("heading",{name:"页面不存在",exact:true})).toBeVisible();await page.getByRole("link",{name:"返回项目列表",exact:true}).click();await expect(page.getByRole("heading",{name:"我的项目",exact:true})).toBeVisible();expect(writes).toEqual([]);
   expect(loaded.filter(u=>/\/src\/App\.tsx|\/src\/styles\.css|\/assets\/styles-/.test(u))).toEqual([]);
 });
+test("native Trash restores a selected Batch and its child as one exact owned operation",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const scope=(await(await request.get("/api/history-scope")).json()).scope;expect(scope).toBeTruthy();const nav=await(await request.get("/api/navigation")).json();const project=nav.items.find((p:{title:string})=>p.title==="TEST Agent UI HTTP fixture").project_id;
+  const batches=await(await request.get(`/api/batches?project_id=${project}&history_scope=${scope.id}&limit=100&offset=0`)).json();const batch=batches.batches.find((b:{status:string;child_run_ids:string[]})=>b.status==="completed"&&b.child_run_ids.length);expect(batch,"requires the post-cutover completed TEST Sample Journey Batch").toBeTruthy();
+  const before=await(await request.get(`/api/runs/${batch.child_run_ids[0]}/annotations`)).json();const headers={"x-annotagent-csrf":(await(await request.get("/api/session")).json()).csrf_token};
+  const body={project_id:project,history_scope:scope.id,action:"move_to_trash",objects:[{kind:"batch",id:batch.id,expected_revision:batch.lifecycle_revision}],idempotency_key:randomUUID()};const base=`/api/projects/${project}/management`;
+  const preview=await(await request.post(`${base}/preview?history_scope=${scope.id}`,{headers,data:body})).json();expect(preview.can_execute).toBe(true);
+  const confirmation=await request.post("/api/session/privileged-confirmation",{headers,data:{action:`POST ${base}/actions`,confirmed:true}});expect(confirmation.ok()).toBeTruthy();
+  const deleted=await request.post(`${base}/actions?history_scope=${scope.id}`,{headers:{...headers,"x-annotagent-privileged-confirmation":(await confirmation.json()).confirmation_token},data:{...body,confirmation_token:preview.confirmation_token}});expect(deleted.ok(),await deleted.text()).toBeTruthy();
+  const trash=await(await request.get(`/api/projects/${project}/trash?history_scope=${scope.id}&limit=50&offset=0`)).json();const entries=trash.items.filter((e:{object:{id:string}})=>e.object.id===batch.id||batch.child_run_ids.includes(e.object.id));expect(entries.length).toBeGreaterThan(1);
+  await page.goto(`/projects/${project}/manage/trash`);for(const e of entries)await page.getByRole("checkbox",{name:`选择 ${e.display_name}`,exact:true}).check();
+  const sent=page.waitForRequest(r=>r.url().includes("/management/preview")&&r.method()==="POST");await page.getByRole("button",{name:"恢复选中项…",exact:true}).click();const normalized=(await sent).postDataJSON();expect(normalized.objects).toHaveLength(1);expect(normalized.objects[0]).toMatchObject({kind:"batch",id:batch.id});
+  await page.getByRole("dialog").getByRole("button",{name:"恢复",exact:true}).click();await expect(page.getByRole("dialog")).toHaveCount(0);expect((await(await request.get(`/api/batches/${batch.id}`)).json()).batch.in_trash).toBe(false);expect(await(await request.get(`/api/runs/${batch.child_run_ids[0]}/annotations`)).json()).toEqual(before);
+});
 test("native Replay reads real unsupported model scope and never posts",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
   const runs=await(await request.get("/api/runs?limit=50")).json();const run=runs.runs.find((r:{project_name:string})=>r.project_name==="TEST Agent UI HTTP fixture");expect(run).toBeTruthy();
