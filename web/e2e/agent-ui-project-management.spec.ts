@@ -1,6 +1,35 @@
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
+test("native model management locks, unlocks and explicitly deletes only a TEST profile",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const models=await(await request.get("/api/model-profiles")).json();
+  const source=models.models.find((m:{locked:boolean})=>!m.locked);expect(source).toBeTruthy();
+  const session=await(await request.get("/api/session")).json();
+  const name=`TEST lifecycle ${randomUUID()}`;
+  const response=await request.post("/api/model-profiles",{headers:{"x-annotagent-csrf":session.csrf_token},data:{provider_id:source.provider_id,display_name:name,remote_model_id:"test-no-probe",input_modalities:["text"],task_capabilities:["text_generation"],protocol_features:source.protocol_features}});
+  expect(response.ok(),await response.text()).toBeTruthy();const model=await response.json();
+  let probes=0;page.on("request",r=>{if(r.url().includes("active-probe"))probes++;});
+  await page.goto("/settings/agent-models");
+  const region=page.getByRole("region",{name:"模型配置",exact:true});
+  await region.getByLabel("搜索模型",{exact:true}).fill(name);
+  const expand=()=>region.getByText("模型状态、质量与管理",{exact:true}).click();
+  await expand();await region.getByRole("button",{name:"读取质量契约",exact:true}).click();
+  await region.getByRole("button",{name:"收费连接测试…",exact:true}).click();
+  let dialog=page.getByRole("dialog",{name:"确认收费连接测试",exact:true});
+  await expect(dialog.getByRole("button",{name:"确认操作",exact:true})).toBeDisabled();
+  await dialog.getByRole("button",{name:"取消",exact:true}).click();expect(probes).toBe(0);
+  await region.getByRole("button",{name:"锁定配置…",exact:true}).click();
+  dialog=page.getByRole("dialog",{name:"锁定模型配置",exact:true});
+  await dialog.getByRole("checkbox").check();await dialog.getByRole("button",{name:"确认操作",exact:true}).click();await expect(dialog).toHaveCount(0);
+  await expect(region.getByRole("button",{name:"已锁定",exact:true})).toBeDisabled();
+  await expand();await region.getByRole("button",{name:"解锁配置…",exact:true}).click();
+  dialog=page.getByRole("dialog",{name:"解锁模型配置",exact:true});await dialog.getByRole("checkbox").check();await dialog.getByRole("button",{name:"确认操作",exact:true}).click();await expect(dialog).toHaveCount(0);
+  await expand();await region.getByRole("button",{name:"删除模型配置…",exact:true}).click();
+  dialog=page.getByRole("dialog",{name:"删除模型配置",exact:true});await dialog.getByRole("checkbox").check();await expect(dialog.getByRole("button",{name:"确认操作",exact:true})).toBeDisabled();
+  await dialog.getByLabel("输入模型显示名称",{exact:true}).fill(name);await dialog.getByRole("button",{name:"确认操作",exact:true}).click();await expect(dialog).toHaveCount(0);
+  const after=await(await request.get("/api/model-profiles")).json();expect(after.models.some((m:{id:string})=>m.id===model.id)).toBe(false);expect(probes).toBe(0);
+});
 test("native model editor saves declarations without probing or invoking providers",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
   const providers=await(await request.get("/api/providers")).json();

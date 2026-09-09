@@ -1065,3 +1065,5 @@ caption {
 .ui-app .model-profile-editor fieldset > p { grid-column: 1 / -1; }
 .ui-app .model-profile-editor .model-check { display: flex; align-items: center; gap: 8px; }
 .ui-app .model-profile-editor .model-check input { width: auto; flex: 0 0 auto; }
+.ui-app section[aria-label="模型配置"] > label { display: grid; gap: 8px; max-width: 480px; margin-block: 16px; }
+.ui-app section[aria-label="模型配置"] .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 12px; }

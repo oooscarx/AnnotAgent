@@ -3,7 +3,8 @@ import type { ProviderProfile, RegistryModelProfile } from "../types";
 import type { api } from "../api";
 import { Dialog } from "./Dialog";
 import { ModelProfileEditor, type EditableModel } from "./ModelProfileEditor";
-export type ModelProfileService = Pick<typeof api, "modelProfiles" | "providers" | "createModelProfile" | "updateModelProfile">;
+import { ModelProfileActions, type ModelActionService } from "./ModelProfileActions";
+export type ModelProfileService = Pick<typeof api, "modelProfiles" | "providers" | "createModelProfile" | "updateModelProfile"> & ModelActionService;
 export function ModelProfiles({service}:{service:ModelProfileService}) {
   const [models,setModels]=useState<RegistryModelProfile[]>();
   const [providers,setProviders]=useState<ProviderProfile[]>([]);
@@ -46,7 +47,7 @@ export function ModelProfiles({service}:{service:ModelProfileService}) {
     <div className="actions"><button disabled={busy} onClick={()=>void reload().catch(e=>setError(e.message))}>重新读取</button><button disabled={!providers.length||busy} onClick={()=>{setError("");setEdit("new");}}>添加模型配置</button></div>
     {!providers.length&&models&&<p>先在 Providers 中保存连接；添加模型不需要收费探测。</p>}
     <label>搜索模型<input value={query} onChange={e=>setQuery(e.target.value)} placeholder="名称、模型 ID 或能力"/></label>
-    {models?.filter(m=>[m.display_name,m.remote_model_id,...m.task_capabilities].join(" ").toLowerCase().includes(query.toLowerCase())).map(m=><div className="settings-row" key={m.id}><div><strong>{m.display_name}</strong><p>{providers.find(p=>p.id===m.provider_id)?.display_name||"Provider 不存在"} · {m.status}</p><p>{m.remote_model_id}</p><p>{m.task_capabilities.join(" · ")}</p></div><button disabled={m.locked||busy} onClick={()=>{setError("");setEdit(structuredClone(m));}}>{m.locked?"已锁定":"编辑配置"}</button></div>)}
+    {models?.filter(m=>[m.display_name,m.remote_model_id,...m.task_capabilities].join(" ").toLowerCase().includes(query.toLowerCase())).map(m=><div className="settings-row" key={m.id}><div><strong>{m.display_name}</strong><p>{providers.find(p=>p.id===m.provider_id)?.display_name||"Provider 不存在"} · {m.status}</p><p>{m.remote_model_id}</p><p>{m.task_capabilities.join(" · ")}</p><ModelProfileActions key={`${m.id}:${m.revision}:${m.locked}`} model={m} provider={providers.find(p=>p.id===m.provider_id)} service={service} reload={reload}/></div><button disabled={m.locked||busy} onClick={()=>{setError("");setEdit(structuredClone(m));}}>{m.locked?"已锁定":"编辑配置"}</button></div>)}
     {edit&&<Dialog title={edit==="new"?"添加模型配置":"编辑模型配置"} onClose={()=>{if(!busy&&window.confirm("放弃编辑？"))setEdit(undefined);}}>
       {error&&<p role="alert">{error}</p>}
       <ModelProfileEditor model={edit==="new"?undefined:edit} providers={providers} busy={busy} cancel={()=>setEdit(undefined)} save={value=>void save(value)}/>

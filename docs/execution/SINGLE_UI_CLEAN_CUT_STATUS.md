@@ -43,6 +43,16 @@ Committed visual evidence: `single-ui-clean-cut/m0/disclosure-expanded.png` (144
 
 ## Remaining
 
+### Model lifecycle, probe consent and quality evidence
+
+New native ModelProfileActions exposes lock/unlock, typed-name delete confirmation, explicitly confirmed billable connectivity test, saved probe usage, operation-scoped quality contracts and generation/limit details. It reuses existing endpoints and privileged protection; refresh/Disclosure expansion never sends a probe. Model/provider preflight rejects observed configuration changes before a mutation. This remains client preflight, not backend atomic CAS. Failed/unknown probe confirmation cannot immediately resubmit; the user must inspect records. Connectivity success is explicitly not geometry accuracy or comprehensive capability verification. Zero usage cost is labeled unverified, not free.
+
+Web typecheck, 287 unit tests, isolated production build and six HTTP management E2E passed. TEST lifecycle E2E creates a dedicated unreferenced profile, locks/unlocks it, checks the disabled delete confirmation until the exact name is entered, deletes that TEST profile only, and proves cancelling the billable dialog invokes no probe. Quality-contract GET is exercised. Actual billable probe execution, referenced-delete refusal and stale-provider race still need coverage. A first run started before the fixture listener was ready and failed connection; the same live fixture handle was observed until ready before rerunning.
+
+The isolated fixture now reports backend `25ea0ef` (worktree advanced from `34436fd`; not merged into frontend main here). Screenshot `m2/model-management.png`: actual built React, `/settings/agent-models` on TEST8794, 1440×900, DPR1, light; frontend `b9b1b47` plus this slice. Inspected screenshot and corrected the search label spacing afterward. Corrected the prior source-dependency test's Node-only import by keeping that filesystem assertion in a Vitest JavaScript test; production TS remains browser-only.
+
+UIAPI-009: read delivered `8cccca5` gap specification fully. It is a proposal, not implementation. Requested round2 implementation of that frozen-membership/explicit-establishment API and tests; accepted queue message `01a086ce-8662-72e2-93bf-a3c001e45795` to the confirmed Backend UUID. No GET-based cutover, real workspace mutation or hidden history workaround added. History scope/advanced Workflow/Run migration and final legacy deletion remain unfinished. No push or user build deployment.
+
 ### Legacy root dependency extraction
 
 Moved pure Workflow display/default helpers, model-input coordinate projection, COCO RLE validation/decoding, artifact boxes/crops/masks, evidence parsing and geometry/score semantics from old App into the existing `pipelinePresentation.ts` module. The existing recovery-node and Builder-plan helpers remain intact. Old App imports the shared helpers temporarily; `labelPipelineUi.test.ts` now tests the shared module directly, not the legacy React root. No old whole page was relocated or embedded. This removes a concrete deletion dependency without claiming route cutover is complete.
