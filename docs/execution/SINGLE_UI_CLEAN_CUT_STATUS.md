@@ -1,5 +1,9 @@
 # Single UI Clean Cut
 
+## UIAPI-017 third and final clarification request
+
+Read backend99f66f6 and its full UIAPI-017_OVERLAY_DEPENDENCY.md. It adds a boundary regression/specification, not live Replay implementation; not integrated or counted as parity. The documented dependency is internal runner construction/per-call admission, not an external service or missing authority. Sent round3 to the fixed authorized Backend UUID, accepted receipt01a087a2-7ac4-7663-a522-3e98d8059cbe, citing integrationd592e3c. Requested the scoped existing-runtime overlay already specified, actual loopback HTTP positive/revoked/stale/duplicate/unchanged-source tests, or a concrete unresolved scope decision. No more clarification rounds for this issue; unresolved delivery must be escalated, not silently waived. Frontend does not edit the owned Rust files or enable unsupported live Replay. Other independent migration remains active.
+
 ## Native Trash parent/child selection integrity
 
 Native Trash now resolves selected Batch ownership, lifecycle revision and actual child IDs before previewing a mixed Batch/Run restore or purge. Only verified selected child Runs are covered by their selected parent; independent Runs remain explicit. Foreign/stale/not-in-trash evidence fails before mutation. Preparing is guarded against duplicate clicks and stale unmounted responses; no operation scope is silently broadened. Existing impact confirmation, server protections, durable receipts and source/annotation retention remain unchanged.
