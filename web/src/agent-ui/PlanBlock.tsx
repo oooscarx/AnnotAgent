@@ -1,4 +1,5 @@
 import type { Task } from "./adapter";
+import { Icon } from "./Icon";
 export function PlanBlock({
   plan,
   expanded,
@@ -10,7 +11,7 @@ export function PlanBlock({
 }) {
   const content = (
     <section className="plan-block">
-      <strong>☷ 标注计划</strong>
+      <strong><Icon name="plan" />标注计划</strong>
       <ol>
         {plan.steps.map((step) => (
           <li key={step}>{step}</li>
@@ -28,7 +29,7 @@ export function PlanBlock({
     content
   ) : (
     <details className="plan-history">
-      <summary>☷ 查看{fixture ? "演示" : ""}计划 · {plan.steps.length} 个步骤</summary>
+      <summary><Icon name="plan" size={16} />查看{fixture ? "演示" : ""}计划 · {plan.steps.length} 个步骤</summary>
       {content}
     </details>
   );

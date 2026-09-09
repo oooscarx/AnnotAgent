@@ -54,7 +54,7 @@ test("providers: validate, save, simulated probe failure/unknown, deletion impac
   page,
 }) => {
   await page.goto("/ui-preview?settings=providers");
-  await page.getByRole("button", { name: "＋ 添加 Provider" }).click();
+  await page.getByRole("button", { name: "添加 Provider" }).click();
   await page.getByRole("button", { name: "保存账户" }).click();
   await expect(page.getByRole("alert")).toContainText("显示名称");
   await page.getByLabel("显示名称").fill("测试账户");
@@ -89,13 +89,13 @@ test("dirty settings cannot silently leave through global project sidebar", asyn
   await page.goto("/ui-preview?settings=usage");
   await page.getByRole("textbox", { name: "预算上限" }).fill("7.50");
   page.once("dialog", (d) => d.dismiss());
-  await page.getByRole("button", { name: "· 新任务", exact: true }).click();
+  await page.locator(".task-link").filter({hasText:"新任务"}).click();
   await expect(page.getByRole("textbox", { name: "预算上限" })).toHaveValue(
     "7.50",
   );
   await page.getByRole("button", { name: "保存设置" }).click();
   await expect(page.getByRole("status")).toContainText("已保存");
-  await page.getByRole("button", { name: "· 新任务", exact: true }).click();
+  await page.locator(".task-link").filter({hasText:"新任务"}).click();
   await expect(page.locator(".composer")).toBeVisible();
 });
 test("visual install confirm, failure and retry are simulated", async ({

@@ -7,6 +7,8 @@ import type {
   Section,
 } from "./adapter";
 import { Dialog } from "./Dialog";
+import { Icon, BrandMark } from "./Icon";
+import { ProjectMenu } from "./ProjectMenu";
 import { PlanBlock } from "./PlanBlock";
 import { SettingsView } from "./Settings";
 import { ArtifactPane } from "./ArtifactPane";
@@ -125,6 +127,14 @@ export function AgentPreviewApp({
   }, [theme]);
   useEffect(() => {
     if (!picker) return;
+    const place=()=>{
+      const panel=pickerRef.current,button=pickerButton.current;if(!panel||!button)return;
+      const r=button.getBoundingClientRect();
+      panel.style.position="fixed";panel.style.right="auto";panel.style.bottom="auto";
+      panel.style.width=`${Math.min(320,innerWidth-24)}px`;
+      panel.style.left=`${Math.max(12,Math.min(r.left,innerWidth-panel.offsetWidth-12))}px`;
+      panel.style.top=`${Math.max(12,Math.min(r.top-panel.offsetHeight-8,innerHeight-panel.offsetHeight-12))}px`;
+    };
     const close = (e: PointerEvent) => {
       if (
         !pickerRef.current?.contains(e.target as Node) &&
@@ -157,9 +167,11 @@ export function AgentPreviewApp({
     document.addEventListener("pointerdown", close);
     document.addEventListener("keydown", key);
     pickerRef.current?.querySelector("input")?.focus();
+    place();window.addEventListener("resize",place);
     return () => {
       document.removeEventListener("pointerdown", close);
       document.removeEventListener("keydown", key);
+      window.removeEventListener("resize",place);
     };
   }, [picker]);
   const navigate = (
@@ -266,7 +278,7 @@ export function AgentPreviewApp({
               navigate({ settings: null, task: state.tasks[0]?.id || null });
             }}
           >
-            <img src={fixture ? "/assets/mark-ink.svg" : "/brand/core/annotagent-mark-ink.svg"} alt="" />
+            <BrandMark />
             AnnotAgent
           </a>
           <button
@@ -282,21 +294,24 @@ export function AgentPreviewApp({
               })
             }
           >
-            ＋ {text("新任务", "New task")}
+            <Icon name="plus" />{text("新任务", "New task")}
           </button>
-          {!fixture && <a className="task-link" href="/projects?new=1">＋ 新建项目</a>}
+          {!fixture && <a className="new-project" href="/projects?new=1"><Icon name="plus" />新建项目</a>}
+          <label className="task-search"><Icon name="search" />
           <input
             aria-label="搜索任务"
             placeholder={text("搜索会话", "Search tasks")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
+          </label>
           <small>{text("项目", "Projects")}</small>
           <nav>
             {state.projects.map((p) => (
               <div key={p.id}>
                 <button
                   className="project-folder"
+                  title={p.title}
                   aria-expanded={expanded.includes(p.id)}
                   onClick={() =>
                     setExpanded((x) =>
@@ -306,7 +321,7 @@ export function AgentPreviewApp({
                     )
                   }
                 >
-                  {expanded.includes(p.id) ? "⌄" : "›"}　▱ {p.title}
+                  <Icon name={expanded.includes(p.id) ? "chevron-down" : "chevron-right"} size={12} /><Icon name="folder" /><span>{p.title}</span>
                 </button>
                 {(expanded.includes(p.id) || search) &&
                   state.tasks
@@ -320,11 +335,12 @@ export function AgentPreviewApp({
                           !section && t.id === task?.id ? "page" : undefined
                         }
                         key={t.id}
+                        title={t.title}
                         onClick={() =>
                           navigate({ settings: null, task: t.id, pane: null })
                         }
                       >
-                        · {t.title}
+                        <span className="task-dot" aria-hidden="true" /><span>{t.title}</span>
                       </button>
                     ))}
               </div>
@@ -332,9 +348,9 @@ export function AgentPreviewApp({
           </nav>
           <footer>
             <button onClick={() => navigate({ settings: "general" })}>
-              ⚙ {text("设置", "Settings")}
+              <Icon name="settings" />{text("设置", "Settings")}
             </button>
-            <small>{fixture ? "本地 UI Preview 工作区" : "本地工作区 · HTTP"}</small>
+            <small title={fixture ? "Fixture Adapter" : "HttpAdapter · 服务器持久化"}>{fixture ? "本地 UI Preview 工作区" : "本地工作区"}</small>
           </footer>
         </aside>
         <main className="workspace-main">
@@ -344,7 +360,7 @@ export function AgentPreviewApp({
               aria-label="打开项目导航"
               onClick={() => setMobileNav(!mobileNav)}
             >
-              ☰
+              <Icon name="panel" />
             </button>
             <div>
               {section ? (
@@ -363,20 +379,18 @@ export function AgentPreviewApp({
                   <button
                     onClick={() => navigate({ pane: pane ? null : "image" })}
                   >
+                    <Icon name="panel" size={16} />
                     {pane
                       ? text("收起数据", "Close data")
                       : text("打开数据", "Open data")}
                   </button>
-                  <details>
-                    <summary aria-label="项目管理菜单">···</summary>
-                    <div className="project-menu">
+                  <ProjectMenu>
                       <strong>项目管理{fixture ? " · 预览" : ""}</strong>
                       <p>
                         原应用中的数据、方案、处理记录、审核、导出与回收站保持不变。
                       </p>
                       {fixture ? <p>此隔离界面尚未连接这些真实管理操作。</p> : <a href={`/projects/${encodeURIComponent(task.project)}?${new URLSearchParams({return_task:task.id,...(pane?{return_pane:"image",return_image:url.searchParams.get("image") || String(task.image)}:{})})}`}>项目管理 →</a>}
-                    </div>
-                  </details>
+                  </ProjectMenu>
                 </>
               )}
               <span className="preview-chip" title={state.testOnly ? "隔离 TEST 数据库；真实 HTTP；外部模型是测试后端，不是真实模型准确率验证" : undefined}>{fixture ? "UI Preview" : state.testOnly ? "TEST · HTTP" : "服务器工作区"}</span>
@@ -413,7 +427,7 @@ export function AgentPreviewApp({
               className={`work-columns ${pane ? "with-data" : ""}`}
               style={{
                 gridTemplateColumns: pane
-                  ? `${split}% 6px minmax(0,1fr)`
+                  ? `${split}% 1px minmax(0,1fr)`
                   : undefined,
               }}
             >
@@ -449,12 +463,12 @@ export function AgentPreviewApp({
                             }
                           >
                             {item.role === "assistant" && (
-                              <strong>⌁ AnnotAgent</strong>
+                              <strong className="assistant-author"><BrandMark />AnnotAgent</strong>
                             )}
                             <p>{item.text}</p>
                             {item.reference && (
                               <small>
-                                引用：示意图片 {item.reference.image} ·{" "}
+                                引用：{fixture ? "示意图片" : "图片"} {item.reference.image} ·{" "}
                                 {item.reference.candidate}
                               </small>
                             )}
@@ -481,11 +495,14 @@ export function AgentPreviewApp({
                           )}
                         </div>
                         {!fixture && !!task.receipts?.length && <details className="plan-history"><summary>执行记录 · {task.receipts.length} 项</summary>{task.receipts.map(r=><details key={r.id}><summary>{r.title} · {r.status}</summary><p>{r.detail || "系统已保存此操作回执；未记录自然语言回复。"}</p></details>)}</details>}
-                        {!fixture && !active && adapter.prepareAction && task.items.length > 0 && <div className="actions">
-                          <button disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),"plan"))}>查看规划授权</button>
-                          <button disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),"sample"))}>构建方案并测试样例…</button>
-                          {task.sample && <button disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),"process"))}>确认方案并开始处理…</button>}
-                          <button disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),"export"))}>导出…</button>
+                        {!fixture && !active && !task.approval && adapter.prepareAction && task.items.length > 0 && <div className="task-next-actions">
+                          {(() => {
+                            const choices = [{kind:"plan" as const,label:"查看规划授权",icon:"plan" as const},{kind:"sample" as const,label:"构建方案并测试样例…",icon:"image" as const},...(task.sample?[{kind:"process" as const,label:"确认方案并开始处理…",icon:"play" as const}]:[]),{kind:"export" as const,label:"导出…",icon:"download" as const}];
+                            const primary = task.sample ? "process" : task.plan ? "sample" : "plan";
+                            const action = choices.find(c=>c.kind===primary)!;
+                            const render = (c:typeof action,main=false) => <button key={c.kind} className={main ? "primary" : undefined} disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),c.kind))}><Icon name={c.icon} size={16} />{c.label}</button>;
+                            return <>{render(action,true)}<details className="secondary-task-actions"><summary>其他操作<Icon name="chevron-down" size={14} /></summary><div>{choices.filter(c=>c!==action).map(c=>render(c))}</div></details></>;
+                          })()}
                         </div>}
                         {!fixture && task.resumeTargets?.map(r=><p key={r.id}>{r.reason}<button onClick={()=>void act(()=>adapter.resumeOperation(command(task),r.id))}>继续 {r.label}</button></p>)}
                         {!fixture && !!task.stopTargets?.length && <div className="notice"><strong>请选择停止哪一项</strong>{task.stopTargets.map(t=><button key={t.id} onClick={()=>void act(()=>adapter.selectStop!(command(task),t.id))}>{t.label}</button>)}</div>}
@@ -499,7 +516,7 @@ export function AgentPreviewApp({
                             fixture={fixture}
                           />
                         )}
-                        {task.phase === "awaiting_approval" && (
+                        {fixture && task.phase === "awaiting_approval" && (
                           <button
                             className="primary"
                             disabled={!allowed("approve")}
@@ -542,8 +559,7 @@ export function AgentPreviewApp({
                         )}
                         {task.phase === "outcome_unknown" && (
                           <div className="error">
-                            远端结果未知。不能直接重试收费请求；需要 Adapter
-                            核实状态。此处不模拟成功。
+                            远端结果未知。不能直接重试收费请求；请查看执行记录并核实服务端状态。
                           </div>
                         )}
                         {task.phase === "failed" && (
@@ -592,13 +608,13 @@ export function AgentPreviewApp({
                   >
                     {reference?.task === task.id && (
                       <div className="reference-chip">
-                        引用：示意图片 {reference.image} · {reference.candidate}
+                        引用：{fixture ? "示意图片" : "图片"} {reference.image} · {reference.candidate}
                         <button
                           type="button"
                           aria-label="移除对象引用"
                           onClick={() => setReference(null)}
                         >
-                          ×
+                          <Icon name="close" size={16} />
                         </button>
                       </div>
                     )}
@@ -620,7 +636,7 @@ export function AgentPreviewApp({
                                   );
                                 }}
                               >
-                                ×
+                                <Icon name="close" size={16} />
                               </button>
                             </span>
                           ))}
@@ -659,7 +675,7 @@ export function AgentPreviewApp({
                     />
                     <div className="composer-tools">
                       <label className="attach-button">
-                        ＋ 图片
+                        <Icon name="plus" size={16} />图片
                         <input
                           type="file"
                           accept="image/*"
@@ -691,18 +707,20 @@ export function AgentPreviewApp({
                           setMode(mode === "plan" ? "execute" : "plan")
                         }
                       >
-                        {mode === "plan" ? "☷ Plan" : "▷ 执行"}
+                        <Icon name={mode === "plan" ? "plan" : "play"} size={16} />{mode === "plan" ? "Plan" : "执行"}
                       </button>
                       <div className="model-anchor">
                         <button
                           type="button"
                           ref={pickerButton}
+                          aria-label={`选择模型：${state.models.find(m=>m.id===task.model)?.name || "模型已移除"}`}
+                          title="Agent 模型 · 仅下次请求生效"
                           aria-expanded={picker}
                           onClick={() => setPicker(!picker)}
                         >
-                          {state.models.find((m) => m.id === task.model)
-                            ?.name || "模型已移除"}{" "}
-                          · 模型⌄
+                          <span className="model-button-name">{state.models.find((m) => m.id === task.model)
+                            ?.name || "模型已移除"}</span>
+                          <Icon name="chevron-down" size={14} />
                         </button>
                         {picker && (
                           <div
@@ -749,7 +767,7 @@ export function AgentPreviewApp({
                                     >
                                       <span>
                                         {m.name}
-                                        {m.id === task.model ? " ✓" : ""}
+                                        {m.id === task.model && <Icon name="check" size={16} />}
                                         <small>
                                           {m.reason || `文本 / 工具调用${fixture ? " · 演示" : ""}`}
                                         </small>
@@ -782,15 +800,17 @@ export function AgentPreviewApp({
                             )
                           }
                         >
-                          {task.phase === "stopping" ? "正在停止…" : "■ 停止"}
+                          <Icon name="stop" size={16} />{task.phase === "stopping" ? "正在停止…" : "停止"}
                         </button>
                       )}
                       <button
-                        className="primary"
+                        className="primary send-button"
+                        aria-label={active ? "排队" : "发送"}
+                        title={active ? "排队输入，不改写在途请求" : "发送"}
                         disabled={!task.draft.trim() || busy || !allowed("send")}
                         type="submit"
                       >
-                        {active ? "排队" : "↑ 发送"}
+                        {active ? "排队" : <Icon name="arrow-up" size={16} />}
                       </button>
                     </div>
                   </form>

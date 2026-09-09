@@ -9,6 +9,7 @@ import type {
 } from "./adapter";
 import { sections } from "./adapter";
 import { Dialog } from "./Dialog";
+import { Icon } from "./Icon";
 function Row({
   title,
   help,
@@ -380,7 +381,7 @@ export function SettingsView({
                             })
                           }
                         >
-                          ＋ 添加 Provider
+                          <Icon name="plus" size={16} />添加 Provider
                         </button>
                       </div>
                       {draft.providers.length === 0 ? (
@@ -482,7 +483,7 @@ export function SettingsView({
                                 onClick={() => change("defaultModel", m.id)}
                               >
                                 {draft.defaultModel === m.id
-                                  ? "✓ 当前默认"
+                                  ? <><Icon name="check" size={16} />当前默认</>
                                   : "设为默认"}
                               </button>
                             </Row>

@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
+import { Icon, IconButton } from "./Icon";
+import { labelColor } from "../annotationVisuals";
 import type { WorkspaceAdapter, Task, Box, Snapshot, ImageId } from "./adapter";
 import { command } from "./App";
 export function ArtifactPane({
@@ -37,6 +39,14 @@ export function ArtifactPane({
   const [compare, setCompare] = useState(false);
   const [original, setOriginal] = useState(false);
   const [zoom, setZoom] = useState(100);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [screenScale, setScreenScale] = useState(1);
+  useEffect(()=>{
+    const svg=svgRef.current;if(!svg)return;
+    const measure=()=>setScreenScale(svg.getScreenCTM()?.a || 1);
+    const observer=new ResizeObserver(measure);observer.observe(svg);measure();
+    return()=>observer.disconnect();
+  },[width,height,zoom]);
   const [history, setHistory] = useState<Box[][]>([]);
   const [saving, setSaving] = useState(false);
   const [drag, setDrag] = useState<{
@@ -88,14 +98,7 @@ export function ArtifactPane({
         <button aria-pressed={compare} onClick={() => setCompare(!compare)}>
           对比
         </button>
-        <button
-          aria-label="关闭图片"
-          onClick={() => {
-            close();
-          }}
-        >
-          ×
-        </button>
+        <IconButton icon="close" label="关闭图片" onClick={close} />
       </div>
       <div className="artifact-toolbar">
         <small>{asset?.name || "图片不存在"}</small>
@@ -108,9 +111,9 @@ export function ArtifactPane({
           }}
           disabled={!history.length}
         >
-          撤销
+          <Icon name="undo" size={16} />撤销
         </button>
-        <button onClick={() => setZoom(100)}>Fit</button>
+        <button onClick={() => setZoom(100)} aria-label="适应画布"><Icon name="fit" size={16} />Fit</button>
         <label>
           Zoom{" "}
           <input
@@ -126,6 +129,7 @@ export function ArtifactPane({
       </div>
       <div className="canvas-region">
         <svg
+          ref={svgRef}
           viewBox={`0 0 ${width} ${height}`}
           aria-label={fixture ? "演示标注画布" : "标注画布"}
           style={{ width: `${zoom}%`, minWidth: `${zoom}%` }}
@@ -166,7 +170,7 @@ export function ArtifactPane({
                 width={b.w}
                 height={b.h}
                 fill="none"
-                stroke="var(--aa-annotation-4)"
+                stroke={labelColor(b.label)}
                 strokeWidth="1"
                 strokeDasharray="5 4"
                 vectorEffect="non-scaling-stroke"
@@ -200,29 +204,20 @@ export function ArtifactPane({
                   width={b.w}
                   height={b.h}
                   fill="transparent"
-                  stroke={
-                    b.label === "bottle"
-                      ? "var(--aa-annotation-4)"
-                      : "var(--aa-annotation-1)"
-                  }
+                  stroke={labelColor(b.label)}
                   strokeWidth="1.25"
                   vectorEffect="non-scaling-stroke"
                 />
-                <text
-                  x={b.x + 3}
-                  y={b.y - 9}
-                  fontSize="20"
-                  fill="var(--aa-annotation-1)"
-                >
-                  {b.label}{fixture ? " · 演示" : ""}
-                </text>
+                <g className="bbox-label" pointerEvents="none" transform={`translate(${Math.max(2/screenScale,Math.min(b.x,width-Math.min(180,width*screenScale-4)/screenScale))} ${Math.max(16/screenScale,b.y-5/screenScale)}) scale(${1/screenScale})`}>
+                  <text fontSize="12" paintOrder="stroke" stroke="var(--aa-surface)" strokeWidth="3" strokeLinejoin="round" fill={labelColor(b.label)}><title>{b.label}</title>{Array.from(b.label).slice(0,20).join("")}{b.label.length>20?"…":""}{fixture ? " · 演示" : ""}</text>
+                </g>
                 {selected === b.id && (
                   <circle
                     cx={b.x + b.w}
                     cy={b.y + b.h}
-                    r="4"
+                    r={3 / screenScale}
                     fill="var(--aa-surface)"
-                    stroke="var(--aa-annotation-1)"
+                    stroke={labelColor(b.label)}
                     vectorEffect="non-scaling-stroke"
                   />
                 )}
@@ -301,7 +296,7 @@ export function ArtifactPane({
             ]);
           }}
         >
-          ＋ 添加遗漏目标
+          <Icon name="plus" size={16} />添加遗漏目标
         </button>
       </details>
       <div className="artifact-footer">

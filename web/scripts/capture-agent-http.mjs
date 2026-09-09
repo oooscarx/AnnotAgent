@@ -9,6 +9,7 @@ if(readFileSync(join(dirname(manifestPath),"FIXTURE_ONLY"),"utf8")!=="AnnotAgent
 const base=new URL(manifest.base_url);
 if(base.hostname!=="127.0.0.1" || base.port==="8787")throw Error("Only isolated loopback test services may be captured");
 const sha=execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"}).trim();
+const sourceDiff=execFileSync("git",["diff","--","web/src"],{encoding:"utf8"});
 const id=`${sha.slice(0,10)}-${Date.now()}`;
 const directory=resolve("public/evidence/agent-ui-integration",id);
 mkdirSync(directory,{recursive:true});
@@ -28,9 +29,10 @@ async function shot(name,title,note="") {
   await page.locator("img").evaluateAll(images=>Promise.all(images.map(image=>image.decode().catch(()=>{}))));
   const file=`${name}.png`;
   await page.screenshot({path:join(directory,file),animations:"disabled"});
-  records.push({file,title,note,sha,url:page.url(),viewport:page.viewportSize(),theme:await page.locator("html").getAttribute("data-aa-theme"),state:"TEST / real HTTP+SQLite; external model fixture; not Live accuracy",capturedAt:new Date().toISOString()});
+  records.push({file,title,note,sha,sourceState:sourceDiff?"working tree over SHA; see source.patch":"committed",url:page.url(),viewport:page.viewportSize(),dpr:await page.evaluate(()=>devicePixelRatio),theme:await page.locator("html").getAttribute("data-aa-theme"),state:"TEST / real HTTP+SQLite; external model fixture; not Live accuracy",capturedAt:new Date().toISOString()});
 }
 try {
+  if(sourceDiff)writeFileSync(join(directory,"source.patch"),sourceDiff);
   await open(work(manifest.project,`new:${manifest.project}`));
   await shot("01-new-task","新任务与项目树");
   await open(work(manifest.project,manifest.plan_task_id));
@@ -58,7 +60,7 @@ try {
     await shot("07-unknown","停止后的未知结果","The initial stopping state is evidenced by the real HTTP response; it is not artificially held for a screenshot.");
   }
   await open(work(manifest.project,`new:${manifest.project}`));
-  await page.getByRole("button",{name:/模型⌄/}).click();
+  await page.getByRole("button",{name:/选择模型：/}).click();
   await shot("08-model-picker","真实 Registry 模型选择");
   for(const [key,title] of [["general","通用"],["providers","Providers"],["agent","Agent 模型"],["vision","视觉模型与插件"],["privacy","数据与隐私"],["usage","用量与预算"]]) {
     await open(work(manifest.project,manifest.task_id,`&settings=${key}`));

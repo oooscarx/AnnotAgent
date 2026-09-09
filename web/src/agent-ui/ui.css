@@ -133,7 +133,7 @@ button.primary:hover:not(:disabled) {
   padding: 24px 12px 12px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 4px;
   min-height: 0;
 }
 .brand {
@@ -150,9 +150,6 @@ button.primary:hover:not(:disabled) {
   width: 24px;
   height: 24px;
 }
-[data-aa-theme="dark"] .brand img {
-  filter: invert(1);
-}
 .project-sidebar .new-task {
   text-align: left;
 }
@@ -165,7 +162,7 @@ button.primary:hover:not(:disabled) {
 .project-sidebar nav button {
   width: 100%;
   text-align: left;
-  overflow-wrap: anywhere;
+  min-width: 0;
 }
 .task-link {
   padding-left: 28px;
@@ -223,14 +220,17 @@ button.primary:hover:not(:disabled) {
   border-radius: 4px;
 }
 .project-menu {
-  position: absolute;
-  right: 16px;
-  top: 84px;
+  position: fixed;
   z-index: 15;
   background: var(--aa-surface);
   border: 1px solid var(--aa-border);
   padding: 18px;
   max-width: 320px;
+  width: min(320px, calc(100vw - 16px));
+  max-height: calc(100dvh - 24px);
+  overflow: auto;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px var(--aa-overlay);
 }
 .mobile-menu {
   display: none;
@@ -502,7 +502,9 @@ button.primary:hover:not(:disabled) {
 .splitter {
   background: var(--aa-border);
   cursor: col-resize;
-  width: 6px;
+  width: 1px;
+  position: relative;
+  z-index: 2;
   touch-action: none;
 }
 .artifact-pane {
@@ -629,8 +631,8 @@ button.primary:hover:not(:disabled) {
   margin-bottom: 28px;
 }
 .settings-row {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 280px);
   gap: 24px;
   align-items: center;
   padding: 22px 0;
@@ -651,7 +653,8 @@ button.primary:hover:not(:disabled) {
   justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
-  max-width: 52%;
+  min-width: 0;
+  width: 100%;
   font-size: 13px;
 }
 .row-control select {
@@ -771,9 +774,6 @@ caption {
   padding: 14px 0;
 }
 @media (max-width: 1000px) {
-  .header-actions .preview-chip {
-    display: none;
-  }
   .composer-region {
     padding: 12px;
   }
@@ -781,7 +781,7 @@ caption {
     padding: 20px;
   }
   .row-control {
-    max-width: 55%;
+    max-width: 100%;
   }
   .settings-content {
     padding: 28px 20px;
@@ -846,6 +846,7 @@ caption {
     margin: 0;
   }
   .settings-row {
+    display: flex;
     align-items: flex-start;
     flex-direction: column;
     gap: 12px;
@@ -926,6 +927,71 @@ caption {
 .project-sidebar > small {
   padding-bottom: 0;
 }
-.project-sidebar {
-  gap: 16px;
+.ui-app .ui-icon { display: inline-block; flex: 0 0 auto; vertical-align: middle; pointer-events: none; }
+.ui-app button.mobile-menu, .ui-app button.mobile-stop { display: none; }
+.ui-app button, .ui-app .attach-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+.ui-app .icon-button { width: 34px; height: 34px; padding: 0; display: inline-grid; place-items: center; flex-shrink: 0; }
+.ui-app .brand-mark { display: inline-flex; width: 24px; height: 24px; flex: 0 0 auto; }
+.ui-app .brand-mark img { width: 100%; height: 100%; }
+.ui-app .mark-dark { display: none; }
+[data-aa-theme="dark"] .ui-app .mark-light { display: none; }
+[data-aa-theme="dark"] .ui-app .mark-dark { display: block; }
+.ui-app .assistant-author { display: inline-flex; align-items: center; gap: 8px; }
+.ui-app .assistant-author .brand-mark { width: 18px; height: 18px; }
+.ui-app .project-sidebar .brand { padding-bottom: 24px; }
+.ui-app .project-sidebar .new-task, .ui-app .project-sidebar .new-project, .ui-app .project-sidebar footer button { justify-content: flex-start; padding: 8px 11px; min-height: 36px; }
+.ui-app .new-project { display: flex; gap: 10px; align-items: center; color: inherit; text-decoration: none; border-radius: 6px; font-size: 13px; }
+.ui-app .task-search { display: flex; align-items: center; gap: 8px; padding: 0 11px; margin: 6px 0 8px; }
+.ui-app .task-search input { border: 0; width: 100%; padding: 8px 0; background: transparent; font-size: 13px; }
+.ui-app .project-sidebar > small { padding: 12px 11px 8px; }
+.ui-app .project-sidebar nav { flex: 1; min-height: 0; scrollbar-width: thin; }
+.ui-app .project-sidebar nav > div { margin-bottom: 12px; }
+.ui-app .project-sidebar nav .project-folder { display: grid; grid-template-columns: 12px 18px minmax(0,1fr); gap: 7px; min-height: 36px; padding: 8px 10px; font-size: 13px; }
+.ui-app .project-folder > span, .ui-app .task-link > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-app .project-sidebar nav .task-link { display: grid; grid-template-columns: 5px minmax(0,1fr); gap: 8px; padding: 8px 10px 8px 31px; margin-top: 4px; min-height: 34px; font-size: 12px; }
+.ui-app .task-dot { width: 4px; height: 4px; background: var(--aa-text-muted); border-radius: 50%; }
+.ui-app .project-sidebar footer { margin-top: 12px; gap: 8px; }
+.ui-app .project-menu-anchor > summary { list-style: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 6px; padding: 0; }
+.ui-app .project-menu-anchor > summary::-webkit-details-marker { display: none; }
+.ui-app .project-menu-anchor > summary:hover { background: var(--aa-surface-muted); }
+.ui-app .splitter::before { content: ""; position: absolute; inset: 0 -4px; }
+.ui-app .splitter:focus-visible { outline: 2px solid var(--aa-accent); outline-offset: 2px; }
+.ui-app .composer-tools { gap: 4px; }
+.ui-app .composer-tools button { min-width: 0; padding: 6px 8px; }
+.ui-app .composer-tools > button:first-of-type { border-color: var(--aa-border); background: var(--aa-surface-muted); }
+.ui-app .composer-tools .send-button { min-width: 32px; min-height: 32px; padding: 7px; }
+.ui-app .model-anchor { min-width: 0; max-width: 100%; }
+.ui-app .model-anchor > button { max-width: 100%; }
+.ui-app .model-button-name { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ui-app.icon-gallery { height: auto; min-height: 100dvh; display: block; padding: 24px; background: var(--aa-bg); color: var(--aa-text); }
+.ui-app .icon-gallery-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 16px; }
+.ui-app .icon-gallery-grid section { border-bottom: 1px solid var(--aa-border); padding: 12px; }
+.ui-app .icon-gallery-grid section > div { display: flex; gap: 12px; align-items: center; padding-top: 12px; }
+.ui-app .model-picker button { justify-content: flex-start; }
+.ui-app .model-picker button > span { width: 100%; overflow-wrap: anywhere; }
+.ui-app .model-picker button .ui-icon { float: right; }
+.ui-app .task-next-actions { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin: 20px 0; }
+.ui-app .secondary-task-actions summary { display: flex; align-items: center; gap: 8px; color: var(--aa-text-muted); font-size: 12px; }
+.ui-app .secondary-task-actions > div { display: grid; gap: 6px; padding: 8px 0; }
+.ui-app .secondary-task-actions button { justify-content: flex-start; }
+.ui-app .plan-block strong { display: flex; align-items: center; gap: 8px; }
+.ui-app .settings-row strong { overflow-wrap: anywhere; }
+.ui-app .row-control > select, .ui-app .row-control > input:not([type=checkbox]) { width: 100%; max-width: 280px; }
+.ui-app .settings-row .row-control { max-width: 100%; }
+.ui-app .provider-editor { max-width: 100%; }
+.ui-app .provider-editor label { display: grid; grid-template-columns: minmax(0,1fr) minmax(180px,280px); align-items: center; gap: 24px; }
+.ui-app .artifact-toolbar > small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%; }
+.ui-app .artifact-toolbar label { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ui-app .bbox-label { user-select: none; }
+@media(max-width:760px) {
+  .ui-app button.mobile-menu, .ui-app button.mobile-stop { display: inline-flex; }
+  .ui-app .project-sidebar.mobile-open { top: 30px; }
+  .ui-app[data-adapter="http"] .project-sidebar.mobile-open { top: 0; }
+  .ui-app .header-actions { gap: 2px; }
+  .ui-app .workspace-header { gap: 6px; }
+  .ui-app .preview-chip { font-size: 9px; white-space: nowrap; }
+  .ui-app .provider-editor label { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+  .ui-app .composer-tools button, .ui-app .attach-button, .ui-app .artifact-toolbar button { min-height: 44px; }
+  .ui-app .workspace-header > div:first-of-type { flex: 1; }
+  .ui-app .model-anchor { flex: 1; }
 }

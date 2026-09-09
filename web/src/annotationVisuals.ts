@@ -100,3 +100,5 @@ export function annotationVisual(
 }
 
 export const annotationColor = (slot: AnnotationVisualSlot): string => `var(--aa-annotation-${slot})`;
+/** Shared deterministic fallback for label-only views without Schema visual overrides. */
+export const labelColor = (label: string): string => annotationColor(stableSlot(label));

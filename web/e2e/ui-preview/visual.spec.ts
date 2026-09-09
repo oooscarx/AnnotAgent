@@ -13,7 +13,7 @@ async function plan(page: Page) {
     .fill(
       "标出这些图片里的杯子和瓶子，用来训练检测模型。先给我方案，不确定的让我确认。",
     );
-  await page.getByRole("button", { name: "↑ 发送", exact: true }).click();
+  await page.getByRole("button", { name: "发送", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "批准并试跑 3 张" }),
   ).toBeVisible();
@@ -49,7 +49,7 @@ test("capture actual React preview pages and evidence metadata", async ({
   await shot("01-new-task-light");
   await plan(page);
   await shot("02-plan-light");
-  await page.getByRole("button", { name: /模型⌄/ }).click();
+  await page.getByRole("button", { name: /选择模型：/ }).click();
   await shot("06-model-picker-light");
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "批准并试跑 3 张" }).click();
@@ -60,7 +60,7 @@ test("capture actual React preview pages and evidence metadata", async ({
   await page.getByRole("button", { name: "排队", exact: true }).click();
   await page.getByRole("button", { name: "打开数据", exact: true }).click();
   await shot("03-running-queue-light");
-  await page.getByRole("button", { name: "■ 停止" }).click();
+  await page.getByRole("button", { name: "停止" }).click();
   await expect(page.getByRole("button", { name: "正在停止…" })).toBeVisible();
   await shot("05-stopping-light");
   await expect(
@@ -96,7 +96,7 @@ test("capture actual React preview pages and evidence metadata", async ({
     await page.goto(`/ui-preview?task=new&settings=${id}`);
     await shot(name);
     if (id === "providers") {
-      await page.getByRole("button", { name: "＋ 添加 Provider" }).click();
+      await page.getByRole("button", { name: "添加 Provider" }).click();
       await page.getByRole("button", { name: "保存账户" }).click();
       await shot("10-provider-validation");
       await page.getByRole("button", { name: "取消账户编辑" }).click();
@@ -128,7 +128,7 @@ for (const size of [
       await page.getByRole("button", { name: "排队", exact: true }).click();
     }
     const box = await page
-      .getByRole("button", { name: "■ 停止" })
+      .getByRole("button", { name: "停止" })
       .boundingBox();
     expect(box!.y + box!.height).toBeLessThanOrEqual(size.height);
     expect(
@@ -137,7 +137,7 @@ for (const size of [
     await page.getByRole("button", { name: "打开数据", exact: true }).click();
     await expect(page.locator(".artifact-pane")).toBeVisible();
     await page.getByRole("button", { name: "关闭图片", exact: true }).click();
-    await expect(page.getByRole("button", { name: "■ 停止" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "停止" })).toBeVisible();
   });
 test("geometry edits and image selection restore; saving failure does not advance", async ({
   page,

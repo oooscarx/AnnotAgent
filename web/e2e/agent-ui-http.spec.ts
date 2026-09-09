@@ -18,7 +18,7 @@ test("a: real owned thread/image reads, Back/refresh, no execution on GET",async
   const {root,tasks}=await identity(request);
   const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});
   await page.goto(`/?task=${tasks[0].task_id}`);
-  await expect(page.getByText("本地工作区 · HTTP")).toBeVisible();
+  await expect(page.getByText("本地工作区")).toBeVisible();
   await expect(page.locator(".user-message").first()).toContainText(tasks[0].title);
   await page.getByRole("button",{name:"打开数据",exact:true}).click();
   await expect(page.getByRole("complementary",{name:"图片与标注"})).toBeVisible();
@@ -35,7 +35,7 @@ test("a: real owned thread/image reads, Back/refresh, no execution on GET",async
 test("b: six real Settings reads, local preference save/cancel and return context",async({page,request})=>{
   const {tasks}=await identity(request);
   await page.goto(`/?task=${tasks[0].task_id}&pane=image`);
-  await page.getByRole("button",{name:"⚙ 设置"}).click();
+  await page.getByRole("button",{name:"设置"}).click();
   for(const title of ["通用","Providers 与账户","Agent 模型","视觉模型与插件","数据与隐私","用量与预算"]){
     await page.getByRole("button",{name:title,exact:true}).click();
     await expect(page.getByRole("heading",{name:title,exact:true})).toBeVisible();
@@ -60,7 +60,7 @@ test("c: IME does not send; explicit Send stores one real task; refresh never ex
   await input.dispatchEvent("compositionstart");await input.press("Enter");await input.dispatchEvent("compositionend");
   expect(writes).toHaveLength(0);
   await input.press("Shift+Enter");await input.type("TEST persisted input");
-  await page.getByRole("button",{name:"↑ 发送"}).dblclick();
+  await page.getByRole("button",{name:"发送"}).dblclick();
   await expect(page.locator(".user-message")).toContainText("TEST HTTP UI classify");
   expect(writes).toHaveLength(1);
   const task=new URL(page.url()).searchParams.get("task");expect(task).not.toContain("new:");
@@ -72,7 +72,7 @@ test("c: explicit Plan approval calls TEST provider once and persisted receipts 
   const {p,root}=await identity(request);
   await page.goto(`/?task=${encodeURIComponent(`new:${p.project_id}`)}`);
   await page.getByRole("textbox",{name:"给 AnnotAgent 的需求"}).fill("按室内和室外给图片分类 TEST authorized schema");
-  await page.getByRole("button",{name:"↑ 发送"}).click();
+  await page.getByRole("button",{name:"发送"}).click();
   await expect(page.locator(".user-message")).toContainText("TEST authorized schema");
   const task=new URL(page.url()).searchParams.get("task");
   await page.getByRole("button",{name:"查看规划授权",exact:true}).click();
@@ -106,9 +106,10 @@ test("c: a separately approved Sample Journey produces saved terminal results",a
   const {p,root}=await identity(request);
   await page.goto(`/?task=${encodeURIComponent(`new:${p.project_id}`)}`);
   await page.getByRole("textbox",{name:"给 AnnotAgent 的需求"}).fill("按室内和室外给图片分类 TEST UI sample");
-  await page.getByRole("button",{name:"↑ 发送"}).click();
+  await page.getByRole("button",{name:"发送"}).click();
   await expect(page.locator(".user-message")).toContainText("TEST UI sample");
   const task=new URL(page.url()).searchParams.get("task");
+  await page.locator(".secondary-task-actions > summary").click();
   await page.getByRole("button",{name:"构建方案并测试样例…",exact:true}).click();
   await expect(page.locator(".plan-block")).toContainText("不写正式标注");
   await page.getByRole("button",{name:"查看并确认授权"}).click();
@@ -130,6 +131,7 @@ test("c: a separately approved Sample Journey produces saved terminal results",a
 test("f: explicit native Export produces a real downloadable file, not a server path link",async({page,request})=>{
   const {tasks}=await identity(request);
   await page.goto(`/?task=${tasks[0].task_id}`);
+  await page.locator(".secondary-task-actions > summary").click();
   await page.getByRole("button",{name:"导出…",exact:true}).click();
   await expect(page.locator(".plan-block").filter({hasText:"导出为 Native"})).toContainText("条已确认标注");
   await page.getByRole("button",{name:"查看并确认授权"}).click();
@@ -179,7 +181,7 @@ test("production routes reject foreign tasks and preserve management return with
   await page.goBack();await expect(page.locator(".ui-app")).toHaveAttribute("data-adapter","http");
   await expect(page).toHaveURL(new RegExp(`task=${tasks[0].task_id}`));
   await expect(page.locator("svg image")).toBeVisible();
-  await page.getByRole("button",{name:"⚙ 设置"}).click();
+  await page.getByRole("button",{name:"设置"}).click();
   await page.getByRole("button",{name:"Agent 模型",exact:true}).click();
   await page.getByRole("link",{name:"管理模型配置 →",exact:true}).click();
   await expect(page.getByRole("button",{name:"Return to annotation task",exact:true})).toBeVisible();
@@ -214,12 +216,12 @@ test("d: saved supplement waits for its own explicit text-only authorization",as
   const {p,root}=await identity(request);
   await page.goto(`/projects/${p.project_id}/work`);
   await page.getByRole("textbox",{name:"给 AnnotAgent 的需求"}).fill("TEST initial goal for a fresh queue task");
-  await page.getByRole("button",{name:"↑ 发送",exact:true}).click();
+  await page.getByRole("button",{name:"发送",exact:true}).click();
   await expect(page.locator(".user-message")).toContainText("TEST initial goal");
   const task=new URL(page.url()).searchParams.get("task");
   const before=await(await request.get(`${root}/tasks/${task}/workspace`)).json();
   await page.getByRole("textbox",{name:"给 AnnotAgent 的需求"}).fill("TEST queued supplement classify indoor versus outdoor");
-  await page.getByRole("button",{name:"↑ 发送",exact:true}).click();
+  await page.getByRole("button",{name:"发送",exact:true}).click();
   await expect(page.locator(".user-message").last()).toContainText("TEST queued supplement");
   const after=await(await request.get(`${root}/tasks/${task}/workspace`)).json();expect(after.calls).toHaveLength(before.calls.length);
   await page.locator(".queue summary").click();
@@ -246,12 +248,12 @@ test("b: next-request model selection uses a CAS command without a model probe",
   const before=await(await request.get(`${root}/agent-model`)).json();
   await page.goto(`/projects/${p.project_id}/work`);
   const posts:string[]=[];page.on("request",r=>{if(r.method()==="POST")posts.push(r.url());});
-  await page.getByRole("button",{name:/模型⌄/}).click();
+  await page.getByRole("button",{name:/选择模型：/}).click();
   await page.locator(".model-picker section button:not(:disabled)").first().click();
   await expect.poll(async()=>{const value=await(await request.get(`${root}/agent-model`)).json();return value.revision;}).toBe(before.revision+1);
   expect(posts.filter(p=>p.endsWith("/agent-model"))).toHaveLength(1);
   expect(posts.some(p=>p.includes("probe")||p.includes("proposals")||p.endsWith("/check"))).toBe(false);
-  await page.reload();await expect(page.getByRole("button",{name:/TEST deterministic model.*模型⌄/})).toBeVisible();
+  await page.reload();await expect(page.getByRole("button",{name:/选择模型：TEST deterministic model/})).toBeVisible();
 });
 
 test("b: new TEST Provider credential is write-only and not browser-persisted",async({page,request})=>{
@@ -260,7 +262,7 @@ test("b: new TEST Provider credential is write-only and not browser-persisted",a
   const name=`TEST credential account ${crypto.randomUUID()}`;
   const secret="TEST-NOT-A-REAL-KEY-ui-write-only";
   await page.goto(`/?task=${tasks[0].task_id}&settings=providers`);
-  await page.getByRole("button",{name:"＋ 添加 Provider",exact:true}).click();
+  await page.getByRole("button",{name:"添加 Provider",exact:true}).click();
   await page.getByLabel("显示名称",{exact:true}).fill(name);
   await page.getByLabel("Endpoint",{exact:true}).fill("http://127.0.0.1:8797/openai/v1");
   await page.getByRole("button",{name:"保存账户",exact:true}).click();
@@ -318,7 +320,7 @@ test("d: actual stop POST is observed as stopping and settles to unknown without
   const started=await request.post(scene.start.url,{headers:{"x-annotagent-csrf":session.csrf_token},data:scene.start.body});expect(started.ok()).toBe(true);
   await expect.poll(async()=>{const calls=await(await request.get(scene.wait_for_reserved_url)).json();return calls.some((c:{status:string})=>c.status==="reserved");}).toBe(true);
   await page.goto(`/projects/${m.project}/work?task=${scene.task_id}`);
-  await expect(page.getByRole("button",{name:"■ 停止",exact:true})).toBeEnabled();
+  await expect(page.getByRole("button",{name:"停止",exact:true})).toBeEnabled();
   await page.getByRole("textbox",{name:"给 AnnotAgent 的需求"}).fill("TEST queued while the model request is active");
   await page.getByRole("button",{name:"排队",exact:true}).click();
   await expect(page.getByText(/1 条排队输入/)).toBeVisible();

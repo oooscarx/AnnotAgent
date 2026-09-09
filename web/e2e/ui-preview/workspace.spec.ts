@@ -44,7 +44,7 @@ test("IME, Shift Enter, single send, approval, queue, stop and continue", async 
   await input.fill("先检查边界");
   await page.getByRole("button", { name: "排队", exact: true }).click();
   await expect(page.locator(".queue")).toContainText("1 条");
-  await page.getByRole("button", { name: "■ 停止" }).click();
+  await page.getByRole("button", { name: "停止" }).click();
   await expect(page.getByRole("button", { name: "正在停止…" })).toBeVisible();
   await expect(
     page.getByRole("button", { name: "继续任务", exact: true }),
@@ -62,12 +62,12 @@ test("task draft, pane and model selection survive relevant navigation", async (
   await page.reload();
   await expect(page.locator(".artifact-pane")).toBeVisible();
   await expect(input).toHaveValue("保留中文输入");
-  await page.getByRole("button", { name: /模型⌄/ }).click();
+  await page.getByRole("button", { name: /选择模型：/ }).click();
   await page.getByRole("button", { name: /Qwen · 演示/ }).click();
   await expect(
-    page.getByRole("button", { name: /Qwen · 演示 · 模型/ }),
+    page.getByRole("button", { name: /选择模型：Qwen · 演示/ }),
   ).toBeVisible();
-  await page.getByRole("button", { name: /模型⌄/ }).click();
+  await page.getByRole("button", { name: /选择模型：/ }).click();
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("button", { name: /模型⌄/ })).toBeFocused();
+  await expect(page.getByRole("button", { name: /选择模型：/ })).toBeFocused();
 });
