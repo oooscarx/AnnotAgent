@@ -260,6 +260,7 @@ pub(super) async fn launch(
             scope_hash: consent.scope_hash.clone(),
             repair: consent.repair.clone(),
             image_class_repair: consent.image_class_repair.clone(),
+            queued_plan: None,
         };
         let hash=annotagent_image_tools::sha256(&serde_json::to_vec(&json!({"execution":execution,"model":selected.safe_selection(),"settings":settings})).map_err(ApiError::internal)?);
         if saved.request_hash != hash {
@@ -334,6 +335,7 @@ pub(super) async fn launch(
         scope_hash: consent.scope_hash,
         repair: consent.repair,
         image_class_repair: consent.image_class_repair,
+        queued_plan: None,
     };
     state
         .application

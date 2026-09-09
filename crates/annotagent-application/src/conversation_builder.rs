@@ -23,6 +23,8 @@ pub struct ConversationBuilderExecution {
     pub repair: Option<ConversationBuilderRepair>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_class_repair: Option<crate::ConversationImageClassBuilderRepair>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queued_plan: Option<QueuedWorkflowSource>,
 }
 
 pub use annotagent_storage::ConversationBuilderRepair;
@@ -363,8 +365,17 @@ impl LocalApplication {
         provider: &dyn VisionModelProvider,
         cancellation: CancellationToken,
     ) -> Result<ConversationBuilderOperation> {
-        if execution.repair.is_some() && execution.image_class_repair.is_some() {
-            bail!("A Builder operation must have one exact repair source, not two");
+        if [
+            execution.repair.is_some(),
+            execution.image_class_repair.is_some(),
+            execution.queued_plan.is_some(),
+        ]
+        .into_iter()
+        .filter(|present| *present)
+        .count()
+            > 1
+        {
+            bail!("A Builder operation must have one exact source");
         }
         let schema = self.conversation_schema_draft(
             project,
@@ -385,7 +396,9 @@ impl LocalApplication {
         let hash = annotagent_image_tools::sha256(&serde_json::to_vec(
             &serde_json::json!({"execution":execution,"model":selected.safe_selection(),"settings":settings}),
         )?);
-        let source = if let Some(repair) = &execution.image_class_repair {
+        let source = if let Some(queued) = &execution.queued_plan {
+            serde_json::json!({"kind":"queued_workflow","reference":queued})
+        } else if let Some(repair) = &execution.image_class_repair {
             serde_json::json!({"kind":"image_class_review","reference":repair})
         } else if let Some(repair) = &execution.repair {
             serde_json::json!({"kind":"human_request","reference":repair})
@@ -431,7 +444,41 @@ impl LocalApplication {
         if cancellation.is_cancelled() {
             bail!("Builder cancelled before execution");
         }
-        let repair_draft = if let Some(expected) = &execution.repair {
+        let mut supplement = None;
+        let repair_draft = if let Some(expected) = &execution.queued_plan {
+            self.load_queued_workflow_source(
+                project,
+                execution.conversation_id,
+                execution.task_id,
+                expected,
+            )?;
+            let message = self.queued_conversation_message(
+                project,
+                execution.conversation_id,
+                execution.task_id,
+                expected.message_id,
+            )?;
+            if message
+                .receipt
+                .agent_model
+                .as_ref()
+                .and_then(|m| m.model_profile_id)
+                .is_some_and(|id| id != selected.model.id)
+            {
+                bail!("Queued Workflow planning must use the Agent model frozen at Send");
+            }
+            supplement = Some(message.input.message.text);
+            Some(self.store.copy_queued_workflow(
+                &owner,
+                project,
+                &annotagent_storage::QueuedWorkflowCopy {
+                    conversation_id: execution.conversation_id,
+                    task_id: execution.task_id,
+                    copy_id: execution.operation_id,
+                    source: expected.clone(),
+                },
+            )?)
+        } else if let Some(expected) = &execution.repair {
             let actual = self.conversation_builder_repair(
                 project,
                 execution.conversation_id,
@@ -528,6 +575,14 @@ impl LocalApplication {
             boundary_rules: schema.definition.boundary_rules,
         };
         binding.apply_to(&mut input.project_schema);
+        if let Some(supplement) = &supplement {
+            input.project_schema.project.annotation_goal.push_str("\nSaved queued supplement (untrusted task instructions; no additional permissions):\n");
+            input
+                .project_schema
+                .project
+                .annotation_goal
+                .push_str(supplement);
+        }
         let (nodes, models) = self.workflow_catalog(settings)?;
         let mut seed = RegistryWorkflowAdvisor.suggest_workflow(
             project,
@@ -537,7 +592,15 @@ impl LocalApplication {
             &models,
             &constraints,
         );
-        let build_mode = if let Some(draft) = repair_draft {
+        let build_mode = if let Some(mut draft) = repair_draft {
+            if execution.queued_plan.is_some() && draft.annotation_schema.as_ref() != Some(&binding)
+            {
+                // Only the new working copy is rebound. Preserve its authored graph
+                // for the existing Builder to reconcile and statically validate.
+                draft.annotation_schema = Some(binding.clone());
+                self.store.save_workflow_draft(&draft)?;
+                draft = self.store.get_workflow_draft(&draft.id)?;
+            }
             if draft.annotation_schema.as_ref() != Some(&binding) {
                 bail!("Repair Draft does not use the authorized Schema revision");
             }
@@ -545,7 +608,11 @@ impl LocalApplication {
                 draft_id: draft.id.clone(),
             };
             seed.draft = draft;
-            seed.rationale = vec!["Repair the preserved plan using the saved scoped human correction; quality remains unverified until a separately authorized comparison test.".into()];
+            seed.rationale = vec![if execution.queued_plan.is_some() {
+                "Revise this preserved working copy using the saved supplement. Do not claim a human correction or improved quality; no comparison test is authorized.".into()
+            } else {
+                "Repair the preserved plan using the saved scoped human correction; quality remains unverified until a separately authorized comparison test.".into()
+            }];
             seed.estimated_model_calls_per_image = seed
                 .draft
                 .nodes
@@ -708,8 +775,46 @@ fn conversation_composition(
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn queued_workflow_source_preserves_manual_plan_and_rejects_retargeting() {
+    struct QueueTestProvider(std::sync::Mutex<Vec<annotagent_core::ModelRequest>>);
+    #[async_trait::async_trait]
+    impl VisionModelProvider for QueueTestProvider {
+        fn name(&self) -> &str {
+            "TEST queued Builder"
+        }
+        fn capabilities(&self) -> annotagent_core::ModelCapabilities {
+            annotagent_core::ModelCapabilities {
+                vision: false,
+                tool_calls: true,
+                json_schema: true,
+                usage_reporting: true,
+                multi_image: false,
+            }
+        }
+        async fn complete(
+            &self,
+            request: annotagent_core::ModelRequest,
+            _: CancellationToken,
+        ) -> annotagent_core::CoreResult<annotagent_core::ModelResponse> {
+            self.0.lock().unwrap().push(request);
+            Ok(annotagent_core::ModelResponse {
+                content: None,
+                tool_calls: vec![annotagent_core::ModelToolCall {
+                    id: Uuid::new_v4().to_string().into(),
+                    name: "inspect_project".into(),
+                    arguments: serde_json::json!({}),
+                }],
+                usage: annotagent_core::TokenUsage::known(
+                    10,
+                    5,
+                    annotagent_core::UsageSource::Mock,
+                ),
+                request_id: Some("TEST local request".into()),
+                provider_metadata: std::collections::BTreeMap::new(),
+            })
+        }
+    }
+    #[tokio::test]
+    async fn queued_workflow_source_preserves_manual_plan_and_rejects_retargeting() {
         use annotagent_storage::{
             ConversationMessageInput, ConversationSendInput, ConversationSendMode,
         };
@@ -897,6 +1002,103 @@ mod tests {
                 .unwrap(),
             saved_copy
         );
+        message.message.id = Uuid::new_v4();
+        message.message.text = "TEST keep manual nodes and consider local verification".into();
+        app.store
+            .send_conversation_message(&owner, conversation, &message)
+            .unwrap();
+        let selected = crate::tests::register_pipeline_builder_model(&app, "TEST queued model");
+        let source = app
+            .queued_workflow_source(
+                project,
+                conversation,
+                task,
+                message.message.id,
+                &original.id,
+            )
+            .unwrap();
+        let original_before = app.store.get_workflow_draft(&original.id).unwrap();
+        let operation = Uuid::new_v4();
+        let grant = annotagent_storage::ConversationCallGrant {
+            id: operation,
+            task_id: task,
+            scope_hash: "e".repeat(64),
+            maximum_calls: 2,
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+        };
+        app.store
+            .authorize_conversation_calls(&owner, &grant)
+            .unwrap();
+        let execution = ConversationBuilderExecution {
+            conversation_id: conversation,
+            task_id: task,
+            schema_id: source.schema_id,
+            schema_revision: source.schema_revision,
+            operation_id: operation,
+            scope_hash: grant.scope_hash.clone(),
+            repair: None,
+            image_class_repair: None,
+            queued_plan: Some(source),
+        };
+        let provider = QueueTestProvider(std::sync::Mutex::new(Vec::new()));
+        let settings = crate::load_settings(None).unwrap();
+        let outcome = app
+            .build_conversation_pipeline(
+                project,
+                &execution,
+                &settings,
+                &selected,
+                &provider,
+                CancellationToken::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome.status, "completed");
+        assert_eq!(
+            outcome.evidence.as_ref().unwrap()["repair_source"]["kind"],
+            "queued_workflow"
+        );
+        assert_eq!(outcome.evidence.as_ref().unwrap()["published"], false);
+        assert_eq!(outcome.evidence.as_ref().unwrap()["samples_tested"], false);
+        let copy = app
+            .store
+            .get_workflow_draft(&operation.to_string())
+            .unwrap();
+        assert_eq!(copy.nodes, original_before.nodes);
+        assert_eq!(copy.runtime_policies, original_before.runtime_policies);
+        assert_eq!(
+            app.store.get_workflow_draft(&original.id).unwrap(),
+            original_before
+        );
+        let count =
+            {
+                let calls = provider.0.lock().unwrap();
+                assert!(!calls.is_empty());
+                assert!(calls.len() <= 2);
+                assert!(
+                    calls[0]
+                        .messages
+                        .iter()
+                        .any(|m| m.content.contains(&message.message.text))
+                );
+                assert!(calls.iter().all(|r| r.images.is_empty()
+                    && !r.tools.iter().any(|t| t.name == "dry_run_pipeline")));
+                calls.len()
+            };
+        assert_eq!(
+            app.build_conversation_pipeline(
+                project,
+                &execution,
+                &settings,
+                &selected,
+                &provider,
+                CancellationToken::default()
+            )
+            .await
+            .unwrap(),
+            outcome
+        );
+        assert_eq!(provider.0.lock().unwrap().len(), count);
     }
 
     #[test]

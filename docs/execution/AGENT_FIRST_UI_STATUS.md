@@ -1002,3 +1002,30 @@ This remains an internal copy primitive, not a new executor or a user-visible cl
 that an instruction was applied. Next integration must use explicit Builder consent,
 reuse this copy as the existing Builder's working Draft, and preserve cumulative
 budget and model scope. No live Provider calls, real workspace changes or push.
+
+## M3 existing Builder on a queued working copy — 2026-09-09
+
+ConversationBuilderExecution accepts an optional, exclusive queued-plan source.
+It revalidates exact source and frozen Agent model, admits the existing Builder
+operation, creates the atomic copy and uses that copy in the existing RepairDraft
+loop. No Runtime/Provider/Registry replacement was introduced. A separately approved
+semantic binding can be applied to the copy only, preserving its authored graph for
+Builder reconciliation and static validation. The original is never rebound.
+The saved supplement is added as untrusted annotation-goal context, now explicit in
+the existing Builder's initial user context. Provenance is `queued_workflow`, not
+human feedback. Plan still forces no dry-run tools and meters cumulative calls.
+
+Validation: expanded isolated Application source test passed (12489). Actual TEST
+Provider requests contain the exact supplement, carry no images or dry-run tool,
+stay within two calls and are not repeated on operation retry. The preserved copy's
+nodes/policies and unchanged original are checked, as are queued provenance and
+published=false / samples_tested=false. Full Application library: 156 passed,
+1 paid smoke explicitly ignored (98734). Strict Application/Server all-target/
+all-feature Clippy passed (61464). This fixture inspects the plan rather than proving
+a model-generated quality improvement; no Live accuracy claim is made.
+
+Next: expose this source in existing Builder preview/consent and the queue UI, with
+scoped recovery and ordered dispatch. Existing HTTP paths currently set queued_plan
+to None and retain their original behavior. Internal dispatch is connected, not yet
+a completed user-facing Workflow-edit journey. Goal remains active; no push or
+remote modification, no real workspace mutation.

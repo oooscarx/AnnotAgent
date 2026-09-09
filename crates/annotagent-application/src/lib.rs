@@ -12779,6 +12779,7 @@ impl LocalApplication {
                         "image_count": input.data_profile.image_count,
                     },
                     "target": {"task_id": input.target_task_id, "label": input.target_label},
+                    "annotation_goal": input.project_schema.project.annotation_goal,
                     "workflow_constraints": constraints,
                     "builder_constraints": builder_constraints,
                     "enabled_skill_summaries": input.enabled_skills,
