@@ -1,6 +1,31 @@
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
+test("native human geometry creation freezes requests and recovers without duplicate annotations",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const runs=await(await request.get("/api/runs?limit=50")).json();const run=runs.runs.find((r:{project_name:string})=>r.project_name==="TEST Agent UI HTTP fixture");expect(run).toBeTruthy();
+  const headers={"x-annotagent-csrf":(await(await request.get("/api/session")).json()).csrf_token};
+  let summary=await(await request.get(`/api/projects/${run.project_id}/summary`)).json();
+  if(!summary.project.annotation_schema.some((t:{display_name:string})=>t.display_name==="TEST Manual Box")){
+    const task=await request.post(`/api/projects/${run.project_id}/schema/tasks`,{headers,data:{display_name:"TEST Manual Box",kind:"bounding_box",labels:["TEST_manual_box"],attributes:{}}});expect(task.ok(),await task.text()).toBeTruthy();
+    summary=await(await request.get(`/api/projects/${run.project_id}/summary`)).json();
+  }
+  const base=(await(await request.get(`/api/runs/${run.id}/annotations`)).json()).annotations[0];expect(base).toBeTruthy();
+  const seedId=randomUUID();const seed=await request.post(`/api/runs/${run.id}/annotations`,{headers,data:{annotation:{...base,id:seedId,label:`${base.label} TEST`,source:"human",review_status:"needs_review",created_at:new Date().toISOString()}}});expect(seed.ok(),await seed.text()).toBeTruthy();
+  await page.goto(`/projects/${run.project_id}/manage/review/${seedId}`);await page.getByRole("button",{name:"补充遗漏标注…",exact:true}).click();const creation=page.locator(".native-human-annotation");await creation.getByRole("button",{name:/新增 TEST Manual Box/}).click();
+  await expect(creation.getByLabel("新增标注类别",{exact:true})).toHaveValue("TEST_manual_box");
+  const move=creation.getByRole("button",{name:"Move box with arrow keys",exact:true});await move.focus();await move.press("ArrowRight");
+  await creation.screenshot({path:"/tmp/annotagent-native-human-creation.png"});
+  const bodies:unknown[]=[];await page.route(`**/api/runs/${run.id}/annotations`,async route=>{if(route.request().method()!=="POST")return route.continue();bodies.push(route.request().postDataJSON());const response=await route.fetch();expect(response.ok()).toBeTruthy();if(bodies.length===1)await route.abort();else await route.fulfill({response});});
+  await creation.getByRole("button",{name:"保存新增标注",exact:true}).click();await expect(creation.getByRole("alert")).toBeVisible();await expect(creation.getByLabel("新增标注类别",{exact:true})).toBeDisabled();
+  page.on("dialog",d=>d.accept());await page.reload();await page.getByRole("button",{name:"补充遗漏标注…",exact:true}).click();await expect(creation.getByRole("button",{name:"使用原请求重试保存",exact:true})).toBeVisible();expect(bodies).toHaveLength(1);
+  await creation.getByRole("button",{name:"使用原请求重试保存",exact:true}).click();await expect(creation.getByRole("status")).toContainText("新增标注已保存");expect(bodies).toHaveLength(2);expect(bodies[1]).toEqual(bodies[0]);
+  const body=bodies[0] as {annotation:{id:string;value:{rect:number[]}}};expect(body.annotation.value.rect[0]).toBeGreaterThan(0.35);const all=(await(await request.get(`/api/runs/${run.id}/annotations`)).json()).annotations;expect(all.filter((a:{id:string})=>a.id===body.annotation.id)).toHaveLength(1);
+  const original=await(await request.get(`/api/projects/${run.project_id}/reviews/${seedId}`)).json();expect(original.annotation.review_status).toBe("needs_review");
+  await creation.getByRole("link",{name:"审核新增对象",exact:true}).click();await expect(page).toHaveURL(new RegExp(`/manage/review/${body.annotation.id}[?]queue_offset=0$`));await expect(page.getByLabel("标签",{exact:true})).toHaveValue("TEST_manual_box");
+  // Leave this isolated fixture's queue clean for the other Review scenario.
+  for(const id of [seedId,body.annotation.id]){const result=await request.post(`/api/projects/${run.project_id}/reviews/${id}/accept-and-next`,{headers,data:{decision:"accept",reason_code:"accepted_as_is",note:"TEST human creation verified"}});expect(result.ok(),await result.text()).toBeTruthy();}
+});
 test("native publication cancels without writes and rejects a changed confirmed revision",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");const nav=await(await request.get("/api/navigation")).json();const project=nav.items.find((p:{title:string})=>p.title==="TEST Agent UI HTTP fixture").project_id;
   const session=await(await request.get("/api/session")).json();const headers={"x-annotagent-csrf":session.csrf_token};const created=await request.post("/api/workflow-drafts",{headers,data:{project_id:project,from_template:false}});expect(created.ok()).toBeTruthy();const draft=await created.json();
@@ -340,7 +365,7 @@ test("native review preserves failed edits and advances only after a saved decis
   const session=await(await request.get("/api/session")).json();
   const old=await(await request.get(`/api/projects/${run.project_id}/reviews`)).json();
   for(const prior of old.reviews){
-    expect(prior.annotation.source).toBe("human");expect(prior.annotation.label).toMatch(/ TEST$/);
+    expect(prior.annotation.source).toBe("human");expect(prior.annotation.label).toMatch(/ TEST$|^TEST_manual_box$/);
     const outcome=await request.post(`/api/projects/${run.project_id}/reviews/${prior.review_id}/accept-and-next`,{headers:{"x-annotagent-csrf":session.csrf_token},data:{decision:"accept",reason_code:"accepted_as_is",note:"Finish an interrupted isolated review test"}});
     expect(outcome.ok(),await outcome.text()).toBeTruthy();
   }
