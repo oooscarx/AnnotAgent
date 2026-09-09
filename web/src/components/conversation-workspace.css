@@ -32,10 +32,18 @@
 .conversation-messages p { white-space: pre-wrap; }
 .conversation-messages button { text-align: start; white-space: normal; overflow-wrap: anywhere; }
 .conversation-composer { display: grid; gap: 10px; margin-top: auto; }
-.agent-composer-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
+.agent-composer-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-start; }
+.agent-composer-actions > button[type=submit] { margin-inline-start: auto; }
 .agent-composer-actions > small { flex-basis: 100%; }
 .agent-composer-actions > .agent-composer-mode { flex: 0 0 auto; width: auto; margin: 0; }
 .agent-composer-mode select { min-width: 7rem; width: auto; }
+.agent-composer-upload { position: relative; display: inline-flex; align-items: center; min-height: 44px; padding: 6px 10px; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-sm); cursor: pointer; }
+.agent-composer-upload input { position: absolute; inset: 0; opacity: 0; width: 100%; cursor: pointer; }
+.agent-composer-upload:focus-within { outline: 2px solid var(--aa-primary); outline-offset: 2px; }
+.agent-composer-upload:has(input:disabled) { opacity: .55; cursor: default; }
+.agent-composer-image { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-width: 0; }
+.agent-composer-image img { width: 56px; height: 56px; object-fit: contain; border: 1px solid var(--aa-border); border-radius: var(--aa-radius-sm); }
+.agent-composer-image span { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; }
 .conversation-composer textarea { width: 100%; min-width: 0; resize: vertical; }
 .conversation-composer small { overflow-wrap: anywhere; }
 .conversation-composer button { justify-self: end; }

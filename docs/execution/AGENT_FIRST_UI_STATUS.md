@@ -731,3 +731,46 @@ context/navigation assertions; no full legacy browser-suite pass is claimed.
 No backend/credential/Published Version/user-workspace mutation, push or remote change.
 Full compact thread/Plan blocks, attachment integration, queue/continuation and final
 visual/accessibility evidence remain unfinished.
+
+## M1/M4 continuation — real Composer image attachment, 2026-09-09
+
+Previous turn made verified progress in 6f3cc9b. Composer now exposes one PNG/JPEG
+attachment through the existing Project uploader; bulk dataset import remains in the
+image pane. No endpoint, executor or model connector was duplicated. Encoded image
+bytes are hashed with browser SHA-256 and matched to the refreshed owned dataset index,
+consistent with the existing importer. Filename collision, duplicates and list ordering
+do not choose the attachment. Empty/oversized files fail before upload; missing secure
+WebCrypto fails with a specific message rather than sending unverified content.
+
+The unsent attachment is pinned independently of the displayed canvas. A candidate
+reference must be explicitly removed before uploading a replacement image. Sending
+freezes the existing Image ID/hash contract with mode/model/task scope. Removing an
+attachment removes only the reference, not the saved image. Failed upload leaves the
+prior attachment unchanged. The original uploader still reports partial import errors.
+
+Unsent attachment metadata is currently protected by the navigation/unload dirty guard,
+including when text is empty; it is not advertised as a durable sent message. After
+Send admission, existing session retry/server receipt recovery persists the reference.
+Discarding an unsent attachment does not delete the uploaded dataset file. This is the
+single-image contract already supported by Send, not a claim of multi-image chat turns.
+
+Verification:
+- Typecheck/build and diff check passed. Web unit suite 242/49 passed (79708).
+- Attachment + Send 5/5 (29098), isolated `/tmp/annotagent-guided-e2e-69300`.
+- Expanded attachment + model picker + Plan/Execute 4/4 (82960), isolated
+  `/tmp/annotagent-guided-e2e-69541`: same-name distinct encoded TEST content resolves
+  the right image hash, duplicate upload adds no source, corrupt input preserves pin,
+  canvas changes do not retarget it, lost Send acknowledgement retries the identical
+  command, reload restores the saved reference, and the task has zero model calls.
+- Final attachment test including empty-text navigation guard passed (30636), isolated
+  `/tmp/annotagent-guided-e2e-69711`. Native confirm was dismissed and the task stayed
+  open. No claim of complete native-200%/IME validation is made from this test.
+- Actual 390px Composer screenshot inspected and retained as
+  `agent-composer-attachment-390.png`. Shortened the visible remove label while retaining
+  its accessible name, and adjusted flex wrapping after the first screenshot showed
+  filename squeezing. This TEST screenshot is partial evidence, not a final six-state
+  deliverable. The existing build chunk-size warning remains.
+
+All test images are repository synthetic fixtures; no real workspace, paid Provider,
+historical Published Version, remote or push was touched. Queue dispatch, continuation,
+compact Plan/tool blocks and full final regression remain incomplete.

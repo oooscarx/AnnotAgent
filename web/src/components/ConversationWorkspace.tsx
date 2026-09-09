@@ -46,6 +46,9 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
   const frozenAgentChoice = useRef<SendModel | undefined>(undefined);
   const [sendMode,setSendMode]=useState<SendMode>("plan");
   const frozenMode=useRef<SendMode>("plan");
+  const [composerAttachment,setComposerAttachment]=useState<ImageItem>();
+  const [suppressImageReference,setSuppressImageReference]=useState(false);
+  const attachmentDirty=useRef(false);
   const [rejectedModelSend, setRejectedModelSend] = useState(false);
   const [revisedSend, setRevisedSend] = useState(false);
   const [modelPickerGeneration, setModelPickerGeneration] = useState(0);
@@ -205,11 +208,11 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
     onNavigate(projectWorkPath(project.id,{conversationId:message.conversation_id,taskId:reference.task_id,draftId:reference.draft_id,sampleTestId:reference.sample_test_id,imageId:image.image_id,referenceMessageId:message.input.id}));
     setMobileView("images");
   }
-  const referenceImage = frozen.current ? images.find((image) => image.image_id === frozen.current?.image?.image_id) : results ? images.find(image=>image.image_id===results.imageId) : selected;
+  const referenceImage = frozen.current ? images.find((image) => image.image_id === frozen.current?.image?.image_id) : composerAttachment ?? (suppressImageReference ? undefined : results ? images.find(image=>image.image_id===results.imageId) : selected);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
-    const guard = () => changingPane.current || ((!formalGuard.current || formalGuard.current()) && (selectingImage.current || (!pending.current && (!(unsent.current || schemaDirty.current || sampleDirty.current || budgetDirty.current || feedbackScopeDirty.current.size) || window.confirm("Leave with unsaved message, Schema, budget, scope answer or sample edits? Saved workspace data remains on the server.")))));
-    const unload = (event: BeforeUnloadEvent) => { if (pending.current || unsent.current || schemaDirty.current || sampleDirty.current || budgetDirty.current || feedbackScopeDirty.current.size) event.preventDefault(); };
+    const guard = () => changingPane.current || ((!formalGuard.current || formalGuard.current()) && (selectingImage.current || (!pending.current && (!(unsent.current || attachmentDirty.current || schemaDirty.current || sampleDirty.current || budgetDirty.current || feedbackScopeDirty.current.size) || window.confirm("Leave with unsaved message, Schema, budget, scope answer or sample edits? Saved workspace data remains on the server.")))));
+    const unload = (event: BeforeUnloadEvent) => { if (pending.current || unsent.current || attachmentDirty.current || schemaDirty.current || sampleDirty.current || budgetDirty.current || feedbackScopeDirty.current.size) event.preventDefault(); };
     onNavigationGuardChange(guard);
     window.addEventListener("beforeunload", unload);
     return () => { onNavigationGuardChange(undefined); window.removeEventListener("beforeunload", unload); };
@@ -359,6 +362,7 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
         if(!alive.current)return;
       }
       setTasks(existing);
+      setComposerAttachment(undefined);attachmentDirty.current=false;
       sessionStorage.removeItem(sendStorageKey);
       frozen.current = undefined; frozenSend.current=undefined; frozenAgentChoice.current=undefined; setRejectedModelSend(false); setRevisedSend(false); unsent.current = ""; setText(""); setPinnedSelection(undefined); setStatus("Message sent and saved. No new model call was authorized.");
       if(receipt.disposition === "new_task"){
@@ -415,11 +419,20 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
     } catch(error){if(alive.current)setError((error as Error).message);}
     finally {pending.current=false;if(alive.current)setBusy(false);}
   }
-  async function upload(files: File[]) {
+  async function upload(files: File[],attach=false) {
     if (pending.current || !files.length) return;
+    if(attach&&(frozen.current||pinnedSelection)){setError("Remove the candidate reference or finish the pending send before attaching another image.");return;}
     pending.current = true; setBusy(true); setError("");
     workspaceQueries.invalidate(queryKeys.projectImages(project.id));
     try {
+      let attachmentHash:string|undefined;
+      if(attach){
+        if(files.length!==1||files[0].size===0||files[0].size>25*1024*1024)throw new Error("Choose one non-empty PNG or JPEG up to 25 MB.");
+        if(!crypto.subtle)throw new Error("Attaching an image requires HTTPS or localhost so the browser can verify its identity. No file was uploaded.");
+        // The existing importer preserves encoded bytes and indexes their SHA-256.
+        // Match that identity after upload, never the filename or first image.
+        attachmentHash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",await files[0].arrayBuffer())),value=>value.toString(16).padStart(2,"0")).join("");
+      }
       for (const [index, file] of files.entries()) {
         setStatus(`Uploading ${index + 1}/${files.length} to this AnnotAgent server…`);
         const result = await api.uploadImage(project.id, file);
@@ -428,7 +441,15 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
       const imageKey = queryKeys.projectImages(project.id);
       workspaceQueries.invalidate(imageKey);
       const dataset = await workspaceQueries.load(imageKey, signal => api.images(project.id, signal), { force: true });
-      if (alive.current) { setImages(dataset.images); setStatus("Images saved on this server. This upload did not start inference."); }
+      if (alive.current) {
+        setImages(dataset.images);
+        if(attach){
+          const image=dataset.images.find(image=>image.content_hash===attachmentHash);
+          if(!image)throw new Error("The uploaded image identity could not be recovered. No other image was attached; retry the upload.");
+          setComposerAttachment(image);setSuppressImageReference(false);attachmentDirty.current=true;
+          setStatus("Image saved on this server and attached to your unsent message. Send to save its reference; no model was called.");
+        }else setStatus("Images saved on this server. This upload did not start inference.");
+      }
     } catch (error) { if (alive.current) { setError((error as Error).message); setStatus("Completed uploads are retained. Reselect files to retry; identical content is deduplicated."); } }
     finally { pending.current = false; if (alive.current) setBusy(false); }
   }
@@ -506,11 +527,11 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
         {conversation && taskId && !goalMessage && <p role="status">{requestsReady ? "The selected annotation task is not available in this conversation. Select a saved message; no other task was substituted." : "Loading the selected annotation task…"}</p>}
         {activeRequest && ((activeRequest.status==="applied" && activeRequest.resume_draft_id) || (activeRequest.status==="pending"&&!activeRequest.deferred)) && <ConversationRepairCard key={activeRequest.input.id} project={project.id} request={activeRequest} editing={repairEditing} onPendingConsent={id=>setRequests(items=>items.some(item=>item.input.id===activeRequest.input.id && item.authorized_journey_id!==id) ? items.map(item=>item.input.id===activeRequest.input.id ? {...item,authorized_journey_id:id} : item) : items)} onAssistance={assistanceChanged} onSample={(draft,test,image)=>void openSample(draft,test,image)} />}
         </div>
-        <AgentComposer inputRef={messageInput} value={text} disabled={!ready || busy} inputLocked={Boolean(frozen.current)} mode={sendMode} onModeChange={setSendMode}
+        <AgentComposer inputRef={messageInput} value={text} disabled={!ready || busy} inputLocked={Boolean(frozen.current)} mode={sendMode} onModeChange={setSendMode} onAttachImage={file=>void upload([file],true)} attachmentDisabled={Boolean(pinnedSelection)||stopComposer}
           onChange={value=>{unsent.current=value;setText(value);}}
           onCompositionChange={value=>{composing.current=value;}}
           onSubmit={()=>{void send();}}
-          reference={stopComposer ? <small>{t("Standalone stop control · No LLM or image submission. Multiple active operations require an explicit choice.")}</small> : pinnedSelection?.input.reference?.scope === "sample_candidate" ? <div className="conversation-candidate-reference" aria-label="Message candidate reference"><strong>Only this saved candidate</strong><span>{pinnedSelection.name} · {pinnedSelection.input.reference.candidate_id} · Draft revision {pinnedSelection.input.reference.draft_revision}</span><small>Changing the displayed image does not change this reference. Saving the message does not edit the annotation.</small><button type="button" disabled={busy||Boolean(frozen.current)} onClick={()=>setPinnedSelection(undefined)}>Remove candidate reference</button></div> : <small>{referenceImage ? `Image reference: ${referenceImage.name}` : "No image reference · Project-level message"}</small>}
+          reference={stopComposer ? <small>{t("Standalone stop control · No LLM or image submission. Multiple active operations require an explicit choice.")}</small> : pinnedSelection?.input.reference?.scope === "sample_candidate" ? <div className="conversation-candidate-reference" aria-label="Message candidate reference"><strong>Only this saved candidate</strong><span>{pinnedSelection.name} · {pinnedSelection.input.reference.candidate_id} · Draft revision {pinnedSelection.input.reference.draft_revision}</span><small>Changing the displayed image does not change this reference. Saving the message does not edit the annotation.</small><button type="button" disabled={busy||Boolean(frozen.current)} onClick={()=>setPinnedSelection(undefined)}>Remove candidate reference</button></div> : referenceImage ? <div className="agent-composer-image" aria-label="Message image attachment"><img src={referenceImage.url} alt={`Attached image: ${referenceImage.name}`}/><span>{referenceImage.name}<small> · Image reference only</small></span><button type="button" aria-label="Remove image reference" disabled={busy||Boolean(frozen.current)} onClick={()=>{setComposerAttachment(undefined);setSuppressImageReference(true);attachmentDirty.current=false;}}>Remove</button></div> : <small>No image reference · Project-level message</small>}
           actions={<><AgentModelPicker key={`${project.id}:${modelPickerGeneration}`} project={project.id} conversation={conversation} onConversation={setConversation} onPreference={setAgentChoice} onSettings={()=>onNavigate(conversationSettingsPath(project.id,"models",navigationContext))}/>{stopComposer ? <button className="danger-button" disabled={!ready || busy} type="submit">{t(busy ? "Saving stop request…" : frozen.current ? "Retry same stop request" : taskId ? "Stop selected task" : "Stop active work")}</button> : <button className="primary" disabled={!ready || busy || !text.trim() || rejectedModelSend || ((!frozen.current || revisedSend) && !agentChoice)} type="submit">{busy ? "Sending…" : revisedSend ? "Send updated request" : frozen.current ? "Retry same send" : "Send"}</button>}</>} />
         {rejectedModelSend && <div className="conversation-consent" aria-label="Model selection changed before Send"><p>The server rejected this send before saving a message. Keep the same text and object references, but review the current model choice.</p><button type="button" disabled={busy} onClick={()=>void reviewRejectedSendModel()}>Review current model for this message</button></div>}
       </section>
