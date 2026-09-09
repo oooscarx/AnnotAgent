@@ -3,13 +3,14 @@ import type { api } from "../api";
 import type { RunDebugSummary, RunNodeArtifactInspection } from "../types";
 import {ArtifactPreview,artifactIdentity} from "./ArtifactPreview";
 import { Disclosure } from "./Disclosure";
+import {NodeReplay,type NodeReplayService} from "./NodeReplay";
 
-export type RunInspectorService = Pick<typeof api, "pipelineArtifacts" | "runDebugSummary">;
+export type RunInspectorService = Pick<typeof api, "pipelineArtifacts" | "runDebugSummary"> & NodeReplayService;
 export function assertInspection(value: RunNodeArtifactInspection, project: string, run: string) {
   if (value.project_id !== project || value.run_id !== run) throw new Error("节点产物不属于当前项目或运行。");
   return value;
 }
-export function RunInspector({ service, projectId, runId }: { service: RunInspectorService; projectId: string; runId: string }) {
+export function RunInspector({ service, projectId, runId, workspaceId }: { service: RunInspectorService; projectId: string; runId: string; workspaceId?:string }) {
   const [inspection, setInspection] = useState<RunNodeArtifactInspection>();
   const [summary, setSummary] = useState<RunDebugSummary>();
   const [error, setError] = useState("");
@@ -48,6 +49,7 @@ export function RunInspector({ service, projectId, runId }: { service: RunInspec
       }}><option value="">请选择节点</option>{inspection.nodes.map(n => <option value={n.node_id} key={n.node_id}>{n.operation} · {n.node_id} · {n.status}</option>)}</select></label>}
       {nodeId && !node && <p role="alert">所链接的节点不在本次执行中。请选择列表中的节点；没有自动替换为其他节点。</p>}
       {node && <article>
+        {workspaceId&&<NodeReplay key={node.node_id} workspaceId={workspaceId} projectId={projectId} runId={runId} nodeId={node.node_id} service={service}/>}
         <h3>{node.operation}</h3><p>{node.status} · {node.latency_ms} ms · 尝试 {node.attempts} 次 · {node.cache_hit ? "命中缓存" : "未命中缓存"}</p>
         <p>模型用量：{node.usage.input_tokens}/{node.usage.output_tokens} tokens · {Number(node.usage.cost) > 0 ? `$${node.usage.cost}` : "费用未核实"}</p>
         {node.route && <p>实际分支：{node.route}</p>}

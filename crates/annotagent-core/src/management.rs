@@ -103,6 +103,8 @@ pub struct PipelineLifecycleSummary {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManagementRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_scope: Option<String>,
     pub project_id: String,
     pub objects: Vec<ManagementObjectRef>,
     pub action: ManagementAction,
@@ -301,6 +303,7 @@ mod tests {
             expected_revision: 1,
         };
         let mut request = ManagementRequest {
+            history_scope: None,
             project_id: "project".to_owned(),
             objects: vec![object.clone(), object],
             action: ManagementAction::MoveToTrash,

@@ -75,6 +75,8 @@ export type Task = {
   loaded?: boolean;
   sample?: {id:string;draft:string;revision:number};
   imageResults?: Record<ImageId, {labels:string[]; risks:string[]}>;
+  geometryEvidence?: Record<ImageId,import("./geometryComparison").GeometrySample>;
+  excludedCandidates?: Record<ImageId,import("../sampleFeedbackOverlay").ExcludedSampleCandidate[]>;
   approval?: Approval;
   receipts?: {id:string; title:string; status:string; detail?:string; startedAt?:string; finishedAt?:string; durationMs?:number; stage?:string}[];
   queueEntries?: {id:string;text:string;status:string;canCancel:boolean;canPlan:boolean}[];
@@ -117,6 +119,7 @@ export type Snapshot = {
     project?: string;
     name: string;
     src: string;
+    thumbnail?: string;
     width: number;
     height: number;
   }[];
@@ -138,12 +141,17 @@ export type Command = {
 export interface WorkspaceAdapter {
   readonly deliveryIntake?: import("./DeliveryIntake").DeliveryIntakeService;
   readonly delivery?: import("./deliveryService").DeliveryService;
+  readonly taskFeedback?: import("./TaskFeedback").TaskFeedbackService;
+  readonly providerControls?: import("./ProviderControls").ProviderControlService;
+  readonly historyManagement?: import("./HistoryManagement").HistoryService;
   readonly reviewManagement?: import("./ReviewManagement").ReviewService;
   readonly runDetail?: import("./RunDetail").RunDetailService;
   readonly batchDetail?: import("./BatchDetail").BatchDetailService;
   readonly workflowEditor?: import("./WorkflowEditor").WorkflowEditorService;
   readonly workflowVersion?: import("./WorkflowVersionDetail").WorkflowVersionService;
   readonly exportManagement?: import("./ExportManagement").ExportService;
+  readonly taskExportHistory?: import("./TaskExportHistory").TaskExportService;
+  readonly taskSchemaDrafts?: import("./TaskSchemaDrafts").TaskSchemaService;
   readonly trashManagement?: import("./TrashManagement").TrashService;
   readonly projectManagement?: import("./ProjectManagement").ProjectManagementService;
   readonly runtimeSettingsManagement?: import("./RuntimeSettings").RuntimeSettingsService;

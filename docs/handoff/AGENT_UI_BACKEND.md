@@ -139,3 +139,22 @@ UIAPI-009 remains unfinished; its uncommitted history_scope/0059 work is preserv
 Delivered GET `/api/workflow-drafts/{id}?project_id=...` and POST `/api/workflow-drafts/{id}/validate` with required project_id/expected_revision. Static response carries the actual Draft identity/revision/content_hash and Core WorkflowValidationReport; wrong owner404, stale409, invalid request type422. Metadata-only catalog construction bypasses credential resolution and Provider/HTTP Worker construction while reusing existing Core/grammar/geometry checks. It performs no inference, plugin execution, sample-test, publication or writes. A valid static report does not assert live model readiness or publication approval. Full adapter contract: docs/contracts/agent-ui-v1/UIAPI-013_STATIC_VALIDATION.md.
 
 Delivery-only TEST checkout: Application159 unit +1 integration, Server60 passed; 3 existing ignored. Full workspace all-target Clippy -D warnings and fmt/diff checks passed. Regressions cover owner/revision/type failures, real type mismatch, no network, malformed endpoints, no sample/Run, unchanged Draft/Published snapshots, and metadata-only versus runtime authentication behavior. No migration or Web changes. No real workspace mutation, service restart, paid calls, push or merge. Commit SHA is supplied in the delivery message. Pending UIAPI-009 changes remain excluded.
+
+## UIAPI-009 implemented: immutable workspace history scope
+
+See `docs/contracts/agent-ui-v1/UIAPI-009_HISTORY_SCOPE.md` for the executable contract and isolated acceptance tests. Passive GET, preview plus explicit privileged idempotent establishment, persisted identity membership, SQL-filtered scoped pagination and management preview/action guards are implemented. Direct references and Published/annotation data remain unchanged. Migration0059 only adds scope tables; no real workspace scope was established. Frontend must send the returned scope ID explicitly on both lists and management requests.
+
+## UIAPI-014 native frozen versions and exact publication
+
+Implemented owned `GET /api/projects/{project_id}/workflows/{workflow_id}/versions/{version}` returning the actual complete frozen version. Existing Draft publish accepts exact `{command_id,project_id,expected_revision,expected_content_hash}` and atomically saves publication plus replay receipt; no new inference/Run. Additive migration0061; old Published snapshots remain unchanged. Full API/field/error/migration contract: `docs/contracts/agent-ui-v1/UIAPI-014_PUBLICATION.md`. This is separate from repair admission commit220576f.
+
+## UIAPI-016 exact clone
+
+Existing version clone POST now accepts complete `{project_id,source_snapshot_hash,command_id}`. First/replay201 return the same original creation Draft receipt; GET its ID for current edits. Owner/hash/scope checks and atomic durable receipt prevent duplicate copies. No Published/default changes or inference. Additive0062. Full contract and tests: `docs/contracts/agent-ui-v1/UIAPI-016_CLONE.md`. This supersedes the legacy-clone recovery gap recorded in UIAPI-015; empty-body legacy calls still lack recovery.
+
+Verification: publication/clone filter **10 passed**, existing legacy designer HTTP journey **1 passed**, zero failures. Storage/Server all-target strict clippy (`-D warnings`) and workspace fmt check passed.
+
+
+## UIAPI-017 bounded Replay delivery; live-binding gap remains
+
+Existing Replay path now has passive owned GET preview, exact scope-bound POST and durable GET command receipts. Core/frozen Mock sandbox only; live Provider/Plugin/current binding Replay explicitly refuses and remains a parity blocker. No automatic retry, source checkpoint/formal annotation/Published writes. Contract and bounded follow-up requirements: `docs/contracts/agent-ui-v1/UIAPI-017_REPLAY.md`. Additive0063.

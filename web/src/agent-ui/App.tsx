@@ -8,9 +8,13 @@ import type {
 } from "./adapter";
 import { Dialog } from "./Dialog";
 import { Disclosure } from "./Disclosure";
+import { TaskExportHistory } from "./TaskExportHistory";
+import { TaskSchemaDrafts } from "./TaskSchemaDrafts";
+import { TaskFeedback } from "./TaskFeedback";
 import { SidebarTitle } from "./SidebarTitle";
 import { ProjectManagement } from "./ProjectManagement";
 import { TrashManagement } from "./TrashManagement";
+import { HistoryManagement } from "./HistoryManagement";
 import { ReviewManagement } from "./ReviewManagement";
 import { RunDetail } from "./RunDetail";
 import { BatchDetail } from "./BatchDetail";
@@ -24,7 +28,7 @@ import { SettingsView } from "./Settings";
 import { ArtifactPane } from "./ArtifactPane";
 import { ExecutionProgress } from "./ExecutionProgress";
 import { DeliveryIntake } from "./DeliveryIntake";
-import { routeProject, taskLocation } from "./routes";
+import { routeProject, taskLocation, settingsTaskReturn } from "./routes";
 import { parseAgentRoute } from "./navigationContract";
 export const phaseNames: Record<Phase, string> = {
   idle: "准备任务",
@@ -91,7 +95,7 @@ export function AgentPreviewApp({
   const approvalPending = useRef(false);
   const owner = fixture ? null : routeProject(url);
   const selectedId = url.searchParams.get("task");
-  const task = (!fixture && !owner && !selectedId) ? undefined : state.tasks.find(t => (!owner || t.project === owner) &&
+  const task = (!fixture && !owner && (!selectedId || parseAgentRoute(url).kind !== "settings")) ? undefined : state.tasks.find(t => (!owner || t.project === owner) &&
     (!url.searchParams.get("conversation") || t.conversationId === url.searchParams.get("conversation")) &&
     (selectedId ? t.id === selectedId : owner ? t.id === `new:${owner}` : true));
   useEffect(()=>{
@@ -118,8 +122,8 @@ export function AgentPreviewApp({
   }, [state.projects.length]);
   const settingsRoute = parseAgentRoute(url);
   const settingsSections: Record<string, Section> = {general:"general",providers:"providers","agent-models":"agent","vision-models":"vision",plugins:"vision",storage:"privacy",privacy:"privacy",usage:"usage"};
-  const unknownSettings = !fixture && url.pathname.startsWith("/settings/") && settingsRoute.kind !== "settings";
-  const section = (settingsRoute.kind === "settings" ? settingsSections[settingsRoute.page] : url.searchParams.get("settings") || (url.pathname === "/settings" ? "general" : null)) as Section | null;
+  const unknownSettings = !fixture && settingsRoute.kind === "not-found";
+  const section = (settingsRoute.kind === "settings" ? settingsSections[settingsRoute.page] : fixture ? url.searchParams.get("settings") : null) as Section | null;
   const pane = ["image", "artifacts"].includes(url.searchParams.get("pane") || "");
   const theme = previewTheme || state.settings.theme;
   const en = state.settings.language === "en";
@@ -208,7 +212,7 @@ export function AgentPreviewApp({
       next.searchParams.delete("conversation");
       next.searchParams.delete("image");
     } else if (!fixture && values.settings === null && next.pathname.startsWith("/settings")) {
-      if(task) next = taskLocation(next, task.project);
+      if(task) next = settingsTaskReturn(next, task.project, task.id);
       else next = new URL("/projects", location.origin);
     }
     for (const [k, v] of Object.entries(values))
@@ -302,10 +306,11 @@ export function AgentPreviewApp({
         >
           <a
             className="brand"
-            href="?task=new"
+            href={fixture?"?task=new":"/projects"}
             onClick={(e) => {
               e.preventDefault();
-              navigate({ settings: null, task: state.tasks[0]?.id || null });
+              if(fixture)navigate({ settings: null, task: state.tasks[0]?.id || null });
+              else if(canNavigate()){history.pushState(null,"","/projects");setUrl(new URL(location.href));setMobileNav(false);}
             }}
           >
             <BrandMark />
@@ -417,7 +422,7 @@ export function AgentPreviewApp({
                       <p>
                         原应用中的数据、方案、处理记录、审核、导出与回收站保持不变。
                       </p>
-                      {fixture ? <p>此隔离界面尚未连接这些真实管理操作。</p> : <><a href={`/projects/${encodeURIComponent(task.project)}/manage/data`}>图片数据</a><a href={`/projects/${encodeURIComponent(task.project)}/manage/labels`}>标签定义</a><a href={`/projects/${encodeURIComponent(task.project)}/manage/review`}>审核标注</a><a href={`/projects/${encodeURIComponent(task.project)}/manage/export`}>导出标注</a><a href={`/projects/${encodeURIComponent(task.project)}/manage/trash`}>回收站</a><a href={`/projects/${encodeURIComponent(task.project)}`}>历史与其他管理（迁移中）</a></>}
+                      {fixture ? <p>此隔离界面尚未连接这些真实管理操作。</p> : <><a href={`/projects/${encodeURIComponent(task.project)}/manage/data`}>图片数据</a><a href={`/projects/${encodeURIComponent(task.project)}/manage/labels`}>标签定义</a><a href={`/projects/${encodeURIComponent(task.project)}/manage/review`}>审核标注</a><a href={`/projects/${encodeURIComponent(task.project)}/manage/export`}>导出标注</a><a href={`/projects/${encodeURIComponent(task.project)}/manage/trash`}>回收站</a><a href={`/projects/${encodeURIComponent(task.project)}/manage/pipelines`}>自动化方案</a><a href={`/projects/${encodeURIComponent(task.project)}/manage/runs`}>处理记录</a></>}
                   </ProjectMenu>
                 </>
               )}
@@ -430,7 +435,7 @@ export function AgentPreviewApp({
               <button onClick={() => setError("")}>关闭</button>
             </div>
           )}
-          {!fixture && settingsRoute.kind === "detail" && settingsRoute.page === "pipelines" && url.searchParams.has("version") && adapter.workflowVersion ? <WorkflowVersionDetail service={adapter.workflowVersion} projectId={settingsRoute.projectId} workflowId={settingsRoute.objectId} version={url.searchParams.get("version")||""}/> : !fixture && settingsRoute.kind === "detail" && settingsRoute.page === "pipelines" && adapter.workflowEditor ? <WorkflowEditor key={`${settingsRoute.projectId}:${settingsRoute.objectId}`} projectId={settingsRoute.projectId} draftId={settingsRoute.objectId} service={adapter.workflowEditor}/> : !fixture && settingsRoute.kind === "detail" && settingsRoute.page === "batches" && adapter.batchDetail ? <BatchDetail key={`${settingsRoute.projectId}:${settingsRoute.objectId}`} projectId={settingsRoute.projectId} batchId={settingsRoute.objectId} service={adapter.batchDetail}/> : !fixture && settingsRoute.kind === "detail" && settingsRoute.page === "runs" && adapter.runDetail ? <RunDetail key={`${settingsRoute.projectId}:${settingsRoute.objectId}`} projectId={settingsRoute.projectId} runId={settingsRoute.objectId} service={adapter.runDetail}/> : !fixture && settingsRoute.kind === "management" && settingsRoute.page === "export" && adapter.exportManagement ? <ExportManagement key={settingsRoute.projectId} projectId={settingsRoute.projectId} service={adapter.exportManagement}/> : !fixture && (settingsRoute.kind === "management" || settingsRoute.kind === "detail") && settingsRoute.page === "review" && adapter.reviewManagement && state.workspaceId ? <ReviewManagement key={url.pathname} projectId={settingsRoute.projectId} reviewId={settingsRoute.kind==="detail"?settingsRoute.objectId:undefined} workspaceId={state.workspaceId} service={adapter.reviewManagement}/> : !fixture && settingsRoute.kind === "management" && settingsRoute.page === "trash" && adapter.trashManagement && state.workspaceId ? <TrashManagement key={settingsRoute.projectId} projectId={settingsRoute.projectId} workspaceId={state.workspaceId} service={adapter.trashManagement}/> : !fixture && adapter.projectManagement && (settingsRoute.kind === "create-project" || (settingsRoute.kind === "management" && ["data","labels"].includes(settingsRoute.page))) ? <ProjectManagement key={url.pathname} service={adapter.projectManagement} projectId={settingsRoute.kind==="management"?settingsRoute.projectId:undefined} page={settingsRoute.kind==="create-project"?"create":settingsRoute.page as "data"|"labels"} created={async id=>{await adapter.refresh?.();history.pushState(null,"",`/projects/${encodeURIComponent(id)}/manage/data`);setUrl(new URL(location.href));}}/> : !fixture && settingsRoute.kind === "projects" ? <section className="native-project-manager"><h1>我的项目</h1><p>选择项目继续标注，或创建新的标注项目。</p><a className="primary" href="/projects/new">新建标注项目</a>{state.projects.map(p=><div className="settings-row" key={p.id}><strong>{p.title}</strong><a href={`/projects/${encodeURIComponent(p.id)}/work`}>继续工作</a><a href={`/projects/${encodeURIComponent(p.id)}/manage/data`}>管理数据</a></div>)}</section> : unknownSettings ? <section className="empty"><h1>页面不存在</h1><p>旧设置地址已停用，不会加载旧页面或猜测返回项目。</p><button onClick={()=>navigate({settings:"general"})}>打开设置</button></section> : section ? (
+          {!fixture && settingsRoute.kind === "management" && (settingsRoute.page === "pipelines" || settingsRoute.page === "runs") && adapter.historyManagement && state.workspaceId ? <HistoryManagement key={`${settingsRoute.projectId}:${settingsRoute.page}`} projectId={settingsRoute.projectId} workspaceId={state.workspaceId} kind={settingsRoute.page} service={adapter.historyManagement}/> : !fixture && settingsRoute.kind === "detail" && settingsRoute.page === "pipelines" && url.searchParams.has("version") && adapter.workflowVersion ? <WorkflowVersionDetail workspaceId={state.workspaceId} service={adapter.workflowVersion} projectId={settingsRoute.projectId} workflowId={settingsRoute.objectId} version={url.searchParams.get("version")||""}/> : !fixture && settingsRoute.kind === "detail" && settingsRoute.page === "pipelines" && adapter.workflowEditor ? <WorkflowEditor key={`${settingsRoute.projectId}:${settingsRoute.objectId}`} projectId={settingsRoute.projectId} draftId={settingsRoute.objectId} workspaceId={state.workspaceId} service={adapter.workflowEditor}/> : !fixture && settingsRoute.kind === "detail" && settingsRoute.page === "batches" && adapter.batchDetail ? <BatchDetail key={`${settingsRoute.projectId}:${settingsRoute.objectId}`} projectId={settingsRoute.projectId} batchId={settingsRoute.objectId} service={adapter.batchDetail}/> : !fixture && settingsRoute.kind === "detail" && settingsRoute.page === "runs" && adapter.runDetail ? <RunDetail workspaceId={state.workspaceId} key={`${settingsRoute.projectId}:${settingsRoute.objectId}`} projectId={settingsRoute.projectId} runId={settingsRoute.objectId} service={adapter.runDetail}/> : !fixture && settingsRoute.kind === "management" && settingsRoute.page === "export" && adapter.exportManagement ? <ExportManagement key={settingsRoute.projectId} projectId={settingsRoute.projectId} service={adapter.exportManagement}/> : !fixture && (settingsRoute.kind === "management" || settingsRoute.kind === "detail") && settingsRoute.page === "review" && adapter.reviewManagement && state.workspaceId ? <ReviewManagement key={url.pathname} projectId={settingsRoute.projectId} reviewId={settingsRoute.kind==="detail"?settingsRoute.objectId:undefined} workspaceId={state.workspaceId} service={adapter.reviewManagement}/> : !fixture && settingsRoute.kind === "management" && settingsRoute.page === "trash" && adapter.trashManagement && state.workspaceId ? <TrashManagement key={settingsRoute.projectId} projectId={settingsRoute.projectId} workspaceId={state.workspaceId} service={adapter.trashManagement}/> : !fixture && adapter.projectManagement && (settingsRoute.kind === "create-project" || (settingsRoute.kind === "management" && ["data","labels"].includes(settingsRoute.page))) ? <ProjectManagement workspaceId={state.workspaceId} key={url.pathname} service={adapter.projectManagement} projectId={settingsRoute.kind==="management"?settingsRoute.projectId:undefined} page={settingsRoute.kind==="create-project"?"create":settingsRoute.page as "data"|"labels"} created={async id=>{await adapter.refresh?.();history.pushState(null,"",`/projects/${encodeURIComponent(id)}/manage/data`);setUrl(new URL(location.href));}}/> : !fixture && settingsRoute.kind === "projects" ? <section className="native-project-manager"><h1>我的项目</h1><p>选择项目继续标注，或创建新的标注项目。</p><a className="primary" href="/projects/new">新建标注项目</a>{state.projects.map(p=><div className="settings-row" key={p.id}><strong>{p.title}</strong><a href={`/projects/${encodeURIComponent(p.id)}/work`}>继续工作</a><a href={`/projects/${encodeURIComponent(p.id)}/manage/data`}>管理数据</a></div>)}</section> : unknownSettings ? <section className="empty"><h1>页面不存在</h1><p>此地址不存在或已停用。不会加载旧页面、猜测所属项目或自动执行操作。</p><a href="/projects">返回项目列表</a><button onClick={()=>navigate({settings:"general"})}>打开设置</button></section> : section ? (
             <SettingsView
               key={section}
               adapter={adapter}
@@ -536,6 +541,9 @@ export function AgentPreviewApp({
                         {!fixture && !!task.stopTargets?.length && <div className="notice"><strong>请选择停止哪一项</strong>{task.stopTargets.map(t=><button key={t.id} onClick={()=>void act(()=>adapter.selectStop!(command(task),t.id))}>{t.label}</button>)}</div>}
                         {!fixture && task.processing?.map(p=><p key={p.id}>处理批次 · {p.status} <a href={p.url}>查看本次结果 →</a></p>)}
                         {!fixture && task.exports?.map(e=><p key={e.id}>导出 · {e.status} · {e.detail} {e.url && <a href={e.url} download>下载真实导出文件</a>}</p>)}
+                        {!fixture && task.conversationId && adapter.taskExportHistory && <TaskExportHistory key={`exports:${task.project}:${task.id}`} project={task.project} conversation={task.conversationId} task={task.id} service={adapter.taskExportHistory}/>}
+                        {!fixture && task.conversationId && state.workspaceId && adapter.taskSchemaDrafts && <TaskSchemaDrafts key={`schema:${task.project}:${task.id}`} project={task.project} conversation={task.conversationId} task={task.id} workspace={state.workspaceId} service={adapter.taskSchemaDrafts}/>}
+                        {!fixture && task.conversationId && state.workspaceId && adapter.taskFeedback && <TaskFeedback key={`feedback:${task.project}:${task.id}`} project={task.project} conversation={task.conversationId} task={task.id} workspace={state.workspaceId} service={adapter.taskFeedback}/>}
                         {!fixture && task.approval && <section className="plan-block"><strong>{task.approval.title}</strong><ul>{task.approval.scope.map((s,i)=><li key={i}>{s}</li>)}</ul><p>费用：{task.approval.budget ?? "未知；可能产生费用"}</p><button className="primary" disabled={approvalBusy} onClick={()=>setApproval(command(task))}>查看并确认授权</button>{approvalBusy && <p role="status">请求已提交，正在读取服务器执行状态；离开不会取消。</p>}</section>}
                         {task.plan && (
                           <PlanBlock

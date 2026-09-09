@@ -1,13 +1,18 @@
 import { api, ApiRequestError, request, type JourneyPreview, type JourneyConsent, type ProcessingAuthorization, type ProcessingReceipt } from "../api";
 import type { ImageItem, ProviderProfile, RegistryModelProfile, GlobalModelDefaults, ExpertPluginRegistry, InstalledModelInstance, ConversationSchemaPreview, ConversationCallReceipt, ConversationBuilderItem, WorkflowSampleTestRecord, SampleFeedbackRevision, ExportReadiness, ProjectExportResult } from "../types";
 import { terminalSampleAnnotations } from "../sampleAnnotations";
+import { historyScopeApi } from "./historyScope";
+import { historyManagementApi } from "./HistoryManagement";
 import { sampleFeedbackOverlay } from "../sampleFeedbackOverlay";
 import { callStage, failureDetail } from "./ExecutionProgress";
 import type { HumanRequest } from "../conversation-human-api";
-import type { QueuedMessage } from "../components/ConversationQueue";
+import { canCancelQueuedMessage, isPendingQueuedMessage, type QueuedMessage } from "../conversation-queue-state";
 import type { QueueConsent, QueuePreview } from "../conversation-queue-api";
 import type { SendCommand, SendReceipt } from "../conversation-send";
 import type { StopRequestRecord } from "../conversation-stop-api";
+import {ownedStopSelection} from "./stopSelection";
+import {taskFeedbackService} from "./TaskFeedback";
+import {stopTargetMatches} from "../conversation-control";
 import type { WorkspaceAdapter, Snapshot, Task, Command, Settings, ImageId, Box, Phase, Action } from "./adapter";
 import {readPendingDelivery,rememberPendingDelivery,clearPendingDelivery} from "./pendingDelivery";
 
@@ -32,6 +37,7 @@ type Thread = { id: string; role: "user"; task_id: string; project_owner_id: str
 type SafeSettings = { revision: string; sections: { data_privacy: { workspace_id: string }; usage_budget: { future_run_budget: Record<string, unknown> & { max_cost?: string } } } };
 export type Transport = <T>(path: string, init?: RequestInit) => Promise<T>;
 const esc = encodeURIComponent;
+const nativeTrashService = {...api, historyScope:historyScopeApi};
 const unsupported = (detail: string): never => { throw new Error(`尚未接通：${detail}。没有执行操作，也没有回退到演示结果。`); };
 const initialSettings: Settings = { revision: "", theme: "system", language: "zh", font: "标准", density: "舒适", collapsed: false, providers: [], defaultModel: "", plugins: [], allowExternal: false, cache: 0, budget: "", range: "未来 Run 默认预算" };
 
@@ -112,13 +118,18 @@ export class HttpAdapter implements WorkspaceAdapter {
   get modelProfileManagement() { return this.transport === request ? api : undefined; }
   get runtimeSettingsManagement() { return this.transport === request ? api : undefined; }
   get projectManagement() { return this.transport === request ? api : undefined; }
-  get trashManagement() { return this.transport === request ? api : undefined; }
+  get providerControls() { return this.transport === request ? api : undefined; }
+  get trashManagement() { return this.transport === request ? nativeTrashService : undefined; }
+  get historyManagement() { return this.transport === request ? historyManagementApi : undefined; }
   get reviewManagement() { return this.transport === request ? api : undefined; }
   get runDetail() { return this.transport === request ? api : undefined; }
   get batchDetail() { return this.transport === request ? api : undefined; }
   get workflowEditor() { return this.transport === request ? api : undefined; }
   get workflowVersion() { return this.transport === request ? api : undefined; }
   get exportManagement() { return this.transport === request ? api : undefined; }
+  get taskExportHistory() { return this.transport === request ? api : undefined; }
+  get taskSchemaDrafts() { return this.transport === request ? api : undefined; }
+  get taskFeedback() { return this.transport === request ? taskFeedbackService : undefined; }
   private async testEnvironment() {
     if(this.transport!==request)return false;
     const response=await fetch("/api/health",{credentials:"same-origin"});
@@ -211,7 +222,8 @@ export class HttpAdapter implements WorkspaceAdapter {
       if (ws) this.workspaces.set(id, ws);
       const artifacts = images.images.map(image => {
         if (!image.url.startsWith("/api/") || image.url.startsWith("//")) throw new Error("图片地址不是受控站内资源");
-        return { id: image.image_id, project, name: image.name, src: image.url, width: 0, height: 0 };
+        if(image.thumbnail_url&&!image.thumbnail_url.startsWith("/api/"))throw new Error("缩略图地址不是受控站内资源");
+        return { id: image.image_id, project, name: image.name, src: image.url, thumbnail:image.thumbnail_url, width: 0, height: 0 };
       });
       const current = this.task(id);
       const pendingApproval=this.stored<{id:string;url:string;body:unknown;execution?:string;view?:Task["approval"]}|null>(`approval.${id}`,null);
@@ -225,7 +237,7 @@ export class HttpAdapter implements WorkspaceAdapter {
       const sampleId = human?.input.sample_test_id || sampleOp?.id;
       const draftId = sampleOp?.draft_id;
       if(human&&!draftId)throw new Error("人工问题的 Sample 未提供所属 Draft 映射；不会把 checkpoint 当作 Draft ID");
-      const result: Partial<Task> = {human:undefined};
+      const result: Partial<Task> = {human:undefined,geometryEvidence:{},excludedCandidates:{}};
       const proposal=ws?.builder_operations?.items.find(item=>item.session?.builder_proposal)?.session?.builder_proposal;
       if(proposal) {
         const steps=proposal.draft.label_pipeline ? [...proposal.draft.label_pipeline.shared_stages.flatMap(s=>s.steps),...proposal.draft.label_pipeline.label_pipelines.flatMap(p=>p.steps)] : [];
@@ -253,10 +265,12 @@ export class HttpAdapter implements WorkspaceAdapter {
           const image=images.images.find(i=>i.image_id===input.image_id), asset=artifacts.find(a=>a.id===input.image_id);
           if(!image || !asset || image.content_hash!==input.content_hash) throw new Error("样例图片内容哈希已变化；不会替换原始证据");
           const sample=record.report.samples[index]; if(!sample) continue;
+          result.geometryEvidence![input.image_id]=sample;
           const feedback=await this.transport<{revisions:SampleFeedbackRevision[]}>(`/api/workflow-sample-tests/${esc(sampleId)}/images/${esc(input.image_id)}/feedback`,{signal:ctrl.signal});
           feedbackVersion+=`${input.image_id}:${feedback.revisions.at(-1)?.sequence || 0};`;
           const original=terminalSampleAnnotations(sample,input.image_id,sampleId);
-          const annotations=sampleFeedbackOverlay(original,feedback.revisions).annotations;
+          const overlay=sampleFeedbackOverlay(original,feedback.revisions);
+          const annotations=overlay.annotations;result.excludedCandidates![input.image_id]=overlay.excluded;
           const dims=await this.measure(asset.src);asset.width=dims.width;asset.height=dims.height;
           boxesByImage[input.image_id]=annotations.flatMap(a=>a.value.kind==="bounding_box"?[{id:a.id,label:a.label || "",x:a.value.rect[0]*dims.width,y:a.value.rect[1]*dims.height,w:a.value.rect[2]*dims.width,h:a.value.rect[3]*dims.height}]:[]);
           imageResults[input.image_id]={labels:annotations.flatMap(a=>a.value.kind==="classification"?a.value.labels:[]),risks:sample.projection?.review_candidates.map(r=>r.explanation.summary) || (sample.projection?[]:["旧样例没有终端投影，未显示中间框"])};
@@ -273,6 +287,9 @@ export class HttpAdapter implements WorkspaceAdapter {
       }
       const persistedStop = this.stored<{id:string}|null>(`stop.${id}`, null) || [...thread].reverse().find(t=>t.message.input.reference?.scope==="stop_request");
       const stop = persistedStop && ws ? await this.transport<StopRequestRecord & {normalized_state: Phase|null}>(`${this.conversation(project)}/stop-requests/${esc(persistedStop.id)}`, {signal:ctrl.signal}) : null;
+      const selectionRaw=persistedStop?this.storage?.getItem(this.key(`stop-selection.${id}.${persistedStop.id}`))||null:null;
+      const stopSelection=stop?ownedStopSelection(stop,p.conversation_id!,persistedStop!.id,selectionRaw):undefined;
+      if(stopSelection&&stop?.selected_target)this.save(`stop-selection.${id}.${persistedStop!.id}`,null);
       if (seq !== this.sequence) return;
       const receipts = [
         ...(ws?.calls || []).map(c=>({id:c.id,title:"模型结构化决策",status:c.status==="completed" && (c.failure || c.evidence?.decision?.Err) ? "invalid_result" : c.status,detail:failureDetail(c.failure) || c.evidence?.decision?.Ok?.rationale || c.evidence?.decision?.Err || c.evidence?.error,startedAt:c.started_at || undefined,finishedAt:c.completed_at || undefined,durationMs:c.duration_ms ?? undefined,stage:callStage(c.stage)})),
@@ -287,10 +304,10 @@ export class HttpAdapter implements WorkspaceAdapter {
         ...result, approval:pendingApproval?.view || t.approval, actions: {...ws?.actions || t.actions,answer:{available:!!result.human && ["classification","bounding_box"].includes(result.human.kind),reason:"仅保存当前人工作答的样例修正"}}, model: ws?.agent_model.model_profile_id || this.defaults.pipeline_builder || t.model,
         loaded:true, image: human?.input.image_id || artifacts[0]?.id || "", editBoxes: edits.revision===result.resultRevision ? edits.boxes || {} : {},
         phase, receipts, humanQuestion:human?.input.question,
-        stopTargets:stop?.status==="needs_selection"?stop.targets.map(t=>({id:`${t.kind}:${t.id}`,label:`${t.kind} · ${t.state}`})):[],
+        stopTargets:stop?.status==="needs_selection"?stop.targets.filter(t=>!stopSelection||stopTargetMatches(t,stopSelection.target)).map(target=>({id:`${target.kind}:${target.id}`,label:`${stopSelection?"核实原选择 · ":""}${this.state.tasks.find(t=>t.id===target.task_id)?.title||target.task_id} · ${target.kind} · ${target.id.slice(0,8)} · ${target.state}`})):[],
         resumeTargets:ws?.resume_actions?.filter(a=>a.available).map(a=>({id:`${a.kind}:${a.id}`,label:a.kind,reason:a.reason})),
-        queue: ws?.queue.filter(q => ["waiting_for_dispatch","authorized","running","in_doubt"].includes(q.status)).map(q => q.input.message.text) || [],
-        queueEntries: ws?.queue.map(q=>({id:q.input.message.id,text:q.input.message.text,status:q.status,canCancel:["waiting_for_dispatch","authorized","in_doubt"].includes(q.status),canPlan:!human&&q.status==="waiting_for_dispatch"&&!q.planning_call_id})),
+        queue: ws?.queue.filter(q => isPendingQueuedMessage(q.status)).map(q => q.input.message.text) || [],
+        queueEntries: ws?.queue.map(q=>({id:q.input.message.id,text:q.input.message.text,status:q.status,canCancel:canCancelQueuedMessage(q.status),canPlan:!human&&q.status==="waiting_for_dispatch"&&!q.planning_call_id})),
       }) });
     } catch (e) { if (seq !== this.sequence || ctrl.signal.aborted) return; this.emit({ error: (e as Error).message, artifacts: [] }); throw e; }
   };
@@ -418,9 +435,18 @@ export class HttpAdapter implements WorkspaceAdapter {
     if(!input || !task.stopTargets?.some(t=>t.id===target))throw new Error("停止目标已变化，请重新读取");
     const root=`${this.conversation(task.project)}/stop-requests/${esc(input.id)}`;
     const record=await this.transport<StopRequestRecord>(root);
+    const suffix=`stop-selection.${task.id}.${input.id}`;
+    const pending=ownedStopSelection(record,task.conversationId!,input.id,this.storage?.getItem(this.key(suffix))||null);
     const chosen=record.targets.find(t=>`${t.kind}:${t.id}`===target);
     if(!chosen)throw new Error("此目标不在已冻结的停止请求中");
-    await this.transport(`${root}/select`,{method:"POST",body:JSON.stringify({target:{kind:chosen.kind,id:chosen.id,task_id:chosen.task_id}})});
+    if(pending&&!stopTargetMatches(pending.target,chosen))throw new Error("原停止选择尚未核实，不能切换目标");
+    const selection=pending||{message_id:input.id,target:{kind:chosen.kind,id:chosen.id,task_id:chosen.task_id},pending:true};
+    if(!this.storage)throw new Error("无法保存停止目标恢复记录，未发送请求");
+    this.save(suffix,selection);
+    const result=await this.transport<StopRequestRecord>(`${root}/select`,{method:"POST",body:JSON.stringify({target:selection.target})});
+    ownedStopSelection(result,task.conversationId!,input.id,JSON.stringify(selection));
+    if(!result.selected_target||!stopTargetMatches(result.selected_target,selection.target))throw new Error("停止选择尚未被服务器确认");
+    this.save(suffix,null);
     await this.reloadCurrent(task);
   }
   async resumeOperation(c: Command, target?:string) {

@@ -11,8 +11,8 @@ export function ownedBatch(batch:DatasetBatchSummary,project:string,id:string) {
 export function batchControls(batch:DatasetBatchSummary):("pause"|"resume"|"cancel")[] {
   if(batch.in_trash)return [];
   if(batch.status==="running")return ["pause","cancel"];
-  if(batch.status==="paused")return ["resume","cancel"];
-  return batch.status==="pending"?["cancel"]:[];
+  if(batch.status==="paused"||batch.status==="pending")return ["resume","cancel"];
+  return [];
 }
 export function BatchDetail({service,projectId,batchId}:{service:BatchDetailService;projectId:string;batchId:string}) {
   const [batch,setBatch]=useState<DatasetBatchSummary>();const [error,setError]=useState("");const [message,setMessage]=useState("");const [busy,setBusy]=useState(false);const [reload,setReload]=useState(0);
@@ -27,7 +27,7 @@ export function BatchDetail({service,projectId,batchId}:{service:BatchDetailServ
     if(pending.current||!batch||!batchControls(batch).includes(action))return;
     if(!window.confirm(action==="resume"?"继续此批次的现有授权处理，可能继续产生模型费用；不会新建批次。继续？":action==="cancel"?"取消此批次尚未完成的处理？已保存结果不会因此删除。":"暂停此批次？已发出的请求不一定能立即中断。"))return;
     pending.current=true;setBusy(true);setError("");setMessage("");const signal=lifetime.current?.signal;
-    try{const current=ownedBatch((await service.batch(batchId,signal)).batch,projectId,batchId);if(!batchControls(current).includes(action))throw new Error("状态已变化，未发送控制请求");await service.controlBatch(batchId,action);if(!signal?.aborted){setMessage("服务器已响应，正在核实批次状态。");setReload(v=>v+1);}}
+    try{const current=ownedBatch((await service.batch(batchId,signal)).batch,projectId,batchId);if(signal?.aborted)return;if(!batchControls(current).includes(action))throw new Error("状态已变化，未发送控制请求");await service.controlBatch(batchId,action);if(!signal?.aborted){setMessage("服务器已响应，正在核实批次状态。");setReload(v=>v+1);}}
     catch(e){if(!signal?.aborted)setError(`${(e as Error).message}。未自动重试，请重新读取状态。`);}finally{pending.current=false;if(!signal?.aborted)setBusy(false);}
   };
   return <section className="native-project-manager" aria-label="批处理详情"><h1>批量处理</h1>

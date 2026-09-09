@@ -1,0 +1,19 @@
+import {useEffect,useMemo,useState} from "react";
+import type {api} from "../api";
+import {FutureProposalControls} from "./FutureProposalControls";
+import type {futureProposalApi,FutureProposalStatus,FutureProposalSource} from "../conversation-future-proposal-api";
+import {futureProposalDefinition,futureProposalPhase,futureProposalSourceMatches} from "../conversation-future-proposal";
+import type {FutureSchemaProvenance} from "../conversation-future-schema";
+import type {ConversationSchemaDraft} from "../types";
+import {Disclosure} from "./Disclosure";
+export function checkedFutureProposal(value:FutureProposalStatus,task:string,source:FutureProposalSource){
+  if(value.authorization.grant.task_id!==task||value.authorization.context.base_schema.task_id!==task||value.authorization.context.scope!=="future_tasks_only"||!futureProposalSourceMatches(value.authorization.source,source)||!futureProposalSourceMatches(value.authorization.context.source,source)||value.authorization.context.base_schema.id!==source.base_schema_id||value.authorization.context.base_schema.revision!==source.base_schema_revision)throw new Error("模型规则建议不属于当前基线与反馈范围");return value;
+}
+export function SavedFutureProposal({service,project,conversation,task,source,base,disabled,onAdopt,cancel,storageKey,onActive}:{service:typeof futureProposalApi;cancel:typeof api.cancelConversationSchema;storageKey:string;onActive:(active:boolean)=>void;project:string;conversation:string;task:string;source:FutureProposalSource;base:ConversationSchemaDraft;disabled:boolean;onAdopt:(proposal:FutureSchemaProvenance)=>void}){
+  const controls=useMemo(()=>({proposal:service,cancel}),[service,cancel]);
+  const [value,setValue]=useState<FutureProposalStatus|null>();const [error,setError]=useState("");const [generation,setGeneration]=useState(0);const [busy,setBusy]=useState(false);const identity=JSON.stringify(source);
+  useEffect(()=>{const c=new AbortController();setBusy(true);setError("");void service.read(project,conversation,task,source.feedback_call_id,c.signal).then(v=>{if(!c.signal.aborted)setValue(v?checkedFutureProposal(v,task,source):null);}).catch(e=>{if(!c.signal.aborted)setError((e as Error).message);}).finally(()=>{if(!c.signal.aborted)setBusy(false);});return()=>c.abort();},[service,project,conversation,task,identity,generation]);
+  const phase=value?futureProposalPhase(value):undefined;const proposal=value?.proposal&&"Ok"in value.proposal?value.proposal.Ok:null;
+  const adopt=()=>{if(!value||phase!=="draft"||disabled)return;if(!window.confirm("把这个已保存的模型建议载入编辑区？将替换当前未提交的字段，但不会保存、调用模型或执行方案。"))return;try{onAdopt({proposal_call_id:value.authorization.consent.call_id,proposal_digest:value.proposal_digest!,definition:futureProposalDefinition(base,proposal!)});}catch(e){setError((e as Error).message);}};
+  return <Disclosure title="模型辅助规则建议"><section aria-label="已保存的未来规则建议"><p>采用仅填入编辑区，仍需检查差异并明确保存。新建议需要单独确认授权。</p><FutureProposalControls service={controls} {...{project,conversation,task,source,storageKey,disabled}} onResult={setValue} onActive={onActive}/>{busy&&<p role="status">读取建议…</p>}{error&&<p role="alert">{error}</p>}{value===null&&!busy&&<p>没有已保存的模型规则建议。</p>}{value&&<><p role="status">{phase==="draft"?"建议可供人工检查":phase==="clarify"?"模型需要进一步澄清":phase==="unknown"?"远端结果未知，不自动重试":phase}</p><p>{value.authorization.summary.model_name} · {value.authorization.summary.destination}</p>{proposal&&<><p>{proposal.goal}</p><p>{proposal.decision.rationale}</p>{proposal.decision.decision==="clarify"?<p>{proposal.decision.question}</p>:<><ul>{proposal.decision.labels.map((v,i)=><li key={i}>{v}</li>)}</ul><ul>{proposal.decision.boundary_rules.map((v,i)=><li key={i}>{v}</li>)}</ul></>}</>}{value.error&&<p role="alert">{value.error}</p>}{phase==="draft"&&<button disabled={disabled||busy||!!error} onClick={adopt}>采用到规则编辑区</button>}</>}<button disabled={busy} onClick={()=>setGeneration(v=>v+1)}>读取最新模型建议</button></section></Disclosure>;
+}

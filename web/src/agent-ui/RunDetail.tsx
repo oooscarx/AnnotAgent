@@ -19,7 +19,7 @@ export function runControls(run:HistoryRun):("pause"|"resume"|"cancel")[] {
   if(run.status==="paused")return ["resume","cancel"];
   return ["pending","awaiting_review"].includes(run.status)?["cancel"]:[];
 }
-export function RunDetail({service,projectId,runId}:{service:RunDetailService;projectId:string;runId:string}) {
+export function RunDetail({service,projectId,runId,workspaceId}:{service:RunDetailService;projectId:string;runId:string;workspaceId?:string}) {
   const [run,setRun]=useState<HistoryRun>();
   const [annotations,setAnnotations]=useState<RunAnnotationInspection>();
   const [summary,setSummary]=useState<RunResultSummary>();
@@ -84,7 +84,7 @@ export function RunDetail({service,projectId,runId}:{service:RunDetailService;pr
       {sourceReviewPath(projectId,new URL(location.href))&&<a href={sourceReviewPath(projectId,new URL(location.href))}>返回来源审核项</a>}
       {versionLink(projectId,run.workflow_version_id)&&<a href={versionLink(projectId,run.workflow_version_id)}>查看运行的 Workflow 版本</a>}
       <button aria-expanded={debug} onClick={()=>{const next=!debug;setDebug(next);const url=new URL(location.href);url.searchParams.set("view",next?"debug":original?"original":"results");history.replaceState(history.state,"",url);}}>{debug?"返回结果画布":"查看执行详情"}</button>
-      {debug&&<RunInspector key={runId} service={service} projectId={projectId} runId={runId}/>}
+      {debug&&<RunInspector key={runId} service={service} projectId={projectId} runId={runId} workspaceId={workspaceId}/>}
       {run.terminal_reason&&<p>{run.terminal_reason}</p>}
       <div className="actions"><button disabled={busy} onClick={()=>setReload(v=>v+1)}>重新读取状态</button>{runControls(run).map(action=><button key={action} disabled={busy} onClick={()=>void control(action)}>{action==="pause"?"暂停":action==="resume"?"继续运行":"取消运行"}</button>)}</div>
       {run.controllable&&<p>离开页面不会取消运行。停止请使用取消运行。</p>}

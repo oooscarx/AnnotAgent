@@ -16,6 +16,7 @@ mod event_replay;
 mod export_jobs;
 mod image_previews;
 mod processing_operations;
+mod replay_commands;
 mod sample_operations;
 mod security;
 mod task_delivery;
@@ -623,6 +624,8 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route("/api/navigation", get(agent_ui::navigation))
         .route("/api/health", get(health))
         .route("/api/session", get(local_session))
+        .route("/api/history-scope", get(get_history_scope).post(establish_history_scope))
+        .route("/api/history-scope/preview", post(preview_history_scope))
         .route(
             "/api/session/privileged-confirmation",
             post(issue_privileged_confirmation),
@@ -844,6 +847,7 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
             "/api/workflows/{workflow_id}/versions/{version}/create-geometry-safe-draft",
             post(create_geometry_safe_draft),
         )
+        .route("/api/projects/{project_id}/workflows/{workflow_id}/versions/{version}", get(get_owned_workflow_version))
         .route("/api/workflows/compare", post(compare_workflow_versions))
         .route(
             "/api/projects/{project_id}/pipeline-improvements",
@@ -3291,13 +3295,86 @@ fn run_summary(
     }
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct HistoryScopeQuery {
+    history_scope: Option<String>,
+}
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HistoryScopePreviewRequest {
+    policy: String,
+}
+fn history_error(error: StorageError) -> ApiError {
+    let mut result = ApiError::management(error.into());
+    if result.body["code"] == "invalid_history_scope_request" {
+        result.status = StatusCode::BAD_REQUEST;
+        result.body["status"] = json!(400);
+    }
+    result.body["admitted"] = json!(false);
+    result
+}
+async fn get_history_scope(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
+    Ok(Json(
+        json!({"scope":state.application.store().history_scope().map_err(history_error)?}),
+    ))
+}
+async fn preview_history_scope(
+    State(state): State<ServerState>,
+    Json(request): Json<HistoryScopePreviewRequest>,
+) -> ApiResult<Json<annotagent_storage::HistoryScopePreview>> {
+    if request.policy != annotagent_storage::HISTORY_POLICY {
+        return Err(ApiError::bad_request("unsupported history scope policy"));
+    }
+    state
+        .application
+        .store()
+        .preview_history_scope()
+        .map(Json)
+        .map_err(history_error)
+}
+async fn establish_history_scope(
+    State(state): State<ServerState>,
+    Json(request): Json<annotagent_storage::EstablishHistoryScope>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    match state.application.store().establish_history_scope(&request) {
+        Ok((scope, created)) => Ok((
+            if created {
+                StatusCode::CREATED
+            } else {
+                StatusCode::OK
+            },
+            Json(json!({"scope":scope})),
+        )),
+        Err(error) => {
+            let mut result = history_error(error);
+            if result.body["code"] == "history_scope_already_established" {
+                result.body["scope"] = serde_json::to_value(
+                    state
+                        .application
+                        .store()
+                        .history_scope()
+                        .map_err(history_error)?,
+                )
+                .map_err(ApiError::internal)?;
+            }
+            Err(result)
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct TrashQuery {
+    history_scope: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
     kind: Option<ManagementObjectKind>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 struct PipelineLifecycleQuery {
+    history_scope: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
     #[serde(default)]
     include_archived: bool,
     #[serde(default)]
@@ -3309,6 +3386,26 @@ async fn list_project_pipeline_lifecycle(
     AxumPath(project_id): AxumPath<String>,
     Query(query): Query<PipelineLifecycleQuery>,
 ) -> ApiResult<Json<Value>> {
+    if let Some(id) = query.history_scope.as_deref() {
+        let owner = state
+            .application
+            .management_scope(&project_id)
+            .map_err(ApiError::management)?;
+        let page = state
+            .application
+            .store()
+            .list_pipeline_lifecycle_scoped(
+                &owner,
+                id,
+                query.include_archived,
+                query.include_deleted,
+                PageRequest::bounded(query.limit, query.offset),
+            )
+            .map_err(history_error)?;
+        return Ok(Json(
+            json!({"pipelines":page.items,"page":{"total":page.total,"limit":page.limit,"offset":page.offset,"next_offset":page.next_offset}}),
+        ));
+    }
     let pipelines = state
         .application
         .list_pipeline_lifecycle(&project_id, query.include_archived, query.include_deleted)
@@ -3319,8 +3416,13 @@ async fn list_project_pipeline_lifecycle(
 async fn preview_project_management(
     State(state): State<ServerState>,
     AxumPath(project_id): AxumPath<String>,
+    Query(query): Query<HistoryScopeQuery>,
     Json(mut request): Json<ManagementRequest>,
 ) -> ApiResult<Json<ManagementPreview>> {
+    if request.history_scope.is_some() && request.history_scope != query.history_scope {
+        return Err(ApiError::bad_request("history_scope must match the query"));
+    }
+    request.history_scope = query.history_scope;
     if request.project_id != project_id {
         return Err(ApiError::bad_request(
             "request project_id must match the Project route",
@@ -3337,8 +3439,13 @@ async fn preview_project_management(
 async fn execute_project_management(
     State(state): State<ServerState>,
     AxumPath(project_id): AxumPath<String>,
-    Json(request): Json<ManagementRequest>,
+    Query(query): Query<HistoryScopeQuery>,
+    Json(mut request): Json<ManagementRequest>,
 ) -> ApiResult<(StatusCode, Json<ManagementReceipt>)> {
+    if request.history_scope.is_some() && request.history_scope != query.history_scope {
+        return Err(ApiError::bad_request("history_scope must match the query"));
+    }
+    request.history_scope = query.history_scope;
     if request.project_id != project_id {
         return Err(ApiError::bad_request(
             "request project_id must match the Project route",
@@ -3357,6 +3464,25 @@ async fn list_project_trash(
     AxumPath(project_id): AxumPath<String>,
     Query(query): Query<TrashQuery>,
 ) -> ApiResult<Json<Value>> {
+    if let Some(id) = query.history_scope.as_deref() {
+        let owner = state
+            .application
+            .management_scope(&project_id)
+            .map_err(ApiError::management)?;
+        let page = state
+            .application
+            .store()
+            .list_trash_scoped(
+                &owner,
+                id,
+                query.kind,
+                PageRequest::bounded(query.limit, query.offset),
+            )
+            .map_err(history_error)?;
+        return Ok(Json(
+            json!({"items":page.items,"page":{"total":page.total,"limit":page.limit,"offset":page.offset,"next_offset":page.next_offset}}),
+        ));
+    }
     let entries: Vec<TrashEntry> = state
         .application
         .list_trash(&project_id, query.kind)
@@ -3398,16 +3524,20 @@ fn product_runs(
     project_id: Option<ProjectId>,
     request: PageRequest,
 ) -> ApiResult<SummaryPage<RunSummary>> {
+    product_runs_scoped(state, project_id, request, None)
+}
+fn product_runs_scoped(
+    state: &ServerState,
+    project_id: Option<ProjectId>,
+    request: PageRequest,
+    history_scope: Option<&str>,
+) -> ApiResult<SummaryPage<RunSummary>> {
     let route_ids = project_route_ids(state)?;
-    let page = if let Some(project_id) = project_id {
-        state
-            .application
-            .store()
-            .list_project_runs_summary(project_id, request)
-    } else {
-        state.application.store().list_executions_summary(request)
-    }
-    .map_err(ApiError::internal)?;
+    let page = state
+        .application
+        .store()
+        .list_run_summaries_scoped(project_id, request, history_scope)
+        .map_err(history_error)?;
     Ok(SummaryPage {
         items: page
             .items
@@ -4488,10 +4618,93 @@ struct DryRunWorkflowRequest {
     authorization_fingerprint: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PublishWorkflowRequest {
+    command_id: uuid::Uuid,
+    project_id: String,
+    expected_revision: u64,
+    expected_content_hash: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmptyWorkflowPublication {}
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum WorkflowPublicationBody {
+    Exact(PublishWorkflowRequest),
+    Legacy(EmptyWorkflowPublication),
+}
+fn publication_error(error: anyhow::Error) -> ApiError {
+    if let Some(StorageError::WorkflowDraftRevisionConflict { expected, current }) =
+        error.downcast_ref::<StorageError>()
+    {
+        return ApiError {
+            status: StatusCode::CONFLICT,
+            body: json!({"status":409,"code":"workflow_draft_revision_conflict","error":"Workflow Draft changed; reload before publishing","expected_revision":expected,"current_revision":current}),
+        };
+    }
+    if let Some(StorageError::Management { .. }) = error.downcast_ref::<StorageError>() {
+        return ApiError::management(error);
+    }
+    ApiError::bad_request(error)
+}
+async fn get_owned_workflow_version(
+    State(state): State<ServerState>,
+    AxumPath((project_id, workflow_id, version)): AxumPath<(String, String, u32)>,
+) -> ApiResult<Json<annotagent_core::PublishedWorkflowVersion>> {
+    state
+        .application
+        .project_path(&project_id)
+        .map_err(ApiError::not_found)?;
+    let frozen = state
+        .application
+        .store()
+        .get_published_workflow_version(&workflow_id, version)
+        .map_err(ApiError::not_found)?;
+    if frozen.project_id != project_id {
+        return Err(ApiError::not_found(
+            "Published Workflow was not found in this Project",
+        ));
+    }
+    Ok(Json(frozen))
+}
+
 async fn publish_workflow(
     State(state): State<ServerState>,
     AxumPath(draft_id): AxumPath<String>,
+    request: Option<Json<WorkflowPublicationBody>>,
 ) -> ApiResult<Json<Value>> {
+    let command = request
+        .and_then(|Json(body)| match body {
+            WorkflowPublicationBody::Exact(request) => Some(request),
+            WorkflowPublicationBody::Legacy(_) => None,
+        })
+        .map(|request| annotagent_storage::WorkflowPublicationCommand {
+            command_id: request.command_id,
+            project_id: request.project_id,
+            draft_id: draft_id.clone(),
+            expected_revision: request.expected_revision,
+            expected_content_hash: request.expected_content_hash,
+        });
+    if let Some(command) = &command {
+        state
+            .application
+            .project_path(&command.project_id)
+            .map_err(ApiError::not_found)?;
+        if let Some(result) = state
+            .application
+            .store()
+            .workflow_publication_result(command)
+            .map_err(|e| publication_error(e.into()))?
+        {
+            return Ok(Json(json!(result)));
+        }
+        let draft = read_owned_workflow_draft(&state, &draft_id, &command.project_id)?;
+        command
+            .check_draft(&draft)
+            .map_err(|e| publication_error(e.into()))?;
+    }
     let settings = state.settings.read().await.clone();
     let (draft, _) = state
         .application
@@ -4523,17 +4736,14 @@ async fn publish_workflow(
             ));
         }
     }
-    let version = match state.application.publish_workflow(&draft_id, &settings) {
-        Ok(version) => version,
-        Err(error)
-            if error
-                .to_string()
-                .contains("workflow_draft_revision_conflict:") =>
-        {
-            return Err(ApiError::revision_conflict(error));
-        }
-        Err(error) => return Err(ApiError::bad_request(error)),
+    let result = if let Some(command) = &command {
+        state
+            .application
+            .publish_workflow_command(command, &settings)
+    } else {
+        state.application.publish_workflow(&draft_id, &settings)
     };
+    let version = result.map_err(publication_error)?;
     Ok(Json(json!(version)))
 }
 
@@ -4548,10 +4758,43 @@ async fn archive_workflow_draft(
     Ok(Json(json!(draft)))
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CloneWorkflowRequest {
+    command_id: uuid::Uuid,
+    project_id: String,
+    source_snapshot_hash: String,
+}
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum WorkflowCloneBody {
+    Exact(CloneWorkflowRequest),
+    Legacy(EmptyWorkflowPublication),
+}
+
 async fn clone_workflow_version(
     State(state): State<ServerState>,
     AxumPath((workflow_id, version)): AxumPath<(String, u32)>,
+    request: Option<Json<WorkflowCloneBody>>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
+    if let Some(Json(WorkflowCloneBody::Exact(request))) = request {
+        state
+            .application
+            .project_path(&request.project_id)
+            .map_err(ApiError::not_found)?;
+        let draft = state
+            .application
+            .store()
+            .clone_workflow_version_command(&annotagent_storage::WorkflowCloneCommand {
+                command_id: request.command_id,
+                project_id: request.project_id,
+                workflow_id,
+                version,
+                source_snapshot_hash: request.source_snapshot_hash,
+            })
+            .map_err(|e| publication_error(e.into()))?;
+        return Ok((StatusCode::CREATED, Json(json!(draft))));
+    }
     let draft = state
         .application
         .clone_workflow_version(&workflow_id, version)
@@ -5359,6 +5602,7 @@ fn pipeline_artifact_coordinates(artifact: &PipelineArtifact) -> Value {
 
 #[derive(Debug, Default, Deserialize)]
 struct SummaryPageQuery {
+    history_scope: Option<String>,
     limit: Option<usize>,
     offset: Option<usize>,
     project_id: Option<String>,
@@ -5383,10 +5627,11 @@ async fn list_run_summaries(
                 })
         })
         .transpose()?;
-    let page = product_runs(
+    let page = product_runs_scoped(
         &state,
         stable_project_id,
         PageRequest::bounded(query.limit, query.offset),
+        query.history_scope.as_deref(),
     )?;
     Ok(Json(json!({
         "runs": page.items,
@@ -6133,11 +6378,12 @@ async fn list_batches(
     let page = state
         .application
         .store()
-        .list_batch_summaries(
+        .list_batch_summaries_scoped(
             query.project_id.as_deref(),
             PageRequest::bounded(query.limit, query.offset),
+            query.history_scope.as_deref(),
         )
-        .map_err(ApiError::internal)?;
+        .map_err(history_error)?;
     let batches = page
         .items
         .into_iter()
@@ -6392,7 +6638,11 @@ async fn get_run_debug_summary(
 async fn replay_run_from_node(
     State(state): State<ServerState>,
     AxumPath((run_id, node_id)): AxumPath<(String, String)>,
+    request: Option<Json<replay_commands::ExactReplayRequest>>,
 ) -> ApiResult<Json<Value>> {
+    if let Some(Json(request)) = request {
+        return replay_commands::execute(state, run_id, node_id, request).await;
+    }
     let run_id = parse_run_id(&run_id)?;
     let settings = state.settings.read().await.clone();
     let replay = state
@@ -11708,6 +11958,322 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn history_scope_http_confirmation_restart_lists_and_management_fail_closed() {
+        let temp = tempfile::tempdir().unwrap();
+        let app = Arc::new(LocalApplication::new(temp.path()).unwrap());
+        let yaml = "version: 1\nproject:\n  name: TEST history\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n";
+        for project in ["TEST-owner", "TEST-other"] {
+            app.create_project(project, yaml).unwrap();
+        }
+        let draft = |id: &str, project: &str| {
+            serde_json::from_value::<WorkflowDraft>(json!({"id":id,"project_id":project,"name":id,"status":"editing","nodes":[],"edges":[],"created_at":Utc::now(),"updated_at":Utc::now()})).unwrap()
+        };
+        app.store()
+            .save_workflow_draft(&draft("TEST-old", "TEST-owner"))
+            .unwrap();
+        let service = router(
+            test_state(app.clone(), Arc::new(InMemorySecretStore::default())).await,
+            None,
+        );
+        for _ in 0..2 {
+            let (status, body) = call_json(
+                &service,
+                axum::http::Method::GET,
+                "/api/history-scope",
+                Value::Null,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(body["scope"].is_null());
+        }
+        let (status, body) = call_json(
+            &service,
+            axum::http::Method::GET,
+            "/api/projects/TEST-owner/pipelines?history_scope=unknown",
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["code"], "history_scope_not_established");
+        let (_, preview) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/history-scope/preview",
+            json!({"policy":annotagent_storage::HISTORY_POLICY}),
+        )
+        .await;
+        assert_eq!(preview["excluded_counts"]["pipeline"], 1);
+        let mut command = json!({"command_id":uuid::Uuid::new_v4(),"expected_scope_revision":null,"expected_snapshot_hash":preview["expected_snapshot_hash"],"policy":annotagent_storage::HISTORY_POLICY,"confirmed":true});
+        // Valid same-origin/CSRF without the privileged nonce cannot establish a boundary.
+        let mut headers =
+            security_headers(&service, &axum::http::Method::POST, "/api/history-scope").await;
+        headers.remove(security::PRIVILEGED_CONFIRMATION_HEADER);
+        let mut request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/history-scope")
+            .header("content-type", "application/json")
+            .body(Body::from(command.to_string()))
+            .unwrap();
+        request.headers_mut().extend(headers);
+        assert_eq!(
+            service.clone().oneshot(request).await.unwrap().status(),
+            StatusCode::FORBIDDEN
+        );
+        assert!(app.store().history_scope().unwrap().is_none());
+        let mut unconfirmed = command.clone();
+        unconfirmed["confirmed"] = json!(false);
+        assert_eq!(
+            call_json(
+                &service,
+                axum::http::Method::POST,
+                "/api/history-scope",
+                unconfirmed
+            )
+            .await
+            .0,
+            StatusCode::BAD_REQUEST
+        );
+        app.store()
+            .save_workflow_draft(&draft("TEST-old2", "TEST-owner"))
+            .unwrap();
+        let (status, error) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/history-scope",
+            command.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(error["code"], "history_scope_snapshot_changed");
+        assert_eq!(error["admitted"], false);
+        assert!(app.store().history_scope().unwrap().is_none());
+        let (_, preview) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/history-scope/preview",
+            json!({"policy":annotagent_storage::HISTORY_POLICY}),
+        )
+        .await;
+        command["expected_snapshot_hash"] = preview["expected_snapshot_hash"].clone();
+        let (status, established) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/history-scope",
+            command.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{established}");
+        let id = established["scope"]["id"].as_str().unwrap();
+        let (status, replay) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/history-scope",
+            command.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(replay, established);
+        let mut changed = command.clone();
+        changed["expected_snapshot_hash"] = json!("changed");
+        let (status, error) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/history-scope",
+            changed,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(error["code"], "history_scope_command_conflict");
+        let mut different = command.clone();
+        different["command_id"] = json!(uuid::Uuid::new_v4());
+        let (status, error) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/history-scope",
+            different,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(error["code"], "history_scope_already_established");
+        assert_eq!(error["scope"], established["scope"]);
+        let reopened = Arc::new(LocalApplication::new(temp.path()).unwrap());
+        let second = router(
+            test_state(reopened, Arc::new(InMemorySecretStore::default())).await,
+            None,
+        );
+        assert_eq!(
+            call_json(
+                &second,
+                axum::http::Method::GET,
+                "/api/history-scope",
+                Value::Null
+            )
+            .await
+            .1,
+            established
+        );
+        assert_eq!(
+            call_json(
+                &second,
+                axum::http::Method::POST,
+                "/api/history-scope",
+                command
+            )
+            .await,
+            (StatusCode::OK, established.clone())
+        );
+        for path in [
+            "/api/projects/TEST-owner/pipelines",
+            "/api/projects/TEST-owner/trash",
+            "/api/runs",
+            "/api/batches",
+        ] {
+            let (status, error) = call_json(
+                &service,
+                axum::http::Method::GET,
+                &format!("{path}?history_scope=foreign"),
+                Value::Null,
+            )
+            .await;
+            assert_eq!(status, StatusCode::CONFLICT, "{path}: {error}");
+            assert_eq!(error["code"], "history_scope_mismatch");
+        }
+        for (key, project) in [
+            ("TEST-new-a", "TEST-owner"),
+            ("TEST-new-b", "TEST-owner"),
+            ("TEST-foreign", "TEST-other"),
+        ] {
+            app.store()
+                .save_workflow_draft(&draft(key, project))
+                .unwrap();
+        }
+        let (_, first) = call_json(
+            &service,
+            axum::http::Method::GET,
+            &format!("/api/projects/TEST-owner/pipelines?history_scope={id}&limit=1"),
+            Value::Null,
+        )
+        .await;
+        let (_, second_page) = call_json(
+            &service,
+            axum::http::Method::GET,
+            &format!("/api/projects/TEST-owner/pipelines?history_scope={id}&limit=1&offset=1"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(first["page"]["total"], 2);
+        assert_eq!(first["page"]["next_offset"], 1);
+        assert_eq!(first["pipelines"].as_array().unwrap().len(), 1);
+        assert_eq!(second_page["page"]["total"], 2);
+        assert!(second_page["page"]["next_offset"].is_null());
+        assert_ne!(
+            first["pipelines"][0]["workflow_id"],
+            second_page["pipelines"][0]["workflow_id"]
+        );
+        let (_, legacy) = call_json(
+            &service,
+            axum::http::Method::GET,
+            "/api/projects/TEST-owner/pipelines",
+            Value::Null,
+        )
+        .await;
+        assert_eq!(legacy["pipelines"].as_array().unwrap().len(), 4);
+        assert_eq!(
+            call_json(
+                &service,
+                axum::http::Method::GET,
+                "/api/workflow-drafts/TEST-old?project_id=TEST-owner",
+                Value::Null
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        let management = |target: &str| json!({"project_id":"TEST-owner","objects":[{"kind":"workflow_draft","id":target,"expected_revision":1}],"action":"move_to_trash","idempotency_key":format!("TEST-{target}")});
+        for action in ["preview", "actions"] {
+            let (status, error) = call_json(
+                &service,
+                axum::http::Method::POST,
+                &format!("/api/projects/TEST-owner/management/{action}?history_scope={id}"),
+                management("TEST-old"),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CONFLICT);
+            assert_eq!(error["code"], "history_object_out_of_scope");
+        }
+        let (status, foreign_preview) = call_json(
+            &service,
+            axum::http::Method::POST,
+            &format!("/api/projects/TEST-owner/management/preview?history_scope={id}"),
+            management("TEST-foreign"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(foreign_preview["can_execute"], false);
+        assert!(
+            foreign_preview["blockers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|b| b["code"] == "foreign_project_object")
+        );
+        let mut foreign_request = management("TEST-foreign");
+        foreign_request["confirmation_token"] = foreign_preview["confirmation_token"].clone();
+        let (status, error) = call_json(
+            &service,
+            axum::http::Method::POST,
+            &format!("/api/projects/TEST-owner/management/actions?history_scope={id}"),
+            foreign_request,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(error["code"], "foreign_project_object");
+        let mut deletion = management("TEST-new-a");
+        let (_, preview) = call_json(
+            &service,
+            axum::http::Method::POST,
+            &format!("/api/projects/TEST-owner/management/preview?history_scope={id}"),
+            deletion.clone(),
+        )
+        .await;
+        assert_eq!(preview["can_execute"], true, "{preview}");
+        deletion["confirmation_token"] = preview["confirmation_token"].clone();
+        // Dropping scope cannot reuse a scoped preview's confirmation.
+        assert_eq!(
+            call_json(
+                &service,
+                axum::http::Method::POST,
+                "/api/projects/TEST-owner/management/actions",
+                deletion.clone()
+            )
+            .await
+            .0,
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            call_json(
+                &service,
+                axum::http::Method::POST,
+                &format!("/api/projects/TEST-owner/management/actions?history_scope={id}"),
+                deletion
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        let (_, trash) = call_json(
+            &service,
+            axum::http::Method::GET,
+            &format!("/api/projects/TEST-owner/trash?history_scope={id}&limit=1"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(trash["page"]["total"], 1);
+        assert_eq!(trash["items"][0]["object"]["id"], "TEST-new-a");
+        assert!(app.store().get_workflow_draft("TEST-old").is_ok());
+    }
+
+    #[tokio::test]
     async fn owned_static_validation_is_revisioned_core_only_and_never_executes() {
         let temp = tempfile::tempdir().unwrap();
         let app = Arc::new(LocalApplication::new(temp.path()).unwrap());
@@ -15664,6 +16230,226 @@ export:
     }
 
     #[tokio::test]
+    async fn owned_publication_http_exact_confirmation_frozen_get_and_lost_response() {
+        let temp = tempfile::tempdir().unwrap();
+        let app = Arc::new(LocalApplication::new(temp.path()).unwrap());
+        for project in ["TEST-publish-owner", "TEST-publish-other"] {
+            app.create_project(
+                project,
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .unwrap();
+        }
+        let state = test_state(app.clone(), Arc::new(InMemorySecretStore::default())).await;
+        let mut settings = annotagent_application::load_settings(None).unwrap();
+        settings.default_provider = "mock".into();
+        let draft = app
+            .create_workflow_draft_with_template(
+                "TEST-publish-owner",
+                &settings,
+                false,
+                Some("robocup.ball.vlm-bootstrap"),
+            )
+            .unwrap();
+        annotagent_image_tools::generate_synthetic_robocup(
+            &temp.path().join("TEST-publish-owner/images/TEST.png"),
+        )
+        .unwrap();
+        // Test-only preparation executes the existing Mock sample path. Publication itself must not execute it again.
+        app.dry_run_workflow_samples(&draft.id, &settings, &[0])
+            .await
+            .unwrap();
+        let saved = app.store().get_workflow_draft(&draft.id).unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        settings.provider.endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
+        settings.provider.api_key_env = "TEST_PUBLICATION_NO_CREDENTIAL".into();
+        *state.settings.write().await = settings;
+        let service = router(state, None);
+        let uri = format!("/api/workflow-drafts/{}/publish", draft.id);
+        let body = json!({"command_id":uuid::Uuid::new_v4(),"project_id":"TEST-publish-owner","expected_revision":saved.revision,"expected_content_hash":saved.content_hash});
+        let mut wrong = body.clone();
+        wrong["project_id"] = json!("TEST-publish-other");
+        assert_eq!(
+            call_json(&service, axum::http::Method::POST, &uri, wrong)
+                .await
+                .0,
+            StatusCode::NOT_FOUND
+        );
+        wrong = body.clone();
+        wrong["expected_revision"] = json!(saved.revision + 1);
+        let (status, error) = call_json(&service, axum::http::Method::POST, &uri, wrong).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(error["current_revision"], saved.revision);
+        wrong = body.clone();
+        wrong["expected_content_hash"] = json!("TEST-wrong");
+        let (status, error) = call_json(&service, axum::http::Method::POST, &uri, wrong).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(error["code"], "workflow_draft_content_conflict");
+        assert!(
+            app.store()
+                .list_published_workflow_versions(None)
+                .unwrap()
+                .is_empty()
+        );
+        let before_samples =
+            serde_json::to_value(app.store().get_workflow_sample_test(&draft.id).unwrap()).unwrap();
+        let before_runs = app
+            .store()
+            .list_run_summaries_scoped(None, annotagent_storage::PageRequest::default(), None)
+            .unwrap()
+            .total;
+        let (status, frozen) =
+            call_json(&service, axum::http::Method::POST, &uri, body.clone()).await;
+        assert_eq!(status, StatusCode::OK, "{frozen}");
+        assert_eq!(frozen["draft"]["revision"], saved.revision);
+        assert_eq!(frozen["draft"]["content_hash"], saved.content_hash);
+        assert!(frozen["snapshot"]["draft"].is_object());
+        let version_uri = format!(
+            "/api/projects/TEST-publish-owner/workflows/{}/versions/{}",
+            draft.id, frozen["version"]
+        );
+        assert_eq!(
+            call_json(&service, axum::http::Method::GET, &version_uri, Value::Null).await,
+            (StatusCode::OK, frozen.clone())
+        );
+        assert_eq!(
+            call_json(
+                &service,
+                axum::http::Method::GET,
+                &version_uri.replace("TEST-publish-owner", "TEST-publish-other"),
+                Value::Null
+            )
+            .await
+            .0,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            call_json(
+                &service,
+                axum::http::Method::GET,
+                &format!(
+                    "/api/projects/TEST-publish-owner/workflows/{}/versions/999",
+                    draft.id
+                ),
+                Value::Null
+            )
+            .await
+            .0,
+            StatusCode::NOT_FOUND
+        );
+        // Exact clone has its own durable command; publication replay must not be
+        // confused with cloning a second editable copy.
+        let clone_uri = format!(
+            "/api/workflows/{}/versions/{}/clone",
+            draft.id, frozen["version"]
+        );
+        let clone_body = json!({"command_id":uuid::Uuid::new_v4(),"project_id":"TEST-publish-owner","source_snapshot_hash":frozen["content_hash"]});
+        let mut wrong_clone = clone_body.clone();
+        wrong_clone["project_id"] = json!("TEST-publish-other");
+        assert_eq!(
+            call_json(&service, axum::http::Method::POST, &clone_uri, wrong_clone)
+                .await
+                .0,
+            StatusCode::NOT_FOUND
+        );
+        wrong_clone = clone_body.clone();
+        wrong_clone["source_snapshot_hash"] = json!("wrong");
+        let (status, error) =
+            call_json(&service, axum::http::Method::POST, &clone_uri, wrong_clone).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(error["code"], "workflow_clone_source_conflict");
+        let (status, cloned) = call_json(
+            &service,
+            axum::http::Method::POST,
+            &clone_uri,
+            clone_body.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let mut edited: annotagent_core::WorkflowDraft =
+            serde_json::from_value(cloned.clone()).unwrap();
+        edited.name = "TEST edited after lost clone response".into();
+        app.store().save_workflow_draft(&edited).unwrap();
+        let mut copy = app
+            .clone_workflow_version(
+                &draft.id,
+                u32::try_from(frozen["version"].as_u64().unwrap()).unwrap(),
+            )
+            .unwrap();
+        copy.name = "TEST independently edited clone".into();
+        app.store().save_workflow_draft(&copy).unwrap();
+        assert_eq!(
+            call_json(&service, axum::http::Method::GET, &version_uri, Value::Null).await,
+            (StatusCode::OK, frozen.clone())
+        );
+        let restarted = Arc::new(LocalApplication::new(temp.path()).unwrap());
+        let service2 = router(
+            test_state(restarted, Arc::new(InMemorySecretStore::default())).await,
+            None,
+        );
+        assert_eq!(
+            call_json(&service2, axum::http::Method::POST, &uri, body.clone()).await,
+            (StatusCode::OK, frozen.clone())
+        );
+        assert_eq!(
+            call_json(
+                &service2,
+                axum::http::Method::POST,
+                &clone_uri,
+                clone_body.clone()
+            )
+            .await,
+            (StatusCode::CREATED, cloned.clone())
+        );
+        assert_eq!(
+            app.store()
+                .get_workflow_draft(cloned["id"].as_str().unwrap())
+                .unwrap()
+                .name,
+            "TEST edited after lost clone response"
+        );
+        let mut changed_clone = clone_body;
+        changed_clone["source_snapshot_hash"] = json!("changed");
+        let (status, error) = call_json(
+            &service2,
+            axum::http::Method::POST,
+            &clone_uri,
+            changed_clone,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(error["code"], "workflow_clone_command_conflict");
+        wrong = body;
+        wrong["expected_revision"] = json!(saved.revision + 1);
+        let (status, error) = call_json(&service2, axum::http::Method::POST, &uri, wrong).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(error["code"], "workflow_publication_command_conflict");
+        assert_eq!(
+            app.store()
+                .list_published_workflow_versions(None)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            serde_json::to_value(app.store().get_workflow_sample_test(&draft.id).unwrap()).unwrap(),
+            before_samples
+        );
+        assert_eq!(
+            app.store()
+                .list_run_summaries_scoped(None, annotagent_storage::PageRequest::default(), None)
+                .unwrap()
+                .total,
+            before_runs
+        );
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(30), listener.accept())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
     async fn duplicate_project_start_returns_structured_409_conflict() {
         let temp = tempfile::tempdir().expect("temp");
         let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
@@ -16257,6 +17043,95 @@ export:
         assert_eq!(debug_summary["failed_node_count"], json!(0));
         assert_eq!(debug_summary["issues"], json!([]));
 
+        let replay_path = format!("/api/runs/{run_id}/replay/scene.day.classifier");
+        let preview = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("{replay_path}?project_id=http-label"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(preview["available"], true, "{preview}");
+        assert_eq!(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("{replay_path}?project_id=TEST-foreign"),
+                None
+            )
+            .await
+            .status(),
+            StatusCode::NOT_FOUND
+        );
+        let command = uuid::Uuid::new_v4();
+        let body = json!({"project_id":"http-label","command_id":command,"scope_hash":preview["scope_hash"],"maximum_model_requests":0,"allow_unknown_cost":false});
+        let mut wrong = body.clone();
+        wrong["scope_hash"] = json!("stale");
+        assert_eq!(
+            request(
+                &service,
+                axum::http::Method::POST,
+                &replay_path,
+                Some(wrong)
+            )
+            .await
+            .status(),
+            StatusCode::CONFLICT
+        );
+        let first = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                &replay_path,
+                Some(body.clone()),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(first["command_id"], command.to_string());
+        let receipt_path = format!("{replay_path}/commands/{command}?project_id=http-label");
+        let mut receipt = first;
+        for _ in 0..100 {
+            receipt = response_json(
+                request(&service, axum::http::Method::GET, &receipt_path, None).await,
+            )
+            .await;
+            if receipt["status"] != "running" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(receipt["status"], "completed", "{receipt}");
+        assert_eq!(receipt["result"]["sandbox"], true);
+        assert_eq!(
+            response_json(
+                request(
+                    &service,
+                    axum::http::Method::POST,
+                    &replay_path,
+                    Some(body.clone())
+                )
+                .await
+            )
+            .await,
+            receipt
+        );
+        let mut changed = body;
+        changed["maximum_model_requests"] = json!(1);
+        assert_eq!(
+            request(
+                &service,
+                axum::http::Method::POST,
+                &replay_path,
+                Some(changed)
+            )
+            .await
+            .status(),
+            StatusCode::CONFLICT
+        );
         let replay = response_json(
             request(
                 &service,

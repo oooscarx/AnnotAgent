@@ -8,7 +8,8 @@ it("rejects foreign project or run artifact responses",()=>{
   expect(()=>assertInspection(value,"other","r")).toThrow();
   expect(()=>assertInspection(value,"p","other")).toThrow();
 });
-it("keeps inspector read-only and independent of the old root",()=>{
+it("keeps saved inspection independent of old root and legacy synchronous Replay",()=>{
   expect(source).not.toContain("../App");expect(source).not.toContain("replayNode");
   expect(source).toContain("controller.abort()");expect(source).toContain("popstate");
+  expect(source).toContain("<NodeReplay");
 });

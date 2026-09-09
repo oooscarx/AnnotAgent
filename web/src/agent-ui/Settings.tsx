@@ -15,6 +15,10 @@ import { PluginSettings } from "./PluginSettings";
 import { ModelProfiles } from "./ModelProfiles";
 import { RuntimeSettings } from "./RuntimeSettings";
 import { VisionWorkers } from "./VisionWorkers";
+import { ProviderControls } from "./ProviderControls";
+import { ProviderPresetPicker } from "./ProviderPresetPicker";
+import { ProbeUsage } from "./ProbeUsage";
+import { isEnvironmentVariableName } from "../providerCatalog";
 function Row({
   title,
   help,
@@ -62,7 +66,8 @@ export function SettingsView({
   const [saved, setSaved] = useState("");
   const [editor, setEditor] = useState<Provider | null>(null);
   const [credential, setCredential] = useState("");
-  useEffect(()=>{setCredential("");},[editor?.id]);
+  const [credentialSource,setCredentialSource]=useState<"workspace_file"|"environment_variable"|"session_only">("workspace_file");
+  useEffect(()=>{setCredential("");setCredentialSource("workspace_file");},[editor?.id]);
   const [confirm, setConfirm] = useState<{
     title: string;
     body: string;
@@ -283,6 +288,7 @@ export function SettingsView({
                       <h2>
                         {editor.id.startsWith("new-") ? "添加账户" : "编辑账户"}
                       </h2>
+                      {!fixture && editor.id.startsWith("new-") && adapter.providerControls && <ProviderPresetPicker service={adapter.providerControls} onSelect={preset=>setEditor({...editor,name:preset.display_name,endpoint:preset.base_url})}/>}
                       <label>
                         显示名称
                         <input
@@ -320,14 +326,16 @@ export function SettingsView({
                         </select>
                       </label>}
                       {!fixture && !editor.id.startsWith("new-") && <div>
-                        <label>替换 API Key（只写）<input type="password" autoComplete="new-password" value={credential} onChange={e=>setCredential(e.target.value)} /></label>
-                        <p>保存到服务器本地工作区文件，重启后保留；不使用系统钥匙串，不写入浏览器存储。</p>
-                        <button disabled={!credential.trim() || saving || !adapter.saveCredential} onClick={()=>void run(async()=>{setSaving(true);try{await adapter.saveCredential!(editor.id,credential);setCredential("");setEditor({...editor,credential:true});setSaved("凭证已由服务器保存；不会返回密钥内容");}finally{setSaving(false);}})}>保存新凭证</button>
+                        <label>凭证存储<select value={credentialSource} onChange={e=>{setCredentialSource(e.target.value as typeof credentialSource);setCredential("");}}><option value="workspace_file">本地工作区文件（重启保留）</option><option value="environment_variable">服务器环境变量引用</option><option value="session_only">仅服务器当前进程（重启清除）</option></select></label>
+                        <label>{credentialSource==="environment_variable"?"环境变量名称":"替换 API Key（只写）"}<input type={credentialSource==="environment_variable"?"text":"password"} autoComplete="new-password" value={credential} onChange={e=>setCredential(e.target.value)} /></label>
+                        <p>{credentialSource==="workspace_file"?"保存到服务器本地工作区文件，重启后保留。":credentialSource==="environment_variable"?"只填写服务器中已有的变量名称，不要粘贴密钥；重启后的可用性由服务器启动环境决定。":"仅存于服务器进程，重启后需要重新输入。"}不使用系统钥匙串，不写入浏览器存储。</p>
+                        <button disabled={!credential.trim() || saving || !adapter.providerControls || (credentialSource==="environment_variable"&&!isEnvironmentVariableName(credential.trim()))} onClick={()=>void run(async()=>{setSaving(true);try{const result=await adapter.providerControls!.saveProviderCredential(editor.id,{source:credentialSource,...(credentialSource==="environment_variable"?{environment_variable:credential.trim()}:{secret:credential})});if(result.provider_id!==editor.id||!result.credential_configured||result.credential_source!==credentialSource)throw new Error("凭证回执不匹配，请刷新服务器状态核实。没有自动重试。");setCredential("");setEditor({...editor,credential:true});setSaved("凭证引用已由服务器保存；不会返回密钥内容");await adapter.refresh?.();}finally{setSaving(false);}})}>保存新凭证</button>
                         {saved && <p role="status">{saved}</p>}
                       </div>}
                       <p>
                         {fixture ? "不提供 API Key 输入框。" : "只显示凭证是否已配置，不会读取原密钥。"}不要在名称或 Endpoint 中填写密钥。
                       </p>
+                      {!fixture && !editor.id.startsWith("new-") && adapter.providerControls && <ProviderControls providerId={editor.id} service={adapter.providerControls} onChanged={async()=>{await adapter.refresh?.();}}/>}
                       <div className="actions">
                         <button onClick={() => setEditor(null)}>
                           取消账户编辑
@@ -597,6 +605,7 @@ export function SettingsView({
               )}
               {section === "usage" && (
                 <>
+                  {!fixture && adapter.modelProfileManagement && <ProbeUsage service={adapter.modelProfileManagement}/>}
                   <Row title="统计范围" help={fixture ? "示例数据不是你的真实 API 用量。" : "仅未来 Run 默认预算；Task 账本、Provider probe 与正式执行不是同一个统计范围。"}>
                     <select
                       disabled={!fixture}

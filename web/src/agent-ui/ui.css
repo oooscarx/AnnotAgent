@@ -1053,7 +1053,19 @@ caption {
 .ui-app .lifecycle-impact dd { margin: 4px 0 0; font-weight: 600; }
 .ui-app .native-project-manager > .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-block: 20px; }
 .ui-app .native-project-manager input[type="checkbox"] { width: auto; }
+.ui-app .native-history label:has(> input[type="checkbox"]) { display: inline-flex; align-items: center; gap: 8px; }
+.ui-app .native-history .settings-row { display: flex; align-items: center; justify-content: flex-start; flex-wrap: wrap; gap: 12px; padding-block: 16px; }
+.ui-app .native-history .settings-row > input[type="checkbox"] { flex: 0 0 auto; margin: 0; }
+.ui-app .native-history .settings-row > strong, .ui-app .native-history .settings-row > span { flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
+.ui-app .native-history .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.ui-app .native-history article { border-bottom: 1px solid var(--aa-border); padding-block: 8px; }
+.ui-app .frozen-comparison { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
+.ui-app .frozen-comparison > section { min-width: 0; }
+.ui-app .frozen-comparison pre { overflow: auto; max-height: 50vh; }
+@media (max-width: 800px) { .ui-app .frozen-comparison { grid-template-columns: minmax(0,1fr); } }
 .ui-app .native-review .canvas-shell { position: relative; min-width: 0; margin-block: 16px; }
+.ui-app .native-review .review-feedback { margin-block: 16px; }
+.ui-app .native-review .review-feedback > label { margin-block: 12px; }
 .ui-app .native-review .canvas-dimension-probe { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .ui-app .native-review .annotation-canvas { display: block; width: 100%; max-height: 65vh; touch-action: none; }
 .ui-app .native-review .canvas-tools, .ui-app .native-review .canvas-keyboard-tools { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding-block: 8px; }

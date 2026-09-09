@@ -2435,6 +2435,7 @@ mod tests {
             .object
             .clone();
         let mut trash = annotagent_core::ManagementRequest {
+            history_scope: None,
             project_id: "schema-test".into(),
             objects: vec![object],
             action: annotagent_core::ManagementAction::MoveToTrash,

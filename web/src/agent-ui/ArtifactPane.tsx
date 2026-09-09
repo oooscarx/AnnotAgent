@@ -1,6 +1,9 @@
 import { useEffect, useState, useRef } from "react";
 import { Icon, IconButton } from "./Icon";
 import { Disclosure } from "./Disclosure";
+import { ImageBrowser } from "./ImageBrowser";
+import {GeometryStageView} from "./GeometryStageView";
+import {ExcludedCandidates} from "./ExcludedCandidates";
 import { labelColor } from "../annotationVisuals";
 import type { WorkspaceAdapter, Task, Box, Snapshot, ImageId } from "./adapter";
 import { command } from "./App";
@@ -38,6 +41,7 @@ export function ArtifactPane({
   const [selected, setSelected] = useState(savedBoxes[0]?.id);
   const [classification,setClassification]=useState(task.human?.label || "");
   const [compare, setCompare] = useState(false);
+  const [geometryOpen,setGeometryOpen]=useState(false);
   const [original, setOriginal] = useState(false);
   const [zoom, setZoom] = useState(100);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -231,18 +235,7 @@ export function ArtifactPane({
       </p>
       {!fixture && task.imageResults?.[image]?.labels.map((label,i)=><p className="artifact-toolbar" key={i}>分类结果：{label}</p>)}
       {!fixture && task.human?.kind==="classification" && task.human.image===image && <label className="artifact-toolbar">确认类别<select aria-label="确认类别" value={classification} onChange={e=>setClassification(e.target.value)}>{task.human.labels.map(label=><option key={label}>{label}</option>)}</select></label>}
-      <div className="thumbnails">
-        {assets.map((a) => (
-          <button
-            key={a.id}
-            aria-label={`查看图片 ${a.id}`}
-            aria-pressed={a.id === image}
-            onClick={() => pickImage(a.id)}
-          >
-            <img src={a.src} alt="" loading="lazy" decoding="async" />
-          </button>
-        ))}
-      </div>
+      <ImageBrowser assets={assets} image={image} onSelect={pickImage}/>
       <Disclosure className="annotation-list" title={`标注列表与精确编辑 · ${boxes.length} 个`}>
         {boxes.map((b) => (
           <div key={b.id}>
@@ -299,6 +292,8 @@ export function ArtifactPane({
           <Icon name="plus" size={16} />添加遗漏目标
         </button>
       </Disclosure>
+      {!fixture&&asset&&task.geometryEvidence?.[image]&&<Disclosure title="查看几何阶段对比" onToggle={e=>setGeometryOpen(e.currentTarget.open)}>{geometryOpen&&<GeometryStageView key={`${task.sample?.id}:${image}`} sample={task.geometryEvidence[image]} imageUrl={asset.src}/>}</Disclosure>}
+      {!fixture&&asset&&task.excludedCandidates?.[image]&&<ExcludedCandidates key={`${task.sample?.id}:${image}`} excluded={task.excludedCandidates[image]} imageUrl={asset.src}/>}
       <div className="artifact-footer">
         <small>
           {!fixture && !editable ? "只读样例；当前没有待回答的人工问题" : dirty ? "浏览器编辑草稿 · 尚未提交" : fixture ? "演示候选 · 非正式标注" : "样例终端候选 · 非正式标注"}

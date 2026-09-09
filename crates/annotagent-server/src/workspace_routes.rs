@@ -273,7 +273,11 @@ pub(super) fn routes() -> Router<ServerState> {
         )
         .route(
             "/api/runs/{run_id}/replay/{node_id}",
-            post(replay_run_from_node),
+            post(replay_run_from_node).get(super::replay_commands::preview),
+        )
+        .route(
+            "/api/runs/{run_id}/replay/{node_id}/commands/{command_id}",
+            get(super::replay_commands::receipt),
         )
         .route("/api/runs/{run_id}/pause", post(pause_run))
         .route("/api/runs/{run_id}/resume", post(resume_run))

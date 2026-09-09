@@ -47,6 +47,7 @@ mod export_delivery;
 mod management;
 pub use export_delivery::ExportDelivery;
 mod published_run;
+mod replay_preview;
 mod result_projection;
 mod sample_limits;
 mod sample_repair_evidence;
@@ -10954,12 +10955,46 @@ impl LocalApplication {
         node_id: &str,
         settings: &Settings,
     ) -> Result<NodeReplayReport> {
+        self.replay_run_from_node_inner(run_id, node_id, settings, None)
+            .await
+    }
+
+    pub async fn replay_run_from_node_exact(
+        &self,
+        run_id: RunId,
+        node_id: &str,
+        settings: &Settings,
+        source_record_hash: &str,
+    ) -> Result<NodeReplayReport> {
+        self.replay_run_from_node_inner(run_id, node_id, settings, Some(source_record_hash))
+            .await
+    }
+
+    async fn replay_run_from_node_inner(
+        &self,
+        run_id: RunId,
+        node_id: &str,
+        settings: &Settings,
+        source_record_hash: Option<&str>,
+    ) -> Result<NodeReplayReport> {
         let history = self
             .store
             .list_runs()?
             .into_iter()
             .find(|run| run.id == run_id)
             .ok_or_else(|| anyhow!("run {run_id} was not found"))?;
+        if let Some(expected) = source_record_hash {
+            anyhow::ensure!(
+                sha256(
+                    history
+                        .workflow_snapshot_json
+                        .as_deref()
+                        .unwrap_or("")
+                        .as_bytes()
+                ) == expected,
+                "Replay checkpoint changed before execution"
+            );
+        }
         let snapshot: serde_json::Value = serde_json::from_str(
             history
                 .workflow_snapshot_json
@@ -11027,7 +11062,7 @@ impl LocalApplication {
             .collect::<Vec<_>>();
         let (validators, refiners) =
             workflow_extension_implementations(&self.skills, &enabled_ids)?;
-        let runtime = PublishedWorkflowRuntime::new(
+        let mut runtime = PublishedWorkflowRuntime::new(
             workflow.clone(),
             &history.provider,
             settings,
@@ -11038,6 +11073,9 @@ impl LocalApplication {
             self.plugin_registry.clone(),
             self.model_bundle_registry.clone(),
         )?;
+        if source_record_hash.is_some() {
+            runtime = runtime.with_sample_request_limit(0, None);
+        }
         let image = Arc::new(load_image(image_path, 40_000_000).map_err(|error| anyhow!(error))?);
         let model_image = to_model_image(
             "label-pipeline-replay",
@@ -16617,6 +16655,7 @@ impl LocalApplication {
             .find(|item| item.object.id == draft_id)
             .ok_or_else(|| anyhow!("Pipeline Draft lifecycle was not found"))?;
         let mut request = annotagent_core::ManagementRequest {
+            history_scope: None,
             project_id: draft.project_id.clone(),
             objects: vec![lifecycle.object],
             action: annotagent_core::ManagementAction::Archive,
@@ -18162,7 +18201,7 @@ impl LocalApplication {
         settings: &Settings,
         approval: Option<&PublicationApproval>,
     ) -> Result<PublishedWorkflowVersion> {
-        self.publish_workflow_with_processing_guard(draft_id, settings, approval, None)
+        self.publish_workflow_with_processing_guard(draft_id, settings, approval, None, None)
     }
 
     /// The same publication boundary, with a transaction-local cancellation fence for
@@ -18179,6 +18218,26 @@ impl LocalApplication {
             settings,
             Some(approval),
             Some(processing_id),
+            None,
+        )
+    }
+
+    pub fn publish_workflow_command(
+        &self,
+        command: &annotagent_storage::WorkflowPublicationCommand,
+        settings: &Settings,
+    ) -> Result<PublishedWorkflowVersion> {
+        self.project_path(&command.project_id)?;
+        if let Some(result) = self.store.workflow_publication_result(command)? {
+            return Ok(result);
+        }
+        command.check_draft(&self.store.get_workflow_draft(&command.draft_id)?)?;
+        self.publish_workflow_with_processing_guard(
+            &command.draft_id,
+            settings,
+            None,
+            None,
+            Some(command),
         )
     }
 
@@ -18188,6 +18247,7 @@ impl LocalApplication {
         settings: &Settings,
         approval: Option<&PublicationApproval>,
         processing_id: Option<&str>,
+        command: Option<&annotagent_storage::WorkflowPublicationCommand>,
     ) -> Result<PublishedWorkflowVersion> {
         let draft = self.store.get_workflow_draft(draft_id)?;
         let scope = self.management_scope(&draft.project_id)?;
@@ -18205,7 +18265,8 @@ impl LocalApplication {
             &owner,
             chrono::Duration::minutes(30),
         )?;
-        let result = self.publish_workflow_unleased(draft_id, settings, approval, processing_id);
+        let result =
+            self.publish_workflow_unleased(draft_id, settings, approval, processing_id, command);
         let release = self
             .store
             .release_management_lease(&scope, &object, "publication", &owner);
@@ -18222,8 +18283,17 @@ impl LocalApplication {
         settings: &Settings,
         approval: Option<&PublicationApproval>,
         processing_id: Option<&str>,
+        command: Option<&annotagent_storage::WorkflowPublicationCommand>,
     ) -> Result<PublishedWorkflowVersion> {
+        if let Some(command) = command {
+            if let Some(result) = self.store.workflow_publication_result(command)? {
+                return Ok(result);
+            }
+        }
         let mut draft = self.store.get_workflow_draft(draft_id)?;
+        if let Some(command) = command {
+            command.check_draft(&draft)?;
+        }
         if matches!(
             draft.status,
             WorkflowDraftStatus::Published | WorkflowDraftStatus::Archived
@@ -18268,13 +18338,23 @@ impl LocalApplication {
         {
             bail!("workflow publication requires a passing Sample Test without failed images");
         }
-        let report = self.dry_run_workflow(draft_id, settings)?;
+        let report = if command.is_some() {
+            self.validate_workflow_draft_static(&draft, settings)?
+        } else {
+            self.dry_run_workflow(draft_id, settings)?
+        };
         if !report.valid {
             bail!("workflow has blocking static validation issues");
         }
         draft.status = WorkflowDraftStatus::Validated;
         draft.updated_at = chrono::Utc::now();
-        let publish_report = self.validate_workflow_draft(&draft, settings, true)?;
+        let publish_report = if command.is_some() {
+            let project = self.workflow_project_schema(&draft)?;
+            let (nodes, models) = self.static_workflow_catalog(settings)?;
+            self.validate_workflow_draft_in_catalog(&draft, &project, &nodes, &models, true)?
+        } else {
+            self.validate_workflow_draft(&draft, settings, true)?
+        };
         if !publish_report.valid {
             let blockers = publish_report
                 .issues
@@ -18295,7 +18375,11 @@ impl LocalApplication {
         {
             bail!("The approved models or Project definition changed before publication");
         }
-        let (_, models) = self.workflow_catalog(settings)?;
+        let (_, models) = if command.is_some() {
+            self.static_workflow_catalog(settings)?
+        } else {
+            self.workflow_catalog(settings)?
+        };
         normalize_profile_compatibility_bindings(&mut draft, &models)?;
         let snapshot = WorkflowSnapshot::frozen(&draft, &models, draft.enabled_skills.clone())
             .with_model_profiles(model_profiles)
@@ -18303,7 +18387,10 @@ impl LocalApplication {
             .with_safety_compatibility(annotagent_core::WorkflowSafetyCompatibility::Safe);
         let serialized = snapshot.content_hash_material()?;
         let content_hash = annotagent_image_tools::sha256(&serialized);
-        let published = if let Some(processing_id) = processing_id {
+        let published = if let Some(command) = command {
+            self.store
+                .publish_workflow_draft_command(&draft, content_hash, snapshot, command)?
+        } else if let Some(processing_id) = processing_id {
             self.store.publish_workflow_draft_for_processing(
                 &draft,
                 content_hash,
@@ -24107,10 +24194,73 @@ export:
         assert_eq!(debug_summary.succeeded_node_count, 3);
         assert_eq!(debug_summary.failed_node_count, 0);
         assert!(debug_summary.issues.is_empty());
+        let preview = application
+            .preview_node_replay("label-classification", started.run_id, "classifier")
+            .unwrap();
+        assert_eq!(preview["available"], true, "{preview}");
+        assert!(
+            application
+                .preview_node_replay("TEST-wrong-owner", started.run_id, "classifier")
+                .is_err()
+        );
+        assert!(
+            application
+                .replay_run_from_node_exact(started.run_id, "classifier", &settings, "stale")
+                .await
+                .is_err()
+        );
+        let before_snapshot = application
+            .store
+            .list_runs()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.id == started.run_id)
+            .unwrap()
+            .workflow_snapshot_json
+            .unwrap();
+        let mut live: serde_json::Value = serde_json::from_str(&before_snapshot).unwrap();
+        live["selected_workflow"]["draft"]["nodes"][0]["model_binding"] = json!("TEST-live-model");
+        live["selected_workflow"]["snapshot"]["draft"]["nodes"][0]["model_binding"] =
+            json!("TEST-live-model");
+        application
+            .store
+            .update_run_workflow_snapshot(started.run_id, &live.to_string())
+            .unwrap();
+        let refused = application
+            .preview_node_replay("label-classification", started.run_id, "classifier")
+            .unwrap();
+        assert_eq!(refused["available"], false);
+        assert!(
+            refused["refusal_reasons"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("current_binding_replay_unsupported"))
+        );
+        application
+            .store
+            .update_run_workflow_snapshot(started.run_id, &before_snapshot)
+            .unwrap();
         let replay = application
-            .replay_run_from_node(started.run_id, "classifier", &settings)
+            .replay_run_from_node_exact(
+                started.run_id,
+                "classifier",
+                &settings,
+                preview["source_record_hash"].as_str().unwrap(),
+            )
             .await
             .expect("classifier Replay");
+        assert_eq!(
+            application
+                .store
+                .list_runs()
+                .unwrap()
+                .into_iter()
+                .find(|r| r.id == started.run_id)
+                .unwrap()
+                .workflow_snapshot_json
+                .as_deref(),
+            Some(before_snapshot.as_str())
+        );
         assert!(replay.sandbox);
         assert!(replay.reexecuted_nodes.contains(&"classifier".to_owned()));
         assert!(
@@ -24388,6 +24538,7 @@ export:
             annotagent_core::ManagementAction::Purge,
         ] {
             let mut request = annotagent_core::ManagementRequest {
+                history_scope: None,
                 project_id: "label-classification".into(),
                 objects: vec![object],
                 action,

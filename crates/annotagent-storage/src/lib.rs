@@ -94,8 +94,15 @@ pub use conversation_tasks::{BeginConversationTask, ConversationTask};
 pub use conversations::{
     ConversationImageRef, ConversationMessage, ConversationMessageInput, ConversationSelectionRef,
 };
+mod history_scope;
 mod management;
 mod model_install_commands;
+mod replay_commands;
+mod workflow_clone;
+mod workflow_publication;
+pub use history_scope::{EstablishHistoryScope, HISTORY_POLICY, HistoryScope, HistoryScopePreview};
+pub use workflow_clone::WorkflowCloneCommand;
+pub use workflow_publication::WorkflowPublicationCommand;
 mod processing_operations;
 mod sample_feedback;
 mod sample_operations;
@@ -722,15 +729,36 @@ impl SqliteStore {
             transaction.execute_batch(include_str!("../../../migrations/0057_queued_workflow_copies.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0058_conversation_call_progress.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0060_model_install_commands.sql"))?;
-            transaction.execute_batch(include_str!("../../../migrations/0061_task_delivery_intents.sql"))?;
-            transaction.execute_batch(include_str!("../../../migrations/0062_delivery_image_reviews.sql"))?;
-            transaction.execute_batch(include_str!("../../../migrations/0063_delivery_export_snapshots.sql"))?;
-            transaction.execute_batch(include_str!("../../../migrations/0064_delivery_package_consents.sql"))?;
-            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(64,'delivery_package_consents',?1)",[Utc::now().to_rfc3339()])?;
-            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(63,'delivery_export_snapshots',?1)",[Utc::now().to_rfc3339()])?;
-            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(62,'delivery_image_reviews',?1)",[Utc::now().to_rfc3339()])?;
-            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(61,'task_delivery_intents',?1)",[Utc::now().to_rfc3339()])?;
+            // The delivery worktree used 61–64 before main independently assigned 61–63.
+            // Preserve its original audit timestamps; never renumber main's distinct names.
+            for (old, new, name) in [
+                (61, 65, "task_delivery_intents"),
+                (62, 66, "delivery_image_reviews"),
+                (63, 67, "delivery_export_snapshots"),
+                (64, 68, "delivery_package_consents"),
+            ] {
+                transaction.execute(
+                    "UPDATE schema_migrations SET version=?1 WHERE version=?2 AND name=?3",
+                    params![new, old, name],
+                )?;
+            }
+            transaction.execute_batch(include_str!("../../../migrations/0065_task_delivery_intents.sql"))?;
+            transaction.execute_batch(include_str!("../../../migrations/0066_delivery_image_reviews.sql"))?;
+            transaction.execute_batch(include_str!("../../../migrations/0067_delivery_export_snapshots.sql"))?;
+            transaction.execute_batch(include_str!("../../../migrations/0068_delivery_package_consents.sql"))?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(68,'delivery_package_consents',?1)",[Utc::now().to_rfc3339()])?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(67,'delivery_export_snapshots',?1)",[Utc::now().to_rfc3339()])?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(66,'delivery_image_reviews',?1)",[Utc::now().to_rfc3339()])?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(65,'task_delivery_intents',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(60,'model_install_commands',?1)",[Utc::now().to_rfc3339()])?;
+            transaction.execute_batch(include_str!("../../../migrations/0059_history_scope.sql"))?;
+            transaction.execute_batch(include_str!("../../../migrations/0061_workflow_publication_commands.sql"))?;
+            transaction.execute_batch(include_str!("../../../migrations/0062_workflow_clone_commands.sql"))?;
+            transaction.execute_batch(include_str!("../../../migrations/0063_replay_commands.sql"))?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(63,'replay_commands',?1)",[Utc::now().to_rfc3339()])?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(62,'workflow_clone_commands',?1)",[Utc::now().to_rfc3339()])?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(61,'workflow_publication_commands',?1)",[Utc::now().to_rfc3339()])?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(59,'history_scope',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(58,'conversation_call_progress',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(57,'queued_workflow_copies',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(55,'conversation_message_queue',?1)",[Utc::now().to_rfc3339()])?;
@@ -2812,7 +2840,7 @@ impl SqliteStore {
         snapshot: WorkflowSnapshot,
         processing_id: &str,
     ) -> Result<PublishedWorkflowVersion, StorageError> {
-        self.publish_workflow_draft_inner(draft, content_hash, snapshot, Some(processing_id))
+        self.publish_workflow_draft_inner(draft, content_hash, snapshot, Some(processing_id), None)
     }
 
     pub fn publish_workflow_draft(
@@ -2821,7 +2849,17 @@ impl SqliteStore {
         content_hash: String,
         snapshot: WorkflowSnapshot,
     ) -> Result<PublishedWorkflowVersion, StorageError> {
-        self.publish_workflow_draft_inner(draft, content_hash, snapshot, None)
+        self.publish_workflow_draft_inner(draft, content_hash, snapshot, None, None)
+    }
+
+    pub fn publish_workflow_draft_command(
+        &self,
+        draft: &WorkflowDraft,
+        content_hash: String,
+        snapshot: WorkflowSnapshot,
+        command: &WorkflowPublicationCommand,
+    ) -> Result<PublishedWorkflowVersion, StorageError> {
+        self.publish_workflow_draft_inner(draft, content_hash, snapshot, None, Some(command))
     }
 
     fn publish_workflow_draft_inner(
@@ -2830,18 +2868,23 @@ impl SqliteStore {
         content_hash: String,
         snapshot: WorkflowSnapshot,
         processing_id: Option<&str>,
+        command: Option<&WorkflowPublicationCommand>,
     ) -> Result<PublishedWorkflowVersion, StorageError> {
         self.with_connection(|connection| {
-            let transaction = connection.unchecked_transaction()?;
+            let transaction = rusqlite::Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Immediate)?;
+            if let Some(command) = command {
+                if let Some(result) = workflow_publication::replay(&transaction, command)? { return Ok(result); }
+                command.check_draft(draft)?;
+            }
             if let Some(id)=processing_id {
                 Self::validate_processing_publication(&transaction,draft,&content_hash,&snapshot,id)?;
             }
-            let (current_revision, current_hash) = transaction
+            let (current_revision, current_hash, current_status, current_project) = transaction
                 .query_row(
-                    "SELECT revision, content_hash FROM workflow_drafts
+                    "SELECT revision, content_hash, status, project_id FROM workflow_drafts
                      WHERE id = ?1 AND deleted_at IS NULL AND archived_at IS NULL",
                     [&draft.id],
-                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?)),
                 )
                 .optional()?
                 .ok_or_else(|| {
@@ -2850,9 +2893,20 @@ impl SqliteStore {
                         draft.id
                     ))
                 })?;
+            if let Some(command) = command {
+                if command.project_id != current_project {
+                    return Err(StorageError::Management { code: "foreign_project_object".into(), message: "Workflow Draft was not found in this Project".into() });
+                }
+                if current_status == "published" {
+                    return Err(StorageError::Management { code: "workflow_already_published".into(), message: "Draft is already published; recover the original command or view its frozen version".into() });
+                }
+            }
             let current_revision = u64::try_from(current_revision).unwrap_or(1);
             let expected_hash =
                 annotagent_image_tools::sha256(&draft.content_hash_material()?);
+            if command.is_some() && current_revision == draft.revision && current_hash != expected_hash {
+                return Err(StorageError::Management { code: "workflow_draft_content_conflict".into(), message: "Draft bindings changed while freezing publication; review the current Draft and its Sample Test before confirming again".into() });
+            }
             if current_revision != draft.revision || current_hash != expected_hash {
                 return Err(StorageError::WorkflowDraftRevisionConflict {
                     expected: draft.revision,
@@ -2935,6 +2989,10 @@ impl SqliteStore {
                     version.published_at.to_rfc3339(),
                 ],
             )?;
+            if let Some(command) = command {
+                transaction.execute("INSERT INTO workflow_publication_commands(command_id,request_json,result_json) VALUES(?1,?2,?3)",
+                    params![command.command_id.to_string(),serde_json::to_string(command)?,serde_json::to_string(&version)?])?;
+            }
             transaction.commit()?;
             Ok(version)
         })
@@ -4932,6 +4990,60 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn merged_migrations_preserve_both_branch_ledgers_and_are_repeatable() {
+        for delivery_branch in [false, true] {
+            let store = SqliteStore::open_in_memory().unwrap();
+            let legacy = if delivery_branch {
+                vec![
+                    (61, "task_delivery_intents"),
+                    (62, "delivery_image_reviews"),
+                    (63, "delivery_export_snapshots"),
+                    (64, "delivery_package_consents"),
+                ]
+            } else {
+                vec![
+                    (61, "workflow_publication_commands"),
+                    (62, "workflow_clone_commands"),
+                    (63, "replay_commands"),
+                ]
+            };
+            store.with_connection(|db| {
+                db.execute("DELETE FROM schema_migrations WHERE version BETWEEN 61 AND 68", [])?;
+                for (version, name) in &legacy {
+                    db.execute("INSERT INTO schema_migrations(version,name,applied_at) VALUES(?1,?2,'original-audit-time')", params![version, name])?;
+                }
+                Ok(())
+            }).unwrap();
+            store.migrate().unwrap();
+            store.migrate().unwrap();
+            store
+                .with_connection(|db| {
+                    for (version, name) in [
+                        (61, "workflow_publication_commands"),
+                        (62, "workflow_clone_commands"),
+                        (63, "replay_commands"),
+                        (65, "task_delivery_intents"),
+                        (66, "delivery_image_reviews"),
+                        (67, "delivery_export_snapshots"),
+                        (68, "delivery_package_consents"),
+                    ] {
+                        let (actual, timestamp): (String, String) = db.query_row(
+                            "SELECT name,applied_at FROM schema_migrations WHERE version=?1",
+                            [version],
+                            |row| Ok((row.get(0)?, row.get(1)?)),
+                        )?;
+                        assert_eq!(actual, name);
+                        if legacy.iter().any(|(_, old_name)| *old_name == name) {
+                            assert_eq!(timestamp, "original-audit-time");
+                        }
+                    }
+                    Ok(())
+                })
+                .unwrap();
+        }
+    }
 
     #[test]
     fn migration_creates_required_tables() {

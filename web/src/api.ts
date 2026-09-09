@@ -170,6 +170,7 @@ function privilegedAction(path: string, init?: RequestInit): string | undefined 
     || cleanPath === "/api/model-bundles/import"
     || cleanPath === "/api/model-bundles/gc"
     || cleanPath === "/api/model-installations"
+    || (method === "POST" && cleanPath === "/api/history-scope")
     || cleanPath.endsWith("/management/actions")
     || (cleanPath.startsWith("/api/model-bundles/") && ["/verify", "/test", "/enable", "/disable", "/license-acceptance"].some((suffix) => cleanPath.endsWith(suffix)))
     || (cleanPath.startsWith("/api/model-instances/") && cleanPath.endsWith("/test"))
@@ -622,7 +623,7 @@ export const api = {
   conversationSchemaCalls: (project: string, conversation: string, task: string, signal?: AbortSignal) => request<import("./types").ConversationCallReceipt[]>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/tasks/${encodeURIComponent(task)}/calls`, { signal }),
   conversationTaskSelection:(project:string,conversation:string,signal?:AbortSignal)=>request<{revision:number;task_id:string|null}>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/task-selection`,{signal}),
   selectConversationTask:(project:string,conversation:string,input:{request_id:string;expected_revision:number;task_id:string})=>request<{revision:number;task_id:string|null}>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/task-selection`,{method:"POST",body:JSON.stringify(input)}),
-  conversationSchemaClarification: (project:string,conversation:string,task:string,call:string,signal?:AbortSignal)=>request<{id:string;status:string;schema_draft_id:string|null;question:string;expected_schema_revision:string}>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/tasks/${encodeURIComponent(task)}/calls/${encodeURIComponent(call)}/clarification`,{signal}),
+  conversationSchemaClarification: (project:string,conversation:string,task:string,call:string,signal?:AbortSignal)=>request<{id:string;task_id:string;conversation_id:string;status:string;schema_draft_id:string|null;question:string;expected_schema_revision:string}>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/tasks/${encodeURIComponent(task)}/calls/${encodeURIComponent(call)}/clarification`,{signal}),
   cancelSchemaClarification: (project:string,conversation:string,task:string,reference:{call_id:string;expected_schema_revision:string})=>request<{status:string}>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/tasks/${encodeURIComponent(task)}/calls/${encodeURIComponent(reference.call_id)}/clarification/cancel`,{method:"POST",body:JSON.stringify(reference)}),
   proposeConversationSchema: (project: string, conversation: string, task: string, consent: import("./types").ConversationSchemaAuthorization) => request<import("./types").ConversationCallReceipt>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/tasks/${encodeURIComponent(task)}/schema-proposals`, { method: "POST", body: JSON.stringify(consent) }),
   cancelConversationSchema: (project: string, conversation: string, task: string, call: string) => request<import("./types").ConversationCallCancellation>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/tasks/${encodeURIComponent(task)}/calls/${encodeURIComponent(call)}/cancel`, { method: "POST" }),
@@ -631,8 +632,8 @@ export const api = {
   conversationAgentModel: (project: string, conversation: string, signal?: AbortSignal) => request<{revision:number;model_profile_id:string|null}>(`/api/projects/${encodeURIComponent(project)}/conversations/${conversation}/agent-model`, {signal}),
   selectConversationAgentModel: (project: string, conversation: string, input:{request_id:string;expected_revision:number;model_profile_id:string|null}) => request<{revision:number;model_profile_id:string|null}>(`/api/projects/${encodeURIComponent(project)}/conversations/${conversation}/agent-model`, {method:"POST",body:JSON.stringify(input)}),
   conversationMessages: (projectId: string, conversationId: string, after = 0, signal?: AbortSignal) => request<import("./types").ConversationMessage[]>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/messages?after=${after}`, { signal }),
-  conversationMessageQueue: (project: string, conversation: string, task: string, after = 0, signal?: AbortSignal) => request<import("./components/ConversationQueue").QueuedMessage[]>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/tasks/${encodeURIComponent(task)}/message-queue?after=${after}`, {signal}),
-  cancelConversationQueuedMessage: (project: string, conversation: string, task: string, message: string) => request<import("./components/ConversationQueue").QueuedMessage>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/tasks/${encodeURIComponent(task)}/message-queue/${encodeURIComponent(message)}/cancel`, {method:"POST",body:"{}"}),
+  conversationMessageQueue: (project: string, conversation: string, task: string, after = 0, signal?: AbortSignal) => request<import("./conversation-queue-state").QueuedMessage[]>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/tasks/${encodeURIComponent(task)}/message-queue?after=${after}`, {signal}),
+  cancelConversationQueuedMessage: (project: string, conversation: string, task: string, message: string) => request<import("./conversation-queue-state").QueuedMessage>(`/api/projects/${encodeURIComponent(project)}/conversations/${encodeURIComponent(conversation)}/tasks/${encodeURIComponent(task)}/message-queue/${encodeURIComponent(message)}/cancel`, {method:"POST",body:"{}"}),
   conversationFirstGoal: (projectId: string, conversationId: string, signal?: AbortSignal) => request<import("./types").ConversationMessage[]>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/messages?first_goal=true`, { signal }).then(messages => messages[0]),
   conversationHistory: (projectId: string, conversationId: string, before?: number, signal?: AbortSignal) => request<import("./types").ConversationMessage[]>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/messages?${before === undefined ? "latest=true" : `before=${before}`}&limit=100`, { signal }),
   conversationMessage: (projectId: string, conversationId: string, messageId: string, signal?: AbortSignal) => request<import("./types").ConversationMessage>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`, { signal }),
@@ -755,12 +756,12 @@ export const api = {
     }>(`/api/batches/${batchId}`, { signal }),
   previewManagement: (projectId: string, body: ManagementRequest) =>
     request<ManagementPreview>(
-      `/api/projects/${encodeURIComponent(projectId)}/management/preview`,
+      `/api/projects/${encodeURIComponent(projectId)}/management/preview${body.history_scope ? `?history_scope=${encodeURIComponent(body.history_scope)}` : ""}`,
       { method: "POST", body: JSON.stringify(body) },
     ),
   executeManagement: async (projectId: string, body: ManagementRequest) => {
     const receipt = await request<ManagementReceipt>(
-      `/api/projects/${encodeURIComponent(projectId)}/management/actions`,
+      `/api/projects/${encodeURIComponent(projectId)}/management/actions${body.history_scope ? `?history_scope=${encodeURIComponent(body.history_scope)}` : ""}`,
       { method: "POST", body: JSON.stringify(body) },
     );
     if (typeof window !== "undefined") {
@@ -777,10 +778,14 @@ export const api = {
     request<ManagementUsageSummary>(
       `/api/projects/${encodeURIComponent(projectId)}/management/usage`,
     ),
-  trash: (projectId: string, kind?: ManagementObjectKind) =>
-    request<{ items: TrashEntry[] }>(
-      `/api/projects/${encodeURIComponent(projectId)}/trash${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`,
-    ),
+  trash: (projectId: string, kind?: ManagementObjectKind, scope?: string, offset=0) => {
+    const params=new URLSearchParams();
+    if(kind)params.set("kind",kind);
+    if(scope){params.set("history_scope",scope);params.set("limit","50");params.set("offset",String(offset));}
+    return request<{ items: TrashEntry[]; page?: {total:number;offset:number;next_offset:number|null} }>(
+      `/api/projects/${encodeURIComponent(projectId)}/trash${params.size ? `?${params}` : ""}`,
+    );
+  },
   pipelineLifecycle: (
     projectId: string,
     includeArchived = false,
@@ -794,6 +799,10 @@ export const api = {
     );
   },
   workflows: () => request<{ workflows: ProjectWorkflow[] }>("/api/workflows"),
+  frozenWorkflowVersion: (projectId:string,workflowId:string,version:number,signal?:AbortSignal) =>
+    request<import("./types").FrozenWorkflowVersion>(`/api/projects/${encodeURIComponent(projectId)}/workflows/${encodeURIComponent(workflowId)}/versions/${version}`,{signal}),
+  publishExactWorkflow: (draftId:string,body:import("./types").ExactPublicationRequest) =>
+    request<import("./types").FrozenWorkflowVersion>(`/api/workflow-drafts/${encodeURIComponent(draftId)}/publish`,{method:"POST",body:JSON.stringify(body)}),
   workflowDraft: (projectId: string, draftId: string, signal?: AbortSignal) =>
     request<WorkflowDraft>(`/api/workflow-drafts/${encodeURIComponent(draftId)}?project_id=${encodeURIComponent(projectId)}`, {signal}),
   validateWorkflowDraft: (projectId: string, draftId: string, revision: number, signal?: AbortSignal) =>
@@ -932,6 +941,9 @@ export const api = {
       `/api/runs/${runId}/replay/${encodeURIComponent(nodeId)}`,
       { method: "POST" },
     ),
+  nodeReplayPreview:(project:string,run:string,node:string,signal?:AbortSignal)=>request<import("./types").NodeReplayPreview>(`/api/runs/${encodeURIComponent(run)}/replay/${encodeURIComponent(node)}?project_id=${encodeURIComponent(project)}`,{signal}),
+  nodeReplayCommand:(run:string,node:string,command:import("./types").NodeReplayCommand)=>request<import("./types").NodeReplayReceipt>(`/api/runs/${encodeURIComponent(run)}/replay/${encodeURIComponent(node)}`,{method:"POST",body:JSON.stringify(command)}),
+  nodeReplayReceipt:(project:string,run:string,node:string,command:string,signal?:AbortSignal)=>request<import("./types").NodeReplayReceipt>(`/api/runs/${encodeURIComponent(run)}/replay/${encodeURIComponent(node)}/commands/${encodeURIComponent(command)}?project_id=${encodeURIComponent(project)}`,{signal}),
   saveWorkflowDraft: (draft: WorkflowDraft, signal?: AbortSignal) =>
     request<WorkflowDraft>(`/api/workflow-drafts/${draft.id}`, {
       method: "PATCH",
@@ -976,6 +988,8 @@ export const api = {
       `/api/workflows/${workflowId}/versions/${version}/clone`,
       { method: "POST" },
     ),
+  cloneExactWorkflowVersion: (workflowId:string,version:number,body:import("./types").ExactCloneRequest) =>
+    request<WorkflowDraft>(`/api/workflows/${encodeURIComponent(workflowId)}/versions/${version}/clone`,{method:"POST",body:JSON.stringify(body)}),
   compareWorkflowVersions: (
     left: { workflow_id: string; version: number },
     right: { workflow_id: string; version: number },
