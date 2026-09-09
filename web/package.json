@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:ui-preview": "vite --config vite.preview.config.ts",
+    "build:ui-preview": "tsc --noEmit -p tsconfig.preview.json && vite build --config vite.preview.config.ts",
+    "test:ui-preview": "playwright test --config playwright.ui-preview.config.ts",
     "tokens:check": "node ../scripts/generate-tokens.mjs --check",
     "typecheck": "npm run tokens:check && tsc --noEmit",
     "test": "vitest run --exclude 'e2e/**'",
