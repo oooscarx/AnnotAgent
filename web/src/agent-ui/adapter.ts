@@ -70,6 +70,7 @@ export type Task = {
   humanQuestion?: string;
   human?: { id:string; image:ImageId; kind:string; labels:string[]; label:string; candidate:string };
   resultRevision?: string;
+  loaded?: boolean;
   sample?: {id:string;draft:string;revision:number};
   imageResults?: Record<ImageId, {labels:string[]; risks:string[]}>;
   approval?: Approval;

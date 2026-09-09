@@ -11,6 +11,7 @@ import { PlanBlock } from "./PlanBlock";
 import { SettingsView } from "./Settings";
 import { ArtifactPane } from "./ArtifactPane";
 import { routeProject, taskLocation } from "./routes";
+import { conversationSettingsPath, projectWorkPath } from "../navigation";
 export const phaseNames: Record<Phase, string> = {
   idle: "准备任务",
   planning: "正在模拟规划",
@@ -262,7 +263,7 @@ export function AgentPreviewApp({
               navigate({ settings: null, task: state.tasks[0]?.id || null });
             }}
           >
-            <img src={fixture ? "/assets/mark-ink.svg" : "/brand/core/annotagent-mark.svg"} alt="" />
+            <img src={fixture ? "/assets/mark-ink.svg" : "/brand/core/annotagent-mark-ink.svg"} alt="" />
             AnnotAgent
           </a>
           <button
@@ -393,6 +394,7 @@ export function AgentPreviewApp({
               onTheme={setPreviewTheme}
               back={() => navigate({ settings: null })}
               fail={preview?.fail || (() => {})}
+              managementLinks={!fixture ? Object.fromEntries((["models","plugins","storage"] as const).map(s=>[s,task ? conversationSettingsPath(task.project,s,projectWorkPath(task.project,{taskId:task.id.startsWith("new:")?undefined:task.id,pane:pane?"artifacts":"thread",imageId:url.searchParams.get("image") || undefined})) : `/settings/${s}`])) : undefined}
             />
           ) : !task ? (
             <div className="empty">
@@ -664,7 +666,8 @@ export function AgentPreviewApp({
                             e.target.value="";
                             if(!fixture) {
                               setBusy(true);
-                              void act(async()=>{try{await adapter.uploadImages!(command(task),files);navigate({pane:"image"});}finally{setBusy(false);}});
+                              const uploadedFrom=urlRef.current.href;
+                              void act(async()=>{try{await adapter.uploadImages!(command(task),files);if(urlRef.current.href===uploadedFrom)navigate({pane:"image"});}finally{setBusy(false);}});
                               return;
                             }
                             setAttachments((old) => [
@@ -836,7 +839,7 @@ export function AgentPreviewApp({
                   )}
                 </div>
               </section>
-              {pane && (
+              {pane && (fixture || task.loaded) && (
                 <>
                   <div
                     className="splitter"

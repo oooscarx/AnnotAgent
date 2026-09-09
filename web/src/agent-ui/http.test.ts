@@ -76,4 +76,13 @@ describe("HTTP UI read boundary (synthetic transport tests, not HTTP E2E)", () =
     adapter.saveDraft("t1","输入不能被旧请求清空");finish([]);await reading;
     expect(adapter.snapshot().tasks.find(t=>t.id==="t1")?.draft).toBe("输入不能被旧请求清空");
   });
+  it("does not persist an empty canvas before owned task evidence has loaded",async()=>{
+    const {transport}=mockTransport();const adapter=new HttpAdapter(transport);await adapter.refresh();
+    adapter.saveArtifactDraft("t1","image-uuid",[]);
+    expect(adapter.snapshot().tasks.find(t=>t.id==="t1")?.editBoxes).toBeUndefined();
+    await adapter.loadTask("TEST-alpha","t1");
+    expect(adapter.snapshot().tasks.find(t=>t.id==="t1")?.loaded).toBe(true);
+    adapter.saveArtifactDraft("t1","image-uuid",[]);
+    expect(adapter.snapshot().tasks.find(t=>t.id==="t1")?.editBoxes).toEqual({});
+  });
 });

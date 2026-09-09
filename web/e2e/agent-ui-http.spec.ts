@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { readFileSync } from "node:fs";
 
 test.beforeEach(async ({request})=>{
   const health=await request.get("/api/health");
@@ -177,6 +178,14 @@ test("production routes reject foreign tasks and preserve management return with
   await page.goBack();await expect(page.locator(".ui-app")).toHaveAttribute("data-adapter","http");
   await expect(page).toHaveURL(new RegExp(`task=${tasks[0].task_id}`));
   await expect(page.locator("svg image")).toBeVisible();
+  await page.getByRole("button",{name:"⚙ 设置"}).click();
+  await page.getByRole("button",{name:"Agent 模型",exact:true}).click();
+  await page.getByRole("link",{name:"管理模型配置 →",exact:true}).click();
+  await expect(page.getByRole("button",{name:"Return to annotation task",exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"Return to annotation task",exact:true}).click();
+  await expect(page.locator(".ui-app")).toHaveAttribute("data-adapter","http");
+  await expect(page).toHaveURL(new RegExp(`task=${tasks[0].task_id}`));
+  await expect(page.locator("svg image")).toBeVisible();
 });
 
 test("b: Provider metadata and future budget persist through real server writes",async({page,request})=>{
@@ -229,4 +238,87 @@ test("a: explicit image upload uses the server importer and survives refresh",as
   await expect(page.locator("svg image")).toHaveAttribute("href",/^\/api\//);
   await page.reload();await expect(page.locator("svg image")).toHaveAttribute("href",/^\/api\//);
   await expect(page.getByText("内存预览，未上传；刷新后需重新选择")).toHaveCount(0);
+});
+
+test("b: next-request model selection uses a CAS command without a model probe",async({page,request})=>{
+  const {p,root}=await identity(request);
+  const before=await(await request.get(`${root}/agent-model`)).json();
+  await page.goto(`/projects/${p.project_id}/work`);
+  const posts:string[]=[];page.on("request",r=>{if(r.method()==="POST")posts.push(r.url());});
+  await page.getByRole("button",{name:/模型⌄/}).click();
+  await page.locator(".model-picker section button:not(:disabled)").first().click();
+  await expect.poll(async()=>{const value=await(await request.get(`${root}/agent-model`)).json();return value.revision;}).toBe(before.revision+1);
+  expect(posts.filter(p=>p.endsWith("/agent-model"))).toHaveLength(1);
+  expect(posts.some(p=>p.includes("probe")||p.includes("proposals")||p.endsWith("/check"))).toBe(false);
+  await page.reload();await expect(page.getByRole("button",{name:/TEST deterministic model.*模型⌄/})).toBeVisible();
+});
+
+test("b: new TEST Provider credential is write-only and not browser-persisted",async({page,request})=>{
+  const {tasks}=await identity(request);
+  page.on("dialog",dialog=>void dialog.accept());
+  const name=`TEST credential account ${crypto.randomUUID()}`;
+  const secret="TEST-NOT-A-REAL-KEY-ui-write-only";
+  await page.goto(`/?task=${tasks[0].task_id}&settings=providers`);
+  await page.getByRole("button",{name:"＋ 添加 Provider",exact:true}).click();
+  await page.getByLabel("显示名称",{exact:true}).fill(name);
+  await page.getByLabel("Endpoint",{exact:true}).fill("http://127.0.0.1:8797/openai/v1");
+  await page.getByRole("button",{name:"保存账户",exact:true}).click();
+  await expect(page.getByText(name,{exact:true})).toBeVisible();
+  await page.locator(".settings-row").filter({hasText:name}).getByRole("button",{name:"编辑",exact:true}).click();
+  await page.getByLabel("替换 API Key（只写）",{exact:true}).fill(secret);
+  await page.getByRole("button",{name:"保存新凭证",exact:true}).click();
+  await expect(page.getByRole("status")).toContainText("凭证已由服务器保存");
+  const providers=await(await request.get("/api/providers")).json();
+  expect(providers.providers.find((p:{display_name:string})=>p.display_name===name)?.credential_configured).toBe(true);
+  expect(JSON.stringify(providers)).not.toContain(secret);
+  const local=await page.evaluate(()=>JSON.stringify({...localStorage}));expect(local).not.toContain(secret);
+});
+
+test("e: bbox edit saves source-normalized geometry through the real HumanRequest without accepting annotations",async({page,request})=>{
+  const nav=await(await request.get("/api/navigation")).json();
+  const p=nav.items.find((p:{project_id:string})=>p.project_id.startsWith("TEST-agent-ui-bbox-"));expect(p).toBeTruthy();
+  const root=`/api/projects/${p.project_id}/conversations/${p.conversation_id}`;
+  const tasks=await(await request.get(`${root}/task-navigation`)).json();const task=tasks.items[0].task_id;
+  const ws=await(await request.get(`${root}/tasks/${task}/workspace`)).json();const human=ws.human_requests.find((h:{status:string})=>h.status==="pending");expect(human).toBeTruthy();
+  const feedback=`/api/workflow-sample-tests/${human.input.sample_test_id}/images/${human.input.image_id}/feedback`;
+  // UIAPI-004: an unanswered human question cannot create a planning grant.
+  const session=await(await request.get("/api/session")).json();
+  const goal=await(await request.get(`/api/projects/${p.project_id}/goal`)).json();
+  const message=crypto.randomUUID();
+  const sent=await request.post(`${root}/send`,{headers:{"x-annotagent-csrf":session.csrf_token},data:{message:{id:message,text:"TEST pending-human supplement",image:null},task_id:task,schema_revision:goal.revision,mode:"plan"}});expect(sent.ok()).toBe(true);
+  const queue=`${root}/tasks/${task}/message-queue/${message}`;
+  const blocked=await request.get(`${queue}/schema-preview`);expect(blocked.status()).toBe(409);
+  expect((await blocked.json()).admitted).toBe(false);
+  expect(await(await request.get(`${queue}/schema-authorization`)).json()).toBeNull();
+  const readiness=await(await request.get(`/api/projects/${p.project_id}/export-readiness`)).json();
+  await page.goto(`/projects/${p.project_id}/work?task=${task}&pane=image&image=${human.input.image_id}`);
+  await page.getByText(/标注列表与精确编辑/).click();
+  const values={x:80,y:70,w:88,h:90};
+  for(const [key,value] of Object.entries(values))await page.getByLabel(`${human.input.outcome_id} ${key}`,{exact:true}).fill(String(value));
+  await page.getByRole("button",{name:"保存当前样例修正",exact:true}).click();
+  await expect.poll(async()=>{const f=await(await request.get(feedback)).json();return f.revisions.at(-1)?.sequence;}).toBe(human.input.expected_feedback_sequence+1);
+  const saved=await(await request.get(feedback)).json();
+  const rect=saved.revisions.at(-1).corrected_value.rect;
+  for(const [i,value] of [80/640,70/400,88/640,90/400].entries())expect(rect[i]).toBeCloseTo(value,5);
+  expect((await(await request.get(`/api/projects/${p.project_id}/export-readiness`)).json()).accepted_annotations).toBe(readiness.accepted_annotations);
+  await page.reload();await page.getByText(/标注列表与精确编辑/).click();
+  await expect(page.getByLabel(`${human.input.outcome_id} x`,{exact:true})).toHaveValue("80");
+});
+
+test("d: actual stop POST is observed as stopping and settles to unknown without fake resume",async({page,request,baseURL})=>{
+  test.skip(!process.env.AGENT_UI_TEST_MANIFEST,"Requires the marked UIAPI-003 fixture manifest; no synthetic HTTP response substitution");
+  const m=JSON.parse(readFileSync(process.env.AGENT_UI_TEST_MANIFEST!,"utf8"));expect(m.base_url).toBe(baseURL);expect(m.fixture).toBe("external-model-only");
+  const scene=process.env.AGENT_UI_STOP_SCENE ? JSON.parse(readFileSync(process.env.AGENT_UI_STOP_SCENE,"utf8")).scene : m.manual_stop;
+  const session=await(await request.get("/api/session")).json();
+  const started=await request.post(scene.start.url,{headers:{"x-annotagent-csrf":session.csrf_token},data:scene.start.body});expect(started.ok()).toBe(true);
+  await expect.poll(async()=>{const calls=await(await request.get(scene.wait_for_reserved_url)).json();return calls.some((c:{status:string})=>c.status==="reserved");}).toBe(true);
+  await page.goto(`/projects/${m.project}/work?task=${scene.task_id}`);
+  await expect(page.getByRole("button",{name:"■ 停止",exact:true})).toBeEnabled();
+  const response=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/stop-requests"));
+  await page.getByRole("button",{name:"■ 停止",exact:true}).click();
+  const initial=await(await response).json();expect(initial.normalized_state).toBe("stopping");
+  await expect(page.getByText(/远端结果未知/)).toBeVisible();
+  await page.reload();await expect(page.getByText(/远端结果未知/)).toBeVisible();
+  const final=await(await request.get(scene.workspace_url)).json();expect(final.calls.some((c:{status:string})=>c.status==="in_doubt")).toBe(true);
+  expect(final.resume_actions.filter((a:{available:boolean})=>a.available)).toEqual([]);
 });

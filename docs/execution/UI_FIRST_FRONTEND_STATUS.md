@@ -4,6 +4,10 @@
 
 User explicitly approved the UI and integration. The acceptance-only entries below are historical, not the current authorization boundary.
 
+Latest delta: backend `26720fc` and `334f671` were individually reviewed and merged (`dea1f46`, `3d1892e`). Actual HTTP bbox correction now passes, including 640×400 pixel→normalized conversion and unchanged accepted-annotation count. Stop POST `stopping` → GET `outcome_unknown`/`in_doubt` passed; no fictional resume. Fixed early empty-canvas draft persistence and scoped edits to exact sample evidence revision. Reused the approved monochrome mark byte-for-byte in production. Provider metadata/budget writes, write-only credential save, next-request CAS (no probe), explicit queue planning, image upload, and advanced Settings return all passed independently. Backend UIAPI-004 is integrated; fresh-seed combined regression and final capture are being performed.
+
+Rust full regression through `3d1892e`: fmt/check, all-target/all-feature strict clippy, workspace all-feature tests, and all-feature build all exit 0. Seven existing ignored tests remain intentional: four user-supplied real ONNX-model tests, one billable-provider smoke, and two foreground/subprocess fixture harness tests. No commercial-model or real-weight inference was performed. Web unit suite latest completed at 263 tests; Preview interactions 20/20 passed on independent 5176 (capture case excluded to preserve approved evidence assets).
+
 - Approved frontend `f0bbbc692904aef9f89392bd4cbb1ba3cd79172a`; backend initially `ce46c6f7e52da4a1e2fa216256351d8689d05fa5`; common base `c41b281b49252d520117029d39611865133798af`.
 - Isolated worktree `AnnotAgent-integration`, branch `codex/agent-ui-integration`. Pinned backend fixes integrated through `4676652` at `ac54a92`. No main changes, source-branch overwrite or push.
 - Production `main.tsx` now selects the approved Agent UI + HttpAdapter for `/`, `/projects`, `/settings`, `/projects/:id/work`. Preview remains its separate Fixture entry. Existing management views load independently, without bringing back the old functional sidebar; exact same-project return context is retained.

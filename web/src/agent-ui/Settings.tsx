@@ -36,6 +36,7 @@ export function SettingsView({
   onTheme,
   back,
   fail,
+  managementLinks,
 }: {
   adapter: WorkspaceAdapter;
   state: Snapshot;
@@ -44,6 +45,7 @@ export function SettingsView({
   onTheme: (s: string | undefined) => void;
   back: () => void;
   fail: () => void;
+  managementLinks?: Record<string,string>;
 }) {
   const fixture = adapter.kind === "fixture";
   const [draft, setDraft] = useState<Settings>(() =>
@@ -56,6 +58,7 @@ export function SettingsView({
   const [saved, setSaved] = useState("");
   const [editor, setEditor] = useState<Provider | null>(null);
   const [credential, setCredential] = useState("");
+  useEffect(()=>{setCredential("");},[editor?.id]);
   const [confirm, setConfirm] = useState<{
     title: string;
     body: string;
@@ -317,6 +320,7 @@ export function SettingsView({
                         <label>替换 API Key（只写）<input type="password" autoComplete="new-password" value={credential} onChange={e=>setCredential(e.target.value)} /></label>
                         <p>保存到服务器本地工作区文件，重启后保留；不使用系统钥匙串，不写入浏览器存储。</p>
                         <button disabled={!credential.trim() || saving || !adapter.saveCredential} onClick={()=>void run(async()=>{setSaving(true);try{await adapter.saveCredential!(editor.id,credential);setCredential("");setEditor({...editor,credential:true});setSaved("凭证已由服务器保存；不会返回密钥内容");}finally{setSaving(false);}})}>保存新凭证</button>
+                        {saved && <p role="status">{saved}</p>}
                       </div>}
                       <p>
                         {fixture ? "不提供 API Key 输入框。" : "只显示凭证是否已配置，不会读取原密钥。"}不要在名称或 Endpoint 中填写密钥。
@@ -380,7 +384,7 @@ export function SettingsView({
                         </button>
                       </div>
                       {draft.providers.length === 0 ? (
-                        <p>尚未添加 Provider。使用上方按钮配置演示账户。</p>
+                        <p>尚未添加 Provider。使用上方按钮配置{fixture ? "演示" : "服务器"}账户。</p>
                       ) : (
                         draft.providers.map((p) => (
                           <Row
@@ -487,10 +491,12 @@ export function SettingsView({
                     ),
                   )}
                   <p>没有执行真实探测。视觉工作流绑定在下一页单独管理。</p>
+                  {managementLinks?.models && <a href={managementLinks.models} onClick={e=>{if(!window.dispatchEvent(new Event("ui-preview:before-navigate",{cancelable:true})))e.preventDefault();}}>管理模型配置 →</a>}
                 </>
               )}
               {section === "vision" && (
                 <>
+                  {managementLinks?.plugins && <p><a href={managementLinks.plugins} onClick={e=>{if(!window.dispatchEvent(new Event("ui-preview:before-navigate",{cancelable:true})))e.preventDefault();}}>打开真实模型与插件管理 →</a> · 安装需单独确认权限和许可证。</p>}
                   {draft.plugins.map((p) => (
                     <Row
                       key={p.id}
@@ -534,6 +540,7 @@ export function SettingsView({
               )}
               {section === "privacy" && (
                 <>
+                  {managementLinks?.storage && <p><a href={managementLinks.storage} onClick={e=>{if(!window.dispatchEvent(new Event("ui-preview:before-navigate",{cancelable:true})))e.preventDefault();}}>查看服务器数据与存储 →</a></p>}
                   <Row
                     title="工作区"
                     help={fixture ? "隔离的浏览器演示命名空间。没有读取本机真实 workspace。" : "本地服务器工作区；没有将服务器目录误称为浏览器本机目录。"}

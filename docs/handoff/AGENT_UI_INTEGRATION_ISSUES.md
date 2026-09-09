@@ -10,9 +10,13 @@ UIAPI-002 verified: backend `4676652` merged at `ac54a92`; own port regression `
 
 Sent message `01a085e7-8460-7091-aad2-eb3423e58a58` to fixed backend UUID. Integration base `ac54a92`. Current main fixture emits classification terminal results and a classification HumanRequest; it cannot verify pixel→normalized bbox saving. Need committed TEST bbox candidate + pending HumanRequest (image dimensions, candidate ID, feedback revision) and existing delayed/failure Provider procedure for real stop transitions / unknown outcome. Asked backend to change only its fixture/support ownership, not production model behavior. Awaiting delivery; frontend continues unrelated work. Do not fabricate JSON/browser responses to satisfy this evidence.
 
+Resolved by backend `26720fc30b71b3d3b39c93d43cce193d86d2a170`, merged `dea1f46`. Verified new seed and actual browser bbox save + stop sequence. Frontend also fixed two contract assumptions: opaque resume_checkpoint_ref is NOT a Draft ID, and the HumanRequest kind comes from its exact terminal candidate. An early empty canvas was persisting an empty edit list and hiding the subsequent real candidate; canvas now waits for owned evidence, and edit persistence binds exact resultRevision. TEST source pixels remain unchanged.
+
 ### UIAPI-004 — preview admits a pending-human queue grant that execution rejects (P2)
 
 Sent `01a085f1-2af1-7b10-bde2-912c23455971`, integration `a8a2c47`. With pending HumanRequest, supplement Send succeeds; queue schema-preview returns a grant scope; schema-proposals records authorized/planning_call_id but rejects with `Task is waiting for human input; no model call was admitted review_request_or_reload_scope`. No call ran. Frontend now suppresses new queue planning while a pending human question exists, retains the exact unknown/failed grant for explicit recovery and does not pretend the queue completed. Requested backend preview/admission consistency and a documented same-ID recovery contract. Fresh-task queue text planning is separately verified through actual HTTP; not an automatic dispatcher.
+
+Backend delivered `334f6713adc1e9d45819cf94eff1f77a80a49a67`, merged `3d1892e`. Reviewed application preflight, transactional storage admission, server 409 admitted=false mapping and same-grant recovery tests. Own full Rust fmt/clippy/test/build passed. Frontend final fresh-seed HTTP regression additionally checks pending-human preview returns 409 and creates no authorization. No frontend-owned Rust edits.
 
 ### Frontend defects caught by HTTP regression
 
