@@ -17,6 +17,17 @@
 - Screenshots: `web/ui-preview-results/f0-*.png` (local baseline, not reference screenshots).
 - Preview build initially found missing CSS module declaration in isolated tsconfig; added Vite client declaration and rerunning.
 
+## F1 — workspace interaction
+
+- Single 216px project tree, 52px header, centered 720px Composer, optional 54/46 image workspace. Mobile uses conversation/data switching rather than three columns.
+- Preview Plan approval binds task revision; explicit scope/model/destination/unknown-cost confirmation. Queue remains a truthful simulated pending list, not automatic dispatch.
+- Stop passes through stopping before interrupted; resume only from an eligible state. Unknown does not silently retry. Model switching leaves in-flight model frozen. Same message retry preserves command identity.
+- Native dialog focus containment and Escape/return focus; searchable model popover with keyboard navigation; IME and Shift+Enter retained.
+- Images use original illustrative pixels and thin editable boxes. Draft geometry is stored per task and image in the Fixture Adapter; save failure preserves it. Original/compare/list/resize/undo controls available.
+- Settings navigation and sidebar transitions consult an unsaved-edit guard. Local file previews stay in memory and are scoped to the selected task.
+- 7 new unit tests passed; targeted layout and pane/model browser tests passed. Full interaction browser rerun follows an IME-test correction: synthetic composition does not emulate native OS editing, so its no-send assertion is separate from Shift+Enter newline assertion.
+- Preview build passed; preview assets moved to its own public directory so a built preview retains images. No production asset or entry replacement.
+
 ## Remaining / next
 
 F1: interaction correctness, dialogs/focus, scoped drafts, refresh/navigation guards, image edit controls and fixture semantics. F2: six-page error/save flows, model/provider consistency. F3: browser matrix, screenshots and handoff. No Live tests, no human usability tests, no native browser 200% zoom verification yet.
