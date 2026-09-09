@@ -642,6 +642,19 @@ mod tests {
         assert_eq!(labels, &serde_json::json!(["cup", "can", "plate"]));
         for (pipeline, label) in composition.label_pipelines.iter().zip(&binding.task.labels) {
             assert_eq!(pipeline.target_label.as_str(), label);
+            let review = pipeline
+                .steps
+                .iter()
+                .find(|step| step.node_type == "core.human_review")
+                .unwrap();
+            assert_eq!(
+                review.parameters.get("task_id"),
+                Some(&serde_json::json!(pipeline.target_task_id))
+            );
+            assert_eq!(
+                review.parameters.get("target_label"),
+                Some(&serde_json::json!(pipeline.target_label))
+            );
             assert!(
                 pipeline
                     .steps

@@ -5435,3 +5435,32 @@ sweep terminates; no passing rerun is claimed yet. Failure screenshots, contexts
 were preserved under `/tmp/annotagent-full-run-failures-20260909` before any future runner
 cleanup. New-query frontend integration remains pending as recorded above. The complete
 230-unit Web suite passed in 44477 after 6eee1e0's changes.
+
+### 2026-09-09 — Actual export inspected; missing review task binding reproduced and fixed
+
+The running sweep passed bbox case 92 and classification/review cases 91/93/94/95.
+Inspected `formal-export-bbox.png`, then read only the isolated workspace's export records
+and files. Project `conversation-samples-1788914701229`, task
+`eb94fb16-b54c-48d3-b98d-3f680e8bd3db` has applied correction request
+`573c6655-c204-4fc2-9246-7348c620dbe6`, feedback `c8722cd4-57be-4646-b2fc-7aee600de3cf`,
+repair Draft `3df764b4-28db-4906-acc7-a1d6e45fc98f`, retest
+`3a1ca8e7-0cea-4852-8ad5-84deefc5e704`, workflow version 1 and processing/batch
+`1bbde069-cd50-4c42-90bc-73c541ad6543`. Export `c9a5a23b-ecbd-4dde-b0da-d9c20b842724`
+contains one human-accepted annotation and a report. ZIP size 1608 and SHA-256
+`73a7082578c44b1bcab8df8c994ff4527285d2ee8db0b33577b91259b6f6ce33` match the delivery receipt.
+This is actual Fixture service/file evidence, not Live image quality.
+
+Inspection found `task_id: unbound` in the exported detection. The published Commit
+contains the correct task, but its generated geometry-review node had only a reason.
+`pipeline_annotations` obtains the task from the terminal review node, so needs-review
+detections lost that binding before export. Added a composition regression: **19728 failed**
+with missing task `objects`. The generated conversation detection review step now carries
+its explicit target task and label, matching its Commit. **70110 passed** the regression
+and Application all-target/all-feature clippy. Added an export assertion rejecting unbound
+tasks; it has not been browser-run yet. No historical annotation or Published Version was
+rewritten. Other generic review-insertion paths and old snapshots still need an explicit
+audit; this targeted fix is not a claim that all legacy provenance is repaired.
+
+Full browser 34639 remains live, last observed through case 135, with the three known
+joint-repair test failures retained. The new build, targeted reruns and final complete
+regression remain pending. No user data, credentials or remotes were touched.

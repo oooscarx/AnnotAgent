@@ -6026,10 +6026,11 @@ fn controlled_label_composition(
                 outputs: BTreeMap::from([("candidates".to_owned(), ArtifactKind::DetectionSet)]),
                 model_binding: None,
                 skill_binding: None,
-                parameters: BTreeMap::from([(
-                    "reason".to_owned(),
-                    json!("geometry_verification_required"),
-                )]),
+                parameters: BTreeMap::from([
+                    ("reason".to_owned(), json!("geometry_verification_required")),
+                    ("task_id".to_owned(), json!(target_task_id)),
+                    ("target_label".to_owned(), json!(target_label)),
+                ]),
                 validators: Vec::new(),
                 refiners: Vec::new(),
                 fallback: None,

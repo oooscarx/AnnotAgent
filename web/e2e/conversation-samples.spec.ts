@@ -763,6 +763,8 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
       expect(exported.project.annotations[0].id).toBe(reviewId);
       expect(exported.project.annotations[0].value).toEqual(accepted.annotation.value);
       expect(exported.project.annotations[0].review_status).toBe("human_accepted");
+      expect(exported.project.annotations[0].task_id).toBeTruthy();
+      expect(exported.project.annotations[0].task_id).not.toBe("unbound");
       await expect(page.getByRole("heading",{name:"Dataset exported successfully",exact:true})).toBeVisible();
       for (const restored of [false,true]) {
         if(restored) await page.reload();
