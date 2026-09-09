@@ -92,3 +92,13 @@ The isolated regression saves a real Conversation Schema, runs a scripted four-t
 Per the integration owner's priority message, UIAPI-009 is paused with uncommitted implementation/tests/migration0059 preserved and excluded from this delivery. UIAPI-010 CAS remains separately committed as 210091a17b1d4ff7b5fe0a306cb9100f1b548aea. Final isolated test totals and delivery SHA are reported in the delivery response.
 
 Isolated delivery-only worktree verification: Application 158 passed / 0 failed / 1 existing ignored; workspace all-target Clippy with `-D warnings`, fmt and diff checks passed. Pre-fix regression failed specifically because the segmenter node was absent.
+
+## UIAPI-011 round 3: manual drafting budget and native inspection
+
+Schema-bound FromScratch/ImproveExisting now persist deterministic Registry candidates before Provider turns. Manual current-Draft state no longer disables model-turn/step-budget fallback. Fresh scoped Registry revalidation and static validation still apply. When there is an in-progress draft, fallback materializes a separate new ID and records the preserved ID in planning events; no authored graph is overwritten. RepairDraft/ResolveBindings are excluded.
+
+inspect_models_batch now declares and resolves admitted ModelProfile plus expert/model-instance IDs. Profile payloads stay unchanged; expert payloads include kind/model_id/manifest and an explicit inspect_model_contracts/model_binding hint, never bind_model_profile for a native instance. Unknown/unadmitted models fail closed.
+
+Isolated delivery-only verification: Application 159 passed, 0 failed, 1 existing ignored; workspace all-target Clippy -D warnings, fmt and diff checks passed. Eight-turn manual drafting regression verifies separate statically valid segmentation alternative and preserved partial graph. Disabling budget fallback reproduces the failure (no separate alternative). Four-turn discovery, native-instance inspection/materialization and unavailable-model tests pass. Contract: docs/contracts/agent-ui-v1/UIAPI-011_BUDGET_FALLBACK.md.
+
+No paid calls, real artifacts/weights, service updates, Schema output-tool changes, history_scope/0059, frontend edits, push or merge in this delivery. Integration owner must verify actual VLM/SAM artifacts; static planning is not execution evidence. Final SHA is fixed in delivery response.
