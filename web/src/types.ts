@@ -1380,6 +1380,15 @@ export interface WorkflowValidationReport {
   execution_order: string[];
 }
 
+export interface StaticWorkflowValidation {
+  project_id: string;
+  draft_id: string;
+  revision: number;
+  content_hash: string;
+  validation_kind: "static";
+  validation: WorkflowValidationReport;
+}
+
 export interface SampleTestOutcomeRecord {
   id: string;
   label: string;

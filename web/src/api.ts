@@ -794,6 +794,12 @@ export const api = {
     );
   },
   workflows: () => request<{ workflows: ProjectWorkflow[] }>("/api/workflows"),
+  workflowDraft: (projectId: string, draftId: string, signal?: AbortSignal) =>
+    request<WorkflowDraft>(`/api/workflow-drafts/${encodeURIComponent(draftId)}?project_id=${encodeURIComponent(projectId)}`, {signal}),
+  validateWorkflowDraft: (projectId: string, draftId: string, revision: number, signal?: AbortSignal) =>
+    request<import("./types").StaticWorkflowValidation>(`/api/workflow-drafts/${encodeURIComponent(draftId)}/validate`, {
+      method: "POST", signal, body: JSON.stringify({project_id: projectId, expected_revision: revision}),
+    }),
   workflowDrafts: (projectId?: string, signal?: AbortSignal) =>
     request<{
       drafts: WorkflowDraft[];

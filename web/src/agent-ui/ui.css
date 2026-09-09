@@ -1035,6 +1035,7 @@ caption {
 .ui-app .native-project-manager form { max-width: 720px; display: grid; gap: 16px; margin-block: 24px; }
 .ui-app .native-project-manager label { display: grid; gap: 8px; }
 .ui-app .native-project-manager input, .ui-app .native-project-manager textarea, .ui-app .native-project-manager select { width: 100%; min-width: 0; }
+.ui-app .native-project-manager textarea { border: 1px solid var(--aa-border); border-radius: 8px; padding: 10px; color: var(--aa-text); background: var(--aa-bg); font: inherit; resize: vertical; }
 .ui-app .native-image-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(160px,1fr)); gap: 16px; }
 .ui-app .native-image-grid figure { margin: 0; min-width: 0; }
 .ui-app .native-image-grid img { width: 100%; height: 140px; object-fit: contain; }

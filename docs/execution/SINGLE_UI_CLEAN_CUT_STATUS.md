@@ -1,5 +1,13 @@
 # Single UI Clean Cut
 
+## UIAPI-013 native static validation
+
+Reviewed the complete backend contract/code and integrated `ffe09748aacad1a3e01827a75975c6b376fe7885` as `674754c`. Native Workflow editor now uses project-owned single-Draft GET and explicit revision-bound static validation. It compares returned Project/Draft/revision/hash and static-kind before showing evidence. Unsaved changes suppress the report and block validation; refresh neither repeats validation nor executes anything. Static success is explicitly not runtime readiness, sample approval or publication. No dry-run endpoint is used for static checks.
+
+Own tests: two targeted Application/Server regressions passed, including zero network connections, stale revision409, wrong owner404, unchanged Published/Draft and absent Runs/Samples. Web typecheck, 311 unit tests (one final-cutover TODO), isolated production build and fmt passed. Actual browser management suite passed15 (14 TEST HTTP, one controlled Worker-response fixture). A duplicate text locator matching both a disclosure and option was corrected to target summary. Browser verifies one validation POST, dirty suppression, passive refresh and unchanged server Draft. Screenshot `/tmp/annotagent-native-static-validation.png`: 674754c plus this slice, TEST HTTP, light,1440×900/DPR1, `/projects/TEST-agent-ui-15eb0549-f44e-4ae1-81dd-0ebf67714eb2/manage/pipelines/0977a7bd-4ec8-4f56-8527-c86a12407f50` at8794. Inspection revealed default textarea chrome; added native token styling afterward (screenshot remains before that adjustment).
+
+UIAPI-009 implementation priority restored via confirmed Backend UUID; queue receipt `01a08709-8c4f-7600-b133-a4378981944b`. Persistent history scope is still undelivered, not replaced by client filtering. Old root/styles remain in build, so full goal is not complete. No push, user service/dist changes, real workspace mutations or paid calls. Final all-feature Rust/browser/visual acceptance remains pending.
+
 ## UIAPI-012 integrated installation commands
 
 Read full delivery contract and server/storage diff; cherry-picked backend `1c24d4e8f8539f0770dfb0e2e9857179f9423dcf` as `fbe3296`. Resolved two documentation-only conflicts section-by-section, adding only UIAPI-012 and retaining existing history; unrelated UIAPI-011 deliveries are not imported or claimed integrated. Additive migration0060 is independent of pending history scope0059. No user server was restarted, so no migration ran on real workspace.

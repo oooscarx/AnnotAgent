@@ -1,6 +1,22 @@
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
+test("native static validation checks the saved revision without execution and invalidates evidence on edits",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const project="TEST-agent-ui-15eb0549-f44e-4ae1-81dd-0ebf67714eb2";
+  const session=await(await request.get("/api/session")).json();
+  const created=await request.post("/api/workflow-drafts",{headers:{"x-annotagent-csrf":session.csrf_token},data:{project_id:project,from_template:false}});expect(created.ok()).toBeTruthy();const draft=await created.json();
+  const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});
+  await page.goto(`/projects/${project}/manage/pipelines/${draft.id}`);
+  const check=page.getByRole("button",{name:"校验已保存草稿",exact:true});await expect(check).toBeEnabled();expect(writes).toEqual([]);
+  const responsePromise=page.waitForResponse(r=>r.url().endsWith(`/api/workflow-drafts/${draft.id}/validate`));await check.click();const response=await responsePromise;expect(response.ok()).toBeTruthy();const report=await response.json();
+  const region=page.getByRole("region",{name:"静态校验",exact:true});await expect(region.getByRole("status")).toContainText(report.validation.valid?"静态校验通过":"静态校验未通过");
+  expect(report.revision).toBe(draft.revision);expect(report.content_hash).toBe(draft.content_hash);
+  await page.getByLabel("方案名称",{exact:true}).fill("TEST unsaved static edit");await expect(check).toBeDisabled();await expect(region.getByRole("status")).toHaveCount(0);
+  await page.getByRole("button",{name:"取消修改",exact:true}).click();await page.reload();await expect(check).toBeEnabled();await expect(region.getByRole("status")).toHaveCount(0);
+  expect(writes).toEqual([`http://127.0.0.1:8794/api/workflow-drafts/${draft.id}/validate`]);
+  const saved=await(await request.get(`/api/workflow-drafts/${draft.id}?project_id=${project}`)).json();expect(saved).toEqual(draft);
+});
 test("native Pipeline step dialog preserves invalid input then saves only a cloned TEST draft",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
   const project="TEST-agent-ui-15eb0549-f44e-4ae1-81dd-0ebf67714eb2";
@@ -8,7 +24,7 @@ test("native Pipeline step dialog preserves invalid input then saves only a clon
   const session=await(await request.get("/api/session")).json();const clone=await request.post(`/api/workflows/${original.id}/versions/1/clone`,{headers:{"x-annotagent-csrf":session.csrf_token},data:{}});expect(clone.ok(),await clone.text()).toBeTruthy();const draft=await clone.json();
   const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});
   await page.goto(`/projects/${project}/manage/pipelines/${draft.id}`);
-  const group=draft.label_pipeline.label_pipelines[0];await page.getByText(`${group.target_task_id} · ${group.target_label}`,{exact:true}).click();
+  const group=draft.label_pipeline.label_pipelines[0];await page.locator("summary").filter({hasText:`${group.target_task_id} · ${group.target_label}`}).click();
   await page.getByRole("button",{name:"编辑步骤",exact:true}).first().click();
   const dialog=page.getByRole("dialog",{name:"编辑 Pipeline 步骤",exact:true});
   const parameters=dialog.getByRole("textbox",{name:"步骤参数 JSON",exact:true});await parameters.fill("{");
