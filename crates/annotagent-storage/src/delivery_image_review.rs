@@ -1,0 +1,483 @@
+//! Whole-image confirmation is explicit and bound to a server-derived snapshot.
+use crate::{SqliteStore, StorageError, TaskDeliveryRevision};
+use annotagent_core::{Annotation, ImageId, ReviewStatus, RunId};
+use rusqlite::{Connection, OptionalExtension, params};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use uuid::Uuid;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliveryImageDecision {
+    PositiveComplete,
+    NegativeConfirmed,
+    Excluded,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeliveryImageReviewInput {
+    pub command_id: Uuid,
+    pub intent_revision: u32,
+    pub intent_sha256: String,
+    pub image_id: ImageId,
+    pub source_run_id: Option<RunId>,
+    pub expected_snapshot_sha256: String,
+    pub expected_review_revision: u32,
+    pub decision: DeliveryImageDecision,
+    pub reason: Option<String>,
+    pub confirmed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeliveryImageSnapshot {
+    pub image_id: ImageId,
+    pub content_sha256: String,
+    pub source_run_id: Option<RunId>,
+    pub annotations: Vec<Annotation>,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeliveryImageReview {
+    pub revision: u32,
+    pub input: DeliveryImageReviewInput,
+    pub snapshot: DeliveryImageSnapshot,
+    pub created_at: String,
+}
+
+fn invalid(message: &str) -> StorageError {
+    StorageError::InvalidConversation(message.into())
+}
+
+fn intent(
+    db: &Connection,
+    project: &str,
+    conversation: Uuid,
+    task: Uuid,
+) -> Result<TaskDeliveryRevision, StorageError> {
+    let row: Option<(u32, String, String)> = db.query_row(
+        "SELECT d.revision,d.content_sha256,d.intent_json FROM task_delivery_intents d JOIN conversation_tasks t ON t.id=d.task_id JOIN project_conversations c ON c.id=t.conversation_id WHERE t.id=?1 AND c.id=?2 AND c.project_id=?3 ORDER BY d.revision DESC LIMIT 1",
+        params![task.to_string(), conversation.to_string(), project], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)),
+    ).optional()?;
+    let (revision, content_sha256, json) =
+        row.ok_or_else(|| invalid("owned delivery intent not found"))?;
+    Ok(TaskDeliveryRevision {
+        revision,
+        content_sha256,
+        intent: serde_json::from_str(&json)?,
+    })
+}
+
+fn snapshot(
+    db: &Connection,
+    saved: &TaskDeliveryRevision,
+    image: ImageId,
+    run: Option<RunId>,
+) -> Result<DeliveryImageSnapshot, StorageError> {
+    let selected = saved
+        .intent
+        .dataset_scope
+        .as_ref()
+        .and_then(|images| images.iter().find(|i| i.image_id == image))
+        .ok_or_else(|| invalid("image is outside the frozen delivery scope"))?;
+    let hash: Option<String> = db
+        .query_row(
+            "SELECT sha256 FROM images WHERE id=?1 AND project_id=?2",
+            params![image.to_string(), saved.intent.project_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if hash.as_deref() != Some(selected.content_sha256.as_str()) {
+        return Err(invalid("delivery image changed or is no longer owned"));
+    }
+    if let Some(run) = run {
+        let eligible: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM runs r JOIN run_images i ON i.run_id=r.id WHERE r.id=?1 AND r.project_id=?2 AND i.image_id=?3 AND r.status IN ('completed','completed_with_review','partial'))", params![run.to_string(), saved.intent.project_id, image.to_string()], |r| r.get(0))?;
+        if !eligible {
+            return Err(invalid(
+                "source Run is not an owned terminal Run for this image",
+            ));
+        }
+    }
+    let mut stmt = db.prepare("SELECT a.annotation_json FROM annotations a LEFT JOIN runs r ON r.id=a.run_id LEFT JOIN run_provenance_tombstones p ON p.run_id=a.run_id WHERE COALESCE(r.project_id,p.project_id)=?1 AND a.image_id=?2 AND (?3 IS NULL OR a.run_id=?3) ORDER BY a.id")?;
+    let rows = stmt.query_map(
+        params![
+            saved.intent.project_id,
+            image.to_string(),
+            run.map(|r| r.to_string())
+        ],
+        |r| r.get::<_, String>(0),
+    )?;
+    let annotations: Vec<Annotation> = rows
+        .map(|r| Ok(serde_json::from_str(&r?)?))
+        .collect::<Result<_, StorageError>>()?;
+    if annotations.iter().any(|a| a.image_id != image) {
+        return Err(invalid("annotation image identity is inconsistent"));
+    }
+    let bytes = serde_json::to_vec(&(image, &selected.content_sha256, run, &annotations))?;
+    Ok(DeliveryImageSnapshot {
+        image_id: image,
+        content_sha256: selected.content_sha256.clone(),
+        source_run_id: run,
+        annotations,
+        sha256: format!("{:x}", Sha256::digest(bytes)),
+    })
+}
+
+fn receipt(row: &rusqlite::Row<'_>) -> rusqlite::Result<(u32, String, String, String)> {
+    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+}
+fn decode(row: (u32, String, String, String)) -> Result<DeliveryImageReview, StorageError> {
+    Ok(DeliveryImageReview {
+        revision: row.0,
+        input: serde_json::from_str(&row.1)?,
+        snapshot: serde_json::from_str(&row.2)?,
+        created_at: row.3,
+    })
+}
+
+impl SqliteStore {
+    pub fn delivery_image_snapshot(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        image: ImageId,
+        run: Option<RunId>,
+    ) -> Result<DeliveryImageSnapshot, StorageError> {
+        self.with_connection(|db| {
+            snapshot(db, &intent(db, project, conversation, task)?, image, run)
+        })
+    }
+
+    /// Current-intent receipts only. Consumers must recheck snapshot hashes for readiness.
+    pub fn delivery_image_reviews(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+    ) -> Result<Vec<DeliveryImageReview>, StorageError> {
+        self.with_connection(|db| {
+            let saved = intent(db,project,conversation,task)?;
+            let mut stmt = db.prepare("SELECT r.revision,r.input_json,r.snapshot_json,r.created_at FROM delivery_image_reviews r WHERE r.task_id=?1 AND r.intent_revision=?2 AND r.revision=(SELECT MAX(x.revision) FROM delivery_image_reviews x WHERE x.task_id=r.task_id AND x.intent_revision=r.intent_revision AND x.image_id=r.image_id) ORDER BY r.image_id")?;
+            stmt.query_map(params![task.to_string(),saved.revision],receipt)?.map(|r| decode(r?)).collect()
+        })
+    }
+
+    /// This command accepts no annotation bodies, paths or caller-supplied confirmation IDs.
+    pub fn confirm_delivery_image(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        input: &DeliveryImageReviewInput,
+    ) -> Result<DeliveryImageReview, StorageError> {
+        if !input.confirmed || input.command_id.is_nil() {
+            return Err(invalid(
+                "explicit whole-image confirmation and command ID are required",
+            ));
+        }
+        self.with_connection(|db| {
+            let tx = db.unchecked_transaction()?;
+            let saved = intent(&tx,project,conversation,task)?;
+            if let Some(row) = tx.query_row("SELECT revision,input_json,snapshot_json,created_at FROM delivery_image_reviews WHERE task_id=?1 AND command_id=?2",params![task.to_string(),input.command_id.to_string()],receipt).optional()? {
+                let old = decode(row)?;
+                if old.input != *input { return Err(invalid("whole-image confirmation retry changed its scope")); }
+                return Ok(old);
+            }
+            if !saved.intent.missing_slots().is_empty() || saved.revision != input.intent_revision || saved.content_sha256 != input.intent_sha256 { return Err(invalid("delivery intent changed or is incomplete; reload before confirming")); }
+            let current: u32 = tx.query_row("SELECT COALESCE(MAX(revision),0) FROM delivery_image_reviews WHERE task_id=?1 AND intent_revision=?2 AND image_id=?3",params![task.to_string(),saved.revision,input.image_id.to_string()],|r| r.get(0))?;
+            if current != input.expected_review_revision { return Err(invalid("whole-image review changed; reload before confirming")); }
+            let snapshot = snapshot(&tx,&saved,input.image_id,input.source_run_id)?;
+            if snapshot.sha256 != input.expected_snapshot_sha256 { return Err(invalid("image annotations changed; inspect the latest image before confirming")); }
+            let accepted = snapshot.annotations.iter().filter(|a| a.review_status == ReviewStatus::HumanAccepted).count();
+            let unresolved = snapshot.annotations.iter().any(|a| !matches!(a.review_status,ReviewStatus::HumanAccepted | ReviewStatus::Rejected));
+            match input.decision {
+                DeliveryImageDecision::PositiveComplete if input.source_run_id.is_none() || accepted == 0 || unresolved => return Err(invalid("positive image requires an explicit source Run and resolved accepted objects")),
+                DeliveryImageDecision::NegativeConfirmed if accepted != 0 || unresolved => return Err(invalid("negative image still contains accepted or unresolved objects")),
+                DeliveryImageDecision::Excluded if input.reason.as_ref().is_none_or(|s| s.trim().is_empty()) => return Err(invalid("excluding an image requires a reason")),
+                _ => {}
+            }
+            let result = DeliveryImageReview { revision:current.checked_add(1).ok_or_else(|| invalid("review revision overflow"))?, input:input.clone(), snapshot, created_at:chrono::Utc::now().to_rfc3339() };
+            tx.execute("INSERT INTO delivery_image_reviews(task_id,intent_revision,image_id,revision,command_id,input_json,snapshot_json,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)", params![task.to_string(),saved.revision,input.image_id.to_string(),result.revision,input.command_id.to_string(),serde_json::to_string(input)?,serde_json::to_string(&result.snapshot)?,result.created_at])?;
+            tx.commit()?;
+            Ok(result)
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{BeginConversationTask, ConversationMessageInput};
+    use annotagent_core::{
+        AnnotationId, AnnotationProvenance, AnnotationSource, AnnotationValue, NormalizedRect,
+        TaskKind, dataset_delivery::*,
+    };
+
+    struct TestData {
+        store: SqliteStore,
+        path: std::path::PathBuf,
+        saved: TaskDeliveryRevision,
+        image: ImageId,
+        run: RunId,
+        annotation: Annotation,
+    }
+    impl TestData {
+        fn new(root: &std::path::Path) -> Self {
+            let path = root.join("TEST-whole-image.db");
+            let store = SqliteStore::open(&path).unwrap();
+            let project = Uuid::new_v4().to_string();
+            let conversation = store.create_conversation(&project).unwrap();
+            let message = ConversationMessageInput {
+                id: Uuid::new_v4(),
+                text: "TEST whole image".into(),
+                reference: None,
+                image: None,
+            };
+            store
+                .append_conversation_message(&project, conversation, &message)
+                .unwrap();
+            let task = Uuid::new_v4();
+            store
+                .begin_conversation_task(
+                    &project,
+                    conversation,
+                    &BeginConversationTask {
+                        id: task,
+                        source_message_id: message.id,
+                        schema_revision: "a".repeat(64),
+                    },
+                )
+                .unwrap();
+            let image = ImageId::new();
+            let run = RunId::new();
+            let intent = TaskDeliveryIntent {
+                version: 1,
+                project_id: project.clone(),
+                conversation_id: conversation,
+                task_id: task,
+                dataset_scope: Some(vec![DeliveryImage {
+                    image_id: image,
+                    content_sha256: "a".repeat(64),
+                    content_revision: "TEST-1".into(),
+                    existing_split: None,
+                    group_ids: vec![],
+                }]),
+                label_spec: Some(vec![DeliveryLabel {
+                    stable_id: "target".into(),
+                    display_name: "目标".into(),
+                    aliases: vec![],
+                    include: String::new(),
+                    exclude: String::new(),
+                }]),
+                training_target: Some(TrainingTarget {
+                    annotation_kind: TaskKind::BoundingBox,
+                    framework: "ultralytics".into(),
+                    export_profile: DETECTION_PROFILE.into(),
+                    profile_revision: 1,
+                }),
+                split_policy: DeliverySplitPolicy::default(),
+                review_policy: DeliveryReviewPolicy::HumanWholeImage,
+            };
+            let saved = store
+                .save_task_delivery_intent(Uuid::new_v4(), 0, &intent)
+                .unwrap();
+            store.with_connection(|db| {
+                db.execute("INSERT INTO images(id,project_id,relative_path,sha256,metadata_json,imported_at) VALUES(?1,?2,'TEST.png',?3,'{}','TEST')",params![image.to_string(),project,"a".repeat(64)])?;
+                db.execute("INSERT INTO runs(id,project_id,project_name,skill_id,provider,model,status,project_schema_json,created_at,updated_at) VALUES(?1,?2,'TEST','TEST','TEST','TEST','completed','{}','TEST','TEST')",params![run.to_string(),project])?;
+                db.execute("INSERT INTO run_images(run_id,image_id,status) VALUES(?1,?2,'completed')",params![run.to_string(),image.to_string()])?;
+                Ok(())
+            }).unwrap();
+            let annotation = Annotation {
+                id: AnnotationId::new(),
+                image_id: image,
+                task_id: "objects".into(),
+                label: Some("target".into()),
+                value: AnnotationValue::BoundingBox {
+                    rect: NormalizedRect::new(0.1, 0.1, 0.2, 0.2).unwrap(),
+                },
+                attributes: std::collections::BTreeMap::default(),
+                confidence: None,
+                source: AnnotationSource::Human,
+                review_status: ReviewStatus::HumanAccepted,
+                provenance: AnnotationProvenance::default(),
+                created_at: chrono::Utc::now(),
+            };
+            Self {
+                store,
+                path,
+                saved,
+                image,
+                run,
+                annotation,
+            }
+        }
+        fn put(&self, annotation: &Annotation) {
+            self.store.with_connection(|db| {
+                db.execute("INSERT OR REPLACE INTO annotations(id,run_id,image_id,task_id,label,review_status,annotation_json,created_at) VALUES(?1,?2,?3,'objects','target',?4,?5,'TEST')",params![annotation.id.to_string(),self.run.to_string(),self.image.to_string(),serde_json::to_string(&annotation.review_status)?,serde_json::to_string(annotation)?])?;
+                Ok(())
+            }).unwrap();
+        }
+        fn input(&self, decision: DeliveryImageDecision) -> DeliveryImageReviewInput {
+            let i = &self.saved.intent;
+            let snapshot = self
+                .store
+                .delivery_image_snapshot(
+                    &i.project_id,
+                    i.conversation_id,
+                    i.task_id,
+                    self.image,
+                    Some(self.run),
+                )
+                .unwrap();
+            DeliveryImageReviewInput {
+                command_id: Uuid::new_v4(),
+                intent_revision: self.saved.revision,
+                intent_sha256: self.saved.content_sha256.clone(),
+                image_id: self.image,
+                source_run_id: Some(self.run),
+                expected_snapshot_sha256: snapshot.sha256,
+                expected_review_revision: 0,
+                decision,
+                reason: None,
+                confirmed: true,
+            }
+        }
+        fn confirm(
+            &self,
+            input: &DeliveryImageReviewInput,
+        ) -> Result<DeliveryImageReview, StorageError> {
+            let i = &self.saved.intent;
+            self.store
+                .confirm_delivery_image(&i.project_id, i.conversation_id, i.task_id, input)
+        }
+    }
+
+    #[test]
+    fn whole_image_requires_explicit_confirmation_and_resolved_objects() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = TestData::new(dir.path());
+        let i = &f.saved.intent;
+        // Empty model output is not a saved negative decision.
+        assert!(
+            f.store
+                .delivery_image_reviews(&i.project_id, i.conversation_id, i.task_id)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            f.confirm(&f.input(DeliveryImageDecision::PositiveComplete))
+                .is_err()
+        );
+        f.put(&f.annotation);
+        // Object acceptance itself still creates no image receipt.
+        assert!(
+            f.store
+                .delivery_image_reviews(&i.project_id, i.conversation_id, i.task_id)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            f.confirm(&f.input(DeliveryImageDecision::NegativeConfirmed))
+                .is_err()
+        );
+        let mut pending = f.annotation.clone();
+        pending.id = AnnotationId::new();
+        pending.review_status = ReviewStatus::NeedsReview;
+        f.put(&pending);
+        assert!(
+            f.confirm(&f.input(DeliveryImageDecision::PositiveComplete))
+                .is_err()
+        );
+        pending.review_status = ReviewStatus::Rejected;
+        f.put(&pending);
+        let mut input = f.input(DeliveryImageDecision::PositiveComplete);
+        input.confirmed = false;
+        assert!(f.confirm(&input).is_err());
+        input.confirmed = true;
+        let receipt = f.confirm(&input).unwrap();
+        assert_eq!(receipt.snapshot.annotations.len(), 2);
+        assert_eq!(f.confirm(&input).unwrap(), receipt);
+        input.reason = Some("changed retry".into());
+        assert!(f.confirm(&input).is_err());
+        assert!(
+            f.confirm(&f.input(DeliveryImageDecision::PositiveComplete))
+                .is_err()
+        );
+        let restored = SqliteStore::open(&f.path)
+            .unwrap()
+            .delivery_image_reviews(&i.project_id, i.conversation_id, i.task_id)
+            .unwrap();
+        assert_eq!(restored, vec![receipt]);
+    }
+
+    #[test]
+    fn whole_image_rejects_stale_snapshots_owners_and_scope_and_preserves_old_receipts() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = TestData::new(dir.path());
+        let i = &f.saved.intent;
+        let empty = f.input(DeliveryImageDecision::NegativeConfirmed);
+        f.put(&f.annotation);
+        assert!(f.confirm(&empty).is_err());
+        let input = f.input(DeliveryImageDecision::PositiveComplete);
+        assert!(
+            f.store
+                .confirm_delivery_image(
+                    &Uuid::new_v4().to_string(),
+                    i.conversation_id,
+                    i.task_id,
+                    &input
+                )
+                .is_err()
+        );
+        let mut foreign = input.clone();
+        foreign.source_run_id = Some(RunId::new());
+        assert!(f.confirm(&foreign).is_err());
+        foreign = input.clone();
+        foreign.image_id = ImageId::new();
+        assert!(f.confirm(&foreign).is_err());
+        let receipt = f.confirm(&input).unwrap();
+        let mut changed = i.clone();
+        changed.label_spec.as_mut().unwrap()[0].display_name = "Changed".into();
+        f.store
+            .save_task_delivery_intent(Uuid::new_v4(), 1, &changed)
+            .unwrap();
+        assert!(
+            f.store
+                .delivery_image_reviews(&i.project_id, i.conversation_id, i.task_id)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(f.confirm(&input).unwrap(), receipt); // immutable command receipt, not current readiness
+        let mut stale = input;
+        stale.command_id = Uuid::new_v4();
+        assert!(f.confirm(&stale).is_err());
+    }
+
+    #[test]
+    fn negative_and_exclusion_are_deliberate_and_image_byte_changes_invalidate_review() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = TestData::new(dir.path());
+        let mut input = f.input(DeliveryImageDecision::Excluded);
+        assert!(f.confirm(&input).is_err());
+        input.reason = Some("TEST incomplete: missing target cannot be added yet".into());
+        let excluded = f.confirm(&input).unwrap();
+        assert_eq!(excluded.input.decision, DeliveryImageDecision::Excluded);
+        let mut negative = f.input(DeliveryImageDecision::NegativeConfirmed);
+        negative.expected_review_revision = 1;
+        assert_eq!(f.confirm(&negative).unwrap().revision, 2);
+        f.store
+            .with_connection(|db| {
+                db.execute(
+                    "UPDATE images SET sha256=?1 WHERE id=?2",
+                    params!["b".repeat(64), f.image.to_string()],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        negative.command_id = Uuid::new_v4();
+        negative.expected_review_revision = 2;
+        assert!(f.confirm(&negative).is_err());
+    }
+}

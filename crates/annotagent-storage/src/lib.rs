@@ -60,6 +60,7 @@ pub use conversation_agent_model::{ConversationAgentModel, SelectConversationAge
 pub use conversation_message_queue::{ConversationQueuedMessage, ConversationQueuedMessageStatus};
 mod conversation_task_selection;
 mod conversation_tasks;
+mod delivery_image_review;
 mod task_delivery;
 pub use conversation_calls::{
     ConversationCallAdmission, ConversationCallBudget, ConversationCallGrant,
@@ -76,6 +77,9 @@ pub use conversation_send::{
     ConversationSendReceipt,
 };
 pub use conversation_task_selection::{ConversationTaskSelection, SelectConversationTask};
+pub use delivery_image_review::{
+    DeliveryImageDecision, DeliveryImageReview, DeliveryImageReviewInput, DeliveryImageSnapshot,
+};
 pub use task_delivery::TaskDeliveryRevision;
 mod conversations;
 pub use conversation_tasks::{BeginConversationTask, ConversationTask};
@@ -711,6 +715,8 @@ impl SqliteStore {
             transaction.execute_batch(include_str!("../../../migrations/0058_conversation_call_progress.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0060_model_install_commands.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0061_task_delivery_intents.sql"))?;
+            transaction.execute_batch(include_str!("../../../migrations/0062_delivery_image_reviews.sql"))?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(62,'delivery_image_reviews',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(61,'task_delivery_intents',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(60,'model_install_commands',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(58,'conversation_call_progress',?1)",[Utc::now().to_rfc3339()])?;
