@@ -464,7 +464,7 @@ test("new UI creates a TEST project, uploads and defines labels through real HTT
   await expect(page.getByRole("heading",{name:"已保存图片 · 1"})).toBeVisible();
   await page.getByRole("link",{name:"标签定义",exact:true}).click();
   await page.getByLabel("标签组名称",{exact:true}).fill("测试足球目标");
-  await page.getByLabel("类别（逗号或换行分隔）",{exact:true}).fill("ball");
+  await page.getByLabel("类别（逗号或换行分隔）",{exact:true}).fill("ball， ball\nball");
   await page.locator("summary").filter({hasText:"可选属性"}).click();await page.getByLabel("属性名称",{exact:true}).fill("TEST_occluded");await page.getByRole("combobox",{name:"属性类型",exact:true}).selectOption("boolean");
   await page.getByRole("button",{name:"保存标签组",exact:true}).click();
   await expect(page.getByText("标签组已保存；没有自动生成或执行方案。",{exact:true})).toBeVisible();

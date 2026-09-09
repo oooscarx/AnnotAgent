@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Detached Journey pages physically removed
+
+Deleted the unreachable old Journey goal/images/model/local-model/sample/confirmation/revision/Run/Batch pages, FirstResultEntry and ConversationBatchResults. Preserved deterministic label parsing as agent-ui/labelInput and used it in native ProjectManagement; English/Chinese commas, newlines and duplicate labels are covered. Old Journey navigation tests were replaced with native Not Found assertions instead of retaining obsolete route compatibility. This deletion removes roughly1,100 dormant lines, not server objects or business APIs. Remaining detached Conversation cards and navigation.ts still require cleanup and capability parity review.
+
+Verification: typecheck, production build to /tmp/annotagent-journey-clean-dist and323 tests across84 files passed. Test count decreased by three obsolete Journey-route cases, not ignored failures. Two actual isolated HTTP E2E scenarios passed after explicit TEST fixture-ready: old URL matrix renders native Not Found with no writes/legacy modules; native project creation, upload, Chinese-comma/newline duplicate category parsing, optional attribute save, adding a category and refresh persist through real APIs without planning/publication calls. Built86 modules (one extracted parser added); no old root/styles/Fixture in production. Only marked TEST-agent-ui-e2acz_um used on8794/8795; real workspace/dist and user8787/8788 untouched. No Rust, remote or unrelated product-document changes; no push. Goal remains active.
+
 ## Detached old conversation shell deleted; initialized HTTP regression
 
 Reference search across web found no callers/importers of ConversationWorkspace, ConversationNavigation or FocusHeader. Deleted these old UI shells and the stylesheet imported only by the old workspace:833 lines. The approved agent-ui project/task tree, composer, controls and optional canvas remain unchanged. This removes dormant old UI code, not another visual redesign. Recoverable from Git2c08d73; no server data involved. Additional old Journey/Conversation helper components and navigation.ts still need reference/parity cleanup.
