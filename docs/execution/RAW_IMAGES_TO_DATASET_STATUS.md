@@ -52,6 +52,14 @@ Verification: `cargo test --offline -p annotagent-core -p annotagent-storage -p 
 
 M0 local commit: `3d495dc`. M1 foundation follows as a separate local commit. This is not completion of M1: server-resolved scope admission, HTTP endpoints, same-thread intake card, Schema/Builder wiring and capability/authorization gates are next. Storage APIs alone are not exposed as a usable product feature.
 
+### M1 HTTP admission
+
+Foundation commit: `0c8c3f5`. Added Application and server `/api/projects/:project/conversations/:conversation/tasks/:task/delivery-intent` GET/POST. The server derives the stable Project owner and resolves selected image IDs/content digests from the Project image inventory; caller-supplied filesystem paths, hashes and owner fields are not accepted. Empty or foreign image selections fail. GET restores missing slots and reports removed/changed scope images without executing a model. Unsupported training targets remain saved and explicitly blocked from the detection preset. The maximum sample scope is three; this endpoint grants no execution permission.
+
+Real Axum HTTP regression `delivery_http_restores_missing_slots_and_rejects_scope_and_revision_changes` passed using an isolated temporary TEST application: missing-slot restore, save/read identity, exact retry, modified-retry rejection, foreign-image rejection, cross-Project rejection, and unchanged latest state after rejection. This is HTTP handler evidence, not yet browser E2E. Existing split/capture-group metadata discovery, the React intake card, capability chain and Builder/authorization binding are still pending; this endpoint is not declared a finished workflow.
+
+Admission checks: `cargo fmt --all --check` and `cargo clippy --offline -p annotagent-application -p annotagent-server --all-targets --target-dir /tmp/annotagent-dataset-delivery-target -- -D warnings` passed. Targeted server regression passed with the same isolated target directory. User services were not restarted.
+
 ## Not complete / not executed
 
-No new three-slot UI is connected yet; typed intent persistence exists but is not wired to HTTP/Builder. No complete training ZIP has been generated. Whole-image confirmation, explicit negatives/exclusions, exact-scope authorization and automatic authorized packaging remain to implement. Browser screenshots, end-to-end HTTP delivery, official loader smoke, two-path extraction, full workspace checks and live model quality evaluation have not run. No completed delivery or cost is claimed.
+No new three-slot UI is connected yet; typed intent persistence and HTTP admission exist but are not wired to Builder. No complete training ZIP has been generated. Whole-image confirmation, explicit negatives/exclusions, exact-scope authorization and automatic authorized packaging remain to implement. Browser screenshots, end-to-end HTTP delivery, official loader smoke, two-path extraction, full workspace checks and live model quality evaluation have not run. No completed delivery or cost is claimed.
