@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Native future-rule actual HTTP recovery and old diff removal
+
+Extended real feedback scope browser case through future-schema editing: change boundary rules, inspect native actual diff, forward real save then drop response, refresh and verify the same owned future Schema ID/command/definition. Original Sample Test record stayed byte-equivalent as parsed JSON; browser only sent scope-answer and future-schema POSTs. Full extended scenario including older-history navigation passed. Removed the now-unreferenced old FutureSchemaDiff after checking native rendering uses the shared semantic diff and displays tested/new rules; shared domain code remains.
+
+Screenshot /tmp/annotagent-native-future-rules.png is an actual cropped native section, source acd205f, TEST HTTP8794, light, DPR1, browser1440×960. It shows the actual saved rule ID and changed boundary text, not a prototype; inspected visually. A repeat run captured the section successfully but subsequently hit the production mutation rate limit429 while adding101 TEST history fillers. That repeat is failed, not an extra pass; no rate-limit protection was bypassed. Full-page/mobile/dark visual acceptance remains open. Build /tmp/annotagent-native-future-rules-dist. No user service/workspace/Published/remote changes. Future model suggestions/adoption, remaining repair/Replay and final regression still incomplete; goal active.
+
 ## Native future-rule semantic editing
 
 Added FutureRules after an actual saved project_future_rule scope answer, never as an unconditional chat form. Reads existing future-schema API through HttpAdapter service, checks future_tasks_only, task, source scope command/context and saved-record identity. Reuses original future-schema field/diff/input/recovery domain helpers. Native editor exposes goal/output/labels/boundary rules and actual tested-versus-proposed differences. Edits and exact frozen request are workspace/project/conversation/task/call scoped in local storage; source mismatch/corrupt recovery/conflicting saved command blocks mutation. Explicit save rechecks source, accepts only a matching receipt and never posts on refresh. Stored record is described as a future semantic Draft, not adopted rules or model execution.
