@@ -316,8 +316,9 @@ test("native review preserves failed edits and advances only after a saved decis
   expect(seeded.ok(),await seeded.text()).toBeTruthy();
   const queue=await(await request.get(`/api/projects/${run.project_id}/reviews`)).json();
   const review=queue.reviews.find((r:{annotation_id:string})=>r.annotation_id===id);expect(review).toBeTruthy();
-  await page.goto(`/projects/${run.project_id}/manage/review/${review.review_id}`);
+  await page.goto(`/projects/${run.project_id}/manage/review/${review.review_id}?queue_offset=50`);
   await expect(page.getByRole("heading",{name:"审核标注",exact:true})).toBeVisible();
+  await page.getByText("来源与审核证据",{exact:true}).click();await page.getByRole("link",{name:"查看来源运行",exact:true}).click();await expect(page).toHaveURL(new RegExp(`source_review=${review.review_id}&queue_offset=50`));await page.reload();await page.getByRole("link",{name:"返回来源审核项",exact:true}).click();await expect(page).toHaveURL(new RegExp(`/manage/review/${review.review_id}\\?queue_offset=50$`));await expect(page.getByRole("link",{name:"返回审核队列",exact:true})).toHaveAttribute("href",`/projects/${run.project_id}/manage/review?queue_offset=50`);
   await expect(page.locator(".workspace-header")).toContainText("TEST Agent UI HTTP fixture");
   await expect(page.locator(".workspace-header")).not.toContainText("不存在");
   const label=page.getByLabel("标签",{exact:true});await expect(label).toHaveValue(base.label);

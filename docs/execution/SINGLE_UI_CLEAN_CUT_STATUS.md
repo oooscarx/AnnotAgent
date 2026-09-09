@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Native Review source round trip
+
+Review queue page offset is now an explicit validated URL value with Back/popstate restoration. Queue→item, saved next-item navigation and return-to-queue preserve that offset. Review→Run carries only a typed same-project source review ID and annotation ID; Run offers a canonical return link, while the target Review continues authoritative server ownership checks. Arbitrary external/legacy return URLs are not accepted. Existing local unsaved edit persistence and dirty guards remain.
+
+315 unit tests plus one cutover TODO, typecheck/isolated build and20 management browser cases passed (18 real TEST HTTP, two controlled responses). The actual Review regression now navigates to its source Run, refreshes, returns to the same Review and checks queue offset50 before verifying failed-edit preservation/save/accept. Queue filter design, full dirty source-trip testing and additional pagination exhaustion cases remain future verification; this is not a claim of all navigation requirements completed. No Rust changed, real workspace/user services/dist unchanged, no paid calls or push. Owned TEST service stopped. Legacy root/styles and other migration gaps remain; goal active.
+
 ## Owned Workflow version summary
 
 Native Pipeline detail now distinguishes explicit `?version=N` from editable Draft identity. Reads the exact Project's available version summary, checks owner/workflow ID/version, rejects malformed or missing versions without default fallback, and shows actual node/model/dependency/validator/refiner/review/fallback metadata. Run links parse server `workflow@version` references instead of treating that compound string as a Draft ID. It clearly states summary-only: complete frozen snapshot, clone, compare and publication remain migration gaps; no fake buttons or latest-Draft substitution.

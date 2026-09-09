@@ -6,6 +6,7 @@ import { Disclosure } from "./Disclosure";
 import { agentPath } from "./navigationContract";
 import { RunInspector, type RunInspectorService } from "./RunInspector";
 import {versionLink} from "./WorkflowVersionDetail";
+import {sourceReviewPath} from "./reviewNavigation";
 
 export type RunDetailService = Pick<typeof api,"run"|"runAnnotations"|"runResultSummary"|"images"|"control"> & RunInspectorService;
 export function assertRunOwner(run:HistoryRun,project:string,id:string):HistoryRun {
@@ -80,6 +81,7 @@ export function RunDetail({service,projectId,runId}:{service:RunDetailService;pr
     {error&&<p role="alert">{error}</p>}{message&&<p role="status">{message}</p>}
     {!run&&!error&&<p role="status">读取运行与最终结果…</p>}
     {run&&<><p role="status">{run.status} · {run.current_node||"未记录当前节点"}</p>
+      {sourceReviewPath(projectId,new URL(location.href))&&<a href={sourceReviewPath(projectId,new URL(location.href))}>返回来源审核项</a>}
       {versionLink(projectId,run.workflow_version_id)&&<a href={versionLink(projectId,run.workflow_version_id)}>查看运行的 Workflow 版本</a>}
       <button aria-expanded={debug} onClick={()=>{const next=!debug;setDebug(next);const url=new URL(location.href);url.searchParams.set("view",next?"debug":original?"original":"results");history.replaceState(history.state,"",url);}}>{debug?"返回结果画布":"查看执行详情"}</button>
       {debug&&<RunInspector key={runId} service={service} projectId={projectId} runId={runId}/>}
