@@ -1064,6 +1064,8 @@ caption {
 .ui-app .frozen-comparison pre { overflow: auto; max-height: 50vh; }
 @media (max-width: 800px) { .ui-app .frozen-comparison { grid-template-columns: minmax(0,1fr); } }
 .ui-app .native-review .canvas-shell { position: relative; min-width: 0; margin-block: 16px; }
+.ui-app .native-review .review-feedback { margin-block: 16px; }
+.ui-app .native-review .review-feedback > label { margin-block: 12px; }
 .ui-app .native-review .canvas-dimension-probe { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .ui-app .native-review .annotation-canvas { display: block; width: 100%; max-height: 65vh; touch-action: none; }
 .ui-app .native-review .canvas-tools, .ui-app .native-review .canvas-keyboard-tools { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding-block: 8px; }
