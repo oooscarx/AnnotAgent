@@ -1,6 +1,6 @@
 # Conversational Annotation Workspace — execution record
 
-## Current checkpoint (2026-09-09 acceptance audit; not a completion declaration)
+## Current checkpoint (2026-09-09 engineering delivery; conditional validation excluded)
 
 The default Project entry now uses the persisted conversation/image workspace. Explicit goal
 selection survives re-entry, sample candidate references are frozen, and clarification/correction
@@ -49,12 +49,13 @@ revoked or changed binding still blocks inference without discarding the saved c
 Last fully Rust-verified production code is befcaa0. Full Rust fmt/clippy/test/build process
 26940 exited 0 (714 tests passed, 6 explicitly ignored); see
 `/tmp/annotagent-rust-export-schema-final.log`.
-Latest Web typecheck, 232 unit tests and production build passed. Process 12822 passed all
-50 targeted browser cases for repair, samples, archive semantics and management. The preceding
-combined run 66282 had 158 passes, two test-fixture failures and 18 serial cases not run;
-both fixtures were corrected and passed that targeted sweep. Current full browser process
-78366 runs all 178 cases against 370b763; log `/tmp/annotagent-complete-export-schema.log`,
-evidence `/tmp/annotagent-complete-export-schema`. Its terminal result remains pending.
+Latest Web typecheck, 232 unit tests and production build passed again in process 2677,
+exit 0. Full browser process 63116 exited 0: **178/178 passed (23.6m)** against 86e81fe.
+Log `/tmp/annotagent-combined-reconnect.log`, evidence `/tmp/annotagent-combined-reconnect`.
+Previous combined failures were repaired, not waived: 66282 exposed two fixture defects;
+78366 exposed stale Export readiness on SSE reconnect outside the paged Project inventory.
+The latter production fix and strengthened regression are in 86e81fe. The current full
+combination includes all those regressions, with no browser cases skipped.
 Older run numbers/counts below are historical, not the current final result.
 
 Default-goal discovery now uses one bounded owned query rather than downloading the full
@@ -68,13 +69,13 @@ definitions rejected. Old tombstones are not retroactively populated; their limi
 recorded below. Fresh bbox and classification native archives were read and verified after
 the fix, not merely observed as successful download cards.
 
-Remaining verification: terminal full-browser result and consolidated requirement/evidence
-audit. Actual 200% browser zoom, native IME and assistive-technology checks are unverified;
+Engineering verification and the consolidated requirement/evidence audit are now recorded
+below. Actual 200% browser zoom, native IME and assistive-technology checks are unverified;
 automated reflow/composition tests are not substitutes. Live model quality and real-human novice
 usability have not been tested. Point-only and general candidate-comparison request protocols
 are not claimed; the implemented visual requests use reference boxes/classes and corrections.
 
-## Consolidated verification map (current sweep still pending)
+## Consolidated verification map (178-case combined sweep passed)
 
 This map locates executable evidence; it does not substitute a test file's existence for
 its result. The current full log is authoritative. TEST HTTP transports call real Rust
@@ -5801,3 +5802,131 @@ browser cases (42.4s)**. Log `/tmp/annotagent-export-reconnect-verified.log`; ev
 `/tmp/annotagent-export-reconnect-verified`. Rust is unchanged from the 714-pass full run.
 The full current Web combination still needs verification. No real workspace writes, push,
 remote edits or Live model calls.
+
+## Final engineering handoff — 2026-09-09
+
+This section supersedes earlier pending checkpoints, not their failure evidence. M0–M4's
+implemented engineering slice is delivered; Live quality and human usability are separate,
+unexecuted acceptance activities. No claim of recognition accuracy is made.
+
+### Verified commands and boundaries
+
+- `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
+  `cargo test --workspace --all-features`, `cargo build --workspace --all-features`:
+  process 26940 exited 0 against befcaa0, the latest Rust change; **714 passed, 6 ignored**.
+  Ignored tests require conditional Live/weight environments or are subprocess helpers.
+- `npm run typecheck`, `npm test`, `npm run build` in `web`: process 2677 exited 0,
+  **47 files / 232 unit tests passed**. Production build retains a >500 kB chunk warning
+  (JS 1,083 kB, gzip 295 kB); this is a remaining bundle-size limitation, not a failed build.
+- `ANNOTAGENT_E2E_EVIDENCE_DIR=/tmp/annotagent-combined-reconnect npm run test:e2e` in `web`:
+  process 63116 exited 0, **178 passed / 0 failed / 0 skipped, 23.6 minutes**, production
+  code 86e81fe. Tests use their existing isolated workspace and TEST model transport.
+- Rust was not rerun after documentation-only edits or Web-only SSE recovery changes.
+  The final Web rebuild did not overlap the completed browser suite.
+
+### Requirement matrix, attachment section 16
+
+All named browser suites below ran in the successful combined sweep. Rust tests provide
+transaction, ownership, authorization and immutable-state assertions beneath these screens.
+
+| Scenario | Evidence / exact limit |
+| --- | --- |
+| Goal before images; images before goal | `conversation-entry`, `conversation-workspace`, `conversation-goals`: persisted goal and real upload, independent task selection. |
+| Explicit bbox / classification | `conversation-schema`, `conversation-initial-journey`: saved typed Schema and linked Builder/Sample; classification does not require detection. |
+| Ambiguous output | `conversation-clarification`, `conversation-human-schema`, initial-journey clarification: structured answer, saved scope, continued original authorization. |
+| Configured models / bounded autonomous phases | Initial journey and `conversation-budget`: original grant and call limits cover child services, no per-tool approval. |
+| Missing model, setup completion/cancel | `journey-model`, `journey-local-model`: controlled return context and no automatic inference after setup; local installation transport is TEST metadata. |
+| Send then select another image | Feedback/reference and workspace tests: frozen refs, explicit opening of returned result, no late selection theft. |
+| Text-only LLM evidence | Feedback authorization and payload assertions: scoped structured evidence, not an unsupported claim to have inspected pixels. |
+| Human reference/correction canvas | `conversation-reference-target`, `conversation-joint-repair`, samples: structured box/class submitted to real Application and Sandbox. Point-only requests are not implemented. |
+| Double answer, stale revision | Joint repair and sample conflict cases plus storage tests: one Revision/resume; conflict retains edits. |
+| Local wait / independent task / Schema gap | Goals, human-schema and initial-journey cases: separate task identity; dependent work waits for its scoped Schema. |
+| New requirements while old work exists | `conversation-future-schema`, `conversation-future-schema-proposal`: explicit new Schema, preserved prior snapshots, no historical class deletion. |
+| Ambiguous “remove this” | `conversation-feedback`, `conversation-image-class`: scope answer before scoped change; no inferred project-wide deletion. |
+| Publication succeeds, start fails | Samples/Guided processing retry: reuse publication and persisted operation rather than create another version. |
+| Unknown external request | Feedback/schema/sample unknown-outcome tests: explicit unknown state, no exactly-once billing promise or blind paid retry. |
+| Refresh, disconnect, restart | History/Guided plus `conversation-answer-restart`: actual killed answer writer and production startup recovery at commit/pre-dispatch boundary. Not arbitrary instruction-level crash coverage. |
+| Intermediate vs final | Samples and `sample-terminal-comparison`: terminal projection, lineage only in diagnostics, empty final remains empty. |
+| Accepted / no-target inspection | Samples and Guided Results/Review: these remain reachable; missing-target edits do not fabricate a model final. |
+| Untrusted instruction / permissions | Security browser suite and Rust authorization/Registry tests retain data/instruction separation and restricted commands; not a proof against every adversarial model response. |
+| Real export receipt | Samples: real file bytes, hash, report, task identity and frozen task definitions checked, not just a success banner. |
+| Unsupported Mask editing | Feature-truth and plugin tests preserve declared limitations; no general editable Mask claim. |
+| Management, recovery, advanced editing | Guided lifecycle, Provider and plugin suites: existing management routes, trash/restore and owner resolution survive the default conversation entry. |
+
+### A fresh complete persisted chain
+
+Read-only verification of `/tmp/annotagent-guided-e2e-39569/.annotagent/history.db` after the
+combined run links the following actual objects (generic bbox TEST case):
+
+| Object | ID / revision |
+| --- | --- |
+| Project stable ID | `66127734-6402-5a3c-9fc9-8d55fb4612aa` |
+| Conversation | `9eb9fd0f-f416-410f-a4fa-c6ba3f9bd88f` |
+| Task | `79a2748a-5e05-4af5-9f87-8f9d0b741621` |
+| Schema Draft | `ec7de9df-688d-4da5-b186-fc68cabbe9c7`, revision 1, `bounding_box`, label `cup` |
+| Human request | `6c81d926-a905-40b9-80b5-00507bc3d58f`, `applied` |
+| Saved Sandbox correction | `d45efe4e-3e12-45e8-a5e3-af5c3a681f84`, original sample `0280364c-c5bc-4461-a23e-6c418c93840d` |
+| Resumed Workflow Draft | `8cb75db4-0a96-4e3a-a635-87bdb3440b20`, revision 3 |
+| Subsequent passed Sample | `08f3c805-0086-45d5-a496-c20f1439f742`, exact Draft revision 3 |
+| Published Workflow | `8cb75db4-0a96-4e3a-a635-87bdb3440b20@1` |
+| Batch | `c5d2a8f8-0a84-4756-9bf7-689c5844b926` |
+| Delivered export | `fb423d8b-e4fb-4c09-8660-23e0f7a04087`, 1 annotation, 0 skipped, 1,721 bytes |
+
+The human answer contains image `dbc9eb3c-1c6f-5645-b7bb-26a64482e519`, candidate
+`detection-0`, reason `poor_boundary`, normalized rect `[0.35,0.35,0.12,0.2]` and label
+`cup`. Server validation commits the Sandbox Revision and answer/outbox, then resumes the
+saved Draft under the explicit bounded grant. The model cannot mark that edit human-verified.
+Formal Review acceptance remains a later, separate operation.
+
+The persisted Batch status is `awaiting_review`; do not describe that aggregate row as a
+completed Batch. The later actual accepted annotation and export receipt are verified by the
+test. Delivery SHA-256: `2050f0e4a84226adaa6df42e77f19ae4abf0730b868c095486f31c9d0a760f01`.
+Archive folder is under `conversation-samples-1788921664404/exports/deliveries/` in the
+isolated workspace, never the user's dataset. Classification variants in the same sample
+suite exercise class correction, subsequent processing, Review and actual native delivery;
+the earlier fresh classification IDs and task-definition payload are recorded above.
+
+### Screenshots and entry changes
+
+Inspected current-run screenshots are preserved without overwriting the pre-existing dirty
+screenshots:
+
+- [Default entry](conversational-workspace/verified-final-entry.png)
+- [Actual bbox workspace](conversational-workspace/verified-final-bbox.png)
+- [Classification on narrow screen](conversational-workspace/verified-final-classification-mobile.png)
+- [Actual export delivery](conversational-workspace/verified-final-export.png)
+
+These are real rendered pages with TEST data. The synthetic green image is not a cup image;
+its scripted label is deliberately protocol evidence, never a visual accuracy demonstration.
+The default now enters the persistent conversation/canvas instead of requiring Labels →
+Pipeline → Test navigation. Sidebar, full steps and Inspector are not simultaneously open.
+Project management still leads to data, workflows, Runs, Review, export, settings and trash;
+precise existing deep links continue to work. No duplicate annotation execution engine exists.
+
+LLM proposes Schema/method and interprets bounded feedback; registered validators/evidence
+logic enforce feasibility and geometry safety; Rust Runtime runs fixed versions; the human
+provides scoped corrections and explicit formal authorization. New model destinations,
+scope or revisions cannot silently inherit old grants. Unknown Provider outcomes are retained
+as unknown. GET/re-entry is not permission for paid execution.
+
+### Remaining limits and Git delivery
+
+- **Live model validation and real-human novice usability: not performed.** No old keys or
+  live user data were used. A successful fixture pipeline does not establish model accuracy.
+- Native 200% browser zoom, OS Chinese IME and assistive technology were not verified;
+  responsive reflow, synthetic composition, keyboard and reduced-motion tests passed.
+- No point-only / general CompareCandidates request protocol or general Mask editor claim.
+  Reference boxes/classes and before/after correction inspection are implemented.
+- Dataset metadata remains a full index; rendered thumbnails/previews and journal reads are
+  bounded. No arbitrary-scale performance claim. Bundle-size warning remains.
+- Old cleanup tombstones cannot gain lost frozen definitions retroactively; explicit error
+  or current-schema fallback limitations are recorded above. Native export is not a portable
+  full Registry/model/artifact installation bundle.
+- Important local fixes: 027b8ea (answer restart), 6eee1e0 (bounded first goal), 909980d and
+  f4b1eb1 (Run/Review owner), 87b63e1 and befcaa0 (frozen export tasks and cleanup provenance),
+  370b763 (actual archive assertions), 86e81fe (Export reconnect). Earlier M0–M4 commits are
+  retained in this chronological record and Git history.
+- Branch `main`; 214 commits ahead of `origin/main` before this evidence commit. Only this
+  record and four newly named final screenshots are staged for the handoff. The 110 existing
+  screenshot/output changes are preserved. No push, remote changes, reset/rebase/amend or
+  user-workspace restart/cleanup was performed.
