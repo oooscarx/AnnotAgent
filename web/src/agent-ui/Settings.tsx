@@ -493,9 +493,9 @@ export function SettingsView({
                     ),
                   )}
                   <p>没有执行真实探测。视觉工作流绑定在下一页单独管理。</p>
-                  {!fixture && adapter.modelProfileManagement && <ModelProfiles service={adapter.modelProfileManagement} />}
                 </>
               )}
+              {(section === "agent" || section === "vision") && !fixture && adapter.modelProfileManagement && <ModelProfiles service={adapter.modelProfileManagement} />}
               {section === "vision" && !fixture && adapter.pluginManagement && <PluginSettings service={adapter.pluginManagement} />}
               {section === "vision" && (fixture || !adapter.pluginManagement) && (
                 <>

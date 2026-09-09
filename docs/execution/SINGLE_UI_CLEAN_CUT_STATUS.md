@@ -43,6 +43,16 @@ Committed visual evidence: `single-ui-clean-cut/m0/disclosure-expanded.png` (144
 
 ## Remaining
 
+### Model declaration/editor migration
+
+Expanded the new native ModelProfiles surface to create Registry profiles and edit Provider-associated identity, input modalities, all ten existing task capabilities, all seven protocol features, enabled state and five price fields. Search is available; the same component is mounted in Agent models and visual models Settings rather than separate implementations. New declarations start with unknown pricing and no asserted protocol features. Only editable fields are sent; availability/verification state is not invented. Existing locked profiles remain protected. Dirty guards, submit deduplication and revision preflight remain. Actual atomic CAS is not supported by the current backend (UIAPI-010 recorded separately).
+
+Actual HTTP testing found and fixed two contract mismatches: null unknown pricing caused editor validation failure, and the prior native PATCH sent unsupported `revision`, causing 422. The request now matches the server contract; missing CAS remains an explicit limitation, not hidden success. A first browser locator used label text including select options; the semantic combobox locator fixes that test. The visual-model page was also missing the model-editor mount; now both model Settings pages reach it.
+
+Verification: Web typecheck, 286 unit tests (one final-cutover TODO), isolated production build, and five actual HTTP management E2E passed. New test creates a TEST declaration, edits it, disables it, reloads saved protocol/pricing, and asserts zero active probes, discovery or inference requests. Screenshot `single-ui-clean-cut/m2/model-editor.png`: actual new React UI, TEST HTTP 8794, backend `34436fd`, frontend `87e97a4` plus this slice; `/settings/vision-models`, 1440×900, DPR1, light. Modal scroll is used to reach lower fields/save in E2E; screenshot is its top viewport, not a full-form claim.
+
+Still pending: model locks/deletion, explicit billable probe and quality-contract controls, fuller plugin/bundle management, history/advanced Workflow/Run surfaces and old-root/styles/URL removal. The user-facing build was not changed; no push and no paid or real workspace mutation. Goal remains active.
+
 ### Native export delivery
 
 Added `agent-ui/ExportManagement.tsx` through `WorkspaceAdapter.exportManagement`, backed by existing export-readiness/export endpoints. Canonical `/projects/:id/manage/export` enters only the Agent shell; the project menu links to it. No old Export page or global stylesheet is embedded. Displays real image/accepted/unresolved counts, blockers, supported formats and information-loss warnings. Explicit export never accepts reviews or invokes a model. Download links require server-issued delivery IDs; reports include completion time, skipped rows, source fingerprint, files and SHA-256. Server paths are not presented as local folders. GET/mount/reload do not generate exports. Unknown request outcomes disable repeat generation in the current page and offer read-only report reload.

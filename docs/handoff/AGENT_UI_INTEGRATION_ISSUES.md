@@ -1,5 +1,11 @@
 # Agent UI integration — decisions and interface issues
 
+## UIAPI-010 — Model Profile update CAS (open)
+
+Baseline `87e97a4` plus native ModelProfileEditor migration. Actual isolated HTTP: PATCH `/api/model-profiles/:id` including `revision` returns 422. `UpdateModelProfileRequest` in server lib.rs denies unknown fields and provides no expected-revision field. Native UI now sends supported editable fields only, with a GET/revision preflight; this is explicitly not atomic CAS. Two concurrent editors remain a final acceptance limitation.
+
+Requested optional `expected_revision`, atomic comparison with current stored revision, stale 409 response with safe revision information, two-writer regression and immutable published-binding preservation. Queued once to confirmed Backend UUID `01a0855e-9c39-7c33-9f18-93e084d14816`, accepted queue ID `01a086c4-358f-7cf0-a290-28dbca6b2cfd`. Delivery not verified. No backend files edited, no real workspace mutations or paid calls. UIAPI-009 history cutoff is also still awaiting verified delivery; queue acceptance alone is not a running process or completed work.
+
 ## UIAPI-008 — execution feedback and streaming investigation (2026-09-09)
 
 User authorized progress/error repair and investigation of streaming. Queued request `01a08659-4bb7-7fb2-9b4a-1aa70a0e3e19` to the pinned Backend task UUID, not another project. Main baseline `83d2adb`; frontend owns Web only. Backend proposed additive nullable `started_at`, `completed_at`, `duration_ms`, `stage` and safe typed `failure {stage,category,http_status}`. No raw Provider response or credential is requested. Legacy unknown results must not be relabeled successful or automatically retried.

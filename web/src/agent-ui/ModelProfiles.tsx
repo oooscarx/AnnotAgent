@@ -1,14 +1,55 @@
-import { useEffect, useState } from "react";
-import type { RegistryModelProfile } from "../types";
+import { useEffect, useRef, useState } from "react";
+import type { ProviderProfile, RegistryModelProfile } from "../types";
 import type { api } from "../api";
 import { Dialog } from "./Dialog";
-export type ModelProfileService = Pick<typeof api, "modelProfiles" | "updateModelProfile">;
+import { ModelProfileEditor, type EditableModel } from "./ModelProfileEditor";
+export type ModelProfileService = Pick<typeof api, "modelProfiles" | "providers" | "createModelProfile" | "updateModelProfile">;
 export function ModelProfiles({service}:{service:ModelProfileService}) {
   const [models,setModels]=useState<RegistryModelProfile[]>();
-  const [edit,setEdit]=useState<RegistryModelProfile>();
-  const [error,setError]=useState(""); const [busy,setBusy]=useState(false);
-  const reload=async()=>setModels((await service.modelProfiles()).models);
-  useEffect(()=>{let live=true; void service.modelProfiles().then(r=>{if(live)setModels(r.models);}).catch(e=>{if(live)setError(e.message);});return()=>{live=false;};},[service]);
-  useEffect(()=>{const guard=(e:Event)=>{if(edit&&!window.confirm("放弃尚未保存的模型修改？"))e.preventDefault();};const unload=(e:BeforeUnloadEvent)=>{if(edit){e.preventDefault();e.returnValue="";}};window.addEventListener("ui-preview:before-navigate",guard);window.addEventListener("beforeunload",unload);return()=>{window.removeEventListener("ui-preview:before-navigate",guard);window.removeEventListener("beforeunload",unload);};},[edit]);
-  return <section aria-label="模型配置"><h2>模型配置</h2><p>修改 Registry 配置，不自动探测或调用模型，也不改写已有发布版本。</p>{error&&<p role="alert" className="error">{error}</p>}{!models&&!error&&<p role="status">读取模型配置…</p>}<button onClick={()=>void reload().catch(e=>setError(e.message))}>重新读取</button>{models?.map(m=><div className="settings-row" key={m.id}><div><strong>{m.display_name}</strong><p>{m.remote_model_id} · {m.status}</p><p>{m.task_capabilities.join(" · ")}</p></div><button disabled={m.locked} onClick={()=>{setError("");setEdit(structuredClone(m));}}>{m.locked?"已锁定":"编辑配置"}</button></div>)}{edit&&<Dialog title="编辑模型配置" onClose={()=>{if(!busy&&window.confirm("放弃编辑？"))setEdit(undefined);}}><form onSubmit={e=>{e.preventDefault();if(busy)return;setBusy(true);setError("");void service.modelProfiles().then(async r=>{const current=r.models.find(m=>m.id===edit.id);if(!current||current.revision!==edit.revision)throw new Error("模型版本已变化，请取消并重新读取后编辑");await service.updateModelProfile(edit.id,{revision:edit.revision,display_name:edit.display_name,remote_model_id:edit.remote_model_id,enabled:edit.enabled});setEdit(undefined);await reload();}).catch(e=>setError(e.message)).finally(()=>setBusy(false));}}><label>显示名称<input required value={edit.display_name} onChange={e=>setEdit({...edit,display_name:e.target.value})}/></label><label>远程模型 ID<input required value={edit.remote_model_id} onChange={e=>setEdit({...edit,remote_model_id:e.target.value})}/></label><label><input type="checkbox" checked={edit.enabled} onChange={e=>setEdit({...edit,enabled:e.target.checked})}/>启用模型</label>{error&&<p role="alert">{error}</p>}<div className="actions"><button type="button" disabled={busy} onClick={()=>setEdit(undefined)}>取消</button><button disabled={busy}>{busy?"保存中…":"保存配置"}</button></div></form></Dialog>}</section>;
+  const [providers,setProviders]=useState<ProviderProfile[]>([]);
+  const [edit,setEdit]=useState<RegistryModelProfile | "new">();
+  const [query,setQuery]=useState("");
+  const [error,setError]=useState(""); const [message,setMessage]=useState("");
+  const [busy,setBusy]=useState(false);
+  const pending=useRef(false); const revision=useRef(0); const mounted=useRef(false);
+  const reload=async()=>{
+    const generation=++revision.current;
+    const [m,p]=await Promise.all([service.modelProfiles(),service.providers()]);
+    if(mounted.current&&generation===revision.current){setModels(m.models);setProviders(p.providers);}
+  };
+  useEffect(()=>{mounted.current=true;void reload().catch(e=>{if(mounted.current)setError(e.message);});return()=>{mounted.current=false;revision.current++;};},[service]);
+  useEffect(()=>{
+    const guard=(e:Event)=>{if(edit&&!window.confirm("放弃尚未保存的模型修改？"))e.preventDefault();};
+    const unload=(e:BeforeUnloadEvent)=>{if(edit){e.preventDefault();e.returnValue="";}};
+    window.addEventListener("ui-preview:before-navigate",guard);window.addEventListener("beforeunload",unload);
+    return()=>{window.removeEventListener("ui-preview:before-navigate",guard);window.removeEventListener("beforeunload",unload);};
+  },[edit]);
+  const save=async(value:EditableModel)=>{
+    if(pending.current||!edit)return;
+    pending.current=true;setBusy(true);setError("");
+    try{
+      if(edit==="new")await service.createModelProfile(value);
+      else{
+        const current=(await service.modelProfiles()).models.find(m=>m.id===edit.id);
+        if(!current||current.revision!==edit.revision||current.locked)throw new Error("模型已变化或锁定；本地输入保留，请取消并重新读取后核对。");
+        // The current PATCH contract rejects revision; preflight is not atomic CAS.
+        await service.updateModelProfile(edit.id,value);
+      }
+      if(!mounted.current)return;
+      setEdit(undefined);setMessage("模型配置已保存。未执行探测或推理。");await reload();
+    }catch(reason){if(mounted.current)setError((reason as Error).message);}
+    finally{pending.current=false;if(mounted.current)setBusy(false);}
+  };
+  return <section aria-label="模型配置"><h2>模型配置</h2><p>Registry 中的模型定义用于后续请求；不自动探测、不更改已有发布版本。</p>
+    {error&&!edit&&<p role="alert" className="error">{error}</p>}{message&&<p role="status">{message}</p>}
+    {!models&&!error&&<p role="status">读取模型配置…</p>}
+    <div className="actions"><button disabled={busy} onClick={()=>void reload().catch(e=>setError(e.message))}>重新读取</button><button disabled={!providers.length||busy} onClick={()=>{setError("");setEdit("new");}}>添加模型配置</button></div>
+    {!providers.length&&models&&<p>先在 Providers 中保存连接；添加模型不需要收费探测。</p>}
+    <label>搜索模型<input value={query} onChange={e=>setQuery(e.target.value)} placeholder="名称、模型 ID 或能力"/></label>
+    {models?.filter(m=>[m.display_name,m.remote_model_id,...m.task_capabilities].join(" ").toLowerCase().includes(query.toLowerCase())).map(m=><div className="settings-row" key={m.id}><div><strong>{m.display_name}</strong><p>{providers.find(p=>p.id===m.provider_id)?.display_name||"Provider 不存在"} · {m.status}</p><p>{m.remote_model_id}</p><p>{m.task_capabilities.join(" · ")}</p></div><button disabled={m.locked||busy} onClick={()=>{setError("");setEdit(structuredClone(m));}}>{m.locked?"已锁定":"编辑配置"}</button></div>)}
+    {edit&&<Dialog title={edit==="new"?"添加模型配置":"编辑模型配置"} onClose={()=>{if(!busy&&window.confirm("放弃编辑？"))setEdit(undefined);}}>
+      {error&&<p role="alert">{error}</p>}
+      <ModelProfileEditor model={edit==="new"?undefined:edit} providers={providers} busy={busy} cancel={()=>setEdit(undefined)} save={value=>void save(value)}/>
+    </Dialog>}
+  </section>;
 }
