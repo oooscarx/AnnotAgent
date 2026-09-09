@@ -5521,3 +5521,24 @@ regression, Application all-target/all-feature clippy. This modifies new Draft c
 not stored Published Versions or historical annotations. Current browser run uses the
 previous binary, so it does not validate this latest insertion change. Final full Rust
 and browser regression still remain, along with accurate limitations on legacy output.
+
+### 2026-09-09 — Classification review export binding gap caught by the new assertion
+
+43586 terminated **13 passed, 1 failed (3.7m)**. All five corrected joint-repair cases
+passed, and bbox export passed the new non-unbound task assertion. Classification review
+failed that same assertion: its separately constructed confidence-review step also carried
+only a reason. The export/Review services otherwise completed; removing the assertion
+would have hidden a real annotation-scope defect.
+
+The classification confidence-review step now persists its explicit target task and label,
+as does the detection branch. Added composition checks for the classification route as
+well. **31038 exited 0** for the targeted composition regression and all-target/all-feature
+Application clippy. Historical results and immutable versions are not rewritten.
+
+Fresh browser **99466** runs the exact classification-review export case against the new
+binary; its result is pending. The attempted failure-trace backup used a root-relative path
+from the Web directory and failed before the new runner cleaned its output; that particular
+trace was not retained. The observed failure and exact assertion are recorded here rather
+than claiming a preserved archive. Rust full fmt/clippy/test/build **6393** is also running,
+with durable output at `/tmp/annotagent-rust-post-binding-20260909.log`. No full-green claim,
+no real Provider/data mutation, and no push or remote changes.

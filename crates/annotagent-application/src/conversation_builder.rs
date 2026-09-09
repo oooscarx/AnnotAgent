@@ -627,6 +627,29 @@ mod tests {
         let (_, models) = app
             .workflow_catalog(&crate::load_settings(None).unwrap())
             .unwrap();
+        let mut classification_project = project.clone();
+        classification_project.tasks[0].kind = annotagent_core::TaskKind::Classification;
+        let classification = crate::controlled_label_composition(
+            &classification_project,
+            "objects",
+            "cup",
+            &WorkflowConstraints::default(),
+            &models,
+        )
+        .unwrap();
+        let review = classification.label_pipelines[0]
+            .steps
+            .iter()
+            .find(|step| step.kind == annotagent_core::WorkflowNodeKind::HumanReview)
+            .unwrap();
+        assert_eq!(
+            review.parameters.get("task_id"),
+            Some(&serde_json::json!("objects"))
+        );
+        assert_eq!(
+            review.parameters.get("target_label"),
+            Some(&serde_json::json!("cup"))
+        );
         let composition =
             conversation_composition(&project, &binding, &WorkflowConstraints::default(), &models)
                 .unwrap();

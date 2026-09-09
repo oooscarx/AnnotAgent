@@ -5851,10 +5851,14 @@ fn controlled_label_composition(
                 )]),
                 model_binding: None,
                 skill_binding: None,
-                parameters: BTreeMap::from([(
-                    "reason".to_owned(),
-                    json!("classification_confidence_requires_review"),
-                )]),
+                parameters: BTreeMap::from([
+                    (
+                        "reason".to_owned(),
+                        json!("classification_confidence_requires_review"),
+                    ),
+                    ("task_id".to_owned(), json!(target_task_id)),
+                    ("target_label".to_owned(), json!(target_label)),
+                ]),
                 validators: Vec::new(),
                 refiners: Vec::new(),
                 fallback: None,
