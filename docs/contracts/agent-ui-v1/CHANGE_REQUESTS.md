@@ -27,3 +27,5 @@
 - UIAPI-008：补持久 Schema 调用阶段、本地计时和安全类型化失败原因；保留未知结果与同ID不重发。调查确认 Provider 无模型文本增量协议，本轮只保留整包结果，不增加伪 streaming。详见 UIAPI-008_PROGRESS.md。
 
 - UIAPI-009 审计：无现成安全cutover API，已交具体缺口/拟议契约 UIAPI-009_GAP.md（未实现）。新增UI历史切换仍阻塞；不可用localStorage或删除旧记录代替。
+
+- UIAPI-011 已修数据链路：受控candidate的LabelPipeline持久化/materialization、精确Schema单label目标、批准Registry模型选择与绑定同步；不降低sample guard，不重跑旧Builder回执，不调用收费模型。见 UIAPI-011_BUILDER.md。

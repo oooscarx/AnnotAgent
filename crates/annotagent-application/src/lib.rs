@@ -1881,18 +1881,20 @@ fn materialize_feasibility_draft(
             compatible_bindings,
             warnings,
         } => {
-            if let Some(template) = candidate_templates.iter().find_map(|template_id| {
-                input.workflow_templates.iter().find(|template| {
-                    template.id == *template_id
-                        && template.nodes.iter().any(|node| {
-                            compatible_bindings.iter().any(|binding| {
-                                binding
-                                    .split_once(':')
-                                    .is_some_and(|(node_type, _)| node_type == node.node_type)
+            if safe_suggestion.draft.annotation_schema.is_none()
+                && let Some(template) = candidate_templates.iter().find_map(|template_id| {
+                    input.workflow_templates.iter().find(|template| {
+                        template.id == *template_id
+                            && template.nodes.iter().any(|node| {
+                                compatible_bindings.iter().any(|binding| {
+                                    binding
+                                        .split_once(':')
+                                        .is_some_and(|(node_type, _)| node_type == node.node_type)
+                                })
                             })
-                        })
+                    })
                 })
-            }) {
+            {
                 suggestion.draft = template.instantiate(
                     input.project_id.clone(),
                     safe_suggestion.draft.enabled_skills.clone(),
@@ -2361,6 +2363,18 @@ fn bind_available_registry_models(draft: &mut WorkflowDraft, input: &WorkflowAdv
             node.unresolved_model_requirement = None;
         }
     }
+    let bindings = draft
+        .nodes
+        .iter()
+        .filter_map(|node| {
+            node.model_binding
+                .as_ref()
+                .map(|model| (node.id.clone(), model.clone()))
+        })
+        .collect::<Vec<_>>();
+    for (id, model) in bindings {
+        sync_label_step_model(draft, &id, &model);
+    }
 }
 
 fn freeze_node_prompt_resources(draft: &mut WorkflowDraft) {
@@ -2470,6 +2484,7 @@ fn candidate_from_draft(
             annotagent_core::CandidateSufficiency::Partial
         },
         fragment_ids: source.fragment_ids,
+        label_pipeline: draft.label_pipeline.clone(),
         node_blueprints: draft.nodes.clone(),
         edge_blueprints: draft.edges.clone(),
         model_bindings,
@@ -2590,17 +2605,19 @@ fn synthesize_registry_plan_candidates(
     if matches!(
         session.build_mode,
         Some(annotagent_core::PipelineBuildMode::FromScratch)
-    ) && let Some(template) = input.workflow_templates.iter().find(|template| {
-        let types = template
-            .nodes
-            .iter()
-            .map(|node| node.node_type.as_str())
-            .collect::<BTreeSet<_>>();
-        types.contains(annotagent_runtime::CORE_EXPAND_REGION)
-            && types.contains(annotagent_runtime::CORE_PROMPT_COVERAGE_GATE)
-            && types.contains("capability.segment")
-            && types.contains(annotagent_runtime::CORE_PROJECT_COORDINATES)
-    }) {
+    ) && safe_suggestion.draft.annotation_schema.is_none()
+        && let Some(template) = input.workflow_templates.iter().find(|template| {
+            let types = template
+                .nodes
+                .iter()
+                .map(|node| node.node_type.as_str())
+                .collect::<BTreeSet<_>>();
+            types.contains(annotagent_runtime::CORE_EXPAND_REGION)
+                && types.contains(annotagent_runtime::CORE_PROMPT_COVERAGE_GATE)
+                && types.contains("capability.segment")
+                && types.contains(annotagent_runtime::CORE_PROJECT_COORDINATES)
+        })
+    {
         let mut localized = template.instantiate(
             input.project_id.clone(),
             input.project_schema.project.enabled_skill_versions(),
@@ -2813,7 +2830,7 @@ fn refresh_plan_candidates(
             allow_unvalidated_commit: false,
             geometry_risk_acceptance: None,
             annotation_schema: None,
-            label_pipeline: None,
+            label_pipeline: candidate.label_pipeline.clone(),
             created_at: candidate.created_at,
             updated_at: chrono::Utc::now(),
         };
@@ -26418,7 +26435,7 @@ export:
                 Some("ball"),
             )
             .expect("Builder input");
-        let safe_suggestion = application
+        let mut safe_suggestion = application
             .suggest_label_pipeline_preview(
                 "candidate-revalidation",
                 &settings,
@@ -26427,6 +26444,13 @@ export:
                 &WorkflowConstraints::default(),
             )
             .expect("safe suggestion");
+        safe_suggestion.draft.annotation_schema = Some(annotagent_core::WorkflowSchemaBinding {
+            schema_draft_id: uuid::Uuid::new_v4().to_string(),
+            revision: 1,
+            goal: "TEST precise object bounds".into(),
+            task: input.project_schema.tasks[0].clone(),
+            boundary_rules: Vec::new(),
+        });
         let snapshot = application
             .pipeline_builder_context_snapshot(&input)
             .expect("context snapshot");
@@ -26477,6 +26501,119 @@ export:
             annotagent_core::PipelineCandidateSource::RegistrySynthesis
         );
         assert!(session.plan_candidates[0].is_runnable());
+
+        // UIAPI-011: persist/reload the actual selected typed candidate, then materialize
+        // into the same empty working draft used by FromScratch.
+        let selected = session.plan_candidates[0].clone();
+        assert!(selected.label_pipeline.is_some());
+        assert!(
+            selected
+                .node_blueprints
+                .iter()
+                .any(|node| node.node_type == "capability.segment")
+        );
+        application.store.save_agent_session(&session).unwrap();
+        let restored = application.store.get_agent_session(session.id).unwrap();
+        assert_eq!(
+            restored.plan_candidates[0].label_pipeline,
+            selected.label_pipeline
+        );
+        let mut working = safe_suggestion.draft.clone();
+        working.nodes.clear();
+        working.edges.clear();
+        working.label_pipeline = None;
+        let identity = working.id.clone();
+        let binding = working.annotation_schema.clone();
+        annotagent_core::RegistryPipelineSynthesizer
+            .materialize_candidate(&restored.plan_candidates[0], &mut working)
+            .unwrap();
+        assert_eq!(working.id, identity);
+        assert_eq!(working.annotation_schema, binding);
+        assert_eq!(working.label_pipeline, selected.label_pipeline);
+        let segment = working
+            .nodes
+            .iter()
+            .find(|n| n.node_type == "capability.segment")
+            .unwrap();
+        assert_eq!(
+            segment
+                .model_profile_binding
+                .as_ref()
+                .unwrap()
+                .model_profile_id,
+            segmenter.id
+        );
+        assert!(
+            working
+                .nodes
+                .iter()
+                .any(|n| n.node_type == annotagent_runtime::CORE_GEOMETRY_QUALITY_EVALUATION)
+        );
+        // Native model-instance IDs use the same frozen candidate path; no worker is started.
+        let mut native_input = input.clone();
+        let mut native = settings
+            .detection_workers
+            .iter()
+            .find(|w| {
+                w.expected_capabilities
+                    .contains(&VisionCapability::PromptedSegmentation)
+            })
+            .unwrap()
+            .expert_manifest()
+            .unwrap();
+        let native_id = format!("model-instance:{}", uuid::Uuid::new_v4());
+        native.model_id = native_id.clone();
+        native.availability = ModelAvailability::Available;
+        native.checkpoint = Some(annotagent_core::CheckpointIdentity {
+            sha256: "b".repeat(64),
+            source: None,
+            training_dataset_version: None,
+        });
+        native.availability_evidence = ModelAvailabilityEvidence {
+            health_passed: true,
+            protocol_compatible: true,
+            contracts_validated: true,
+            sample_conversion_passed: true,
+            weights_ready: true,
+            checked_at: Some(chrono::Utc::now()),
+            detail: Some("TEST metadata only, no inference".into()),
+        };
+        native_input.expert_models.push(native);
+        let mut native_session = session.clone();
+        native_session.plan_candidates.clear();
+        synthesize_registry_plan_candidates(
+            &mut native_session,
+            &safe_suggestion,
+            &native_input,
+            &feasibility,
+            annotagent_core::OptimizationPriority::Accurate,
+        )
+        .unwrap();
+        let candidate = native_session
+            .plan_candidates
+            .iter()
+            .find(|c| {
+                c.node_blueprints
+                    .iter()
+                    .any(|n| n.model_binding.as_deref() == Some(&native_id))
+            })
+            .unwrap();
+        annotagent_core::RegistryPipelineSynthesizer
+            .materialize_candidate(candidate, &mut working)
+            .unwrap();
+        assert!(
+            working
+                .label_pipeline
+                .as_ref()
+                .unwrap()
+                .label_pipelines
+                .iter()
+                .flat_map(|p| &p.steps)
+                .any(|step| step
+                    .model_binding
+                    .as_ref()
+                    .is_some_and(|m| m.model_id == native_id))
+        );
 
         let mut changed_input = input;
         let changed_segmenter = changed_input

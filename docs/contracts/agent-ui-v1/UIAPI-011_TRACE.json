@@ -1,0 +1,78 @@
+{
+  "ticket": "UIAPI-011",
+  "parent_commit": "8cccca5f4f45ba4203ae77c4d74c79a29fa86323",
+  "http": {
+    "requests": 278,
+    "builder_observations": [
+      {
+        "operation_id": "488f2590-2baa-43b2-a299-c6e6a0a8bde0",
+        "label_pipeline": true,
+        "status": "completed",
+        "node_types": [
+          "core.image_input",
+          "classification.classify",
+          "core.confidence_gate",
+          "commit",
+          "core.human_review"
+        ]
+      },
+      {
+        "operation_id": "488f2590-2baa-43b2-a299-c6e6a0a8bde0",
+        "label_pipeline": true,
+        "status": "completed",
+        "node_types": [
+          "core.image_input",
+          "classification.classify",
+          "core.confidence_gate",
+          "commit",
+          "core.human_review"
+        ]
+      },
+      {
+        "operation_id": "847bdf67-2e2b-4985-a5cb-7c284c70effe",
+        "label_pipeline": true,
+        "status": "completed",
+        "node_types": [
+          "core.image_input",
+          "classification.classify",
+          "core.confidence_gate",
+          "commit",
+          "core.human_review"
+        ]
+      },
+      {
+        "operation_id": "2938408b-7c5d-4764-8c67-82fb2b2cce20",
+        "label_pipeline": true,
+        "status": "completed",
+        "node_types": [
+          "core.image_input",
+          "vlm_detection.detect",
+          "core.filter",
+          "core.confidence_gate",
+          "core.human_review",
+          "commit"
+        ]
+      }
+    ]
+  },
+  "http_trace_path": "/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-dnwly851/HTTP_TRACE.json",
+  "http_source_note": "Increment after candidate projection and approved Profile selection repair; final addition also permits eligible authorized native detector descriptors, checked by subsequent Rust tests/clippy. HTTP fixture has no native detector.",
+  "projection_test": "tests::candidate_revalidation_rejects_a_segmenter_that_became_unavailable",
+  "projection_test_log": "/tmp/annotagent-uiapi011-projection.log",
+  "test_log": "/tmp/annotagent-uiapi011-delivery-tests.log",
+  "clippy_log": "/tmp/annotagent-uiapi011-clippy-delivery.log",
+  "real_inference": "not run; no real workspace/weights/provider accessed",
+  "migration": "No SQL; additive optional candidate.label_pipeline with serde default",
+  "known_limits": [
+    "Old completed operations are not rewritten or reexecuted",
+    "Single-target refinement only when Schema has one exact label",
+    "Existing sample guard remains; arbitrary legacy/Expert DAGs do not gain a fabricated projection"
+  ],
+  "test_results": {
+    "passed": 515,
+    "failed": 0,
+    "ignored": 3,
+    "strict_workspace_clippy": "passed",
+    "fmt": "passed"
+  }
+}
