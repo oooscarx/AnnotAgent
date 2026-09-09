@@ -8,6 +8,7 @@ use anyhow::{Context, Result, bail, ensure};
 use image::ImageDecoder;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::fmt::Write as _;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File},
@@ -132,6 +133,86 @@ fn split_name(split: DatasetSplit) -> &'static str {
         DatasetSplit::Val => "val",
         DatasetSplit::Test => "test",
     }
+}
+
+/// Treat labels as visible data, never Markdown links, HTML or executable examples.
+fn document_text(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| {
+            if c.is_control() {
+                " ".to_owned()
+            } else if "&<>`[]()!*_#|\\".contains(c) {
+                format!("&#{};", c as u32)
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod document_tests {
+    #[test]
+    fn labels_cannot_inject_markup_or_code_into_readme() {
+        let value = super::document_text("杯子\n<script>[run](https://bad) `cmd` &");
+        assert!(value.starts_with("杯子 "));
+        assert!(!value.contains('<') && !value.contains('[') && !value.contains('`'));
+        assert!(value.contains("&#60;script&#62;") && value.ends_with("&#38;"));
+    }
+}
+
+fn package_readme(
+    intent: &TaskDeliveryIntent,
+    revision: u32,
+    images: &[ImageEvidence],
+    objects: usize,
+) -> Result<String> {
+    let mut text = format!(
+        "# AnnotAgent YOLO Object Detection dataset\n\nTraining target: Ultralytics YOLO Object Detection (bounding boxes).\nFrozen delivery revision: {revision}.\n\n## Classes\n\nThe following class IDs are local to this package, not detector class numbers.\n\n"
+    );
+    for (id, label) in intent
+        .label_spec
+        .as_ref()
+        .context("labels missing")?
+        .iter()
+        .enumerate()
+    {
+        writeln!(
+            text,
+            "- {id}: {} (stable label: {})",
+            document_text(&label.display_name),
+            document_text(&label.stable_id)
+        )?;
+    }
+    text.push_str("\n## Actual contents and split\n\n");
+    for split in [DatasetSplit::Train, DatasetSplit::Val, DatasetSplit::Test] {
+        let count = images
+            .iter()
+            .filter(|image| image.split == Some(split))
+            .count();
+        if count > 0 {
+            writeln!(text, "- {}: {count} original images", split_name(split))?;
+        }
+    }
+    let included = images.iter().filter(|image| image.image.is_some()).count();
+    let negatives = images
+        .iter()
+        .filter(|image| {
+            matches!(
+                image.confirmation,
+                ImageConfirmation::NegativeConfirmed { .. }
+            )
+        })
+        .count();
+    let excluded = images.len() - included;
+    write!(
+        text,
+        "- Included originals: {included}; objects: {objects}; explicitly confirmed negative images: {negatives}; excluded images: {excluded}.\n- Split seed: {}. Requested train proportion: {}%; actual grouped allocation is listed above.\n\n",
+        intent.split_policy.seed, intent.split_policy.train_percent
+    )?;
+    text.push_str("## Use after extraction\n\nExtract the entire archive into its own directory. Pass the absolute path of that directory's data.yaml to your separately installed Ultralytics detection data loader. Image directories are relative to the YAML file; no server path or download script is required. Keep images and labels together. data.yaml names defines the package class mapping; each TXT row is class_id x_center y_center width height, normalized to the original image. An empty TXT is an explicitly confirmed negative, not an unprocessed image.\n\nThe source contract was checked against Ultralytics commit 6e43d1e1e5db72afbf686dee6745669bcb124b0a. The official framework loader smoke test was not executed for this package. No training or weight download was performed.\n\n## Review, quality and provenance\n\nOriginal image bytes are preserved; images are not overlay screenshots, crops or augmented examples. Structural validation does not establish model accuracy or guarantee absence of missed objects. Whole-image completeness comes from the recorded explicit review decisions. Exact duplicates and known source groups stay together; unknown visual near-duplicates have not been detected automatically. Source license is unknown: verify usage rights. Original metadata may contain private information; no universal metadata removal is claimed.\n\nSee annotagent/manifest.json for frozen image hashes, class mapping and available annotation/Workflow/Model revision lineage; annotagent/split-manifest.json for actual allocation and confirmations; annotagent/exclusions.json for omitted scope and reasons; and annotagent/validation-report.json for structural checks. The server download receipt carries the final ZIP hash. This README contains no model credentials or training commands.\n");
+    Ok(text)
 }
 fn root(parent: &mut [usize], mut i: usize) -> usize {
     while parent[i] != i {
@@ -546,7 +627,12 @@ pub fn write_training_package_with_lineage(
         "data.yaml",
         serde_yaml::to_string(&yaml)?.as_bytes(),
     )?;
-    write_entry(&mut zip,&mut files,"README.md",b"# AnnotAgent YOLO Object Detection dataset\n\nPass the absolute path of data.yaml after extracting this archive. Image paths are relative to that YAML. Original image bytes are preserved. Geometry and format validation do not establish model accuracy. Source license is unknown; verify usage rights.\n")?;
+    write_entry(
+        &mut zip,
+        &mut files,
+        "README.md",
+        package_readme(&intent, revision, &evidence, objects)?.as_bytes(),
+    )?;
     write_entry(
         &mut zip,
         &mut files,

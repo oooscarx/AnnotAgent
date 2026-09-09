@@ -133,6 +133,25 @@ fn real_zip_contains_originals_negative_labels_mapping_and_portable_yaml() {
     let mut archive = zip::ZipArchive::new(fs::File::open(&destination).unwrap()).unwrap();
     let manifest: PackageManifest =
         serde_json::from_reader(archive.by_name("annotagent/manifest.json").unwrap()).unwrap();
+    let mut readme = String::new();
+    archive
+        .by_name("README.md")
+        .unwrap()
+        .read_to_string(&mut readme)
+        .unwrap();
+    assert!(readme.contains("0: 杯子 (stable label: stable-cup)"));
+    assert!(readme.contains("1: 球 (stable label: stable-ball)"));
+    assert!(readme.contains("Included originals: 11; objects: 20; explicitly confirmed negative images: 1; excluded images: 1."));
+    for (split, name) in [(DatasetSplit::Train, "train"), (DatasetSplit::Val, "val")] {
+        let count = manifest
+            .images
+            .iter()
+            .filter(|image| image.split == Some(split))
+            .count();
+        assert!(readme.contains(&format!("- {name}: {count} original images")));
+    }
+    assert!(readme.contains("official framework loader smoke test was not executed"));
+    assert!(!readme.contains(temp.path().to_str().unwrap()));
     for record in &manifest.images {
         let Some(path) = &record.image else {
             continue;
