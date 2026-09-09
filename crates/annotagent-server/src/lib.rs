@@ -19,6 +19,7 @@ mod processing_operations;
 mod sample_operations;
 mod security;
 mod task_delivery;
+mod training_delivery;
 mod workspace_routes;
 
 use std::{

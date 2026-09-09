@@ -37,6 +37,8 @@ url.workspace = true
 tempfile = "3"
 
 [dev-dependencies]
+image.workspace = true
+zip.workspace = true
 tower = { version = "0.5", features = ["util"] }
 
 [lints]

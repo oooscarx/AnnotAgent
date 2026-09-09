@@ -568,6 +568,7 @@ dependencies = [
  "axum",
  "chrono",
  "futures",
+ "image",
  "rust_decimal",
  "semver",
  "serde",
@@ -581,6 +582,7 @@ dependencies = [
  "tower-http",
  "url",
  "uuid",
+ "zip",
 ]
 
 [[package]]

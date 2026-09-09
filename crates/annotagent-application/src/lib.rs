@@ -2,7 +2,9 @@
 
 mod agent_ui;
 mod task_delivery;
+mod training_delivery;
 pub use task_delivery::{SaveTaskDeliveryIntent, TaskDeliveryImageView, TaskDeliveryView};
+pub use training_delivery::TrainingPackageStatus;
 mod conversation_builder;
 mod conversation_journey;
 pub use conversation_journey::{ConversationJourneyDataScope, JourneyModelDescription};

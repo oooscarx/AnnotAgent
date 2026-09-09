@@ -102,6 +102,19 @@ fn job(
 }
 
 impl SqliteStore {
+    /// Cheap owned polling for writer checkpoints; do not deserialize all frozen annotations per chunk.
+    pub fn delivery_package_phase(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+    ) -> Result<DeliveryPackagePhase, StorageError> {
+        self.with_connection(|db| {
+            let phase:Option<String>=db.query_row("SELECT p.phase FROM delivery_export_snapshots p JOIN conversation_exports e ON e.id=p.export_id WHERE e.id=?1 AND e.project_id=?2 AND e.conversation_id=?3 AND e.task_id=?4",params![id.to_string(),project,conversation.to_string(),task.to_string()],|r|r.get(0)).optional()?;
+            Ok(serde_json::from_value(serde_json::Value::String(phase.ok_or_else(||invalid("owned package not found"))?))?)
+        })
+    }
     pub fn delivery_package(
         &self,
         project: &str,
