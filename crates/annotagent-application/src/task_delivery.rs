@@ -33,6 +33,28 @@ pub struct PrepareDeliverySchema {
     pub expected_sha256: String,
 }
 
+/// Bounded semantic context only: no image paths, credentials or image bytes.
+/// This describes the user's saved target, not permission to execute that target.
+pub(crate) fn delivery_schema_goal(
+    saved: Option<&TaskDeliveryRevision>,
+    goal: &str,
+) -> Result<String> {
+    let Some(saved) = saved else {
+        return Ok(goal.to_owned());
+    };
+    Ok(serde_json::to_string(&serde_json::json!({
+        "contract":"task-delivery-semantics-v1",
+        "original_user_goal":goal,
+        "saved_delivery":{
+            "revision":saved.revision,"content_sha256":saved.content_sha256,
+            "labels":saved.intent.label_spec,"training_target":saved.intent.training_target,
+            "image_count":saved.intent.dataset_scope.as_ref().map(Vec::len),
+            "missing_slots":saved.intent.missing_slots(),
+            "completion":"Deliver a validated original-image training package after whole-image review. A Schema or Pipeline alone is not completion."
+        }
+    }))?)
+}
+
 pub fn require_delivery_schema(
     saved: Option<&TaskDeliveryRevision>,
     definition: &annotagent_storage::ConversationSchemaDefinition,
@@ -424,5 +446,37 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(selected, ids[3..]);
         assert!(ids.iter().all(|id| selected_delivery_image(None, *id)));
+        let context: serde_json::Value =
+            serde_json::from_str(&delivery_schema_goal(Some(&delivery), "YOLO").unwrap()).unwrap();
+        assert_eq!(context["saved_delivery"]["image_count"], 3);
+        assert_eq!(
+            context["saved_delivery"]["missing_slots"],
+            serde_json::json!(["label_spec", "training_target"])
+        );
+        assert!(context["saved_delivery"]["training_target"].is_null());
+        assert!(context.to_string().find(&ids[3].to_string()).is_none());
+        assert_eq!(
+            delivery_schema_goal(None, "legacy goal").unwrap(),
+            "legacy goal"
+        );
+        let mut renamed = delivery.clone();
+        renamed.revision = 2;
+        renamed.intent.label_spec = Some(vec![DeliveryLabel {
+            stable_id: "stable-cup".into(),
+            display_name: "水杯".into(),
+            aliases: vec!["cup".into()],
+            include: "完整或遮挡的杯子".into(),
+            exclude: "图案".into(),
+        }]);
+        let updated: serde_json::Value = serde_json::from_str(
+            &delivery_schema_goal(Some(&renamed), "original cup request").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            updated["saved_delivery"]["labels"][0]["stable_id"],
+            "stable-cup"
+        );
+        assert_eq!(updated["saved_delivery"]["labels"][0]["exclude"], "图案");
+        assert_eq!(updated["saved_delivery"]["revision"], 2);
     }
 }
