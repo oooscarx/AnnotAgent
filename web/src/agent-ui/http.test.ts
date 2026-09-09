@@ -24,8 +24,9 @@ it("sample consent excludes text-only models, includes ready segmentation and re
     [`${root}/t1/workspace`]:{project_id:project.project_id,project_owner_id:project.project_owner_id,conversation_id:project.conversation_id,task:{input:{id:"t1",schema_revision:"schema-1"}},agent_model:{revision:0,model_profile_id:null},actions:{},queue:[],calls:[{id:"call",status:"completed",evidence:{decision:{Ok:{decision:"draft"}}}}]},
     [`${root}/t1/calls/call/schema-draft`]:{id:"schema",task_id:"t1",revision:3},
   });
-  let preview=false;
+  let preview=false,schemaMissing=false;
   const transport:Transport=async<T>(path:string,init?:RequestInit)=>{
+    if(schemaMissing && path.endsWith("/schema-draft"))return null as T;
     if(path.includes("/journey-preview?")){
       preview=true;const q=new URL(path,"http://test").searchParams;
       expect(JSON.parse(q.get("allowed_models")!)).toEqual(["model-profile:vision","model-instance:ready"]);
@@ -35,6 +36,8 @@ it("sample consent excludes text-only models, includes ready segmentation and re
   };
   const adapter=new HttpAdapter(transport);await adapter.refresh();await adapter.loadTask(project.project_id,"t1");
   await adapter.prepareAction({id:"journey",project:project.project_id,task:"t1",revision:"schema-1"},"sample");expect(preview).toBe(true);
+  schemaMissing=true;
+  await expect(adapter.prepareAction({id:"missing",project:project.project_id,task:"t1",revision:"schema-1"},"sample")).rejects.toThrow("目标草稿尚未保存");
 });
 it("restores a completed schema decision and prevents repeating initial planning",async()=>{
   const {transport,paths}=mockTransport({[`${root}/t1/workspace`]:{

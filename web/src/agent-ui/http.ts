@@ -322,7 +322,8 @@ export class HttpAdapter implements WorkspaceAdapter {
       const query = new URLSearchParams({consent_id:c.id,builder_operation_id:crypto.randomUUID(),sample_operation_id:crypto.randomUUID(),allowed_models:JSON.stringify(models)});
       const source=[...(this.workspaces.get(task.id)?.calls || [])].reverse().find(call=>call.status==="completed" && call.evidence?.decision?.Ok?.decision==="draft");
       if(source) {
-        const schema=await this.transport<{id:string;task_id:string;revision:number}>(`${root}/calls/${esc(source.id)}/schema-draft`);
+        const schema=await this.transport<{id:string;task_id:string;revision:number}|null>(`${root}/calls/${esc(source.id)}/schema-draft`);
+        if(!schema)throw new Error("模型已有规划回执，但目标草稿尚未保存；没有重新调用模型，请核对草稿保存结果。");
         if(schema.task_id!==task.id)throw new Error("目标草稿不属于当前任务");
         query.set("schema_id",schema.id);query.set("schema_revision",String(schema.revision));
         if(task.model)query.set("planner_model_id",task.model);
