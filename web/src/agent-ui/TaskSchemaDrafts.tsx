@@ -2,7 +2,8 @@ import {useEffect,useRef,useState} from "react";
 import {ApiRequestError,type api} from "../api";
 import type {ConversationSchemaDraft} from "../types";
 import {Disclosure} from "./Disclosure";
-export type TaskSchemaService=Pick<typeof api,"humanConversationSchemas"|"conversationSchemaCalls"|"conversationSchemaDraftForCall"|"conversationSchemaDraft"|"editConversationSchemaDraft">;
+import {CreateTaskSchema} from "./CreateTaskSchema";
+export type TaskSchemaService=Pick<typeof api,"humanConversationSchemas"|"saveHumanConversationSchema"|"conversationSchemaCalls"|"conversationSchemaDraftForCall"|"conversationSchemaDraft"|"editConversationSchemaDraft">;
 export async function readTaskSchemas(service:TaskSchemaService,project:string,conversation:string,task:string,signal:AbortSignal){
   const [human,calls]=await Promise.all([service.humanConversationSchemas(project,conversation,task,signal),service.conversationSchemaCalls(project,conversation,task,signal)]);
   if(calls.some(c=>c.task_id!==task))throw new Error("Schema 调用不属于当前任务");
@@ -17,7 +18,7 @@ export function TaskSchemaDrafts({service,project,conversation,task,workspace}:{
 function SchemaList({service,project,conversation,task,workspace}:{service:TaskSchemaService;project:string;conversation:string;task:string;workspace:string}){
   const [rows,setRows]=useState<ConversationSchemaDraft[]>();const [error,setError]=useState("");
   useEffect(()=>{const c=new AbortController();void readTaskSchemas(service,project,conversation,task,c.signal).then(v=>{if(!c.signal.aborted)setRows(v);}).catch(e=>{if(!c.signal.aborted)setError((e as Error).message);});return()=>c.abort();},[service,project,conversation,task]);
-  return <section aria-label="任务语义草稿"><p>仅编辑此任务的标签语义草稿；不修改 Project Schema、Published Version 或正式标注，不调用模型。已有方案不会自动采用新 revision。</p>{error&&<p role="alert">{error}</p>}{!rows&&!error&&<p role="status">读取已保存草稿…</p>}{rows?.length===0&&<p>当前任务没有已保存的语义草稿。</p>}{rows?.map(d=><SchemaEdit key={d.id} initial={d} project={project} service={service} storageKey={`annotagent.schema-edit.${workspace}.${project}.${task}.${d.id}`}/>)}</section>;
+return <section aria-label="任务语义草稿"><p>仅编辑此任务的标签语义草稿；不修改 Project Schema、Published Version 或正式标注，不调用模型。已有方案不会自动采用新 revision。</p>{error&&<p role="alert">{error}</p>}{!rows&&!error&&<p role="status">读取已保存草稿…</p>}{rows?.length===0&&<p>当前任务没有已保存的语义草稿。</p>}{rows&&<CreateTaskSchema {...{service,project,conversation,task,workspace}} onSaved={saved=>setRows(previous=>[saved,...(previous||[]).filter(d=>d.id!==saved.id)])}/>} {rows?.map(d=><SchemaEdit key={d.id} initial={d} project={project} service={service} storageKey={`annotagent.schema-edit.${workspace}.${project}.${task}.${d.id}`}/>)}</section>;
 }
 type Edit=Parameters<TaskSchemaService["editConversationSchemaDraft"]>[2];
 function SchemaEdit({initial,project,service,storageKey}:{initial:ConversationSchemaDraft;project:string;service:TaskSchemaService;storageKey:string}){
