@@ -197,11 +197,15 @@ def verify(c, manifest, root):
     saved_plan = {"task_id": task, "workspace_url": tr + "/workspace", "object_path": "builder_operations.items[0].session.builder_proposal", "operation_id": builder_item["operation"]["id"], "draft_id": builder_item["operation"]["evidence"]["draft_id"], "session_id": builder_item["session"]["id"]}
     from http_control_scenes import seed_controls
     controls = seed_controls(c, root, provider)
+    from http_bbox_scene import seed_bbox
+    bbox = seed_bbox(c, root, provider)
+    from http_stop_scene import prepare_stop
+    manual_stop = prepare_stop(c, cr, schema_revision, provider["id"], model["id"])
     first_page = c.get(cr + "/task-navigation?limit=1")
     assert first_page["next_cursor"] is not None
     second_page = c.get(cr + "/task-navigation?limit=1&cursor=" + str(first_page["next_cursor"]))
     assert first_page["items"][0]["task_id"] != second_page["items"][0]["task_id"]
-    return {"project": project, "conversation_id": conversation, "task_id": task, "task_root": tr, "model_profile_id": model["id"], "provider_id": provider["id"], "execution_url": execution, "export": export, "run_id": run_id, "stop": stop, "answered_request_id": human["id"], "pending_request_id": pending["id"], "plan_task_id": plan["task_id"], "controls": controls, "saved_plan": saved_plan, "trace": str(Path(manifest["workspace"]) / "HTTP_TRACE.json")}
+    return {"project": project, "conversation_id": conversation, "task_id": task, "task_root": tr, "model_profile_id": model["id"], "provider_id": provider["id"], "execution_url": execution, "export": export, "run_id": run_id, "stop": stop, "answered_request_id": human["id"], "pending_request_id": pending["id"], "plan_task_id": plan["task_id"], "controls": controls, "saved_plan": saved_plan, "bbox": bbox, "manual_stop": manual_stop, "trace": str(Path(manifest["workspace"]) / "HTTP_TRACE.json")}
 
 
 def verify_stop(c, cr, schema_revision, provider, normal_model):
@@ -264,4 +268,7 @@ def restart_snapshot(c, manifest):
     snapshot["run_events"] = c.get("/api/runs/" + manifest["run_id"] + "/events")
     for kind, scene in manifest.get("controls", {}).items():
         snapshot[kind] = {"budget": c.get(scene["task_root"] + "/budget"), "batch": c.get(scene["batch_url"]), "actions": c.get(scene["task_root"] + "/workspace")["resume_actions"]}
+    if manifest.get("bbox"):
+        bbox = manifest["bbox"]
+        snapshot["bbox"] = {"requests": c.get(bbox["task_root"] + "/human-requests"), "feedback": c.get(bbox["feedback_url"])}
     return snapshot

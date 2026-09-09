@@ -1,0 +1,318 @@
+{
+  "ticket": "UIAPI-003",
+  "base_sha": "4676652b93bc4ca5665ab41dbb28c7be1adbebad",
+  "fixture": "TEST external-model-only; real application HTTP/SQLite/geometry/stop",
+  "source_sha256": {
+    "crates/annotagent-e2e-fixture/src/main.rs": "cbe210ba376d1574efa70fc166d006f84dcefcf27f03aedd9f6f7cb971198526",
+    "crates/annotagent-e2e-fixture/support/http_bbox_scene.py": "75aba905210d12cb19636a364788d527a9f9375eb039e120d921b09a3de0bfda",
+    "crates/annotagent-e2e-fixture/support/http_stop_scene.py": "b060fddc83e776d5f0b54cd79dc58f391f2cd5040b1a86a0c5047d2ec9ae4b39",
+    "crates/annotagent-e2e-fixture/support/http_smoke.py": "b0799cd52e601eafd3dfb42fca83ecba788558670963d75f7cddd47b8b5e0c3d"
+  },
+  "workspace": "/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-o1v5_ynm",
+  "http_request_count": 278,
+  "http_trace": "/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-o1v5_ynm/HTTP_TRACE.json",
+  "restart_unchanged": true,
+  "bbox": {
+    "project": "TEST-agent-ui-bbox-21b0f3df-3f72-48e9-a6f1-8ff034c76db2",
+    "conversation_id": "37824d73-331a-4611-8e53-20efeefca948",
+    "task_id": "0c7be422-ed18-4c02-a55f-0c40302b2f53",
+    "task_root": "/api/projects/TEST-agent-ui-bbox-21b0f3df-3f72-48e9-a6f1-8ff034c76db2/conversations/37824d73-331a-4611-8e53-20efeefca948/tasks/0c7be422-ed18-4c02-a55f-0c40302b2f53",
+    "sample_url": "/api/workflow-drafts/2e65db16-7f20-4ad7-b56e-c633267481a8/sample-test?test_id=d762b18b-2ca7-400d-a3f5-750de46f49a3",
+    "sample_test_id": "d762b18b-2ca7-400d-a3f5-750de46f49a3",
+    "draft_id": "2e65db16-7f20-4ad7-b56e-c633267481a8",
+    "candidate_id": "detection-0",
+    "source_artifact_id": "3b90ec8c-ad9d-53f1-907c-92ce25370852",
+    "terminal_candidate": {
+      "final_status": "Prompt coverage uncertain / geometry drift",
+      "geometry": "Model-proposed geometry",
+      "lineage_id": "detection:detection-0",
+      "localization": "Whole-image localization",
+      "outcome": {
+        "confidence": 0.8999999761581421,
+        "failure_classes": [],
+        "geometry_quality": {
+          "area_change_from_refiner": null,
+          "area_ratio": 0.04000000283122063,
+          "artifact_id": "sha256:907d6bca7036ba95861f6aba14889640029701804900b9bbb1857bb195e3ef4f",
+          "aspect_ratio_outlier": false,
+          "center_shift_from_refiner": null,
+          "clipped_to_image": false,
+          "edge_support": null,
+          "foreground_occupancy": null,
+          "geometry_semantics": "coarse_hypothesis",
+          "historical_correction_rate": null,
+          "iou_with_refiner": null,
+          "issue_codes": [],
+          "manual_area_change": null,
+          "manual_center_shift": null,
+          "mask_support": null
+        },
+        "id": "detection-0",
+        "label": "cup",
+        "status": "needs_review",
+        "value": {
+          "kind": "bounding_box",
+          "rect": [
+            0.3499999940395355,
+            0.3499999940395355,
+            0.20000000298023224,
+            0.20000000298023224
+          ]
+        }
+      },
+      "source_artifact_id": "3b90ec8c-ad9d-53f1-907c-92ce25370852",
+      "source_artifact_ref": "sha256:907d6bca7036ba95861f6aba14889640029701804900b9bbb1857bb195e3ef4f"
+    },
+    "projection_group": "review_candidates",
+    "image_id": "c86f7a9f-49b0-5ed0-a4dc-9aeb7a28e2a1",
+    "content_hash": "65380e2d40ffb9009ff18c6b60fdb846a6797817e75da491e4d4da461d7fd77a",
+    "image_dimensions": {
+      "width": 640,
+      "height": 400
+    },
+    "feedback_url": "/api/workflow-sample-tests/d762b18b-2ca7-400d-a3f5-750de46f49a3/images/c86f7a9f-49b0-5ed0-a4dc-9aeb7a28e2a1/feedback",
+    "feedback_revision_id": "9365ce3b-1270-4f0d-9890-b5db881d41e7",
+    "feedback_sequence": 1,
+    "pending_request_id": "bda5ce5b-8675-4d16-b8a0-6810a8696d17",
+    "answer_url": "/api/projects/TEST-agent-ui-bbox-21b0f3df-3f72-48e9-a6f1-8ff034c76db2/conversations/37824d73-331a-4611-8e53-20efeefca948/tasks/0c7be422-ed18-4c02-a55f-0c40302b2f53/human-requests/bda5ce5b-8675-4d16-b8a0-6810a8696d17/answer",
+    "answer_example": {
+      "answer": {
+        "revision_id": "edc4b1fb-7671-4d8c-b5e7-974c4c37a3a2",
+        "sample_test_id": "d762b18b-2ca7-400d-a3f5-750de46f49a3",
+        "image_id": "c86f7a9f-49b0-5ed0-a4dc-9aeb7a28e2a1",
+        "sequence": 2,
+        "reason": "poor_boundary",
+        "outcome_id": "detection-0",
+        "corrected_value": {
+          "kind": "bounding_box",
+          "rect": [
+            0.1,
+            0.15,
+            0.12,
+            0.2
+          ]
+        },
+        "corrected_label": "cup",
+        "note": "TEST browser bbox correction",
+        "created_at": "2026-09-09T11:31:50.837487+00:00"
+      }
+    },
+    "normalized_rect_order": "x,y,width,height; unit interval; Rust f32 rounding"
+  },
+  "manual_stop_prepared": {
+    "task_id": "99c8ff32-85db-4392-988e-6a5ee7b928fa",
+    "task_root": "/api/projects/TEST-agent-ui-01154f31-ee0e-4bf0-b46a-3466ca1cce3f/conversations/7714847f-2195-4c46-b8f3-c90da50b3431/tasks/99c8ff32-85db-4392-988e-6a5ee7b928fa",
+    "workspace_url": "/api/projects/TEST-agent-ui-01154f31-ee0e-4bf0-b46a-3466ca1cce3f/conversations/7714847f-2195-4c46-b8f3-c90da50b3431/tasks/99c8ff32-85db-4392-988e-6a5ee7b928fa/workspace",
+    "model_profile_id": "308f72ca-1e5b-4140-b2f4-663bb381818d",
+    "delay_seconds": 30,
+    "expires_at": "2026-09-09T12:01:50.851088Z",
+    "start": {
+      "method": "POST",
+      "url": "/api/projects/TEST-agent-ui-01154f31-ee0e-4bf0-b46a-3466ca1cce3f/conversations/7714847f-2195-4c46-b8f3-c90da50b3431/tasks/99c8ff32-85db-4392-988e-6a5ee7b928fa/journey-consents/d07225aa-f45a-4bb8-b863-d5d3c247af53/execution",
+      "body": {}
+    },
+    "wait_for_reserved_url": "/api/projects/TEST-agent-ui-01154f31-ee0e-4bf0-b46a-3466ca1cce3f/conversations/7714847f-2195-4c46-b8f3-c90da50b3431/tasks/99c8ff32-85db-4392-988e-6a5ee7b928fa/calls",
+    "stop": {
+      "method": "POST",
+      "url": "/api/projects/TEST-agent-ui-01154f31-ee0e-4bf0-b46a-3466ca1cce3f/conversations/7714847f-2195-4c46-b8f3-c90da50b3431/stop-requests",
+      "body": {
+        "id": "0f40cdc8-1112-4dd3-8bac-93d853f69d4d",
+        "text": "停止",
+        "image": null,
+        "reference": {
+          "scope": "stop_request",
+          "task_id": "99c8ff32-85db-4392-988e-6a5ee7b928fa"
+        }
+      }
+    },
+    "observation_url": "/api/projects/TEST-agent-ui-01154f31-ee0e-4bf0-b46a-3466ca1cce3f/conversations/7714847f-2195-4c46-b8f3-c90da50b3431/stop-requests/0f40cdc8-1112-4dd3-8bac-93d853f69d4d",
+    "expected_final": "outcome_unknown; underlying schema call in_doubt",
+    "status": "prepared_not_started"
+  },
+  "manual_stop_verified": {
+    "task_id": "3051b0e5-5309-49df-9c2d-40060066704f",
+    "task_root": "/api/projects/TEST-agent-ui-01154f31-ee0e-4bf0-b46a-3466ca1cce3f/conversations/7714847f-2195-4c46-b8f3-c90da50b3431/tasks/3051b0e5-5309-49df-9c2d-40060066704f",
+    "workspace_url": "/api/projects/TEST-agent-ui-01154f31-ee0e-4bf0-b46a-3466ca1cce3f/conversations/7714847f-2195-4c46-b8f3-c90da50b3431/tasks/3051b0e5-5309-49df-9c2d-40060066704f/workspace",
+    "model_profile_id": "9750c237-95fd-4746-9031-7543cf1d17f6",
+    "delay_seconds": 30,
+    "expires_at": "2026-09-09T12:03:21.119769Z",
+    "start": {
+      "method": "POST",
+      "url": "/api/projects/TEST-agent-ui-01154f31-ee0e-4bf0-b46a-3466ca1cce3f/conversations/7714847f-2195-4c46-b8f3-c90da50b3431/tasks/3051b0e5-5309-49df-9c2d-40060066704f/journey-consents/4c370fff-0214-47b2-a57c-80aa02bf206c/execution",
+      "body": {}
+    },
+    "wait_for_reserved_url": "/api/projects/TEST-agent-ui-01154f31-ee0e-4bf0-b46a-3466ca1cce3f/conversations/7714847f-2195-4c46-b8f3-c90da50b3431/tasks/3051b0e5-5309-49df-9c2d-40060066704f/calls",
+    "stop": {
+      "method": "POST",
+      "url": "/api/projects/TEST-agent-ui-01154f31-ee0e-4bf0-b46a-3466ca1cce3f/conversations/7714847f-2195-4c46-b8f3-c90da50b3431/stop-requests",
+      "body": {
+        "id": "0388cb6c-cd26-4871-9a26-30a343445b6d",
+        "text": "停止",
+        "image": null,
+        "reference": {
+          "scope": "stop_request",
+          "task_id": "3051b0e5-5309-49df-9c2d-40060066704f"
+        }
+      }
+    },
+    "observation_url": "/api/projects/TEST-agent-ui-01154f31-ee0e-4bf0-b46a-3466ca1cce3f/conversations/7714847f-2195-4c46-b8f3-c90da50b3431/stop-requests/0388cb6c-cd26-4871-9a26-30a343445b6d",
+    "expected_final": "outcome_unknown; underlying schema call in_doubt",
+    "status": "verified_outcome_unknown",
+    "verification": {
+      "initial": {
+        "created_at": "2026-09-09T11:33:23.144647+00:00",
+        "dispatch_error": null,
+        "message": {
+          "conversation_id": "7714847f-2195-4c46-b8f3-c90da50b3431",
+          "input": {
+            "id": "0388cb6c-cd26-4871-9a26-30a343445b6d",
+            "image": null,
+            "reference": {
+              "scope": "stop_request",
+              "task_id": "3051b0e5-5309-49df-9c2d-40060066704f"
+            },
+            "text": "停止"
+          },
+          "sequence": 11
+        },
+        "normalized_state": "stopping",
+        "observation": {
+          "description": "Cancellation is saved; the selected worker is still settling. Previously sent requests may still incur charges.",
+          "state": "cancel_pending"
+        },
+        "resume": {
+          "available": false,
+          "reason": "A stop receipt is not a resumable checkpoint. Use the exact paused Run/Batch or saved HumanRequest; never automatically resend an unknown Provider call."
+        },
+        "selected_target": {
+          "id": "4c370fff-0214-47b2-a57c-80aa02bf206c",
+          "kind": "journey",
+          "task_id": "3051b0e5-5309-49df-9c2d-40060066704f"
+        },
+        "status": "cancel_requested",
+        "targets": [
+          {
+            "id": "4c370fff-0214-47b2-a57c-80aa02bf206c",
+            "kind": "journey",
+            "parent_journey_ids": [],
+            "state": "running",
+            "task_id": "3051b0e5-5309-49df-9c2d-40060066704f"
+          }
+        ]
+      },
+      "after_two_seconds": {
+        "created_at": "2026-09-09T11:33:23.144647+00:00",
+        "dispatch_error": null,
+        "message": {
+          "conversation_id": "7714847f-2195-4c46-b8f3-c90da50b3431",
+          "input": {
+            "id": "0388cb6c-cd26-4871-9a26-30a343445b6d",
+            "image": null,
+            "reference": {
+              "scope": "stop_request",
+              "task_id": "3051b0e5-5309-49df-9c2d-40060066704f"
+            },
+            "text": "停止"
+          },
+          "sequence": 11
+        },
+        "normalized_state": "outcome_unknown",
+        "observation": {
+          "description": "Local execution ended. The remote completion and cost are unknown; no automatic retry was started.",
+          "state": "unknown"
+        },
+        "resume": {
+          "available": false,
+          "reason": "A stop receipt is not a resumable checkpoint. Use the exact paused Run/Batch or saved HumanRequest; never automatically resend an unknown Provider call."
+        },
+        "selected_target": {
+          "id": "4c370fff-0214-47b2-a57c-80aa02bf206c",
+          "kind": "journey",
+          "task_id": "3051b0e5-5309-49df-9c2d-40060066704f"
+        },
+        "status": "cancel_requested",
+        "targets": [
+          {
+            "id": "4c370fff-0214-47b2-a57c-80aa02bf206c",
+            "kind": "journey",
+            "parent_journey_ids": [],
+            "state": "running",
+            "task_id": "3051b0e5-5309-49df-9c2d-40060066704f"
+          }
+        ]
+      },
+      "final": {
+        "created_at": "2026-09-09T11:33:23.144647+00:00",
+        "dispatch_error": null,
+        "message": {
+          "conversation_id": "7714847f-2195-4c46-b8f3-c90da50b3431",
+          "input": {
+            "id": "0388cb6c-cd26-4871-9a26-30a343445b6d",
+            "image": null,
+            "reference": {
+              "scope": "stop_request",
+              "task_id": "3051b0e5-5309-49df-9c2d-40060066704f"
+            },
+            "text": "停止"
+          },
+          "sequence": 11
+        },
+        "normalized_state": "outcome_unknown",
+        "observation": {
+          "description": "Local execution ended. The remote completion and cost are unknown; no automatic retry was started.",
+          "state": "unknown"
+        },
+        "resume": {
+          "available": false,
+          "reason": "A stop receipt is not a resumable checkpoint. Use the exact paused Run/Batch or saved HumanRequest; never automatically resend an unknown Provider call."
+        },
+        "selected_target": {
+          "id": "4c370fff-0214-47b2-a57c-80aa02bf206c",
+          "kind": "journey",
+          "task_id": "3051b0e5-5309-49df-9c2d-40060066704f"
+        },
+        "status": "cancel_requested",
+        "targets": [
+          {
+            "id": "4c370fff-0214-47b2-a57c-80aa02bf206c",
+            "kind": "journey",
+            "parent_journey_ids": [],
+            "state": "running",
+            "task_id": "3051b0e5-5309-49df-9c2d-40060066704f"
+          }
+        ]
+      },
+      "calls": [
+        {
+          "id": "43dae8e8-013d-4829-a8c0-cd4c2d295310",
+          "task_id": "3051b0e5-5309-49df-9c2d-40060066704f",
+          "request_hash": "00866cddc9eb682367a961254741a7f19971d788aca3ad7d7f7cab342db01663",
+          "status": "in_doubt",
+          "evidence": {
+            "error": "Schema request did not return a complete response. Remote completion and cost are unknown; no automatic retry was scheduled."
+          }
+        }
+      ]
+    }
+  },
+  "manual_stop_trace": "/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-o1v5_ynm/UIAPI-003_STOP_3051b0e5-5309-49df-9c2d-40060066704f.json",
+  "browser_answer_example_test": "Applied and exact retry preserved on separate TEST bbox scene; 2 feedback revisions persisted",
+  "browser_answer_trace": "/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-uhctsx0k/UIAPI-003_BROWSER_ANSWER.json",
+  "checks": {
+    "bbox_sample_failed_count": 0,
+    "bbox_seed_answer_retry_count": 1,
+    "pending_request_present": true,
+    "stop_reserved_after_two_seconds": true,
+    "stop_initial": "stopping",
+    "stop_final": "outcome_unknown",
+    "call_final": "in_doubt",
+    "resume_available": false,
+    "clippy_fixture_all_targets": "passed",
+    "fmt": "passed"
+  },
+  "limits": [
+    "30-second external delay guarantees time to issue Stop, not 30 seconds of stopping state.",
+    "Local cancellation can settle to unknown immediately; do not patch JSON or fabricate an animation state.",
+    "Candidate IDs are scoped by sample/image/artifact, not globally unique UUIDs."
+  ]
+}

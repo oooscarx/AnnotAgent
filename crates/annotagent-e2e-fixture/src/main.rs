@@ -534,6 +534,13 @@ async fn openai_completion(
             "usage":{"prompt_tokens":40,"completion_tokens":8,"total_tokens":48}
         }));
     }
+    // Explicit browser evidence window; only this synthetic external model waits.
+    // Application stop/call state is never mocked or rewritten here.
+    if request["model"] == "e2e-conversation-classification-schema-manual-stop"
+        && tools.contains_key("propose_annotation_schema")
+    {
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+    }
     if request["model"] == "e2e-conversation-classification-schema-background"
         && tools.contains_key("propose_annotation_schema")
     {
