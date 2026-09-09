@@ -17,4 +17,4 @@ export function createContextArchiveService(transport:typeof request=request){
 }
 export type ContextArchiveService=ReturnType<typeof createContextArchiveService>;
 export function parseContextArchive(text:string):ContextArchive{const value=JSON.parse(text) as ContextArchive;if(value?.format!=="annotagent.context"||value.version!==1||!Array.isArray(value.payload?.records)||!value.archive_hash)throw new Error("不是支持的 AnnotAgent 会话归档 v1");return value;}
-export function downloadContextArchive(archive:ContextArchive){const url=URL.createObjectURL(new Blob([JSON.stringify(archive,null,2)],{type:"application/json"}));const a=document.createElement("a");a.href=url;a.download=`annotagent-context-${archive.archive_hash.slice(0,12)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+export function downloadContextArchive(archive:ContextArchive){const url=URL.createObjectURL(new Blob([JSON.stringify(archive)],{type:"application/json"}));const a=document.createElement("a");a.href=url;a.download=`annotagent-context-${archive.archive_hash.slice(0,12)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
