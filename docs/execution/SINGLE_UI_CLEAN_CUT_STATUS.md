@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Native task Schema draft editing
+
+Added on-demand TaskSchemaDrafts through the real HttpAdapter service boundary, not an old page wrapper. Reads human drafts and completed draft-decision call references only, validates task ownership and deduplicates saved IDs. Existing drafts expose labels/boundary rules while preserving kind, multi-label and attributes. Explicit save uses existing expected_revision/request_id API, persists the exact command before submission, retains it on unknown response, and never auto-POSTs after refresh. Ownership is checked again on returned draft. Dirty/unload guards, cancel and explicit latest-revision read protect ordinary edits. Collapsing details does not unmount entered text. Invalid browser recovery records block saving rather than silently overwrite a pending operation.
+
+Verification: typecheck/isolated production build passed,301 unit tests across87 files passed. Actual marked TEST HTTP browser created a TEST human schema, edited through native controls, deliberately dropped the successful response, refreshed, retried the identical request and verified revision increased exactly once with the expected label. Initial test timed out selecting another hidden draft textarea; no save was sent. Fixed locator scopes to the uniquely named TEST draft, then scenario passed. No model execution/publication/real workspace mutation occurred. This slice does not yet expose manual schema creation/clarification answers, unsaved model-proposal recovery, future-rule adoption or schema-specific Builder admission. Those are remaining migration work, not declared unsupported or removed from the goal. No old root/page restoration or push.
+
 ## Native image browsing parity
 
 Audited retired ConversationImages against the active ArtifactPane: native thumbnails had regressed to all-image DOM and full original resources. Added native ImageBrowser with24-item pages, selected-image page recovery, bounded thumbnail DOM, lazy loading and original-resource fallback. HttpAdapter preserves a separate controlled thumbnail URL; the canvas still receives the unchanged original URL, coordinates and transforms. Removed the unmounted legacy ConversationImages and replaced its two render tests with native render tests, including selection beyond the first page. No new data/prediction generated.
