@@ -134,6 +134,11 @@ fn applied_repair_sample(
     {
         return Ok(false);
     }
+    if !crate::conversation_journey::permits_repair_sample(
+        db, task, operation, &draft, &request, &human,
+    )? {
+        return Ok(false);
+    }
     let Some(binding) = draft.annotation_schema.as_ref() else {
         return Ok(false);
     };

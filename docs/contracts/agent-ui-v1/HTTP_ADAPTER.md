@@ -165,3 +165,8 @@ See `docs/contracts/agent-ui-v1/UIAPI-009_HISTORY_SCOPE.md` for the executable c
 ## UIAPI-014 native frozen versions and exact publication
 
 Implemented owned `GET /api/projects/{project_id}/workflows/{workflow_id}/versions/{version}` returning the actual complete frozen version. Existing Draft publish accepts exact `{command_id,project_id,expected_revision,expected_content_hash}` and atomically saves publication plus replay receipt; no new inference/Run. Additive migration0061; old Published snapshots remain unchanged. Full API/field/error/migration contract: `docs/contracts/agent-ui-v1/UIAPI-014_PUBLICATION.md`. This is separate from repair admission commit220576f.
+
+
+## UIAPI-014 sealed repair Journey Sample follow-up
+
+Sample pending-human admission is narrowed to the exact active, sealed repair Journey/source, in addition to the existing running-operation identity, grant, lease and scope checks. Ordinary Sample cannot inherit the exception from an Applied repair copy. No new HTTP fields/routes: use existing explicit repair `journey-preview`/consent/execution. Real TEST HTTP covers ordinary Sample denied with zero calls, then sealed Journey Sample through the actual vision adapter with three images/zero failures and two unchanged pending requests. See `docs/contracts/agent-ui-v1/UIAPI-014_REPAIR_ADMISSION.md` for contract, replay command and retained trace. This increment contains no migrations, publication or frontend changes.

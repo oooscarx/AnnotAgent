@@ -56,15 +56,30 @@ def main():
     budget = sample_preview["conversation_budget"]
     sample = c.post("/api/projects/" + scene["project"] + "/sample-operations", {"request_id": sample_preview["request_id"], "draft_id": draft_id, "expected_revision": sample_preview["revision"], "image_indices": [0, 1, 2], "authorization_fingerprint": sample_preview["authorization_fingerprint"], "conversation": {"conversation_id": scene["conversation_id"], "task_id": scene["task_id"], **{key: budget[key] for key in ["previous_grant_id", "scope_hash", "expires_at"]}, "allow_unknown_cost": True, "human_review": True}})
     sample = c.poll("/api/projects/" + scene["project"] + "/sample-operations/" + sample["id"], lambda v: v["status"] in ["succeeded", "failed"])
-    assert sample["status"] == "succeeded", sample
     record = c.get(f"/api/workflow-drafts/{draft_id}/sample-test?test_id={sample['id']}")["sample_test"]
+    assert record["report"]["summary"]["failed_count"] == 3, record
+    for image in record["report"]["samples"]:
+        assert any("Task is waiting for human input; no model call was admitted" in issue["message"] for node in image["nodes"] for issue in node["issues"]), image
+    assert c.get(tr + "/calls") == after_calls
+    # Joint consent must bind the Applied source; an ordinary sample must not
+    # acquire this exception merely because it points to the same repair copy.
+    query = {"consent_id": uid(), "builder_operation_id": uid(), "sample_operation_id": uid(), "planner_model_id": scene["model_profile_id"], "allowed_models": json.dumps(["model-profile:" + scene["model_profile_id"]]), "schema_id": scene["schema_id"], "schema_revision": scene["schema_revision"], "repair_request_id": scene["answered_request_id"]}
+    consent = c.get(tr + "/journey-preview?" + urllib.parse.urlencode(query))["consent"]
+    consent["allow_unknown_cost"] = True
+    c.post(tr + "/journey-consents", consent)
+    execution = tr + "/journey-consents/" + consent["id"] + "/execution"
+    c.post(execution)
+    result = c.poll(execution, lambda v: (v.get("sample") or {}).get("status") in ["succeeded", "failed"] or (v.get("dispatch") or {}).get("error"))
+    assert (result.get("sample") or {}).get("status") == "succeeded", result
+    sample = result["sample"]
+    record = c.get(f"/api/workflow-drafts/{sample['draft_id']}/sample-test?test_id={sample['id']}")["sample_test"]
     assert record["report"]["summary"]["failed_count"] == 0, record
     assert len(c.get(tr + "/calls")) > len(after_calls)
     final_humans = c.get(tr + "/human-requests")
     for other in others:
         assert next(r for r in final_humans if r["input"]["id"] == other["input"]["id"]) == other
     (workspace / "UIAPI014_REPAIR_HTTP_TRACE.json").write_text(json.dumps({"scene": scene, "result": result, "pending_others": others, "trace": c.trace}, indent=2))
-    print("PASS real HTTP Applied Builder + separately authorized Sample admitted; two other images pending unchanged; exact Builder replay adds zero calls")
+    print("PASS real HTTP Applied Builder + sealed repair Journey Sample admitted; ordinary Sample blocked without calls; two other images pending unchanged; exact Builder replay adds zero calls")
 
 
 if __name__ == "__main__":

@@ -237,6 +237,65 @@ fn fits(consent: &ConversationJourneyConsent, sample: &JourneySampleScope) -> bo
         && sample.maximum_calls <= consent.maximum_sample_calls
 }
 
+/// Only an active, sealed repair Journey can exempt its exact Sample from
+/// unrelated pending `HumanRequests`. The ordinary sample path never inherits it.
+pub(crate) fn permits_repair_sample(
+    db: &rusqlite::Connection,
+    task: Uuid,
+    operation: Uuid,
+    draft: &annotagent_core::WorkflowDraft,
+    request: &serde_json::Value,
+    human: &str,
+) -> Result<bool, StorageError> {
+    let Some(id) = request["conversation"]["journey_consent_id"]
+        .as_str()
+        .and_then(|s| Uuid::parse_str(s).ok())
+    else {
+        return Ok(false);
+    };
+    let Some(saved) = read(db, task, id)? else {
+        return Ok(false);
+    };
+    let consent = saved.effective_consent();
+    let Some(sample) = saved.sample.as_ref() else {
+        return Ok(false);
+    };
+    let Some(repair) = consent.repair.as_ref() else {
+        return Ok(false);
+    };
+    if saved.revoked
+        || consent.expires_at <= Utc::now()
+        || !fits(consent, sample)
+        || repair.request_id.to_string() != human
+        || repair.draft_id != draft.id
+        || sample.operation_id != operation
+        || sample.draft_id.to_string() != draft.id
+        || request["execution"]["expected_revision"] != sample.draft_revision
+        || request["execution"]["authorization_fingerprint"] != sample.authorization_fingerprint
+        || request["conversation"]["previous_grant_id"] != consent.builder_operation_id.to_string()
+        || request["conversation"]["human_review"] != true
+        || request["execution"]["image_indices"]
+            != serde_json::json!((0..sample.images.len()).collect::<Vec<_>>())
+    {
+        return Ok(false);
+    }
+    let seal: Option<String> = db
+        .query_row(
+            "SELECT scope_json FROM sample_scope_seals WHERE sample_test_id=?1",
+            [operation.to_string()],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let Some(seal) = seal else {
+        return Ok(false);
+    };
+    let seal: serde_json::Value = serde_json::from_str(&seal)?;
+    Ok(
+        seal["annotation_schema"] == serde_json::to_value(&draft.annotation_schema)?
+            && seal["images"] == serde_json::to_value(&sample.images)?,
+    )
+}
+
 fn owned(
     db: &rusqlite::Connection,
     project: &str,
@@ -1050,6 +1109,86 @@ pub(crate) mod tests {
                     .unwrap()["status"],
                 "dispatched"
             );
+        }
+    }
+
+    #[test]
+    fn repair_sample_admission_requires_active_sealed_exact_journey() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let (project, conversation, mut consent, sample) = setup(&store);
+        let human = Uuid::new_v4();
+        consent.repair = Some(ConversationBuilderRepair {
+            request_id: human,
+            draft_id: sample.draft_id.to_string(),
+            revision: sample.draft_revision,
+            content_hash: "a".repeat(64),
+        });
+        store
+            .save_conversation_journey(&project, conversation, &consent)
+            .unwrap();
+        let draft:annotagent_core::WorkflowDraft=serde_json::from_value(serde_json::json!({"id":sample.draft_id,"project_id":project,"name":"TEST sealed repair","status":"editing","nodes":[],"created_at":Utc::now(),"updated_at":Utc::now(),"annotation_schema":{"schema_draft_id":consent.schema_id,"revision":1,"goal":"TEST","task":{"id":"objects","kind":"classification","labels":["cup"]},"boundary_rules":[]}})).unwrap();
+        let request = serde_json::json!({"execution":{"expected_revision":sample.draft_revision,"authorization_fingerprint":sample.authorization_fingerprint,"image_indices":[0]},"conversation":{"journey_consent_id":consent.id,"previous_grant_id":consent.builder_operation_id,"human_review":true}});
+        let check = |request: &serde_json::Value| {
+            store
+                .with_connection(|db| {
+                    permits_repair_sample(
+                        db,
+                        consent.task_id,
+                        sample.operation_id,
+                        &draft,
+                        request,
+                        &human.to_string(),
+                    )
+                })
+                .unwrap()
+        };
+        assert!(!check(&request), "unsealed Journey");
+        store
+            .seal_conversation_journey_sample(
+                &project,
+                conversation,
+                consent.task_id,
+                consent.id,
+                &sample,
+            )
+            .unwrap();
+        assert!(!check(&request), "missing execution seal");
+        store.save_sample_scope_seal(&sample.operation_id.to_string(),&serde_json::json!({"annotation_schema":draft.annotation_schema,"images":sample.images})).unwrap();
+        assert!(check(&request));
+        for change in ["ordinary", "revision", "fingerprint", "images", "grant"] {
+            let mut changed = request.clone();
+            match change {
+                "ordinary" => {
+                    changed["conversation"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("journey_consent_id");
+                }
+                "revision" => changed["execution"]["expected_revision"] = serde_json::json!(99),
+                "fingerprint" => {
+                    changed["execution"]["authorization_fingerprint"] =
+                        serde_json::json!("changed");
+                }
+                "images" => changed["execution"]["image_indices"] = serde_json::json!([1]),
+                _ => {
+                    changed["conversation"]["previous_grant_id"] =
+                        serde_json::json!(Uuid::new_v4());
+                }
+            }
+            assert!(!check(&changed), "{change}");
+        }
+        for change in ["expired", "revoked", "not_repair", "model", "image"] {
+            let mut changed = consent.clone();
+            let mut sealed = sample.clone();
+            match change {
+                "expired" => changed.expires_at = Utc::now() - chrono::Duration::minutes(1),
+                "not_repair" => changed.repair = None,
+                "model" => sealed.models[0].binding_digest = "0".repeat(64),
+                "image" => sealed.images[0].content_hash = "0".repeat(64),
+                _ => {}
+            }
+            store.with_connection(|db|{db.execute("UPDATE conversation_journey_consents SET input_json=?2,sample_scope_json=?3,revoked=?4 WHERE id=?1",params![consent.id.to_string(),serde_json::to_string(&changed)?,serde_json::to_string(&sealed)?,change=="revoked"])?;Ok(())}).unwrap();
+            assert!(!check(&request), "{change}");
         }
     }
 
