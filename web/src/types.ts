@@ -207,6 +207,7 @@ export interface WorkflowVersionRef {
 }
 
 export interface ManagementRequest {
+  history_scope?: string;
   project_id: string;
   objects: ManagementObjectRef[];
   action: ManagementAction;

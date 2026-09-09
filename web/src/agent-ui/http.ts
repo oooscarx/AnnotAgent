@@ -1,6 +1,7 @@
 import { api, ApiRequestError, request, type JourneyPreview, type JourneyConsent, type ProcessingAuthorization, type ProcessingReceipt } from "../api";
 import type { ImageItem, ProviderProfile, RegistryModelProfile, GlobalModelDefaults, ExpertPluginRegistry, InstalledModelInstance, ConversationSchemaPreview, ConversationCallReceipt, ConversationBuilderItem, WorkflowSampleTestRecord, SampleFeedbackRevision, ExportReadiness, ProjectExportResult } from "../types";
 import { terminalSampleAnnotations } from "../sampleAnnotations";
+import { historyScopeApi } from "./historyScope";
 import { sampleFeedbackOverlay } from "../sampleFeedbackOverlay";
 import { callStage, failureDetail } from "./ExecutionProgress";
 import type { HumanRequest } from "../conversation-human-api";
@@ -31,6 +32,7 @@ type Thread = { id: string; role: "user"; task_id: string; project_owner_id: str
 type SafeSettings = { revision: string; sections: { data_privacy: { workspace_id: string }; usage_budget: { future_run_budget: Record<string, unknown> & { max_cost?: string } } } };
 export type Transport = <T>(path: string, init?: RequestInit) => Promise<T>;
 const esc = encodeURIComponent;
+const nativeTrashService = {...api, historyScope:historyScopeApi};
 const unsupported = (detail: string): never => { throw new Error(`尚未接通：${detail}。没有执行操作，也没有回退到演示结果。`); };
 const initialSettings: Settings = { revision: "", theme: "system", language: "zh", font: "标准", density: "舒适", collapsed: false, providers: [], defaultModel: "", plugins: [], allowExternal: false, cache: 0, budget: "", range: "未来 Run 默认预算" };
 
@@ -63,7 +65,7 @@ export class HttpAdapter implements WorkspaceAdapter {
   get modelProfileManagement() { return this.transport === request ? api : undefined; }
   get runtimeSettingsManagement() { return this.transport === request ? api : undefined; }
   get projectManagement() { return this.transport === request ? api : undefined; }
-  get trashManagement() { return this.transport === request ? api : undefined; }
+  get trashManagement() { return this.transport === request ? nativeTrashService : undefined; }
   get reviewManagement() { return this.transport === request ? api : undefined; }
   get runDetail() { return this.transport === request ? api : undefined; }
   get batchDetail() { return this.transport === request ? api : undefined; }

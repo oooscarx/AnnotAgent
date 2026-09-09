@@ -170,6 +170,7 @@ function privilegedAction(path: string, init?: RequestInit): string | undefined 
     || cleanPath === "/api/model-bundles/import"
     || cleanPath === "/api/model-bundles/gc"
     || cleanPath === "/api/model-installations"
+    || (method === "POST" && cleanPath === "/api/history-scope")
     || cleanPath.endsWith("/management/actions")
     || (cleanPath.startsWith("/api/model-bundles/") && ["/verify", "/test", "/enable", "/disable", "/license-acceptance"].some((suffix) => cleanPath.endsWith(suffix)))
     || (cleanPath.startsWith("/api/model-instances/") && cleanPath.endsWith("/test"))
@@ -755,12 +756,12 @@ export const api = {
     }>(`/api/batches/${batchId}`, { signal }),
   previewManagement: (projectId: string, body: ManagementRequest) =>
     request<ManagementPreview>(
-      `/api/projects/${encodeURIComponent(projectId)}/management/preview`,
+      `/api/projects/${encodeURIComponent(projectId)}/management/preview${body.history_scope ? `?history_scope=${encodeURIComponent(body.history_scope)}` : ""}`,
       { method: "POST", body: JSON.stringify(body) },
     ),
   executeManagement: async (projectId: string, body: ManagementRequest) => {
     const receipt = await request<ManagementReceipt>(
-      `/api/projects/${encodeURIComponent(projectId)}/management/actions`,
+      `/api/projects/${encodeURIComponent(projectId)}/management/actions${body.history_scope ? `?history_scope=${encodeURIComponent(body.history_scope)}` : ""}`,
       { method: "POST", body: JSON.stringify(body) },
     );
     if (typeof window !== "undefined") {
@@ -777,10 +778,14 @@ export const api = {
     request<ManagementUsageSummary>(
       `/api/projects/${encodeURIComponent(projectId)}/management/usage`,
     ),
-  trash: (projectId: string, kind?: ManagementObjectKind) =>
-    request<{ items: TrashEntry[] }>(
-      `/api/projects/${encodeURIComponent(projectId)}/trash${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`,
-    ),
+  trash: (projectId: string, kind?: ManagementObjectKind, scope?: string, offset=0) => {
+    const params=new URLSearchParams();
+    if(kind)params.set("kind",kind);
+    if(scope){params.set("history_scope",scope);params.set("limit","50");params.set("offset",String(offset));}
+    return request<{ items: TrashEntry[]; page?: {total:number;offset:number;next_offset:number|null} }>(
+      `/api/projects/${encodeURIComponent(projectId)}/trash${params.size ? `?${params}` : ""}`,
+    );
+  },
   pipelineLifecycle: (
     projectId: string,
     includeArchived = false,

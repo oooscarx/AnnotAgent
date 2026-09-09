@@ -1,5 +1,13 @@
 # Single UI Clean Cut
 
+## Server history scope integrated; native Trash now fails closed
+
+Integrated inspected backend delivery dbe4faef as d768dc4. Conflicts were documentation-only: retained implemented UIAPI-009 contract, kept obsolete gap document deleted, and did not import claims about unrelated backend localization changes. Independently ran three storage history-scope regressions and the server HTTP confirmation/restart/list/management regression: four passed. cargo fmt --all --check passed. These tests use temporary isolated data, not the real workspace.
+
+Added native HistoryBoundary through the Http Adapter. Passive entry only reads server scope; explicit preview and privileged confirmation establish an immutable workspace-wide identity boundary. Persisted pending command prevents automatic replay after uncertain responses. Known snapshot conflict permits a fresh preview; unknown transport results remain pending/read-only. Existing data and direct references remain untouched. Native Trash requires that scope on paginated reads and preview/action requests, isolates pending lifecycle commands by scope, and rejects absent pagination or wrong owners instead of falling back to all history. Old unscoped API remains solely for remaining legacy consumers until their removal.
+
+Frontend typecheck and317 unit tests (one existing cutover TODO) passed. Isolated production build output: /tmp/annotagent-history-scope-dist. New boundary/Trash browser flows, lost-response handling and existing Trash E2E fixture setup still require browser verification; no new screenshot or full HTTP E2E claim for this slice. Historical Pipeline/Run index migration and complete removal of legacy App/styles remain unfinished. No real workspace scope established, real service/dist changed, paid model call or push. Goal remains active.
+
 ## Global defaults migrated; old ModelRegistryPage removed
 
 Audit identified one real old-page gap before deletion: global pipeline_builder/vision_language/text_generation defaults. Added a native Settings disclosure using actual compatible-model queries, preserving unknown/current selections, explicit save/cancel, dirty guard, stale-load protection and reread-before-write conflict detection. It does not change task preference, in-flight requests or Published bindings. Existing endpoint is not atomic CAS; frontend preflight is not claimed as such. Reads do not probe or execute models. After integrating this with existing native ModelProfiles/actions/quality contracts, deleted old ModelRegistryPage function and replaced its two legacy embedded mounts with links to `/settings/agent-models`.
