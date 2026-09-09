@@ -30,6 +30,7 @@ use super::{
 pub(super) fn routes() -> Router<ServerState> {
     Router::new()
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/delivery-intent", get(super::task_delivery::get).post(super::task_delivery::save))
+        .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/delivery-schema", get(super::task_delivery::current_schema).post(super::task_delivery::prepare_schema))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/delivery-packages", post(super::training_delivery::start))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/delivery-packages/{package_id}", get(super::training_delivery::status))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/delivery-packages/{package_id}/cancel", post(super::training_delivery::cancel))

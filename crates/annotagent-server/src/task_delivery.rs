@@ -2,6 +2,42 @@
 use super::*;
 use annotagent_application::{SaveTaskDeliveryIntent, TaskDeliveryView};
 
+pub(super) async fn current_schema(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+) -> ApiResult<Json<Value>> {
+    let delivery = state
+        .application
+        .require_delivery_intake(&project, conversation, task)
+        .map_err(ApiError::conversation)?;
+    let schema = if delivery.is_some() {
+        state
+            .application
+            .human_conversation_schema_drafts(&project, conversation, task)
+            .map_err(ApiError::conversation)?
+            .into_iter()
+            .find(|s| {
+                annotagent_application::require_delivery_schema(delivery.as_ref(), &s.definition)
+                    .is_ok()
+            })
+    } else {
+        None
+    };
+    Ok(Json(json!({"required":delivery.is_some(),"schema":schema})))
+}
+
+pub(super) async fn prepare_schema(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+    Json(input): Json<annotagent_application::PrepareDeliverySchema>,
+) -> ApiResult<Json<annotagent_storage::ConversationSchemaDraft>> {
+    state
+        .application
+        .prepare_delivery_schema(&project, conversation, task, &input)
+        .map(Json)
+        .map_err(ApiError::conversation)
+}
+
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ImageQuery {
@@ -131,6 +167,79 @@ mod tests {
         assert_eq!(view["confirmation_current"], false);
         assert!(view["review"].is_null());
         assert_eq!(view["accepted_objects"], 0);
+        let prepare = json!({"command_id":uuid::Uuid::new_v4(),"expected_revision":view["intent_revision"],"expected_sha256":view["intent_sha256"]});
+        let prepared = request(
+            &service,
+            Method::POST,
+            &format!("{root}/delivery-schema"),
+            Some(prepare.clone()),
+        )
+        .await;
+        assert_eq!(prepared.status(), StatusCode::OK);
+        let prepared = response_json(prepared).await;
+        assert_eq!(prepared["definition"]["task"]["kind"], "bounding_box");
+        assert_eq!(
+            prepared["definition"]["task"]["labels"],
+            json!(["TEST-target"])
+        );
+        assert_eq!(
+            prepared,
+            response_json(
+                request(
+                    &service,
+                    Method::POST,
+                    &format!("{root}/delivery-schema"),
+                    Some(prepare.clone())
+                )
+                .await
+            )
+            .await
+        );
+        let prepared_schema: annotagent_storage::ConversationSchemaDraft =
+            serde_json::from_value(prepared).unwrap();
+        let restored_schema = response_json(
+            request(
+                &service,
+                Method::GET,
+                &format!("{root}/delivery-schema"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            restored_schema["schema"]["id"],
+            prepared_schema.id.to_string()
+        );
+        assert_eq!(restored_schema["required"], true);
+        let current_delivery = app
+            .task_delivery_intent("TEST-image-review", conversation, sent.task_id)
+            .unwrap();
+        annotagent_application::require_delivery_schema(
+            current_delivery.saved.as_ref(),
+            &prepared_schema.definition,
+        )
+        .unwrap();
+        let mut wrong = prepared_schema.definition.clone();
+        wrong.task.kind = annotagent_core::TaskKind::Classification;
+        assert!(
+            annotagent_application::require_delivery_schema(
+                current_delivery.saved.as_ref(),
+                &wrong
+            )
+            .is_err()
+        );
+        assert!(
+            !request(
+                &service,
+                Method::POST,
+                &format!("{root}/delivery-schema").replacen("TEST-image-review", "TEST-foreign", 1),
+                Some(prepare.clone())
+            )
+            .await
+            .status()
+            .is_success()
+        );
         let mut confirm = json!({"command_id":uuid::Uuid::new_v4(),"intent_revision":view["intent_revision"],"intent_sha256":view["intent_sha256"],
             "image_id":image,"source_run_id":null,"expected_snapshot_sha256":view["snapshot"]["sha256"],"expected_review_revision":0,
             "decision":"negative_confirmed","reason":null,"confirmed":false});
@@ -214,6 +323,40 @@ mod tests {
         let current = response_json(request(&service, Method::GET, &image_uri, None).await).await;
         assert_eq!(current["confirmation_current"], false);
         assert!(current["review"].is_null());
+        assert!(
+            !request(
+                &service,
+                Method::POST,
+                &format!("{root}/delivery-schema"),
+                Some(prepare)
+            )
+            .await
+            .status()
+            .is_success()
+        );
+        let latest = app
+            .task_delivery_intent("TEST-image-review", conversation, sent.task_id)
+            .unwrap();
+        assert!(
+            response_json(
+                request(
+                    &service,
+                    Method::GET,
+                    &format!("{root}/delivery-schema"),
+                    None
+                )
+                .await
+            )
+            .await["schema"]
+                .is_null()
+        );
+        assert!(
+            annotagent_application::require_delivery_schema(
+                latest.saved.as_ref(),
+                &prepared_schema.definition
+            )
+            .is_err()
+        );
         assert!(
             app.conversation_schema_calls("TEST-image-review", conversation, sent.task_id)
                 .unwrap()

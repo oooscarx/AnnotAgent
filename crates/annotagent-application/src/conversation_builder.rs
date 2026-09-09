@@ -365,7 +365,8 @@ impl LocalApplication {
         provider: &dyn VisionModelProvider,
         cancellation: CancellationToken,
     ) -> Result<ConversationBuilderOperation> {
-        self.require_delivery_intake(project, execution.conversation_id, execution.task_id)?;
+        let delivery =
+            self.require_delivery_intake(project, execution.conversation_id, execution.task_id)?;
         if [
             execution.repair.is_some(),
             execution.image_class_repair.is_some(),
@@ -386,6 +387,7 @@ impl LocalApplication {
         if schema.task_id != execution.task_id {
             bail!("Schema belongs to another conversation task");
         }
+        crate::task_delivery::require_delivery_schema(delivery.as_ref(), &schema.definition)?;
         if !self
             .conversation_tasks(project, execution.conversation_id)?
             .iter()

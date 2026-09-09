@@ -3,7 +3,10 @@
 mod agent_ui;
 mod task_delivery;
 mod training_delivery;
-pub use task_delivery::{SaveTaskDeliveryIntent, TaskDeliveryImageView, TaskDeliveryView};
+pub use task_delivery::{
+    PrepareDeliverySchema, SaveTaskDeliveryIntent, TaskDeliveryImageView, TaskDeliveryView,
+    require_delivery_schema,
+};
 pub use training_delivery::TrainingPackageStatus;
 mod conversation_builder;
 mod conversation_journey;

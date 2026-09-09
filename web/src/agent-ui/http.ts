@@ -39,6 +39,7 @@ export class HttpAdapter implements WorkspaceAdapter {
   readonly deliveryIntake: import("./DeliveryIntake").DeliveryIntakeService = {
     read: (project, id, signal) => { const task = this.task(id); if (task.project !== project) throw new Error("任务不属于此项目"); return this.transport(`${this.taskRoot(task)}/delivery-intent`, { signal }); },
     save: (project, id, input) => { const task = this.task(id); if (task.project !== project) throw new Error("任务不属于此项目"); return this.transport(`${this.taskRoot(task)}/delivery-intent`, { method: "POST", body: JSON.stringify(input) }); },
+    prepare: async (project,id,input)=>{const task=this.task(id);if(task.project!==project)throw new Error("任务不属于此项目");const result=await this.transport<{id:string;revision:number}>(`${this.taskRoot(task)}/delivery-schema`,{method:"POST",body:JSON.stringify(input)});await this.reloadCurrent(task);return result;},
   };
   readonly kind = "http" as const;
   private state: Snapshot = { loading: true, projects: [], tasks: [], models: [], artifacts: [], usage: [], knownCost: "", protectedCache: 0, settings: initialSettings };
@@ -317,7 +318,10 @@ export class HttpAdapter implements WorkspaceAdapter {
       const bindings = await this.transport<{bindings:{model_profile_id:string}[]}>(`${this.root(task.project)}/model-bindings`);
       const models = [...new Set(bindings.bindings.map(b=>`model-profile:${b.model_profile_id}`))];
       if(!models.length) throw new Error("项目尚未绑定视觉模型，请先设置；不自动扩大到全部 Registry 模型");
-      const query = new URLSearchParams({consent_id:c.id,schema_call_id:crypto.randomUUID(),builder_operation_id:crypto.randomUUID(),sample_operation_id:crypto.randomUUID(),allowed_models:JSON.stringify(models)});
+      const delivery=await this.transport<{required:boolean;schema:null|{id:string;revision:number}}>(`${root}/delivery-schema`);
+      if(delivery.required && !delivery.schema)throw new Error("请先确认已保存的交付目标；旧目标规范不适用于当前版本，不会额外调用模型猜测类别。");
+      const query = new URLSearchParams({consent_id:c.id,builder_operation_id:crypto.randomUUID(),sample_operation_id:crypto.randomUUID(),allowed_models:JSON.stringify(models)});
+      if(delivery.required && delivery.schema){query.set("schema_id",delivery.schema.id);query.set("schema_revision",String(delivery.schema.revision));}else{query.set("schema_call_id",crypto.randomUUID());}
       const p = await this.transport<JourneyPreview>(`${root}/journey-preview?${query}`);
       const consent: JourneyConsent = {...p.consent,allow_unknown_cost:true,...(p.consent.schema_proposal?{schema_proposal:{...p.consent.schema_proposal,allow_unknown_cost:true}}:{})};
       this.approvals.set(task.id,{id:c.id,url:`${root}/journey-consents`,body:consent,execution:`${root}/journey-consents/${esc(consent.id)}/execution`});

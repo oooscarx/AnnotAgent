@@ -93,7 +93,7 @@ pub(super) fn scope(
     previous: AuthorizationBase,
 ) -> ApiResult<(PipelineBuilderModelRuntime, Value)> {
     selection.validate_source()?;
-    state
+    let delivery = state
         .application
         .require_delivery_intake(project, conversation, task)
         .map_err(ApiError::bad_request)?;
@@ -143,6 +143,8 @@ pub(super) fn scope(
     if schema.task_id != task {
         return Err(ApiError::bad_request("Schema belongs to another task"));
     }
+    annotagent_application::require_delivery_schema(delivery.as_ref(), &schema.definition)
+        .map_err(ApiError::bad_request)?;
     let queued_plan = selection
         .queued_message_id
         .map(|message| {
@@ -230,6 +232,10 @@ pub(super) fn scope(
         ));
     }
     let mut context = json!({"contract":"conversation-builder-v1","selection":canonical_selection,"repair":repair,"schema":schema,"model":selected.model,"provider":selected.provider,"config":config,"previous":previous_id,"maximum_calls":maximum_calls,"images":0,"dry_runs":0});
+    if let Some(delivery) = delivery {
+        context["delivery"] =
+            json!({"revision":delivery.revision,"content_sha256":delivery.content_sha256});
+    }
     if image_class_repair.is_some() {
         context["image_class_repair"] = json!(image_class_repair);
     }

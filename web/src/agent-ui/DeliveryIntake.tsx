@@ -9,6 +9,7 @@ export type IntakeView = { saved: null | { revision: number; content_sha256: str
 export interface DeliveryIntakeService {
   read(project: string, task: string, signal?: AbortSignal): Promise<IntakeView>;
   save(project: string, task: string, input: IntakeInput): Promise<IntakeView>;
+  prepare?(project: string, task: string, input: {command_id:string;expected_revision:number;expected_sha256:string}): Promise<{id:string;revision:number}>;
 }
 const target: Target = { annotation_kind: "bounding_box", framework: "ultralytics", export_profile: "ultralytics_yolo_detection", profile_revision: 1 };
 const split: Split = { train_percent: 80, seed: 0, preserve_existing: true, keep_known_groups_together: true };
@@ -28,8 +29,11 @@ export function DeliveryIntake({ service, project, task, images, locked = false 
   const [expanded, setExpanded] = useState(false);
   const retry = useRef<{ signature: string; input: IntakeInput } | null>(null);
   const inFlight = useRef(false);
+  const preparation = useRef<{command_id:string;expected_revision:number;expected_sha256:string} | null>(null);
+  const [prepared,setPrepared]=useState("");
   const supportedTarget = selectedTarget && selectedTarget.annotation_kind === target.annotation_kind && selectedTarget.framework === target.framework && selectedTarget.export_profile === target.export_profile && selectedTarget.profile_revision === target.profile_revision;
   const apply = (value: IntakeView) => {
+    setPrepared("");
     setView(value); setIds(value.saved?.intent.dataset_scope?.map(i => i.image_id) || []);
     setLabels(value.saved?.intent.label_spec?.map(l => l.display_name).join("\n") || "");
     setTarget(value.saved?.intent.training_target || null); setDirty(false);
@@ -54,11 +58,20 @@ export function DeliveryIntake({ service, project, task, images, locked = false 
     catch (e) { setError((e as Error).message); }
     finally { inFlight.current = false; setBusy(false); }
   };
+  const prepare=async()=>{
+    if(!view?.saved || !service.prepare || busy || locked || dirty || inFlight.current)return;
+    inFlight.current=true;setBusy(true);setError("");setPrepared("");
+    if(preparation.current?.expected_sha256!==view.saved.content_sha256 || preparation.current.expected_revision!==view.saved.revision)preparation.current={command_id:crypto.randomUUID(),expected_revision:view.saved.revision,expected_sha256:view.saved.content_sha256};
+    try {await service.prepare(project,task,preparation.current);setPrepared("目标规范已准备。接下来查看方案生成授权；本操作未调用模型、发布或处理图片。");}
+    catch(e){setError((e as Error).message);}finally{inFlight.current=false;setBusy(false);}
+  };
   return <section className="delivery-intake" aria-label="训练数据交付信息">
     <div className="delivery-intake-heading"><strong>训练数据包</strong><button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "收起信息" : view?.saved ? "查看交付信息" : "定义交付目标"}</button></div>
     {error && <p role="alert" className="error">{error}</p>}
     {!view && !error && <p role="status">读取已保存信息…</p>}
     {view?.saved && !expanded && <p>{view.saved.intent.dataset_scope?.length || 0} 张图片 · {view.saved.intent.label_spec?.map(l => l.display_name).join("、") || "类别待确定"} · {view.missing_slots.length ? "仍有信息待补齐" : "信息已保存，尚未批准执行"}</p>}
+    {view?.saved && !view.missing_slots.length && !view.blockers.length && service.prepare && <div className="delivery-intake-actions"><button type="button" disabled={busy||locked||dirty} onClick={()=>void prepare()}>{busy?"保存中…":"确认目标并准备方案"}</button><small>复用已填写的类别和任务类型，不再要求填写内部 ID。模型执行仍需授权。</small></div>}
+    {prepared && <p role="status">{prepared}</p>}
     {expanded && view && <form aria-disabled={locked} onSubmit={e => { e.preventDefault(); void save(); }}>
       {locked && <p role="status">任务执行中，暂时不能保存交付信息；已有输入保留。</p>}
       <fieldset disabled={busy}><legend>用哪些图片？</legend><div className="delivery-intake-selection"><button type="button" onClick={() => { setIds(images.map(i => i.id)); setDirty(true); }}>选择当前 {images.length} 张图片</button><span>已选 {ids.length} 张</span></div>

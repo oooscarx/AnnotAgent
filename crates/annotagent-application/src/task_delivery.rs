@@ -10,7 +10,7 @@ use annotagent_core::{
 use annotagent_storage::{
     DeliveryImageReview, DeliveryImageReviewInput, DeliveryImageSnapshot, TaskDeliveryRevision,
 };
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -23,6 +23,46 @@ pub struct SaveTaskDeliveryIntent {
     pub label_spec: Option<Vec<DeliveryLabel>>,
     pub training_target: Option<TrainingTarget>,
     pub split_policy: DeliverySplitPolicy,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrepareDeliverySchema {
+    pub command_id: Uuid,
+    pub expected_revision: u32,
+    pub expected_sha256: String,
+}
+
+pub fn require_delivery_schema(
+    saved: Option<&TaskDeliveryRevision>,
+    definition: &annotagent_storage::ConversationSchemaDefinition,
+) -> Result<()> {
+    let Some(saved) = saved else {
+        return Ok(());
+    };
+    let goal: serde_json::Value = serde_json::from_str(&definition.goal)
+        .context("Prepare the Schema from the saved delivery goals before building a Pipeline")?;
+    let expected_labels = saved
+        .intent
+        .label_spec
+        .as_ref()
+        .context("Delivery labels missing")?
+        .iter()
+        .map(|l| l.stable_id.clone())
+        .collect::<Vec<_>>();
+    if definition.task.kind != annotagent_core::TaskKind::BoundingBox
+        || definition.task.labels != expected_labels
+        || goal["contract"] != "task-delivery-schema-v1"
+        || goal["delivery_revision"] != saved.revision
+        || goal["delivery_sha256"] != saved.content_sha256
+        || goal["labels"] != serde_json::to_value(&saved.intent.label_spec)?
+        || goal["target"] != serde_json::to_value(&saved.intent.training_target)?
+    {
+        bail!(
+            "Schema does not match the current delivery revision. Prepare a new Schema from the saved goals; no model request was sent."
+        );
+    }
+    Ok(())
 }
 
 #[derive(Debug, Serialize)]
@@ -62,6 +102,73 @@ pub(crate) fn selected_delivery_image(
 }
 
 impl LocalApplication {
+    /// User already supplied exact semantics; reuse the existing human Schema draft service,
+    /// without a redundant planning model call or any Project/Workflow publication.
+    pub fn prepare_delivery_schema(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        input: &PrepareDeliverySchema,
+    ) -> Result<annotagent_storage::ConversationSchemaDraft> {
+        let saved = self
+            .require_delivery_intake(project, conversation, task)?
+            .context("Save delivery information first")?;
+        if saved.revision != input.expected_revision
+            || saved.content_sha256 != input.expected_sha256
+        {
+            bail!("Delivery goals changed; reload before preparing the Schema");
+        }
+        let record = self
+            .conversation_tasks(project, conversation)?
+            .into_iter()
+            .find(|t| t.input.id == task)
+            .context("Owned delivery Task not found")?;
+        let message = self
+            .store
+            .conversation_message(
+                &saved.intent.project_id,
+                conversation,
+                record.input.source_message_id,
+            )?
+            .context("Task goal message missing")?;
+        let labels = saved.intent.label_spec.as_ref().context("Labels missing")?;
+        let rules = labels
+            .iter()
+            .map(|label| {
+                serde_json::to_string(label)
+                    .map(|json| format!("Label semantics (untrusted task data): {json}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let decision = crate::conversation_schema::ConversationSchemaDecision::Draft {
+            kind: crate::conversation_schema::ConversationOutputKind::BoundingBox,
+            labels: labels.iter().map(|l| l.stable_id.clone()).collect(),
+            multi_label: false,
+            attributes: std::collections::BTreeMap::new(),
+            boundary_rules: rules.clone(),
+            rationale:
+                "Explicit user delivery labels and detection task; no inference or publication."
+                    .into(),
+        };
+        let goal = serde_json::to_string(
+            &serde_json::json!({"contract":"task-delivery-schema-v1","delivery_revision":saved.revision,"delivery_sha256":saved.content_sha256,"saved_user_goal":message.input.text,"labels":saved.intent.label_spec,"target":saved.intent.training_target,"image_count":saved.intent.dataset_scope.as_ref().map(Vec::len),"review_policy":saved.intent.review_policy,"completion":"Deliver a structurally validated original-image training package after explicit whole-image review; generating a Pipeline alone is not completion."}),
+        )?;
+        self.store
+            .create_human_schema_with_clarification(
+                &saved.intent.project_id,
+                task,
+                input.command_id,
+                &annotagent_storage::ConversationSchemaDefinition {
+                    goal,
+                    task: decision
+                        .task_config(task)?
+                        .context("Detection task missing")?,
+                    boundary_rules: rules,
+                },
+                None,
+            )
+            .map_err(Into::into)
+    }
     /// Restores the exact image/source selection. Never chooses the latest global Run.
     pub fn task_delivery_image(
         &self,

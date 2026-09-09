@@ -31,6 +31,7 @@ function mockTransport(overrides: Record<string, unknown | (() => Promise<unknow
       [`${root}/${id}/workspace`, { project_id: "TEST-alpha", project_owner_id: "owner-a", conversation_id: "conversation-a", task: { input: { id, schema_revision: "schema-1" } }, agent_model: { revision: 2, model_profile_id: null }, actions: { resume: { available: false, reason: "No checkpoint" } }, queue: [], calls: [] }],
       [`${root}/${id}/thread?limit=100`, { items: [{ id: `message-${id}`, task_id: id, project_owner_id: "owner-a", conversation_id: "conversation-a", role: "user", message: { input: { text: `真实已存 ${id}` } } }], next_cursor: null }],
       [`${root}/${id}/exports`, []],
+      [`${root}/${id}/delivery-schema`, {required:false,schema:null}],
     ])), ...overrides,
   };
   const transport: Transport = async <T>(path: string, init?: RequestInit) => {
@@ -40,6 +41,44 @@ function mockTransport(overrides: Record<string, unknown | (() => Promise<unknow
   };
   return { transport, paths };
 }
+it("delivery preparation posts the exact owned revision and never falls back to fixture success",async()=>{
+  const reads=mockTransport();const posts:{path:string;body:unknown}[]=[];let reject=false;
+  const transport:Transport=async<T>(path:string,init?:RequestInit)=>{
+    if(init?.method==="POST"){
+      posts.push({path,body:JSON.parse(String(init.body))});
+      if(reject)throw new Error("TEST delivery revision changed");
+      return {id:"schema-delivery",revision:1} as T;
+    }
+    return reads.transport<T>(path,init);
+  };
+  const adapter=new HttpAdapter(transport);await adapter.refresh();await adapter.loadTask("TEST-alpha","t1");
+  expect(posts).toEqual([]);
+  const input={command_id:"same-command",expected_revision:3,expected_sha256:"frozen-delivery"};
+  expect(await adapter.deliveryIntake.prepare!("TEST-alpha","t1",input)).toEqual({id:"schema-delivery",revision:1});
+  expect(posts).toEqual([{path:`${root}/t1/delivery-schema`,body:input}]);
+  reject=true;
+  await expect(adapter.deliveryIntake.prepare!("TEST-alpha","t1",input)).rejects.toThrow("revision changed");
+  await expect(adapter.deliveryIntake.prepare!("OTHER","t1",input)).rejects.toThrow("任务不属于");
+  expect(posts).toHaveLength(2);
+  expect(posts[1]).toEqual(posts[0]);
+});
+it("sample consent uses the saved delivery Schema instead of another Schema model call",async()=>{
+  const reads=mockTransport({
+    "/api/projects/TEST-alpha/model-bindings":{bindings:[{model_profile_id:"vision"}]},
+    [`${root}/t1/delivery-schema`]:{required:true,schema:{id:"delivery-schema",revision:4}},
+  });
+  let preview="";
+  const transport:Transport=async<T>(path:string,init?:RequestInit)=>{
+    if(path.includes("journey-preview?")){preview=path;throw new Error("TEST observed exact scope");}
+    return reads.transport<T>(path,init);
+  };
+  const adapter=new HttpAdapter(transport);await adapter.refresh();await adapter.loadTask("TEST-alpha","t1");
+  await expect(adapter.prepareAction({id:"sample",project:"TEST-alpha",task:"t1",revision:"schema-1"},"sample")).rejects.toThrow("TEST observed");
+  const query=new URL(preview,"http://TEST.local").searchParams;
+  expect(query.get("schema_id")).toBe("delivery-schema");expect(query.get("schema_revision")).toBe("4");
+  expect(query.has("schema_call_id")).toBe(false);
+  expect(reads.paths.some(p=>p.includes("schema-preview"))).toBe(false);
+});
 describe("HTTP UI read boundary (synthetic transport tests, not HTTP E2E)", () => {
   it("preserves server timing and safe errors without an old unknown call masking active work", async () => {
     const {transport}=mockTransport({[`${root}/t1/workspace`]:{
