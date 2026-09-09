@@ -199,6 +199,43 @@ fn unresolved_image_or_changed_original_never_publishes_zip() {
 }
 
 #[test]
+fn cancellation_during_copy_or_validation_never_publishes_or_removes_other_files() {
+    let temp = tempfile::tempdir().unwrap();
+    let (intent, sources) = fixture(temp.path());
+    let unrelated = temp.path().join("unrelated.txt");
+    fs::write(&unrelated, b"TEST preserve").unwrap();
+    for (name, stage, occurrence) in [
+        ("during-copy", PackageProgress::Exporting, 1),
+        ("before-validation", PackageProgress::Validating, 1),
+        ("after-validation", PackageProgress::Validating, 2),
+    ] {
+        let destination = temp.path().join(format!("{name}.zip"));
+        let partial = temp.path().join(format!("{name}.zip.partial"));
+        let mut count = 0;
+        let error = write_training_package_controlled(
+            intent.clone(),
+            1,
+            &sources,
+            &destination,
+            |current| {
+                if current == stage && partial.exists() {
+                    count += 1;
+                    if count == occurrence {
+                        anyhow::bail!("TEST cancelled at checkpoint");
+                    }
+                }
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("TEST cancelled"));
+        assert!(!destination.exists());
+        assert!(!partial.exists());
+        assert_eq!(fs::read(&unrelated).unwrap(), b"TEST preserve");
+    }
+}
+
+#[test]
 fn group_conflicts_and_object_only_acceptance_do_not_imply_image_readiness() {
     let temp = tempfile::tempdir().unwrap();
     let (mut intent, mut sources) = fixture(temp.path());

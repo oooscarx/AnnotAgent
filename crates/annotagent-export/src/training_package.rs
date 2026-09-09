@@ -269,6 +269,25 @@ pub fn write_training_package(
     sources: &[PackageImage],
     destination: &Path,
 ) -> Result<PackageReceipt> {
+    write_training_package_controlled(intent, revision, sources, destination, |_| Ok(()))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackageProgress {
+    Exporting,
+    Validating,
+}
+
+/// The service owns cancellation and durable progress. A failed checkpoint aborts
+/// before publication and cleans this writer's partial file, not other files.
+pub fn write_training_package_controlled(
+    intent: TaskDeliveryIntent,
+    revision: u32,
+    sources: &[PackageImage],
+    destination: &Path,
+    mut checkpoint: impl FnMut(PackageProgress) -> Result<()>,
+) -> Result<PackageReceipt> {
+    checkpoint(PackageProgress::Exporting)?;
     let mut sources = sources.iter().collect::<Vec<_>>();
     sources.sort_by_key(|image| image.image_id);
     intent.validate().map_err(anyhow::Error::msg)?;
@@ -293,6 +312,7 @@ pub fn write_training_package(
     );
     let mut included = BTreeSet::new();
     for source in &sources {
+        checkpoint(PackageProgress::Exporting)?;
         match &source.confirmation {
             ImageConfirmation::PositiveComplete { confirmation_id } => {
                 ensure!(
@@ -406,6 +426,7 @@ pub fn write_training_package(
         let mut bytes = 0_u64;
         let mut buffer = [0_u8; 16384];
         loop {
+            checkpoint(PackageProgress::Exporting)?;
             let n = original.read(&mut buffer)?;
             if n == 0 {
                 break;
@@ -537,10 +558,12 @@ pub fn write_training_package(
     let file = zip.finish()?;
     file.sync_all()?;
     // Independent ZIP verification is required before atomic publication (implemented below).
+    checkpoint(PackageProgress::Validating)?;
     validate_training_package(&temporary)?;
     let mut file = File::open(&temporary)?;
     let mut hash = Sha256::new();
     let bytes = std::io::copy(&mut file, &mut hash)?;
+    checkpoint(PackageProgress::Validating)?;
     fs::hard_link(&temporary, destination)
         .context("Cannot atomically publish package without overwriting")?;
     Ok(PackageReceipt {

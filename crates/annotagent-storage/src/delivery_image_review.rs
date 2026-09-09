@@ -50,7 +50,7 @@ fn invalid(message: &str) -> StorageError {
     StorageError::InvalidConversation(message.into())
 }
 
-fn intent(
+pub(super) fn intent(
     db: &Connection,
     project: &str,
     conversation: Uuid,
@@ -69,7 +69,7 @@ fn intent(
     })
 }
 
-fn snapshot(
+pub(super) fn snapshot(
     db: &Connection,
     saved: &TaskDeliveryRevision,
     image: ImageId,
@@ -124,10 +124,12 @@ fn snapshot(
     })
 }
 
-fn receipt(row: &rusqlite::Row<'_>) -> rusqlite::Result<(u32, String, String, String)> {
+pub(super) fn receipt(row: &rusqlite::Row<'_>) -> rusqlite::Result<(u32, String, String, String)> {
     Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
 }
-fn decode(row: (u32, String, String, String)) -> Result<DeliveryImageReview, StorageError> {
+pub(super) fn decode(
+    row: (u32, String, String, String),
+) -> Result<DeliveryImageReview, StorageError> {
     Ok(DeliveryImageReview {
         revision: row.0,
         input: serde_json::from_str(&row.1)?,
@@ -479,5 +481,307 @@ mod tests {
         negative.command_id = Uuid::new_v4();
         negative.expected_review_revision = 2;
         assert!(f.confirm(&negative).is_err());
+    }
+
+    #[test]
+    fn package_freezes_reviews_retries_and_existing_export_history() {
+        use crate::{DeliveryPackageInput, DeliveryPackagePhase};
+        let dir = tempfile::tempdir().unwrap();
+        let f = TestData::new(dir.path());
+        let i = &f.saved.intent;
+        let mut input = DeliveryPackageInput {
+            command_id: Uuid::new_v4(),
+            intent_revision: 1,
+            intent_sha256: f.saved.content_sha256.clone(),
+            image_reviews: std::collections::BTreeMap::from([(f.image, 1)]),
+            confirmed: true,
+        };
+        assert!(
+            f.store
+                .begin_delivery_package(&i.project_id, i.conversation_id, i.task_id, &input)
+                .is_err()
+        );
+        f.put(&f.annotation);
+        f.confirm(&f.input(DeliveryImageDecision::PositiveComplete))
+            .unwrap();
+        let (frozen, created) = f
+            .store
+            .begin_delivery_package(&i.project_id, i.conversation_id, i.task_id, &input)
+            .unwrap();
+        assert!(created);
+        assert_eq!(frozen.phase, DeliveryPackagePhase::Preparing);
+        assert_eq!(
+            frozen.snapshot.images[0].review.snapshot.annotations[0],
+            f.annotation
+        );
+        assert!(frozen.snapshot.images[0].source_evidence_sha256.is_some());
+        assert_eq!(
+            f.store
+                .conversation_exports(&i.project_id, i.conversation_id, i.task_id)
+                .unwrap()[0]
+                .id,
+            input.command_id
+        );
+        let reopened = SqliteStore::open(&f.path).unwrap();
+        let (retry, created) = reopened
+            .begin_delivery_package(&i.project_id, i.conversation_id, i.task_id, &input)
+            .unwrap();
+        assert!(!created);
+        assert_eq!(retry.snapshot_sha256, frozen.snapshot_sha256);
+        // New object changes are never incorporated into the already frozen package.
+        let mut changed = f.annotation.clone();
+        changed.review_status = ReviewStatus::NeedsReview;
+        f.put(&changed);
+        assert_eq!(
+            f.store
+                .delivery_package(
+                    &i.project_id,
+                    i.conversation_id,
+                    i.task_id,
+                    input.command_id
+                )
+                .unwrap()
+                .snapshot
+                .images[0]
+                .review
+                .snapshot
+                .annotations[0],
+            f.annotation
+        );
+        let old_id = input.command_id;
+        input.command_id = Uuid::new_v4();
+        assert!(
+            f.store
+                .begin_delivery_package(&i.project_id, i.conversation_id, i.task_id, &input)
+                .is_err()
+        );
+        input.command_id = old_id;
+        input.image_reviews.clear();
+        assert!(
+            f.store
+                .begin_delivery_package(&i.project_id, i.conversation_id, i.task_id, &input)
+                .is_err()
+        );
+        assert!(
+            f.store
+                .delivery_package("foreign", i.conversation_id, i.task_id, old_id)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn package_cancel_and_worker_claim_are_terminal_cas_and_not_generic_success() {
+        use crate::{DeliveryPackageInput, DeliveryPackagePhase as Phase};
+        let dir = tempfile::tempdir().unwrap();
+        let f = TestData::new(dir.path());
+        let i = &f.saved.intent;
+        f.confirm(&f.input(DeliveryImageDecision::NegativeConfirmed))
+            .unwrap();
+        let input = DeliveryPackageInput {
+            command_id: Uuid::new_v4(),
+            intent_revision: 1,
+            intent_sha256: f.saved.content_sha256.clone(),
+            image_reviews: std::collections::BTreeMap::from([(f.image, 1)]),
+            confirmed: true,
+        };
+        f.store
+            .begin_delivery_package(&i.project_id, i.conversation_id, i.task_id, &input)
+            .unwrap();
+        let id = input.command_id;
+        let result = serde_json::json!({"TEST":"not a real package"});
+        assert!(
+            f.store
+                .finish_delivery_package(
+                    &i.project_id,
+                    i.conversation_id,
+                    i.task_id,
+                    id,
+                    Ok(&result),
+                    false
+                )
+                .is_err()
+        );
+        f.store
+            .finish_conversation_export(id, Some(&result), None)
+            .unwrap();
+        assert!(
+            f.store
+                .conversation_export(&i.project_id, i.conversation_id, i.task_id, id)
+                .unwrap()
+                .result
+                .is_none()
+        );
+        assert!(
+            f.store
+                .advance_delivery_package(
+                    &i.project_id,
+                    i.conversation_id,
+                    i.task_id,
+                    id,
+                    Phase::Preparing,
+                    Phase::Exporting
+                )
+                .unwrap()
+        );
+        assert!(
+            !f.store
+                .advance_delivery_package(
+                    &i.project_id,
+                    i.conversation_id,
+                    i.task_id,
+                    id,
+                    Phase::Preparing,
+                    Phase::Exporting
+                )
+                .unwrap()
+        );
+        assert!(
+            f.store
+                .finish_delivery_package(
+                    &i.project_id,
+                    i.conversation_id,
+                    i.task_id,
+                    id,
+                    Err("TEST user cancelled"),
+                    true
+                )
+                .unwrap()
+        );
+        assert!(
+            !f.store
+                .advance_delivery_package(
+                    &i.project_id,
+                    i.conversation_id,
+                    i.task_id,
+                    id,
+                    Phase::Exporting,
+                    Phase::Validating
+                )
+                .unwrap()
+        );
+        assert!(
+            !f.store
+                .finish_delivery_package(
+                    &i.project_id,
+                    i.conversation_id,
+                    i.task_id,
+                    id,
+                    Ok(&result),
+                    false
+                )
+                .unwrap()
+        );
+        let job = f
+            .store
+            .delivery_package(&i.project_id, i.conversation_id, i.task_id, id)
+            .unwrap();
+        assert_eq!(job.phase, Phase::Cancelled);
+        assert!(job.result.is_none());
+        assert_eq!(
+            f.store
+                .conversation_export_events(&i.project_id, i.conversation_id, i.task_id, 0)
+                .unwrap()
+                .1
+                .into_iter()
+                .map(|e| e.kind)
+                .collect::<Vec<_>>(),
+            vec!["requested", "failed"]
+        );
+    }
+
+    #[test]
+    fn package_scope_and_review_revision_must_match_and_ready_is_immutable() {
+        use crate::{DeliveryPackageInput, DeliveryPackagePhase as Phase};
+        let dir = tempfile::tempdir().unwrap();
+        let f = TestData::new(dir.path());
+        let i = &f.saved.intent;
+        f.confirm(&f.input(DeliveryImageDecision::NegativeConfirmed))
+            .unwrap();
+        let mut input = DeliveryPackageInput {
+            command_id: Uuid::new_v4(),
+            intent_revision: 1,
+            intent_sha256: f.saved.content_sha256.clone(),
+            image_reviews: std::collections::BTreeMap::new(),
+            confirmed: true,
+        };
+        assert!(
+            f.store
+                .begin_delivery_package(&i.project_id, i.conversation_id, i.task_id, &input)
+                .is_err()
+        );
+        input.image_reviews.insert(f.image, 2);
+        assert!(
+            f.store
+                .begin_delivery_package(&i.project_id, i.conversation_id, i.task_id, &input)
+                .is_err()
+        );
+        input.image_reviews.insert(f.image, 1);
+        input.confirmed = false;
+        assert!(
+            f.store
+                .begin_delivery_package(&i.project_id, i.conversation_id, i.task_id, &input)
+                .is_err()
+        );
+        input.confirmed = true;
+        f.store
+            .begin_delivery_package(&i.project_id, i.conversation_id, i.task_id, &input)
+            .unwrap();
+        let id = input.command_id;
+        assert!(
+            f.store
+                .advance_delivery_package(
+                    &i.project_id,
+                    i.conversation_id,
+                    i.task_id,
+                    id,
+                    Phase::Preparing,
+                    Phase::Exporting
+                )
+                .unwrap()
+        );
+        assert!(
+            f.store
+                .advance_delivery_package(
+                    &i.project_id,
+                    i.conversation_id,
+                    i.task_id,
+                    id,
+                    Phase::Exporting,
+                    Phase::Validating
+                )
+                .unwrap()
+        );
+        let result = serde_json::json!({"TEST":"storage transition only, no actual ZIP"});
+        assert!(
+            f.store
+                .finish_delivery_package(
+                    &i.project_id,
+                    i.conversation_id,
+                    i.task_id,
+                    id,
+                    Ok(&result),
+                    false
+                )
+                .unwrap()
+        );
+        assert!(
+            !f.store
+                .finish_delivery_package(
+                    &i.project_id,
+                    i.conversation_id,
+                    i.task_id,
+                    id,
+                    Err("late failure"),
+                    false
+                )
+                .unwrap()
+        );
+        assert_eq!(
+            f.store
+                .delivery_package(&i.project_id, i.conversation_id, i.task_id, id)
+                .unwrap()
+                .phase,
+            Phase::Ready
+        );
     }
 }

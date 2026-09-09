@@ -20,7 +20,11 @@ pub struct ConversationExportEvent {
     pub kind: String,
 }
 
-fn export_event(db: &rusqlite::Connection, id: Uuid, kind: &str) -> Result<(), StorageError> {
+pub(super) fn export_event(
+    db: &rusqlite::Connection,
+    id: Uuid,
+    kind: &str,
+) -> Result<(), StorageError> {
     db.execute("INSERT INTO conversation_export_events(project_id,conversation_id,task_id,export_id,kind) SELECT project_id,conversation_id,task_id,id,?2 FROM conversation_exports WHERE id=?1",params![id.to_string(),kind])?;
     Ok(())
 }
@@ -93,7 +97,7 @@ impl SqliteStore {
         }
         self.with_connection(|db| {
             let tx=db.unchecked_transaction()?;
-            let changed=tx.execute("UPDATE conversation_exports SET result_json=?2,error=?3 WHERE id=?1 AND result_json IS NULL AND error IS NULL",params![id.to_string(),result.map(serde_json::to_string).transpose()?,error])?;
+            let changed=tx.execute("UPDATE conversation_exports SET result_json=?2,error=?3 WHERE id=?1 AND result_json IS NULL AND error IS NULL AND NOT EXISTS(SELECT 1 FROM delivery_export_snapshots p WHERE p.export_id=conversation_exports.id)",params![id.to_string(),result.map(serde_json::to_string).transpose()?,error])?;
             if changed==1{export_event(&tx,id,if result.is_some(){"completed"}else{"failed"})?;}
             tx.commit()?;Ok(())
         })
