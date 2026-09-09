@@ -1,5 +1,44 @@
 # Agent UI integration — decisions and interface issues
 
+## Verified delivery — 2026-09-09 (authoritative current status)
+
+Application source: `9cbdbbf89a` (frozen-model fix); capture tooling: `34bd750172`. Approved frontend, initial backend and common base remain pinned below. Backend fixes are integrated through `334f6713adc1e9d45819cf94eff1f77a80a49a67`. Main and the original frontend branch have not moved. This is a local integration delivery, not a merge to main or a deployment to the real workspace.
+
+- Open the real HTTP application at `http://127.0.0.1:8804/projects`.
+- Actual application gallery: `http://127.0.0.1:8804/evidence/agent-ui-integration/34bd750172-1788955887602/index.html`. Its manifest records source SHA, URL, viewport, theme and TEST status per frame. Includes new task, Plan authorization, sample, saved bbox, dark/mobile canvas, stopped/unknown outcomes, model picker, six Settings pages and real running/queue capture. Initial stopping is evidenced by the actual POST response, not artificially held for a screenshot.
+- Isolated persisted workspace: `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-dnlfrg0f`; external TEST provider port 8805. 8787 and the approved 5174 Preview remain untouched.
+
+### Integration scope and remaining limitations
+
+| Area | Verified connection / boundary |
+| --- | --- |
+| Project/task tree and images | Real owned navigation, thread journal, upload and image reads; refresh/Back and foreign-owner rejection |
+| Settings and model picker | Six sections read real/local appropriately scoped state; Provider metadata and write-only workspace credentials, defaults, next-request CAS, future budget save. Plugin installation reuses the existing management permission/license flow; no simulated install in production |
+| Goal/Plan/sample | Real Send and separately scoped Plan/Journey grants, persisted terminal results. Switching next-request preference no longer overrides a task's frozen Send model (9cbdbbf). No request failure falls back to Fixture |
+| Stop/continue/queue | Actual stopping and unknown receipts; only available checkpoint resume. Supplements persist and require explicit planning authorization. No generic resume or automatic queue dispatcher promised |
+| Human correction | Current classification/bbox HumanRequest saves exact sandbox feedback; normalized bbox conversion verified; formal accepted count unchanged. New UI editing is disabled without a pending supported HumanRequest. Adding missed boxes and candidate-reference-to-Agent submission are NOT wired in this adapter |
+| Batch/results/export | Exact publish/start authorization and idempotency, real Native download. Formal Batch/Run results currently open retained project management detail; the new inline canvas covers sample/human evidence |
+| Management | Header project menu opens existing management, pipelines/history/review/export and their deletion/recovery/trash controls. Typed same-project return task/image/pane preserved. No Runs/Review/Pipeline global feature sidebar |
+
+Fixture simulation remains only in the separate UI Preview. The isolated integration service uses real HTTP, SQLite, CSRF and application services with a clearly marked external TEST model. The synthetic image is a geometry/transport fixture, NOT a cup detector or accuracy demonstration. There is no all-system spending total. Detailed English localization, native OS IME, native 200% zoom and real-human usability remain unverified; automated composition events are not native IME evidence. All legacy browser suites were not rerun.
+
+### Actual final checks
+
+- Full fresh-seed HTTP E2E: **16/16 passed** at 1bbec9d. After the frozen-model correction, affected Plan/Journey cases **2/2 passed**, stop recheck **1/1 passed**, and screenshot traversal successfully previews an old frozen task despite the changed preference.
+- Latest web typecheck + unit: **54 files / 264 tests passed**. Production build passed; existing large legacy management chunk warning remains. Preview build passed; isolated Preview E2E **20/20 passed** (capture-only case excluded to avoid overwriting approved evidence).
+- Rust fmt, strict all-target/all-feature clippy, workspace all-feature tests and build passed through merged 3d1892e. Seven existing ignored tests: four real-weight ONNX tests, one paid provider smoke, two foreground/subprocess harness cases. No Rust changed after that regression.
+- No paid model, model install, real workspace mutation, main merge, remote change or push. Generated incomplete capture attempts were moved outside the repository to `/tmp/annotagent-capture-drafts.BBPLhW`, not deleted.
+
+### Reproduce in an isolated workspace
+
+From the integration worktree, run `npm --prefix web run build`, then:
+
+```sh
+python3 crates/annotagent-e2e-fixture/support/http_fixture.py --enable-fixture --port 8804 --provider-port 8805 --web-dist "$PWD/web/dist"
+```
+
+Use free independent ports if occupied; do not kill another service. The launcher prints its marked TEST manifest. In `web`, run the browser suite with `AGENT_UI_TEST_URL` and `AGENT_UI_TEST_MANIFEST` set to that service/manifest and `npx playwright test --config playwright.integration.config.ts`. Use a fresh seed for the full suite: paused-batch and pending-human tests intentionally consume their fixture states. Capture with `node scripts/capture-agent-http.mjs /absolute/TEST/manifest.json`, then rebuild to serve the generated gallery. This is not a command to restart or migrate the user's production workspace.
+
 ## Current delta (supersedes earlier progress snapshots)
 
 Production entry is now wired in the integration branch: `web/src/main.tsx`, `web/src/agent-ui/routes.ts`, `web/src/agent-ui/http.ts`. Management uses existing `App.tsx` via a separate code/CSS entry; Project work links return to the approved UI. `/ui-preview` is not the production adapter. Eight independent real HTTP browser cases passed; sample-to-processing extension confirms one start on double click. Web unit suite passed 260 tests/54 files before latest queue/upload additions. Final regression is pending.

@@ -1,5 +1,13 @@
 # UI First Frontend — Agent A
 
+## Integration verification delivery — 2026-09-09
+
+Current authoritative scope, evidence, commands and limitations are at `docs/handoff/AGENT_UI_INTEGRATION_ISSUES.md` → Verified delivery. Approved Paper & Graphite layout retained. Formal entry in the integration branch uses HttpAdapter, not Preview; original 8787 is unchanged. Source `9cbdbbf89a`, capture tooling `34bd750172`, backend through `334f671`. Actual application and gallery served on isolated 8804; screenshots under `web/public/evidence/agent-ui-integration/34bd750172-1788955887602`.
+
+Fresh-seed HTTP 16/16; post-fix Plan/Journey 2/2 and stop 1/1; latest web unit 264/54 files; typecheck and production build passed; Preview E2E 20/20 and Preview build passed. Full Rust regression through the last backend merge passed, with seven existing ignored tests. No all-legacy-browser or real-model/native-zoom/human-usability claim. No push or real workspace writes.
+
+Not yet wired in the new adapter: adding missed boxes, candidate-reference Agent refinement, and inline formal Batch result canvas (existing management results retained). Plugin installation remains the real existing management flow. Queue is explicitly authorized planning, not an automatic dispatcher; resume is server capability-limited. These are limits, not Fixture successes. Earlier sections below are chronological snapshots and do not override this verified delivery.
+
 ## Authorized integration — 2026-09-09 (current)
 
 User explicitly approved the UI and integration. The acceptance-only entries below are historical, not the current authorization boundary.
