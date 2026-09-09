@@ -5,6 +5,37 @@ const project = { project_id: "TEST-alpha", project_owner_id: "owner-a", title: 
 const settings = { revision: "revision-1", sections: { data_privacy: { workspace_id: "TEST-workspace" }, usage_budget: { future_run_budget: { max_requests: 10, max_cost: "2.50" } } } };
 const navTask = (id: string) => ({ task_id: id, title: `TEST ${id}`, schema_revision: "schema-1", project_owner_id: "owner-a", conversation_id: "conversation-a", state: "idle" });
 const root = "/api/projects/TEST-alpha/conversations/conversation-a/tasks";
+it.each(["running","settled"])("shows the real journey dispatch %s instead of declaring builder completion as sample success",async(status)=>{
+  const {transport}=mockTransport({[`${root}/t1/workspace`]:{
+    project_id:project.project_id,project_owner_id:project.project_owner_id,conversation_id:project.conversation_id,
+    task:{input:{id:"t1",schema_revision:"schema-1"}},agent_model:{revision:0,model_profile_id:null},actions:{},queue:[],calls:[],
+    journey_consents:[{record:{consent:{id:"journey"}},dispatch:{status,error:status==="settled"?"No inference was started":null}}],
+  }});
+  const adapter=new HttpAdapter(transport);await adapter.refresh();await adapter.loadTask(project.project_id,"t1");
+  const task=adapter.snapshot().tasks.find(t=>t.id==="t1")!;
+  expect(task.phase).toBe(status==="running"?"running":"idle");
+  expect(task.receipts?.at(-1)).toMatchObject({id:"journey",status:status==="running"?"running":"failed"});
+});
+it("sample consent excludes text-only models, includes ready segmentation and reuses saved schema",async()=>{
+  const {transport:base}=mockTransport({
+    "/api/model-profiles":{models:[{id:"text",enabled:true,status:"available",input_modalities:["text"],task_capabilities:[],protocol_features:{}},{id:"vision",enabled:true,status:"available",input_modalities:["text","image"],task_capabilities:[],protocol_features:{}}]},
+    "/api/model-instances":{instances:[],model_profiles:[{selection_id:"model-instance:ready",selectable:true,availability:"available",capabilities:["prompted_segmentation"]},{selection_id:"model-instance:broken",selectable:false,availability:"unavailable",capabilities:["prompted_segmentation"]}]},
+    "/api/projects/TEST-alpha/model-bindings":{bindings:[{model_profile_id:"text"},{model_profile_id:"vision"}]},
+    [`${root}/t1/workspace`]:{project_id:project.project_id,project_owner_id:project.project_owner_id,conversation_id:project.conversation_id,task:{input:{id:"t1",schema_revision:"schema-1"}},agent_model:{revision:0,model_profile_id:null},actions:{},queue:[],calls:[{id:"call",status:"completed",evidence:{decision:{Ok:{decision:"draft"}}}}]},
+    [`${root}/t1/calls/call/schema-draft`]:{id:"schema",task_id:"t1",revision:3},
+  });
+  let preview=false;
+  const transport:Transport=async<T>(path:string,init?:RequestInit)=>{
+    if(path.includes("/journey-preview?")){
+      preview=true;const q=new URL(path,"http://test").searchParams;
+      expect(JSON.parse(q.get("allowed_models")!)).toEqual(["model-profile:vision","model-instance:ready"]);
+      expect(q.get("schema_id")).toBe("schema");expect(q.get("schema_revision")).toBe("3");expect(q.has("schema_call_id")).toBe(false);
+      return {consent:{images:[],maximum_builder_calls:8,maximum_sample_calls:12,builder_scope_hash:"scope"},builder:{},data:{models:[]}} as T;
+    }return base<T>(path,init);
+  };
+  const adapter=new HttpAdapter(transport);await adapter.refresh();await adapter.loadTask(project.project_id,"t1");
+  await adapter.prepareAction({id:"journey",project:project.project_id,task:"t1",revision:"schema-1"},"sample");expect(preview).toBe(true);
+});
 it("restores a completed schema decision and prevents repeating initial planning",async()=>{
   const {transport,paths}=mockTransport({[`${root}/t1/workspace`]:{
     project_id:project.project_id,project_owner_id:project.project_owner_id,conversation_id:project.conversation_id,
