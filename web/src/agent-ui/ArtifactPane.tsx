@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import { Icon, IconButton } from "./Icon";
 import { Disclosure } from "./Disclosure";
 import { ImageBrowser } from "./ImageBrowser";
+import {GeometryStageView} from "./GeometryStageView";
 import { labelColor } from "../annotationVisuals";
 import type { WorkspaceAdapter, Task, Box, Snapshot, ImageId } from "./adapter";
 import { command } from "./App";
@@ -39,6 +40,7 @@ export function ArtifactPane({
   const [selected, setSelected] = useState(savedBoxes[0]?.id);
   const [classification,setClassification]=useState(task.human?.label || "");
   const [compare, setCompare] = useState(false);
+  const [geometryOpen,setGeometryOpen]=useState(false);
   const [original, setOriginal] = useState(false);
   const [zoom, setZoom] = useState(100);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -289,6 +291,7 @@ export function ArtifactPane({
           <Icon name="plus" size={16} />添加遗漏目标
         </button>
       </Disclosure>
+      {!fixture&&asset&&task.geometryEvidence?.[image]&&<Disclosure title="查看几何阶段对比" onToggle={e=>setGeometryOpen(e.currentTarget.open)}>{geometryOpen&&<GeometryStageView key={`${task.sample?.id}:${image}`} sample={task.geometryEvidence[image]} imageUrl={asset.src}/>}</Disclosure>}
       <div className="artifact-footer">
         <small>
           {!fixture && !editable ? "只读样例；当前没有待回答的人工问题" : dirty ? "浏览器编辑草稿 · 尚未提交" : fixture ? "演示候选 · 非正式标注" : "样例终端候选 · 非正式标注"}

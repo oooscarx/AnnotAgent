@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Retire old sample geometry-comparison component
+
+Native ArtifactPane now offers an unmounted-until-open GeometryStageView using sample evidence already fetched and ownership/content-hash checked by HttpAdapter. No extra comparison API, model call, editing side effect or old CSS/component mount. Stage toggles preserve coarse-root-coordinate checks, deduplicate repeated debug artifacts, use stable label colors and distinguish stages with text/dashes. Final retained boxes now come from the shared terminalSampleAnnotations projection, correcting the old component's unsafe sample.outcomes aggregation. Old SampleGeometryComparison.tsx and its tests were removed; coordinate/dedup regressions migrated to native geometryComparison tests with the corrected terminal-only expectation.
+
+321 unit tests, typecheck/build passed. Real HTTP read-only bbox scenario opened the native comparison, toggled terminal results, closed and refreshed; actual sample response unchanged and zero browser writes, 1.4s. Build /tmp/annotagent-native-stage-comparison-dist, source3697818 plus slice, ownedTEST8794/8795. No changed original pixels, saved bbox coordinates, real workspace, paid API, Published or remote state. Full visual matrix and other old component migrations remain open. Timing correction for previous entry: its final calibration E2E run was3.6s, not the earlier2.9s.
+
 ## Actual native calibration creation and server-backed restoration
 
 Extended real HTTP E2E using the existing bbox TEST fixture's actual VLM-detection Draft/sample and loopback-only Profile. Created a TEST processing operation through the existing authorization/publication boundary; it completed a real detection Run. Subsequent checks reuse that exact completed version instead of rerunning it. Added an explicit TEST Project bbox target because Conversation Schema is intentionally not Project Schema. An attempted processing preview after that definition change correctly refused old sample authority; the test does not bypass that check.
