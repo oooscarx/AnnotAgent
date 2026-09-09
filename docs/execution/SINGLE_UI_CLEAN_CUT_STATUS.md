@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Native local Model Bundle import
+
+Added a native `BundleImport` under the plugin Settings disclosure, using existing package inspection/import endpoints. Selection is explicitly unsaved until upload, inspection does not import, license acceptance is a separate control, and the same retained File is submitted only after confirmation. Receipt identity checks bundle ID/version/hash; no number of instances is presented as Ready without checking actual instance statuses. Cancel, dirty navigation/unload guard, failure retention and no automatic retries are implemented. Whole old page is not embedded. Unknown import outcome blocks that file in the current view; cross-refresh receipt recovery remains an interface limitation, not claimed solved by this slice.
+
+Verified typecheck, 303 unit tests plus one pending final-cutover TODO, isolated build and twelve browser tests (eleven real TEST HTTP; one controlled Worker response fixture). New real HTTP test selects an intentionally invalid TEST zip, cancels the first upload confirmation with zero writes, explicitly inspects once, verifies actual server error and retained filename, and proves no import request/button exists without a valid inspection. This is invalid-package evidence, **not** valid-model installation or visual approval. No model downloads/real installations/paid calls. Owned TEST 8794/8795 used source `4ced063` plus this slice and `/tmp/annotagent-native-bundle-import-dist`, then stopped; user services untouched. Old root and advanced Workflow/history migration remain incomplete, goal active, no push.
+
 ## Installation recovery safety continuation
 
 Native bundle start now persists the exact pending request under server workspace/plugin/version identity before POST. Missing workspace identity or unavailable/unwritable browser storage fails closed. Existing pending markers survive refresh and prevent another start; storage events synchronize the guard. Only a matching actual POST receipt removes the marker. This is a retry guard, not a fabricated server receipt; there is deliberately no dismiss-and-retry button for unknown outcomes. Unit tests cover isolation, persistent same-key rejection and failed persistence. Typecheck and 301 unit tests (one final-cutover TODO) passed. Real browser lost-response installation remains unverified.

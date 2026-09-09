@@ -1,6 +1,21 @@
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
+test("native bundle import rejects a real invalid TEST package without installing",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});
+  await page.goto("/settings/vision-models");await page.getByText("导入本地模型包",{exact:true}).first().click();
+  const area=page.getByRole("region",{name:"导入本地模型包",exact:true});
+  await area.getByLabel("选择模型包",{exact:true}).setInputFiles({name:"TEST-invalid-model-bundle.zip",mimeType:"application/zip",buffer:Buffer.from("TEST invalid bundle; intentionally not a zip")});
+  expect(writes).toEqual([]);
+  await area.getByRole("button",{name:"检查模型包…",exact:true}).click();
+  let dialog=page.getByRole("dialog",{name:"确认上传检查模型包",exact:true});await dialog.getByRole("button",{name:"取消",exact:true}).click();expect(writes).toEqual([]);
+  await area.getByRole("button",{name:"检查模型包…",exact:true}).click();dialog=page.getByRole("dialog",{name:"确认上传检查模型包",exact:true});await dialog.getByRole("button",{name:"确认操作",exact:true}).click();
+  await expect(area.getByRole("alert")).toContainText("未自动重试");
+  await expect(area).toContainText("TEST-invalid-model-bundle.zip");
+  expect(writes.length).toBe(1);expect(writes[0]).toContain("/api/model-bundles/packages/inspect");
+  await expect(area.getByRole("button",{name:"导入已检查的模型包…",exact:true})).toHaveCount(0);
+});
 test("native Batch detail keeps project ownership and passive refresh",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
   const batches=await(await request.get("/api/batches?limit=100")).json();const batch=batches.batches[0];expect(batch).toBeTruthy();

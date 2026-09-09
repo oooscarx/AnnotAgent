@@ -4,6 +4,7 @@ import type { PluginManagement } from "./pluginManagement";
 import { Disclosure } from "./Disclosure";
 import { Dialog } from "./Dialog";
 import { BundleInstaller } from "./BundleInstaller";
+import { BundleImport } from "./BundleImport";
 
 export function PluginSettings({ service, workspaceId }: { service: PluginManagement; workspaceId?: string }) {
   const [data, setData] = useState<{ registry: ExpertPluginRegistry; instances: InstalledModelInstance[]; bundles: InstalledModelBundle[] }>();
@@ -80,6 +81,7 @@ export function PluginSettings({ service, workspaceId }: { service: PluginManage
         <div className="row-control"><button disabled={busy} onClick={() => { void service.modelBundleReferences(bundle.manifest.id, bundle.manifest.version).then(result => ask(bundle.enabled ? "禁用模型包" : "启用模型包", `当前引用 ${result.references.length} 项。${result.references.map(r => `${r.kind}: ${r.location}`).join("；")}。服务端仍负责最终引用保护。`, () => service.setModelBundleEnabled(bundle.manifest.id, bundle.manifest.version, !bundle.enabled))).catch(e => setError(e.message)); }}>{bundle.enabled ? "禁用…" : "启用…"}</button></div>
       </article>)}
     </>}
+    <Disclosure title="导入本地模型包"><BundleImport service={service} onImported={reload}/></Disclosure>
     <h2>安装本地插件包</h2>
     <p>文件尚未上传时不会保存。先检查包，再明确确认权限与许可证；不自动下载模型。</p>
     <label className="plugin-package-picker">选择插件包<input type="file" disabled={busy} onChange={e => { setFile(e.target.files?.[0]); setInspection(undefined); setAccepted(false); }} /></label>
