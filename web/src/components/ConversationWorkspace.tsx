@@ -72,7 +72,6 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [prepareMessage,setPrepareMessage]=useState<string>();
-  const preparingGoal=useRef(false);
   const selectionCommand=useRef<Parameters<typeof api.selectConversationTask>[2]|undefined>(undefined);
   async function rememberTask(conversation:string,task:string){
     if(selectionCommand.current?.task_id!==task){
@@ -176,6 +175,8 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
   const sampleDirtyChange = useCallback((dirty:boolean)=>{sampleDirty.current=dirty;setRepairEditing(dirty);},[]);
   const schemaDirtyChange = useCallback((dirty: boolean) => { schemaDirty.current = dirty; }, []);
   const frozen = useRef<ConversationMessageInput | undefined>(undefined);
+  const frozenSend = useRef<{ conversation: string; input: Parameters<typeof api.submitConversationMessage>[2] } | undefined>(undefined);
+  const frozenTask = useRef<{ id: string | null; revision?: string }>({id:null});
   const stopConversation = useRef<string | null>(null);
   const stopStorageKey = `annotagent.stop-send:${project.id}`;
   const alive = useRef(true);
@@ -237,7 +238,7 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
           // Retain identity before the status GET: a failed GET is not evidence
           // that the original cancellation was rejected or safe to replace.
           if (!frozen.current && !unsent.current) {
-            frozen.current = previous.input; stopConversation.current = previous.conversation_id; preparingGoal.current = false; unsent.current = previous.input.text; setText(previous.input.text);
+            frozen.current = previous.input; stopConversation.current = previous.conversation_id; unsent.current = previous.input.text; setText(previous.input.text);
             setStatus(t("The stop request acknowledgement is unknown. Retry preserves the original task scope; nothing was retried on reload."));
           }
           const receipt = current.conversation_id ? await stopApi.read(project.id, current.conversation_id, previous.input.id, controller.signal) : null;
@@ -278,11 +279,12 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
     } catch (reason) { if (!controller.signal.aborted) setError((reason as Error).message); }
     finally { if (historyRequest.current === controller) { historyRequest.current = undefined; setHistoryBusy(false); } }
   }
-  async function send(prepareGoal=false) {
+  async function send() {
     if (pending.current || !ready || !text.trim() || composing.current) return;
     if(!frozen.current) {
-      const intent = composerIntent(text, prepareGoal && !pinnedSelection?.input.reference);
-      preparingGoal.current = intent.prepareGoal;
+      if (taskId && !referenceTask && !isStopCommand(text)) { setError("Wait for the selected task to load before sending."); return; }
+      const intent = composerIntent(text, false);
+      frozenTask.current = pinnedSelection?.input.reference?.scope === "sample_candidate" ? {id:pinnedSelection.input.reference.task_id,revision:pinnedSelection.input.reference.project_schema_revision} : {id:referenceTask?.id ?? null,revision:referenceTask?.schema_revision};
       frozen.current = intent.kind === "stop" ? makeStopMessage(crypto.randomUUID(), text, taskId ?? null) : { id: crypto.randomUUID(), text, image: referenceImage ? { image_id: referenceImage.image_id, sha256: referenceImage.content_hash } : null, ...pinnedSelection?.input };
     }
     const input = frozen.current;
@@ -291,7 +293,7 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
     const acceptStop = (record: StopRequestRecord) => {
       if (!isStopMessage(record.message.input) || record.message.input.id !== input.id || record.message.input.text !== input.text || record.message.input.reference.task_id !== input.reference?.task_id || record.message.conversation_id !== stopConversation.current) throw new Error("The stop receipt does not match the original command. No other task was selected.");
       setConversation(record.message.conversation_id); setMessages(items => mergeConversationMessages(items, [record.message], record.message.conversation_id)); setStopRecords(items => ({ ...items, [input.id]: record }));
-      frozen.current = undefined; stopConversation.current = null; unsent.current = ""; setText(""); preparingGoal.current = false;
+      frozen.current = undefined; stopConversation.current = null; unsent.current = ""; setText("");
       try { sessionStorage.removeItem(stopStorageKey); } catch { /* Refresh can recover the same saved server record. */ }
       setStatus(t("Stop request saved. No LLM was called; saved annotations and the current canvas are unchanged.")); assistanceChanged();
     };
@@ -299,7 +301,7 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
     pending.current = true; setBusy(true); setError(""); setStatus("Saving message…");
     let messageSaved=false;
     try {
-      const id = (stopping ? stopConversation.current : conversation) ?? conversation ?? (await api.createConversation(project.id)).conversation_id;
+      const id = (stopping ? stopConversation.current : frozenSend.current?.conversation) ?? conversation ?? (await api.createConversation(project.id)).conversation_id;
       if (stopping) {
         retainStop(id);
         const record = await stopApi.begin(project.id, id, input);
@@ -307,23 +309,23 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
         if (alive.current) acceptStop(record);
         return;
       }
-      const saved = await api.sendConversationMessage(project.id, id, input);
+      if (!frozenSend.current) frozenSend.current = {conversation:id,input:{message:input,task_id:frozenTask.current.id,schema_revision:frozenTask.current.revision ?? (await api.projectGoal(project.id)).revision}};
+      const receipt = await api.submitConversationMessage(project.id, frozenSend.current.conversation, frozenSend.current.input);
+      const saved = receipt.message;
+      if (saved.input.id !== input.id || saved.conversation_id !== id) throw new Error("Send receipt does not match the frozen command.");
       messageSaved=true;
       if (!alive.current) return;
       setConversation(id); setMessages((items) => mergeConversationMessages(items, [saved], id));
-      let selectedTask:ConversationTask|undefined;
-      if(preparingGoal.current){
-        const existing=await api.conversationTasks(project.id,id);
-        const goal=await api.projectGoal(project.id);
-        selectedTask=existing.find(task=>task.input.source_message_id===saved.input.id) ?? await api.beginConversationTask(project.id,id,{id:crypto.randomUUID(),source_message_id:saved.input.id,schema_revision:goal.revision});
-        await rememberTask(id,selectedTask.input.id);
+      const existing=await api.conversationTasks(project.id,id);
+      if(receipt.disposition === "new_task"){
+        await rememberTask(id,receipt.task_id);
         if(!alive.current)return;
-        setTasks([...existing.filter(task=>task.input.id!==selectedTask!.input.id),selectedTask]);
       }
-      frozen.current = undefined; unsent.current = ""; setText(""); setPinnedSelection(undefined); setStatus("Message saved. Saving this message did not start inference.");
-      if(selectedTask){
+      setTasks(existing);
+      frozen.current = undefined; frozenSend.current=undefined; unsent.current = ""; setText(""); setPinnedSelection(undefined); setStatus("Message sent and saved. No new model call was authorized.");
+      if(receipt.disposition === "new_task"){
         pending.current=false;
-        onNavigate(projectWorkPath(project.id,{conversationId:id,taskId:selectedTask.input.id,imageId:input.image?.image_id}));
+        onNavigate(projectWorkPath(project.id,{conversationId:id,taskId:receipt.task_id,imageId:input.image?.image_id}));
         setPrepareMessage(saved.input.id);
         setStatus("Goal saved. Preparing model authorization; no model has been called.");
       }
@@ -446,9 +448,9 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
         <AgentComposer inputRef={messageInput} value={text} disabled={!ready || busy} inputLocked={Boolean(frozen.current)}
           onChange={value=>{unsent.current=value;setText(value);}}
           onCompositionChange={value=>{composing.current=value;}}
-          onSubmit={()=>{void send(!goalMessage&&!pinnedSelection);}}
+          onSubmit={()=>{void send();}}
           reference={stopComposer ? <small>{t("Standalone stop control · No LLM or image submission. Multiple active operations require an explicit choice.")}</small> : pinnedSelection?.input.reference?.scope === "sample_candidate" ? <div className="conversation-candidate-reference" aria-label="Message candidate reference"><strong>Only this saved candidate</strong><span>{pinnedSelection.name} · {pinnedSelection.input.reference.candidate_id} · Draft revision {pinnedSelection.input.reference.draft_revision}</span><small>Changing the displayed image does not change this reference. Saving the message does not edit the annotation.</small><button type="button" disabled={busy||Boolean(frozen.current)} onClick={()=>setPinnedSelection(undefined)}>Remove candidate reference</button></div> : <small>{referenceImage ? `Image reference: ${referenceImage.name}` : "No image reference · Project-level message"}</small>}
-          actions={stopComposer ? <button className="danger-button" disabled={!ready || busy} type="submit">{t(busy ? "Saving stop request…" : frozen.current ? "Retry same stop request" : taskId ? "Stop selected task" : "Stop active work")}</button> : !goalMessage&&!pinnedSelection&&!frozen.current ? <><button className="primary" disabled={!ready||busy||!text.trim()} type="submit">Save goal and prepare labels</button><button disabled={!ready||busy||!text.trim()} type="button" onClick={()=>void send(false)}>Save message</button><small>Preparing labels opens the model and data authorization. It does not call a model or publish a workflow.</small></> : <button className="primary" disabled={!ready || busy || !text.trim()} type="submit">{busy ? "Saving…" : frozen.current ? "Retry saving message" : "Save message"}</button>} />
+          actions={stopComposer ? <button className="danger-button" disabled={!ready || busy} type="submit">{t(busy ? "Saving stop request…" : frozen.current ? "Retry same stop request" : taskId ? "Stop selected task" : "Stop active work")}</button> : <button className="primary" disabled={!ready || busy || !text.trim()} type="submit">{busy ? "Sending…" : frozen.current ? "Retry same send" : "Send"}</button>} />
       </section>
       <div className="conversation-divider" role="separator" aria-label="Resize conversation panel" aria-orientation="vertical" tabIndex={0} aria-valuemin={25} aria-valuemax={75} aria-valuenow={width} aria-valuetext={`${width}% conversation panel`}
         onKeyDown={(event) => {

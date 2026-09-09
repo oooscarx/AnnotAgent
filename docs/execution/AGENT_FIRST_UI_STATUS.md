@@ -249,3 +249,30 @@ passed 9772. Fresh production build and isolated real HTTP test 80866 passed 1/1
 stable retry, one task/two linked messages, forbidden extra execute field and zero authorized
 or reserved model calls. This is not Plan-permission coverage or a full Rust/browser sweep.
 No real workspace restart/migration, paid call, push, remote change or historical rewrite.
+
+## Composer connected to atomic send
+
+Previous turn was progress (cbc75b6 server admission/rollback tests). Connected the default
+Composer to `/send`: one Send button replaces Save goal/Save message, with the dedicated Stop
+control unchanged. The coordinator freezes message, task/schema and conversation for the
+request; retries reuse the entire command. New-task admission comes from the server receipt,
+then the existing selection and authorization UI is restored. Existing task messages remain
+linked to that task; candidate feedback retains exact scope. Sending does not grant or
+automatically perform inference. Missing selected-task context blocks send rather than
+silently creating a new task. Ordinary task-message interpretation/queue execution is still
+outstanding; this endpoint does not pretend to have generated an Agent answer.
+
+Web typecheck/token check and 236 unit tests passed. Five isolated browser cases (20545)
+passed, including the original unweakened M0 default-entry contract, actual keyboard Send,
+server receipt checks and lost-response retry after opening the artifact pane. Ten existing
+stop regressions (44826) passed. Production builds ran in both suites. The client explicitly
+retains its frozen conversation ID for retry as well as its task/revision. Broader older E2E
+scenarios using Save message/Save goal selectors still need migration and behavior auditing;
+these focused passes are not an entire-suite claim.
+
+Important remaining gap: ordinary pending-send input is held in mounted coordinator memory;
+cross-refresh recovery of an unacknowledged send is not yet implemented (Stop retains its
+separate existing recovery). Successful-message refresh is tested and never re-POSTs, but
+it does not prove pending-send refresh. Plan policy, approval binding, queued execution,
+model picker, advanced form reduction and final visual deliverables remain incomplete.
+No Live call, push, remote modification or user-data cleanup.

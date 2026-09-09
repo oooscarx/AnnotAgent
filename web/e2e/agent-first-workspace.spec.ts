@@ -61,7 +61,7 @@ test("mobile task navigation opens on demand without covering the composer", asy
   await expect(input).toHaveValue("测试输入保持可达\n");
   let messageWrites = 0;
   page.on("request", request => {
-    if (request.method() === "POST" && /\/messages$/.test(new URL(request.url()).pathname)) messageWrites++;
+    if (request.method() === "POST" && /\/send$/.test(new URL(request.url()).pathname)) messageWrites++;
   });
   await input.dispatchEvent("compositionstart");
   await input.press("Enter");

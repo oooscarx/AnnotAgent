@@ -630,6 +630,8 @@ export const api = {
   conversationHistory: (projectId: string, conversationId: string, before?: number, signal?: AbortSignal) => request<import("./types").ConversationMessage[]>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/messages?${before === undefined ? "latest=true" : `before=${before}`}&limit=100`, { signal }),
   conversationMessage: (projectId: string, conversationId: string, messageId: string, signal?: AbortSignal) => request<import("./types").ConversationMessage>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`, { signal }),
   sendConversationMessage: (projectId: string, conversationId: string, input: import("./types").ConversationMessageInput) => request<import("./types").ConversationMessage>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/messages`, { method: "POST", body: JSON.stringify(input) }),
+  submitConversationMessage: (projectId: string, conversationId: string, input: { message: import("./types").ConversationMessageInput; task_id: string | null; schema_revision: string }) =>
+    request<{ message: import("./types").ConversationMessage; task_id: string; disposition: "new_task" | "task_message" | "candidate_feedback" }>(`/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/send`, { method: "POST", body: JSON.stringify(input) }),
   projectGoal: (projectId: string, signal?: AbortSignal) => request<{
     revision: string; goal: string; kind: string | null; labels: string[] | null; editable: boolean;
   }>(`/api/projects/${encodeURIComponent(projectId)}/goal`, { signal }),
