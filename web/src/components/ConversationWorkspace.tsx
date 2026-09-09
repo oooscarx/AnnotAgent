@@ -26,6 +26,7 @@ import { ConversationStopCard } from "./ConversationStopCard";
 import { t } from "../i18n";
 import { imageClassApi, type ImageClassReview } from "../conversation-image-class-api";
 import { mergeImageClassReview } from "../conversation-image-class";
+import { ConversationNavigation } from "./ConversationNavigation";
 
 /** The journal and image importer share the existing Project; neither starts inference. */
 export function ConversationWorkspace({ project, pane, conversationId, imageId, draftId, sampleTestId, taskId, humanRequestId, classReviewId, referenceMessageId, processingOperationId, exportBefore, results, onNavigate, onNavigationGuardChange }: {
@@ -397,7 +398,9 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
       setMobileView("images");
     }catch(error){if(alive.current && request===sampleNavigation.current)setError((error as Error).message);}
   }
-  return <section className="conversation-workspace" aria-label="Annotation workspace">
+  return <section className="conversation-workspace agent-workspace-layout" aria-label="Annotation workspace">
+    <ConversationNavigation projectName={project.name} tasks={tasks} messages={[...messages,...messageContext]} selectedTask={referenceTask?.id ?? taskId} ready={ready && (!conversation || requestsReady)} onSelect={id=>onNavigate(projectWorkPath(project.id,{conversationId:conversation,taskId:id}))} onProjects={()=>onNavigate("/projects")} onSettings={()=>onNavigate(conversationSettingsPath(project.id,"providers",navigationContext))}/>
+    <div className="agent-workspace-main">
     <div className="conversation-surface-controls"><button type="button" aria-expanded={artifactsOpen} aria-controls="conversation-artifacts" onClick={toggleArtifacts}>{artifactsOpen ? "Close data and results" : "Open data and results"}</button></div>
     <nav className="conversation-mobile-tabs" aria-label="Workspace panels">
       <button aria-pressed={mobileView === "conversation"} onClick={() => setMobileView("conversation")}>Conversation</button>
@@ -466,5 +469,6 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
     </div>
     <p className="conversation-status" role="status">{status || (ready ? "Saved workspace loaded" : "Loading saved workspace…")}</p>
     {error && <p role="alert">{error}</p>}
+    </div>
   </section>;
 }

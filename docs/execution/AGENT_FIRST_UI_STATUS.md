@@ -140,3 +140,29 @@ Outstanding M1: session navigation, extracted thread/composer, unified send, the
 migration, mobile/resize preferences, and dedicated object message presentation. The first
 M0 whole-entry acceptance case remains red for those unimplemented requirements; it was
 not weakened or marked as passed. Full Rust/browser regression remains for later stages.
+
+## M1 second layout slice — real task navigation
+
+The preceding turn inspected requested Live/usability preflight but did not advance this
+UI goal. Resumed from the actual uncommitted navigation changes; no paid call or real
+workspace mutation was made. Current backend has one primary conversation per Project,
+so navigation lists its real independent tasks rather than fabricating a conversation tree.
+
+- Added ConversationNavigation using persisted tasks and source message titles, with search,
+  selected-task highlighting, collapse and existing Projects/settings routes. Missing paged
+  titles use a task ID fallback, not invented text. Opening a task is a read-only URL change,
+  not a new task, model call or overwrite of the persisted preferred-task selection.
+- Existing ownership, task deep links, dirty guards, query layer and mounted editors remain
+  shared. Empty Projects now show an honest empty state after loading, not an endless task
+  loading message. Current default task is highlighted even without an explicit task query.
+- Narrow screens start with navigation collapsed; desktop uses a 216px navigation alongside
+  the existing thread and optional artifact pane. This is a partial shell, not final Paper &
+  Graphite or unified Composer. Collapse/width preference persistence remains outstanding.
+
+Evidence: Web typecheck and 233 unit tests passed (13030). Production build plus isolated
+browser pane restoration and independent-task selection/search/reload passed 2/2 (43279).
+Additional 390×844 browser test passed 1/1 (13030), checking disclosure, editable composer and
+no document horizontal overflow. These are viewport tests, NOT native 200% zoom or human
+usability evidence. Existing chunk-size warning remains. The whole-entry Send contract test
+is still intentionally red; no claim of M1/M2 completion or full regression. No push and no
+remote changes; unrelated screenshot/design-package changes remain unstaged.

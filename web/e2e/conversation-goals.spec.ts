@@ -44,6 +44,16 @@ test("saved messages select independent goals without inference or task substitu
   const second=new URL(page.url()).searchParams.get("task");
   await page.reload();
   await expect(page.getByRole("button",{name:"Use message 2 as annotation goal",exact:true})).toHaveAttribute("aria-pressed","true");
+  const taskNavigation=page.getByRole("navigation",{name:"Conversations",exact:true});
+  await expect(taskNavigation.getByRole("button",{name:"按室内和室外分类",exact:true})).toHaveAttribute("aria-current","page");
+  await taskNavigation.getByRole("searchbox",{name:"Search tasks"}).fill("cups");
+  await expect(taskNavigation.getByRole("button",{name:"按室内和室外分类",exact:true})).toHaveCount(0);
+  await taskNavigation.getByRole("button",{name:"Find cups, not bottles",exact:true}).click();
+  await expect.poll(()=>new URL(page.url()).searchParams.get("task")).toBe(first);
+  await page.reload();
+  await expect(taskNavigation.getByRole("button",{name:"Find cups, not bottles",exact:true})).toHaveAttribute("aria-current","page");
+  await taskNavigation.getByRole("button",{name:"按室内和室外分类",exact:true}).click();
+  await expect.poll(()=>new URL(page.url()).searchParams.get("task")).toBe(second);
   await page.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/independent-goals.png"),fullPage:true,animations:"disabled"});
   await page.getByRole("button",{name:"Use message 2 as annotation goal",exact:true}).click();
   expect(new URL(page.url()).searchParams.get("task")).toBe(second);
