@@ -381,6 +381,9 @@ test("native review preserves failed edits and advances only after a saved decis
   await expect(page.locator(".workspace-header")).not.toContainText("不存在");
   const label=page.getByLabel("标签",{exact:true});await expect(label).toHaveValue(base.label);
   await expect(page.locator(".native-review")).toContainText(`待审核 ${queue.progress.remaining_count}`);
+  await page.getByText("属性编辑",{exact:true}).click();const attrs=page.getByRole("region",{name:"标注属性编辑",exact:true});await attrs.getByLabel("属性 JSON",{exact:true}).fill("[]");await attrs.getByRole("button",{name:"应用属性到编辑",exact:true}).click();await expect(attrs.getByRole("alert")).toContainText("JSON 对象");await expect(page.getByRole("button",{name:"接受这个对象并下一项",exact:true})).toBeDisabled();
+  await attrs.getByRole("button",{name:"取消属性编辑",exact:true}).click();await expect(page.getByRole("button",{name:"接受这个对象并下一项",exact:true})).toBeEnabled();
+  await attrs.getByLabel("属性 JSON",{exact:true}).fill(JSON.stringify({...base.attributes,TEST_manual_attribute:true}));await attrs.getByRole("button",{name:"应用属性到编辑",exact:true}).click();
   await label.fill(`${base.label} TEST`);
   await page.getByRole("button",{name:"撤销编辑",exact:true}).click();await expect(label).toHaveValue(base.label);
   await page.getByRole("button",{name:"重做编辑",exact:true}).click();await expect(label).toHaveValue(`${base.label} TEST`);
@@ -412,6 +415,7 @@ test("native review preserves failed edits and advances only after a saved decis
   await expect(label).toHaveValue(`${base.label} TEST`);
   await expect(page.getByRole("button",{name:"接受这个对象并下一项",exact:true})).toBeDisabled();
   const saved=await(await request.get(`/api/projects/${run.project_id}/reviews/${review.review_id}`)).json();expect(saved.annotation.review_status).toBe("human_accepted");
+  expect(saved.annotation.attributes.TEST_manual_attribute).toBe(true);
   await page.reload();await expect(label).toHaveValue(`${base.label} TEST`);
   await expect(page.getByRole("button",{name:"接受这个对象并下一项",exact:true})).toBeDisabled();
   const rejectId=randomUUID();

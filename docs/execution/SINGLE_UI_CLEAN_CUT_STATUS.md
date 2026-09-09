@@ -1,5 +1,15 @@
 # Single UI Clean Cut
 
+## Native Review attributes and source evidence selection
+
+Migrated the old Review's arbitrary annotation-attribute editor and source-model bbox selection into native disclosures. Attribute text must parse as a non-null JSON object; applying it only changes the existing local annotation draft. Unapplied/invalid text blocks parent Save/Accept/Reject and has navigation/unload protection. Cancel restores the current annotation attributes. If other edits change the attribute base while text is pending, apply is blocked rather than overwriting the newer attributes. Existing draft persistence, undo, server PATCH and decision boundaries are reused.
+
+Source evidence is read only from the selected owned Review's detection_evidence. Each source displays capability, explicit score semantics, bbox and artifact reference. Selecting a valid normalized bbox updates the current geometry and records source artifact/model/capability/score provenance; it does not mutate confidence, source, review_status or geometry-quality semantics. Invalid/unsupported geometry is disabled; no clamping of bad evidence into plausible results. Save and acceptance remain separate. This is a native control, not an embedded old Review page.
+
+Verification: typecheck/isolated build and 327 unit tests passed (one final-cutover TODO). Two existing actual TEST HTTP scenarios passed, extended to reject array-valued attributes, cancel pending attribute text, apply a valid attribute, persist through reload/failure/save, and verify the final server annotation contains it. Source-evidence selection has pure geometry/identity/provenance tests, but no real multi-model browser fixture yet; do not claim that coverage. No Rust modified. Owned TEST service8794/8795 stopped; real user services/workspace/dist unchanged. Build still emits old App/styles, so full goal remains incomplete.
+
+Backend worktree read-only inspection now shows b5b2b67 (exact Workflow clone with durable command receipts). Only its stat/identity was inspected here; contract, code, tests and integration still require verification. Remaining Review parity includes Skill-specific correction taxonomy and broader keyboard/source evidence browser coverage before deleting active ReviewPage. No push or goal completion.
+
 ## Native missing-annotation creation
 
 Moved the old Review's missing-geometry creation capability into an on-demand native HumanAnnotation editor. It reads the actual owned Project schema, supports its bbox/keypoint/polyline/polygon groups, and reuses AnnotationCanvas for direct editing. Opening it replaces the original object's editing surface rather than showing two canvases. A center geometry is explicitly an unsaved human starting shape, never a model prediction. Saving creates a separate human/needs_review object under the existing owned Run/image; original acceptance is not implied. The new object's Review link preserves the queue offset.
