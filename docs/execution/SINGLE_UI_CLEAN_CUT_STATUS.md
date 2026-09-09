@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Native saved model-proposal recovery
+
+Schema inventory previously omitted completed model proposals without a materialized Draft. Native TaskSchemaDrafts now retains them as on-demand suggestion summaries with the actual rationale, labels and boundary rules. Explicit save first reads the exact source call's Draft, then invokes the existing save endpoint only when absent. Task/source-call mismatch fails closed. After an uncertain save, refresh remains read-only and explicit recovery checks the same source rather than making a new model request. Successful Draft joins the existing native editor; no automatic publication, Builder launch or sample execution.
+
+Read the actual application/storage path: server reparses saved model response and enforces completed owned call; creation is deduplicated by source_call_id and returns the current revision of an existing compatible Draft. No new backend engine or Rust modification. Typecheck,310 unit tests across91 files and production build passed. Added passive inventory/source ownership and lost-save-read-recovery tests. This slice's positive real HTTP/browser creation and rendered error recovery are still unverified and must be completed; unit transport evidence is not a substitute. Isolated build /tmp/annotagent-native-schema-proposal-dist, baseline ba7f4c1 plus this slice. True workspace, user services/dist and remotes untouched. Clarification answers/cancellation, future-rule and repair flows remain required; goal active.
+
 ## Native stop-target selection recovery and legacy deletion
 
 Audited the retired ConversationStopCard against HttpAdapter stop selection. Native selection now persists the exact message and target before POST, restores only that target after an uncertain response, rejects foreign conversation/message receipts and conflicting server choices, and clears recovery only after matching acknowledgment. Choices include task and operation identity rather than ambiguous same-kind labels. Missing storage blocks submission; passive reload does not repeat POST. Deleted the unmounted ConversationStopCard and unreferenced agent-model-picker stylesheet, retaining shared stop-domain helpers.
