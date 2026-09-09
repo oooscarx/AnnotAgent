@@ -57,8 +57,23 @@ test("mobile task navigation opens on demand without covering the composer", asy
   const input = page.getByRole("textbox", { name: "Your message", exact: true });
   await input.fill("测试输入保持可达");
   await expect(input).toHaveValue("测试输入保持可达");
+  await input.press("Shift+Enter");
+  await expect(input).toHaveValue("测试输入保持可达\n");
+  let messageWrites = 0;
+  page.on("request", request => {
+    if (request.method() === "POST" && /\/messages$/.test(new URL(request.url()).pathname)) messageWrites++;
+  });
+  await input.dispatchEvent("compositionstart");
+  await input.press("Enter");
+  expect(messageWrites).toBe(0);
+  await input.dispatchEvent("compositionend");
+  await input.dispatchEvent("keydown", { key: "Enter", keyCode: 229 });
+  expect(messageWrites).toBe(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  await input.fill("");
+  await input.press("Enter");
+  await expect(page.getByRole("list", { name: "Saved messages", exact: true })).toContainText("测试输入保持可达");
+  expect(messageWrites).toBe(1);
+  await expect(input).toHaveValue("");
 });
 
 // M0 acceptance contract. Real isolated Project; no prototype messages/models.

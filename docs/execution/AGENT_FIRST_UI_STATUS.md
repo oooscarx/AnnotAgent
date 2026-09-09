@@ -195,3 +195,29 @@ TEST Project data and real UI, not prototype assets or Live model results, and a
 M1 evidence, NOT the required final six-state deliverable. Full Rust/management/theme suite,
 native 200%, paid model accuracy and real-human usability are not claimed. Build's existing
 large-chunk warning remains. No push, remote change, secret use or real workspace cleanup.
+
+## M1 fourth slice — extracted Composer and keyboard submission
+
+Previous turn was progress (0a7f018 canonical theme migration). Inspected actual journal,
+task creation and control contracts: ordinary append grants no inference, first-goal
+preparation currently spans append/task/selection/authorization calls, and candidate/stop
+commands have separate validated scopes. A new server-resolved send command must persist
+its selected scope and receipt across retries; renaming both old controls would not implement
+that contract. No fake Plan picker or frontend-only execution permission was added.
+
+Extracted AgentComposer from ConversationWorkspace while retaining the existing frozen
+command coordinator. References precede input, the visual field label is screen-reader-only,
+actions wrap, Enter submits, Shift+Enter inserts a newline, composition/native composing and
+keyCode 229 suppress submission. Frozen input locking is separate from form admission, so
+the original retry button remains usable after an uncertain acknowledgement. Existing
+legacy save controls remain intentionally visible until the server send contract lands;
+unified Send, queued editing while a request is active, Plan and model choice are not done.
+
+Web typecheck/generation check, 236 unit tests (71457), and 12 isolated browser cases (34382)
+passed, with fresh production build. Cases include pane restoration, 390px keyboard submission
+with exactly one journal POST, empty stop, actual reserved-call cancellation, multiple-target
+selection, frozen-target restoration, lost acknowledgements, Chinese composition simulation,
+cross-task rejection and stopping one actual task without touching another. This verifies
+the extraction, not final Plan/continue/queue requirements or native IME/200% usability.
+No Rust code changed in this slice; no full Rust or entire E2E pass claimed. No push/remote
+change and no Live inference. Overall M1 and the full goal remain incomplete.

@@ -32,6 +32,8 @@
 .conversation-messages p { white-space: pre-wrap; }
 .conversation-messages button { text-align: start; white-space: normal; overflow-wrap: anywhere; }
 .conversation-composer { display: grid; gap: 10px; margin-top: auto; }
+.agent-composer-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
+.agent-composer-actions > small { flex-basis: 100%; }
 .conversation-composer textarea { width: 100%; min-width: 0; resize: vertical; }
 .conversation-composer small { overflow-wrap: anywhere; }
 .conversation-composer button { justify-self: end; }
