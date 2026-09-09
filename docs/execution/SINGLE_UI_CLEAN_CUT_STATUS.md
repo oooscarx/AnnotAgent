@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Step dialog actual HTTP verification
+
+Real browser regression now clones a TEST published version through the existing clone API, opens its native step editor, verifies malformed JSON is retained with no write, applies a valid parameter locally with zero writes, explicitly saves exactly once, refreshes persisted parameters, and compares the original Published Draft unchanged. All fourteen management tests passed (thirteen actual TEST HTTP, one explicit Worker response fixture). This verifies parameter/save separation and immutability, not yet interactive shared-source selection or live model rebinding.
+
+Inspected real screenshot `/tmp/annotagent-native-step-dialog.png`, source `5d3a21f`, URL `http://127.0.0.1:8794/projects/TEST-agent-ui-15eb0549-f44e-4ae1-81dd-0ebf67714eb2/manage/pipelines/f21bdc30-41d3-4e6f-8d82-476b2bc18d73`, 1440×900/DPR1/light/TEST HTTP. It exposed a centered checkbox separated from its label and default textarea chrome. Corrected inline checkbox alignment and token-based textarea styling afterward; typecheck and isolated production build passed. Screenshot remains pre-correction, not final visual approval. Backend `1c24d4e` installation command delivery detected but only stat inspected; not yet integrated/verified. Goal active with old root still present. Owned TEST server stopped; no user service changes, real inference or push.
+
 ## Native Pipeline step configuration
 
 Added a focused native step dialog for existing shared stages and Label Pipelines. Model options come from the actual catalog (expert models require available state); source selectors preserve typed shared/local references and filter by Artifact kind. Existing routed/any-of/unknown sources remain intact until explicitly changed. Parameters and human-review gate edit the authoritative composition, and apply checks the current step fingerprint/identity before changing only the unsaved Draft. Model changes never call providers or alter in-flight requests. Invalid parameter JSON remains in the dialog with an error; cancel confirms unapplied changes.

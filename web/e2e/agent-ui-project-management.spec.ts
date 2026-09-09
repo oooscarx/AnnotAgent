@@ -1,6 +1,25 @@
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
+test("native Pipeline step dialog preserves invalid input then saves only a cloned TEST draft",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const project="TEST-agent-ui-15eb0549-f44e-4ae1-81dd-0ebf67714eb2";
+  const original=(await(await request.get(`/api/workflow-drafts?project_id=${project}`)).json()).drafts.find((d:{status:string;label_pipeline:unknown})=>d.status==="published"&&d.label_pipeline);expect(original).toBeTruthy();
+  const session=await(await request.get("/api/session")).json();const clone=await request.post(`/api/workflows/${original.id}/versions/1/clone`,{headers:{"x-annotagent-csrf":session.csrf_token},data:{}});expect(clone.ok(),await clone.text()).toBeTruthy();const draft=await clone.json();
+  const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});
+  await page.goto(`/projects/${project}/manage/pipelines/${draft.id}`);
+  const group=draft.label_pipeline.label_pipelines[0];await page.getByText(`${group.target_task_id} · ${group.target_label}`,{exact:true}).click();
+  await page.getByRole("button",{name:"编辑步骤",exact:true}).first().click();
+  const dialog=page.getByRole("dialog",{name:"编辑 Pipeline 步骤",exact:true});
+  const parameters=dialog.getByRole("textbox",{name:"步骤参数 JSON",exact:true});await parameters.fill("{");
+  await dialog.getByRole("button",{name:"应用到未保存草稿",exact:true}).click();await expect(dialog.getByRole("alert")).toBeVisible();await expect(parameters).toHaveValue("{");expect(writes).toEqual([]);
+  const changed={...group.steps[0].parameters,TEST_edit_marker:"native-dialog"};await parameters.fill(JSON.stringify(changed));
+  await dialog.getByRole("button",{name:"应用到未保存草稿",exact:true}).click();await expect(dialog).toHaveCount(0);expect(writes).toEqual([]);
+  await page.getByRole("button",{name:"保存草稿",exact:true}).click();await expect(page.getByRole("status")).toContainText("草稿已保存");await page.reload();
+  await expect(page.getByRole("textbox",{name:"执行配置 JSON",exact:true})).toHaveValue(/native-dialog/);
+  expect(writes).toEqual([`http://127.0.0.1:8794/api/workflow-drafts/${draft.id}`]);
+  const after=(await(await request.get(`/api/workflow-drafts?project_id=${project}`)).json()).drafts.find((d:{id:string})=>d.id===original.id);expect(after).toEqual(original);
+});
 test("native workflow editor saves an exact TEST draft and never publishes or runs",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
   const projects=await(await request.get("/api/projects")).json();const project=projects.projects.find((p:{name:string})=>p.name.startsWith("TEST clean-cut"));expect(project).toBeTruthy();

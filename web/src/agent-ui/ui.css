@@ -1075,3 +1075,7 @@ caption {
 .native-run-inspector article { display: grid; gap: 12px; min-width: 0; }
 .native-run-inspector :is(p,h2,h3,h4) { margin: 0; }
 .native-run-inspector > button { justify-self: start; }
+.ui-app .pipeline-step-parameters { display: grid; gap: 8px; }
+.ui-app .pipeline-step-parameters textarea { border: 1px solid var(--aa-border); border-radius: 8px; padding: 10px; color: var(--aa-text); background: var(--aa-bg); font: inherit; }
+.ui-app .native-project-manager .pipeline-review-toggle { display: flex; align-items: center; gap: 8px; margin-block: 12px; }
+.ui-app .pipeline-review-toggle input { flex: none; width: auto; margin: 0; }
