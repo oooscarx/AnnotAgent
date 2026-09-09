@@ -1,6 +1,17 @@
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
+test("native Artifact deep link shows its actual input image and refresh remains passive",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const run="4d348027-ff6e-4241-a46c-1c2b6c7aaaef";
+  const inspection=await(await request.get(`/api/runs/${run}/pipeline-artifacts`)).json();const node=inspection.nodes.find((n:{operation:string})=>n.operation==="core.image_input");
+  const artifact=node.outputs[0].artifact.reference.artifact_id;
+  const url=`/projects/${inspection.project_id}/manage/runs/${run}?view=debug&node=${encodeURIComponent(node.node_id)}&artifact=${encodeURIComponent(artifact)}`;
+  const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});await page.goto(url);
+  const region=page.getByRole("region",{name:"中间产物预览",exact:true});await expect(region.getByRole("img")).toHaveAttribute("src",`/api/projects/${inspection.project_id}/images/${inspection.image_id}/content`);
+  await page.reload();await expect(region).toBeVisible();expect(writes).toEqual([]);
+  await page.goto(url.replace(encodeURIComponent(artifact),"missing-artifact"));await expect(page.getByText("所链接的产物不在该节点中，没有自动替换。",{exact:true})).toBeVisible();await expect(region).toHaveCount(0);
+});
 test("native static validation checks the saved revision without execution and invalidates evidence on edits",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
   const project="TEST-agent-ui-15eb0549-f44e-4ae1-81dd-0ebf67714eb2";

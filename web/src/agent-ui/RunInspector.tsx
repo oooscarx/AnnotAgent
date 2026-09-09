@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { api } from "../api";
 import type { RunDebugSummary, RunNodeArtifactInspection } from "../types";
+import {ArtifactPreview,artifactIdentity} from "./ArtifactPreview";
 import { Disclosure } from "./Disclosure";
 
 export type RunInspectorService = Pick<typeof api, "pipelineArtifacts" | "runDebugSummary">;
@@ -13,6 +14,7 @@ export function RunInspector({ service, projectId, runId }: { service: RunInspec
   const [summary, setSummary] = useState<RunDebugSummary>();
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
+  const [artifactId,setArtifactId]=useState(()=>new URL(location.href).searchParams.get("artifact")||"");
   const [nodeId, setNodeId] = useState(() => new URL(location.href).searchParams.get("node") || "");
   useEffect(() => {
     const controller = new AbortController();
@@ -26,10 +28,11 @@ export function RunInspector({ service, projectId, runId }: { service: RunInspec
     return () => controller.abort();
   }, [service, projectId, runId, revision]);
   useEffect(() => {
-    const read = () => setNodeId(new URL(location.href).searchParams.get("node") || "");
+    const read = () => {const url=new URL(location.href);setNodeId(url.searchParams.get("node")||"");setArtifactId(url.searchParams.get("artifact")||"");};
     window.addEventListener("popstate", read); return () => window.removeEventListener("popstate", read);
   }, []);
   const node = inspection?.nodes.find(n => n.node_id === nodeId);
+  const selectedArtifact=node&&[...node.inputs,...node.outputs].find(a=>artifactIdentity(a)===artifactId);
   return <section aria-label="节点与 Artifact 检查" className="native-run-inspector">
     <h2>执行详情</h2><p>以下是保存的实际执行记录与中间产物，不是新增的最终目标，也不是一次重跑。</p>
     <button onClick={() => setRevision(v => v + 1)}>重新读取执行记录</button>
@@ -39,7 +42,7 @@ export function RunInspector({ service, projectId, runId }: { service: RunInspec
     {inspection && <>
       <p>Workflow {inspection.workflow_id} · v{inspection.workflow_version}</p>
       {!inspection.nodes.length ? <p>此运行未保存节点产物，没有生成替代记录。</p> : <label>选择实际执行节点<select value={nodeId} onChange={e => {
-        setNodeId(e.target.value); const url = new URL(location.href);
+        setNodeId(e.target.value); setArtifactId(""); const url = new URL(location.href);
         if (e.target.value) url.searchParams.set("node", e.target.value); else url.searchParams.delete("node");
         url.searchParams.delete("artifact"); history.replaceState(history.state, "", url);
       }}><option value="">请选择节点</option>{inspection.nodes.map(n => <option value={n.node_id} key={n.node_id}>{n.operation} · {n.node_id} · {n.status}</option>)}</select></label>}
@@ -50,7 +53,9 @@ export function RunInspector({ service, projectId, runId }: { service: RunInspec
         {node.route && <p>实际分支：{node.route}</p>}
         {node.error && <p role="alert">{node.error.code}：{node.error.summary} · {node.error.retryable ? "服务器标记为可重试；未自动执行" : "不可直接重试"}</p>}
         <Disclosure title="节点配置"><pre>{JSON.stringify(node.configuration, null, 2)}</pre></Disclosure>
-        {(["inputs", "outputs"] as const).map(key => <div key={key}><h4>{key === "inputs" ? "输入产物" : "输出产物"} · {node[key].length}</h4>{node[key].map((artifact, index) => <Disclosure key={index} title={`${index + 1} · ${artifact.kind}`}><pre>{JSON.stringify(artifact.artifact, null, 2)}</pre></Disclosure>)}</div>)}
+        {artifactId&&!selectedArtifact&&<p role="alert">所链接的产物不在该节点中，没有自动替换。</p>}
+        {selectedArtifact&&<ArtifactPreview key={artifactId} artifact={selectedArtifact} projectId={projectId} imageId={inspection.image_id}/>}
+        {(["inputs", "outputs"] as const).map(key => <div key={key}><h4>{key === "inputs" ? "输入产物" : "输出产物"} · {node[key].length}</h4>{node[key].map((artifact, index) => <div key={index}>{artifactIdentity(artifact)&&<button aria-pressed={artifactId===artifactIdentity(artifact)} onClick={()=>{const id=artifactIdentity(artifact)!;setArtifactId(id);const url=new URL(location.href);url.searchParams.set("artifact",id);history.replaceState(history.state,"",url);}}>查看{key==="inputs"?"输入":"输出"} {index+1} · {artifact.kind}</button>}<Disclosure title={`${index+1} · ${artifact.kind} 原始数据`}><pre>{JSON.stringify(artifact.artifact, null, 2)}</pre></Disclosure></div>)}</div>)}
         {node.metadata && <Disclosure title="执行元数据"><pre>{JSON.stringify(node.metadata, null, 2)}</pre></Disclosure>}
       </article>}
       <Disclosure title="执行错误汇总">{summary?.issues.map((issue, index) => <p key={index}>{issue.node_id} · {issue.code}：{issue.summary}</p>)}</Disclosure>
