@@ -42,6 +42,44 @@ impl Drop for CallCancellationGuard<'_> {
 }
 
 impl crate::LocalApplication {
+    pub fn queued_planning_authorization(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        call: Uuid,
+    ) -> Result<Option<annotagent_storage::QueuedPlanningAuthorization>> {
+        Ok(self.store.queued_planning_authorization(
+            &self.conversation_project_identity(project)?,
+            conversation,
+            task,
+            call,
+        )?)
+    }
+    /// The HTTP boundary validates Registry, text scope and explicit cost consent.
+    pub fn authorize_queued_schema(
+        &self,
+        project: &str,
+        input: &annotagent_storage::QueuedPlanningAuthorization,
+    ) -> Result<()> {
+        Ok(self
+            .store
+            .authorize_queued_planning(&self.conversation_project_identity(project)?, input)?)
+    }
+    pub fn queued_conversation_message(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        message: Uuid,
+    ) -> Result<annotagent_storage::ConversationQueuedMessage> {
+        Ok(self.store.queued_conversation_message(
+            &self.conversation_project_identity(project)?,
+            conversation,
+            task,
+            message,
+        )?)
+    }
     /// Resolve the original goal and this exact saved supplement, never the latest
     /// message or a mutable model preference. This step sends no image pixels.
     fn queued_schema_goal(

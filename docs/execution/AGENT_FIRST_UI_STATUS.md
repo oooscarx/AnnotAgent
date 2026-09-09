@@ -888,3 +888,31 @@ This is the existing semantic Schema phase only, not a generic conversation resp
 or Workflow revision. HTTP consent/preview, prior editable-plan context, controlled
 Workflow continuation and queue dispatch UI remain unfinished. Do not treat producing
 a Schema Draft as satisfying the full queued instruction. Overall goal stays active.
+
+## M3 explicit queued text-planning HTTP boundary — 2026-09-09
+
+The existing owner-scoped queue routes now expose read-only `schema-preview` and
+`schema-authorization`, plus explicit POST `schema-proposals`. Consent binds message,
+model/provider configuration, exact text request digest, previous grant, cumulative
+ceiling and expiry. It requires acknowledgment of unknown cost; the scope explicitly
+excludes pixels, Workflow changes, publication, dataset execution and annotation
+acceptance. Model configuration/credentials use existing Registry and Provider code.
+The existing bounded worker and call ledger own admitted execution after HTTP loss.
+Saved call recovery returns the receipt before resolving credentials or extending
+the budget; in-flight duplicates cannot dispatch twice. GET never grants or executes.
+
+Validation: strict Server all-target/all-feature Clippy passed (74291), after using
+the repository-required Option style. Isolated HTTP TEST fixture test passed (95474).
+Expanded queued-planning plus Registry/Composer browser suite 2/2 passed (56981,
+`/tmp/annotagent-guided-e2e-76025`): reject missing cost acknowledgment, inflated
+ceiling, altered request, model substitution and injected execution field; recover
+authorization, reject inbox cancellation while reserved, deduplicate in-flight and
+completed requests, preserve supplement in real saved Schema Draft, reject moving
+consent to another message, preserve used count for the next preview, reject cancelled
+and foreign queue sources. Production frontend build passed with existing chunk warning.
+All model traffic was to the local TEST fixture, not a paid/live quality test.
+
+Remaining: connect this boundary to explicit queue consent UI and carry controlled
+current-plan/Artifact context into Workflow continuation. This endpoint deliberately
+does not claim a semantic proposal completes a general queued instruction. No push,
+remote changes or production workspace mutation; overall goal remains incomplete.
