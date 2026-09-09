@@ -2296,8 +2296,8 @@ fn purge_run(
 ) -> Result<(), StorageError> {
     let run = read_run(transaction, &object.id)?;
     record_item(transaction, operation_id, object, &run_state(&run))?;
-    let (provider, model, project_name, snapshot, created_at, updated_at) = transaction.query_row(
-        "SELECT provider, model, project_name, workflow_snapshot_json, created_at, updated_at
+    let (provider, model, project_name, snapshot, created_at, updated_at, schema_json) = transaction.query_row(
+        "SELECT provider, model, project_name, workflow_snapshot_json, created_at, updated_at, project_schema_json
          FROM runs WHERE id = ?1",
         [&object.id],
         |row| {
@@ -2308,6 +2308,7 @@ fn purge_run(
                 row.get::<_, Option<String>>(3)?,
                 row.get::<_, String>(4)?,
                 row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
             ))
         },
     )?;
@@ -2337,6 +2338,8 @@ fn purge_run(
         &object.id,
     )?;
     let summary = serde_json::json!({
+        "task_definitions": serde_json::from_str::<serde_json::Value>(&schema_json)
+            .ok().and_then(|schema| schema.get("tasks").cloned()),
         "project_name": project_name,
         "run_status": run.status,
         "created_at": created_at,
@@ -3541,6 +3544,20 @@ mod tests {
         let store = SqliteStore::open_in_memory().expect("store");
         let scope = test_scope();
         let id = insert_run(&store, &scope, RunStatus::Completed).await;
+        let task_definitions =
+            serde_json::json!([{"id":"objects","kind":"classification","labels":["ball"]}]);
+        store
+            .with_connection(|connection| {
+                connection.execute(
+                    "UPDATE runs SET project_schema_json = ?1 WHERE id = ?2",
+                    params![
+                        serde_json::json!({"tasks":task_definitions}).to_string(),
+                        id.to_string()
+                    ],
+                )?;
+                Ok(())
+            })
+            .unwrap();
         let accepted = Annotation {
             id: AnnotationId::new(),
             image_id: ImageId::new(),
@@ -3637,6 +3654,7 @@ mod tests {
             .expect("provenance")
             .expect("provenance tombstone");
         assert!(provenance.source_deleted);
+        assert_eq!(provenance.summary["task_definitions"], task_definitions);
         store
             .with_connection(|connection| {
                 assert_eq!(

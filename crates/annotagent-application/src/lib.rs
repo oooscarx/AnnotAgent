@@ -10251,18 +10251,7 @@ impl LocalApplication {
                 let frozen_schema: ProjectSchema =
                     serde_json::from_str(&run.project_schema_json)
                         .context("cannot recover export Schema from the selected Run")?;
-                for task in frozen_schema.tasks {
-                    if frozen_tasks
-                        .get(&task.id)
-                        .is_some_and(|prior| prior != &task)
-                    {
-                        bail!(
-                            "selected Runs use incompatible frozen definitions for task {}; export requires a consistent Schema",
-                            task.id
-                        );
-                    }
-                    frozen_tasks.insert(task.id.clone(), task);
-                }
+                merge_frozen_export_tasks(&mut frozen_tasks, frozen_schema.tasks)?;
             }
             let accepted_ids = accepted
                 .iter()
@@ -10281,7 +10270,7 @@ impl LocalApplication {
             );
             annotations.extend(accepted);
         }
-        for (_run_id, annotation, retained_revisions) in
+        for (run_id, annotation, retained_revisions) in
             self.store.list_project_retained_annotations(stable_id)?
         {
             if !matches!(
@@ -10293,6 +10282,27 @@ impl LocalApplication {
             let Some(image_index) = image_indices.get(&annotation.image_id).copied() else {
                 continue;
             };
+            if let Some(definitions) = self
+                .store
+                .run_provenance_summary(&run_id.to_string())?
+                .and_then(|summary| summary.summary.get("task_definitions").cloned())
+                .filter(|value| !value.is_null())
+            {
+                merge_frozen_export_tasks(
+                    &mut frozen_tasks,
+                    serde_json::from_value(definitions)
+                        .context("retained Run task definitions are invalid")?,
+                )?;
+            } else if !schema
+                .tasks
+                .iter()
+                .any(|task| task.id == annotation.task_id)
+            {
+                bail!(
+                    "retained annotation {} has no recoverable task definition; its source Run was cleaned up before Schema retention",
+                    annotation.id
+                );
+            }
             processed_images.insert(image_index);
             image_ids
                 .entry(image_index)
@@ -18727,6 +18737,22 @@ fn latest_project_export(
         .max_by(|left, right| left.completed_at.cmp(&right.completed_at))
 }
 
+fn merge_frozen_export_tasks(
+    tasks: &mut BTreeMap<TaskId, TaskConfig>,
+    incoming: Vec<TaskConfig>,
+) -> Result<()> {
+    for task in incoming {
+        if tasks.get(&task.id).is_some_and(|prior| prior != &task) {
+            bail!(
+                "selected Runs use incompatible frozen definitions for task {}; export requires a consistent Schema",
+                task.id
+            );
+        }
+        tasks.insert(task.id.clone(), task);
+    }
+    Ok(())
+}
+
 fn export_readiness_from_data(
     project_id: &str,
     data: &ProjectExportData,
@@ -23506,6 +23532,24 @@ export:
         }
     }
 
+    #[test]
+    fn export_frozen_tasks_reject_conflicts_without_overwriting_semantics() {
+        let source = ProjectSchema::from_yaml(GENERIC_CLASSIFICATION_PROJECT).unwrap();
+        let mut tasks = BTreeMap::new();
+        merge_frozen_export_tasks(&mut tasks, source.tasks.clone()).unwrap();
+        merge_frozen_export_tasks(&mut tasks, source.tasks.clone()).unwrap();
+        assert_eq!(tasks.len(), source.tasks.len());
+        let mut changed = source.tasks[0].clone();
+        changed.labels.push("different-category".to_owned());
+        let error = merge_frozen_export_tasks(&mut tasks, vec![changed]).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("incompatible frozen definitions")
+        );
+        assert_eq!(tasks[&source.tasks[0].id], source.tasks[0]);
+    }
+
     #[tokio::test]
     async fn published_label_pipeline_executes_and_persists_typed_checkpoint() {
         // Only the dedicated child-process regression sets this; production has no fault hook.
@@ -23957,6 +24001,51 @@ export:
                 .open_export_delivery("label-classification", second.delivery.unwrap().id)
                 .is_ok()
         );
+
+        let mut object = annotagent_core::ManagementObjectRef {
+            kind: annotagent_core::ManagementObjectKind::Run,
+            id: started.run_id.to_string(),
+            version: None,
+            expected_revision: 1,
+        };
+        for action in [
+            annotagent_core::ManagementAction::MoveToTrash,
+            annotagent_core::ManagementAction::Purge,
+        ] {
+            let mut request = annotagent_core::ManagementRequest {
+                project_id: "label-classification".into(),
+                objects: vec![object],
+                action,
+                replacement_default_version: None,
+                clear_default: false,
+                display_name: None,
+                idempotency_key: uuid::Uuid::new_v4().to_string(),
+                confirmation_token: None,
+            };
+            let preview = application.preview_management(&request).unwrap();
+            assert!(preview.can_execute, "{preview:?}");
+            request.confirmation_token = Some(preview.confirmation_token);
+            let receipt = application.execute_management(&request).unwrap();
+            object = receipt
+                .affected_objects
+                .into_iter()
+                .find(|item| item.kind == annotagent_core::ManagementObjectKind::Run)
+                .unwrap();
+        }
+        std::fs::write(&schema_path, serde_yaml::to_string(&empty_current).unwrap()).unwrap();
+        let retained = application
+            .project_export_data("label-classification")
+            .unwrap();
+        assert_eq!(retained.snapshot.annotations.len(), 1);
+        assert!(
+            retained
+                .snapshot
+                .schema
+                .tasks
+                .iter()
+                .any(|task| task.id == TaskId::from("scene"))
+        );
+        std::fs::write(&schema_path, &original_yaml).unwrap();
 
         let image_root = temporary.path().join("label-classification/images");
         for index in 0..99 {

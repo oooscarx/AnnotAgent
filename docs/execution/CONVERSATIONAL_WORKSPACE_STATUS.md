@@ -5689,3 +5689,25 @@ The inspected bbox object chain was conversation `2ece9c6f-9464-4837-9dad-ca8de1
 revision 3, selected sample `18045324-23e0-4e73-8e65-95492319a81e`, processing/Batch
 `bbb61e1c-f0d9-41e1-a6de-b3ecaea73c5a`. This records the observed chain and defect, not a
 claim that the old archive was retroactively fixed. No Live quality or novice study performed.
+
+### 2026-09-09 — Retained annotation Schema and conflict regression
+
+Storage regression 9450 first failed because permanent Run cleanup did not preserve task
+definitions. New tombstones now retain only `task_definitions` from the frozen Schema, not
+credentials or a second annotation store. Export reads those definitions through the existing
+provenance API and the same conflict-checking merge used for intact Runs. Historical tombstones
+are not rewritten. If neither the old tombstone nor current Schema supplies the retained task,
+export explicitly fails instead of emitting an orphaned definition. Older tombstones with a
+current definition still use that compatibility fallback; its historical equivalence is not proven.
+
+90607 passed the storage cleanup regression. Added a pure conflict/idempotent-merge test and
+extended the real published classification test to perform authorized preview→trash→purge in
+its temporary workspace, clear current Schema, and inspect retained export data: one annotation
+and the original `scene` task remain. Initial test compilation used LabelId where TaskConfig
+requires String; corrected that test-only mismatch before verification.
+
+60000 exited 0: conflict test (1/1), full published-classification/export test (1/1, including
+the temporary Run cleanup and retained export data), Application+Storage all-target/all-feature
+clippy. No real Run or file was deleted. Browser 66282 remains live against the pre-export-change
+server; it is not evidence for this change. Full Rust and fresh browser archive assertions are
+still required. Existing exports and Published Versions were not modified; no push/remotes.
