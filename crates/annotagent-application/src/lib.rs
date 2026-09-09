@@ -1820,7 +1820,9 @@ struct CachedBuilderObservation {
 }
 
 fn pipeline_builder_tool_error_code(message: &str) -> &'static str {
-    if message.contains("incompatible_model_capability:") {
+    if message.contains("Plan permission denied:") {
+        "plan_permission_denied"
+    } else if message.contains("incompatible_model_capability:") {
         "incompatible_model_capability"
     } else if message.contains("model_profile_unavailable:") {
         "model_profile_unavailable"
@@ -12653,7 +12655,10 @@ impl LocalApplication {
                 tool_calls: Vec::new(),
             });
         }
-        let tools = pipeline_builder_live_tools(&input);
+        let mut tools = pipeline_builder_live_tools(&input);
+        if builder_constraints.planning_only {
+            tools.retain(|tool| tool.name != PipelineBuilderTool::DryRunPipeline.as_str());
+        }
         let context_snapshot = self.pipeline_builder_context_snapshot(&input)?;
         let context_revision = context_snapshot.context_revision.clone();
         let resume_existing_draft = matches!(
@@ -13063,9 +13068,12 @@ impl LocalApplication {
                     "finish the required inspection, then call create_draft_from_template with template_id safe_default"
                 } else if !validation.as_ref().is_some_and(|report| report.valid) {
                     "call validate_pipeline"
-                } else if dry_run.is_none() {
+                } else if dry_run.is_none()
+                    && !builder_constraints.planning_only
+                    && builder_constraints.maximum_dry_runs > 0
+                {
                     "call dry_run_pipeline with one image index"
-                } else if !inspected_dry_run {
+                } else if dry_run.is_some() && !inspected_dry_run {
                     "call inspect_dry_run_summary"
                 } else {
                     "call submit_draft_for_human_approval"
@@ -13183,6 +13191,9 @@ impl LocalApplication {
                     Ok(result)
                 } else {
                     async {
+                    if builder_constraints.planning_only && matches!(resolved, Ok(PipelineBuilderTool::DryRunPipeline)) {
+                        bail!("Plan permission denied: new image inference requires a separate exact-scope sample authorization. No vision call was started.");
+                    }
                     match resolved {
                     Ok(PipelineBuilderTool::GetPipelineBuilderContext) => {
                         inspected_project = true;
@@ -15842,7 +15853,7 @@ impl LocalApplication {
                         if !validation.as_ref().is_some_and(|report| report.valid) {
                             bail!("a valid static report is required before human approval");
                         }
-                        if dry_run.is_none() && builder_constraints.maximum_dry_runs > 0 {
+                        if dry_run.is_none() && !builder_constraints.planning_only && builder_constraints.maximum_dry_runs > 0 {
                             bail!("a sandbox Dry Run is required before human approval");
                         }
                         let suggestion = current
@@ -25012,6 +25023,110 @@ export:
                 .is_empty()
         );
         assert!(application.list_runs().expect("formal Runs").is_empty());
+    }
+
+    #[tokio::test]
+    async fn planning_policy_rejects_model_requested_dry_run_even_with_positive_sample_budget() {
+        let temporary = tempfile::tempdir().unwrap();
+        let application = LocalApplication::new(temporary.path()).unwrap();
+        application
+            .create_project("TEST-plan-policy", GENERIC_CLASSIFICATION_PROJECT)
+            .unwrap();
+        annotagent_image_tools::generate_synthetic_inspection(
+            &temporary.path().join("TEST-plan-policy/images/sample.png"),
+        )
+        .unwrap();
+        let selected = register_pipeline_builder_model(&application, "TEST-planner");
+        register_available_vision_model(
+            &application,
+            &selected,
+            "TEST-classifier",
+            [ModelCapability::ImageClassification],
+        );
+        let script = [
+            ("inspect_project", json!({})),
+            ("inspect_label", json!({})),
+            ("list_enabled_skills", json!({})),
+            ("list_node_definitions", json!({})),
+            ("list_compatible_models", json!({})),
+            ("create_draft_from_template", json!({})),
+            ("validate_pipeline", json!({})),
+            ("dry_run_pipeline", json!({"image_indices":[0]})),
+            (
+                "submit_draft_for_human_approval",
+                json!({"name":"TEST planning only", "rationale":["Static plan only"],"warnings":["Not tested on images"],"alternatives":[]}),
+            ),
+        ];
+        let provider = MockVisionProvider::new(MockScript {
+            steps: script
+                .into_iter()
+                .map(|(name, arguments)| MockStep {
+                    expect_task: Some("pipeline_builder".into()),
+                    expect_message_contains: None,
+                    response: MockResponseSpec::ToolCall {
+                        name: name.into(),
+                        arguments,
+                    },
+                    usage: MockUsage {
+                        input_tokens: 10,
+                        output_tokens: 5,
+                    },
+                })
+                .collect(),
+        });
+        let report = application
+            .run_workflow_advisor_with_selected_model(
+                "TEST-plan-policy",
+                &load_settings(None).unwrap(),
+                &selected,
+                &provider,
+                &WorkflowConstraints::default(),
+                Some(("scene", "day")),
+                PipelineBuilderConstraints {
+                    planning_only: true,
+                    maximum_dry_runs: 3,
+                    ..PipelineBuilderConstraints::default()
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        let denied = report
+            .session
+            .steps
+            .iter()
+            .find(|step| step.tool_name == "dry_run_pipeline")
+            .expect("malicious tool request was observed");
+        assert!(!denied.success);
+        assert!(
+            denied.result.to_string().contains("Plan permission denied"),
+            "{:?}",
+            denied.result
+        );
+        assert!(report.dry_run.is_none());
+        assert!(application.list_runs().unwrap().is_empty());
+        assert!(
+            application
+                .store
+                .list_published_workflow_versions(Some("TEST-plan-policy"))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            report
+                .session
+                .builder_constraints
+                .as_ref()
+                .unwrap()
+                .planning_only
+        );
+        assert_eq!(report.session.status, AgentSessionStatus::WaitingForHuman);
+        assert_eq!(provider.remaining_steps(), 0);
+        let saved = application
+            .store
+            .get_agent_session(report.session.id)
+            .unwrap();
+        assert!(saved.builder_constraints.unwrap().planning_only);
     }
 
     #[tokio::test]

@@ -1226,6 +1226,9 @@ fn copy_node_policy(target: &mut WorkflowDraftNode, source: &WorkflowDraftNode) 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PipelineBuilderConstraints {
+    /// Backend policy, independent of the numeric sample budget. This does not
+    /// authorize the planning LLM; its existing grant is still required.
+    pub planning_only: bool,
     pub priority: OptimizationPriority,
     pub max_cost_per_image: Option<Decimal>,
     pub max_model_calls_per_image: Option<u32>,
@@ -1242,6 +1245,7 @@ pub struct PipelineBuilderConstraints {
 impl Default for PipelineBuilderConstraints {
     fn default() -> Self {
         Self {
+            planning_only: false,
             priority: OptimizationPriority::Balanced,
             max_cost_per_image: None,
             max_model_calls_per_image: Some(4),
@@ -3831,6 +3835,7 @@ mod tests {
     #[test]
     fn planning_only_budget_allows_zero_image_tests() {
         let constraints = PipelineBuilderConstraints {
+            planning_only: true,
             maximum_dry_runs: 0,
             ..Default::default()
         };

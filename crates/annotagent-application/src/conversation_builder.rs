@@ -497,6 +497,7 @@ impl LocalApplication {
             bail!("Task call allowance exhausted; Builder was not started");
         }
         let limits = PipelineBuilderConstraints {
+            planning_only: true,
             maximum_agent_turns: remaining.min(16),
             maximum_dry_runs: 0,
             ..PipelineBuilderConstraints::default()

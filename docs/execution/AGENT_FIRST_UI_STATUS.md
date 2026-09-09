@@ -303,3 +303,35 @@ outbox, queued execution or unsent-text persistence. SessionStorage loss cannot 
 the server never received. Old broad E2E selectors and new-task navigation remain work, along
 with the central missing Plan/approval/queue/model contracts and final visual delivery.
 No push, remote change, real workspace restart/cleanup or paid invocation.
+
+## Builder Plan execution policy foundation
+
+Previous turn was progress (afda92c pending-send refresh without reposting). Added persisted
+`PipelineBuilderConstraints.planning_only`, independent of `maximum_dry_runs`. The existing
+conversation Builder always sets it on the server; the client cannot supply replacement
+constraints to that conversation operation. Legacy/general bounded Builder defaults remain
+unchanged and are not silently relabeled Plan. This is a request/session policy foundation,
+not the final selectable per-turn mode or a project-wide prohibition on independent actions.
+
+Plan hides Dry Run from offered tools AND rejects a model-supplied DryRunPipeline at the
+actual dispatch boundary before its implementation, with `plan_permission_denied`. Numeric
+image budget cannot override it. Fixed a real fallback prompt that previously told a no-tool
+response to perform Dry Run even with a zero-image allowance. Static-valid Plan submission
+can reach human review without pretending an image test ran. Existing registered-tool
+allowlist still excludes publish, full runs, credentials, shell and downloads; passive image
+inspection returns dimensions/byte length, not image pixels. No new model/Runtime was added.
+
+New Application test 74783 passed: a scripted planner explicitly calls the forbidden Dry Run
+with positive numeric sample budget; the dispatch reports denial, no Dry Run or formal Run
+or published version appears, a static proposal reaches human review, and the persisted
+session retains planning_only. Core registry-escape and planning-budget tests passed in 40957.
+The existing authorized bounded-sample multi-turn Builder regression also passed in 40957;
+its scripted provider is not a Live quality test despite the historical test name.
+Core/Application all-target/all-feature clippy passed 96955. These use synthetic TEST inputs
+and scripted planning responses, not paid models or actual annotation quality evidence.
+
+Remaining M2: selectable mode tied to frozen send/turn configuration, exact approval mode
+transition, cross-API permission audit and direct Plan-mode HTTP rejection tests. This
+Builder-dispatch test must not be cited as proof of all project API permissions, schema
+privacy, model-switch authorization, queue or continuation semantics. M1/other stages also
+remain incomplete; no push, remote change, real workspace mutation or old key usage.
