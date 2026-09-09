@@ -38,6 +38,109 @@ fn status(job: DeliveryPackageJob) -> Result<TrainingPackageStatus> {
     })
 }
 impl LocalApplication {
+    pub fn training_package_consents(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+    ) -> Result<Vec<annotagent_storage::DeliveryPackageConsent>> {
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self
+            .store
+            .delivery_package_consents(&owner, conversation, task)?)
+    }
+    pub fn authorize_training_package(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        input: &annotagent_storage::DeliveryPackageConsentInput,
+    ) -> Result<annotagent_storage::DeliveryPackageConsent> {
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self
+            .store
+            .authorize_delivery_package(&owner, conversation, task, input)?)
+    }
+    pub fn cancel_training_package_consent(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+    ) -> Result<annotagent_storage::DeliveryPackageConsent> {
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self
+            .store
+            .cancel_delivery_package_consent(&owner, conversation, task, id)?)
+    }
+    /// Read-only readiness projection. The storage admission repeats snapshot and permission CAS.
+    pub fn automatic_training_package_input(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+    ) -> Result<Option<DeliveryPackageInput>> {
+        let owner = self.conversation_project_identity(project)?;
+        let consent = self
+            .store
+            .delivery_package_consent(&owner, conversation, task, id)?;
+        if consent.state != "armed" {
+            return Ok(None);
+        }
+        let saved = self
+            .require_delivery_intake(project, conversation, task)?
+            .context("Delivery intent missing")?;
+        ensure!(
+            saved.revision == consent.input.intent_revision
+                && saved.content_sha256 == consent.input.intent_sha256,
+            "Automatic package permission is for an older delivery version; cancel or review it"
+        );
+        let mut image_reviews = std::collections::BTreeMap::new();
+        for image in saved
+            .intent
+            .dataset_scope
+            .as_ref()
+            .context("Missing image scope")?
+        {
+            let mut state =
+                self.task_delivery_image(project, conversation, task, image.image_id, None)?;
+            if let Some(run) = state.review.as_ref().and_then(|r| r.input.source_run_id) {
+                state = self.task_delivery_image(
+                    project,
+                    conversation,
+                    task,
+                    image.image_id,
+                    Some(run),
+                )?;
+            }
+            if !state.confirmation_current {
+                return Ok(None);
+            }
+            let review = state.review.context("Current review receipt missing")?;
+            image_reviews.insert(image.image_id, review.revision);
+        }
+        Ok(Some(DeliveryPackageInput {
+            command_id: id,
+            intent_revision: saved.revision,
+            intent_sha256: saved.content_sha256,
+            image_reviews,
+            confirmed: true,
+        }))
+    }
+    pub fn admit_authorized_training_package(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        input: &DeliveryPackageInput,
+    ) -> Result<(TrainingPackageStatus, bool)> {
+        let owner = self.conversation_project_identity(project)?;
+        let (job, created) =
+            self.store
+                .begin_authorized_delivery_package(&owner, conversation, task, input)?;
+        Ok((status(job)?, created))
+    }
     pub fn training_package_status(
         &self,
         project: &str,

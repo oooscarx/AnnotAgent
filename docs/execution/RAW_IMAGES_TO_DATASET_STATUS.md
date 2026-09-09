@@ -2,6 +2,14 @@
 
 ## Baseline and boundaries (2026-09-10)
 
+### Recording follow-up and explicit paid-model authorization
+
+The user subsequently requested a real end-to-end product recording and explicitly authorized paid model calls during this work. This supersedes the earlier no-paid-calls condition for this delivery/recording task only; it does not authorize training, weight installation, unrelated bulk processing, publishing or changes to existing user data. Use configured credentials without logging secrets; preserve application scope/revision and admission safeguards. Record actual usage and distinguish scripted TEST evidence from live-model evidence. Small-scope validation precedes recording; no video or live inference is claimed completed yet.
+
+Read-only inspection of user service 8788 finds enabled GLM-5.2 and Qwen3.7-flash-2026-07-15 profiles with configured Provider credentials and historical successful probes. This is not a fresh model availability test. Chromium and FFmpeg are installed. The existing HTTP E2E config now supports opt-in `ANNOTAGENT_RECORD_JOURNEY=1` recording at 1440×960 without altering backend selection or mutation gates. TEST recordings remain TEST, never evidence of live model quality. User services have not been restarted.
+
+Application now exposes owned package-consent list/authorize/cancel, read-only readiness using each saved review's exact source Run, and admission through the existing atomic consent/Export transaction. These methods are not yet wired to HTTP/UI or server events; automatic continuation is not claimed. Checks passed: Application cargo check; the one-shot storage regression (1 test); Application/storage all-target Clippy; cargo fmt; Web typecheck. Playwright with recording enabled successfully discovers 40 existing HTTP cases (`--list` only, not 40 executions). No new paid call or recording was made in this preparation checkpoint.
+
 - Active request: three-slot intake and a complete `ultralytics_yolo_detection` delivery preset; bounding boxes only for this new preset. Preserve existing task kinds, services and approved Agent UI.
 - Audited main advanced during inspection from `c8923a8` to `0fcfc5d1d5b085583d9506e4ef89c6caa01204d7` due to concurrent work. Main's pre-existing edits were not overwritten.
 - Independent branch: `codex/raw-images-to-dataset`, worktree `/Users/oscar/Documents/my_workspace/AnnotAgent-dataset-delivery`, based on the latter commit. No push, remote changes, real workspace changes, paid calls, service restarts or training.

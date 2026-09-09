@@ -40,6 +40,19 @@ pub(crate) fn read(
 }
 
 impl SqliteStore {
+    pub fn delivery_package_consents(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+    ) -> Result<Vec<DeliveryPackageConsent>, StorageError> {
+        self.with_connection(|db|{
+        intent(db,project,conversation,task)?;
+        let mut query=db.prepare("SELECT id FROM delivery_package_consents WHERE project_id=?1 AND conversation_id=?2 AND task_id=?3 ORDER BY (state='armed') DESC,created_at DESC,id DESC LIMIT 20")?;
+        let ids=query.query_map(params![project,conversation.to_string(),task.to_string()],|r|r.get::<_,String>(0))?.collect::<Result<Vec<_>,_>>()?;
+        ids.into_iter().map(|id|read(db,project,conversation,task,Uuid::parse_str(&id).map_err(|_|invalid("Invalid package permission identity"))?)).collect()
+    })
+    }
     pub fn delivery_package_consent(
         &self,
         project: &str,
