@@ -43,6 +43,16 @@ Committed visual evidence: `single-ui-clean-cut/m0/disclosure-expanded.png` (144
 
 ## Remaining
 
+### Native export delivery
+
+Added `agent-ui/ExportManagement.tsx` through `WorkspaceAdapter.exportManagement`, backed by existing export-readiness/export endpoints. Canonical `/projects/:id/manage/export` enters only the Agent shell; the project menu links to it. No old Export page or global stylesheet is embedded. Displays real image/accepted/unresolved counts, blockers, supported formats and information-loss warnings. Explicit export never accepts reviews or invokes a model. Download links require server-issued delivery IDs; reports include completion time, skipped rows, source fingerprint, files and SHA-256. Server paths are not presented as local folders. GET/mount/reload do not generate exports. Unknown request outcomes disable repeat generation in the current page and offer read-only report reload.
+
+Verification: typecheck, 284 unit tests (one final-cutover TODO), isolated production build, and four actual HTTP management E2E passed. Export E2E verifies downloaded bytes against the server SHA-256, stable delivery after reload with no second POST, and failure followed by read-only recovery. Repeating the test exposed an old-report/new-export display race; new execution now clears the old report before waiting for the response. The initial single pass was not treated as sufficient repeatability evidence. No real workspace or model calls were used.
+
+Screenshots `single-ui-clean-cut/m2/native-export-1440.png` and `native-export-390.png`: actual built React app, light, DPR 1, 1440×900 / 390×844, TEST HTTP backend `34436fd`; frontend `9af78b9` plus this slice. URL `http://127.0.0.1:8794/projects/TEST-agent-ui-15eb0549-f44e-4ae1-81dd-0ebf67714eb2/manage/export`. Capture explicitly generated a TEST export after the Review test changed the source fingerprint; no fake saved report was supplied. Desktop/mobile screenshots inspected. Browser 200% zoom and dark-theme export have not yet been tested.
+
+Backend UIAPI-009 delivery still unverified: exact Backend thread remains notLoaded with UIAPI-008 as latest completed turn. This is not treated as a running wait; history cutoff remains outstanding while other migration work proceeds. The old-root/styles branch still exists and full cutover remains incomplete. No push or user service/dist update.
+
 ### Native Review migration (ongoing, not final cutover)
 
 Added `agent-ui/ReviewManagement.tsx` behind the HttpAdapter and canonical project-owned review routes. The new page reuses AnnotationCanvas geometry, not the old Review page or root stylesheet. Project menu includes the native review queue. Owner-checked reads, abort handling, local edit recovery tied to the server base, dirty guards, explicit save, undo, separate accept/reject, revision records and source evidence are present. Last-item success retains the canvas; navigation to the next item occurs only after a successful decision response. Completed decisions stay disabled after refresh. Save preflight is a client conflict check, not an atomic server CAS.

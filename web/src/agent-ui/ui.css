@@ -1040,6 +1040,13 @@ caption {
 .ui-app .native-image-grid img { width: 100%; height: 140px; object-fit: contain; }
 .ui-app .native-image-grid figcaption { overflow-wrap: anywhere; padding-block: 8px; }
 .ui-app .native-management-tabs { display: flex; flex-wrap: wrap; gap: 16px; }
+.ui-app .native-project-manager a { color: var(--aa-text); text-underline-offset: 3px; }
+.ui-app .native-management-tabs { margin-block: 12px 24px; }
+.ui-app .native-management-tabs a { display: inline-flex; align-items: center; min-height: 32px; }
+.ui-app .native-export > label { max-width: 560px; margin-block: 20px 12px; }
+.ui-app .native-export p, .ui-app .native-export li { max-width: 80ch; overflow-wrap: anywhere; }
+.ui-app .export-delivery { border-top: 1px solid var(--aa-border); margin-top: 24px; padding-top: 16px; }
+.ui-app .export-delivery > a { display: inline-flex; padding: 10px 14px; border: 1px solid var(--aa-border); border-radius: 8px; margin-block: 8px 16px; }
 .ui-app .lifecycle-impact { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
 .ui-app .lifecycle-impact div { min-width: 0; }
 .ui-app .lifecycle-impact dd { margin: 4px 0 0; font-weight: 600; }

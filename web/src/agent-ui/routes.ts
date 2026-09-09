@@ -4,7 +4,7 @@ export function isAgentEntry(url: URL): boolean {
     (url.pathname === "/projects" && url.searchParams.get("new") !== "1") ||
     /^\/projects\/[^/]+\/work\/?$/.test(url.pathname) ||
     url.pathname === "/settings" || url.pathname.startsWith("/settings/") ||
-    url.pathname === "/projects/new" || /^\/projects\/[^/]+\/manage\/(data|labels|trash)$/.test(url.pathname) || /^\/projects\/[^/]+\/manage\/review(?:\/[^/]+)?$/.test(url.pathname);
+    url.pathname === "/projects/new" || /^\/projects\/[^/]+\/manage\/(data|labels|trash|export)$/.test(url.pathname) || /^\/projects\/[^/]+\/manage\/review(?:\/[^/]+)?$/.test(url.pathname);
 }
 
 export function routeProject(url: URL): string | null {

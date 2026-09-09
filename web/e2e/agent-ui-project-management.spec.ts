@@ -1,6 +1,33 @@
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
+test("native export creates a real download and refresh never repeats export",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const nav=await(await request.get("/api/navigation")).json();
+  const project=nav.items.find((p:{title:string})=>p.title==="TEST Agent UI HTTP fixture");expect(project).toBeTruthy();
+  let exports=0;
+  page.on("request",r=>{if(r.method()==="POST"&&r.url().endsWith("/export"))exports++;});
+  await page.goto(`/projects/${project.project_id}/manage/export`);
+  await expect(page.getByRole("heading",{name:"导出标注",exact:true})).toBeVisible();
+  const generate=page.getByRole("button",{name:/^导出为 /});
+  await expect(generate).toBeEnabled();expect(exports).toBe(0);
+  await generate.click();
+  const report=page.getByRole("region",{name:"已保存导出报告"});
+  const link=report.getByRole("link",{name:/下载标注文件/});
+  await expect(link).toBeVisible();expect(exports).toBe(1);
+  const href=await link.getAttribute("href");expect(href).toMatch(/\/exports\/[^/]+\/download$/);
+  const response=await request.get(href!);expect(response.ok()).toBeTruthy();
+  const bytes=await response.body();expect(bytes.length).toBeGreaterThan(0);
+  const latest=await(await request.get(`/api/projects/${project.project_id}/export-readiness`)).json();
+  expect(createHash("sha256").update(bytes).digest("hex")).toBe(latest.last_export.delivery.sha256);
+  await page.reload();await expect(link).toHaveAttribute("href",href!);expect(exports).toBe(1);
+  await page.route("**/export",r=>r.abort());
+  await generate.click();await expect(page.locator(".native-export [role=alert]")).toContainText("没有得到成功确认");
+  await expect(generate).toBeDisabled();
+  await page.getByRole("button",{name:"重新读取范围与报告",exact:true}).click();
+  await expect(link).toHaveAttribute("href",href!);expect(exports).toBe(2);
+  await expect(generate).toBeDisabled();
+});
 test("native review preserves failed edits and advances only after a saved decision",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
   const runs=await(await request.get("/api/runs?limit=50")).json();
