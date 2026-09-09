@@ -159,6 +159,8 @@ export class FixtureAdapter implements WorkspaceAdapter {
     this.listeners.forEach((fn) => fn());
   }
   private task(id: string) {
+    // Never mutate a snapshot already observed by React or a settings editor baseline.
+    this.state = structuredClone(this.state);
     const t = this.state.tasks.find((t) => t.id === id);
     if (!t) throw Error("任务已删除或不存在");
     return t;
@@ -185,6 +187,7 @@ export class FixtureAdapter implements WorkspaceAdapter {
     this.publish();
   }
   async createTask(project: string) {
+    this.state = structuredClone(this.state);
     if (!this.state.projects.some((p) => p.id === project))
       throw Error("项目不存在");
     const t = newTask(crypto.randomUUID(), project);
@@ -316,6 +319,7 @@ export class FixtureAdapter implements WorkspaceAdapter {
     }
     if (!/^\d+(\.\d{1,2})?$/.test(settings.budget))
       throw Error("预算需要非负金额，最多两位小数");
+    this.state = structuredClone(this.state);
     this.state.settings = {
       ...structuredClone(settings),
       revision: crypto.randomUUID(),
@@ -335,11 +339,13 @@ export class FixtureAdapter implements WorkspaceAdapter {
     this.publish();
   }
   async testProvider(id: string, result: "success" | "failed" | "unknown") {
+    this.state = structuredClone(this.state);
     const p = this.state.settings.providers.find((p) => p.id === id);
     if (!p) throw Error("账户不存在");
     p.status = "正在模拟测试";
     this.publish();
     await delay(800);
+    this.state = structuredClone(this.state);
     this.state.settings.providers.find((p) => p.id === id)!.status = {
       success: "模拟连接成功",
       failed: "模拟连接失败",
@@ -349,11 +355,13 @@ export class FixtureAdapter implements WorkspaceAdapter {
     this.publish();
   }
   async installPlugin(id: string, fail: boolean) {
+    this.state = structuredClone(this.state);
     const p = this.state.settings.plugins.find((p) => p.id === id);
     if (!p) throw Error("插件不存在");
     p.status = "模拟安装中";
     this.publish();
     await delay(800);
+    this.state = structuredClone(this.state);
     this.state.settings.plugins.find((p) => p.id === id)!.status = fail
       ? "模拟校验失败"
       : "Ready";

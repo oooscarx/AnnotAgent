@@ -131,8 +131,8 @@ export function AgentPreviewApp({
       document.removeEventListener("keydown", key);
     };
   }, [picker]);
-  const navigate = (values: Record<string, string | null>) => {
-    if (!canNavigate()) return;
+  const navigate = (values: Record<string, string | null>, alreadyConfirmed=false) => {
+    if (!alreadyConfirmed&&!canNavigate()) return;
     const next = new URL(location.href);
     for (const [k, v] of Object.entries(values))
       v === null ? next.searchParams.delete(k) : next.searchParams.set(k, v);
@@ -209,10 +209,11 @@ export function AgentPreviewApp({
             className="new-task"
             onClick={() =>
               void act(async () => {
+                if(!canNavigate())return;
                 const id = await adapter.createTask(
                   task?.project || "products",
                 );
-                navigate({ settings: null, task: id, pane: null });
+                navigate({ settings: null, task: id, pane: null },true);
               })
             }
           >
@@ -453,7 +454,7 @@ export function AgentPreviewApp({
                             <p>
                               打开图片，拖动边界或在标注列表里精确修改。只保存当前演示候选。
                             </p>
-                            <button onClick={() => navigate({ pane: "image" })}>
+                            <button onClick={() => navigate({ pane: "image",image:'1' })}>
                               定位需要修正的目标 →
                             </button>
                           </div>
@@ -780,9 +781,11 @@ export function AgentPreviewApp({
                     }}
                   />
                   <ArtifactPane
-                    key={task.id}
+                    key={`${task.id}:${url.searchParams.get('image')||'1'}`}
                     task={task}
                     adapter={adapter}
+                    image={Math.max(1,Math.min(3,Number(url.searchParams.get('image'))||1))}
+                    onImage={n=>navigate({image:String(n)})}
                     close={() => navigate({ pane: null })}
                     onError={setError}
                   />

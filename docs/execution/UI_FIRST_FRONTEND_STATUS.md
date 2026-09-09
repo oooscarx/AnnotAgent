@@ -30,4 +30,18 @@
 
 ## Remaining / next
 
+## F2 — six settings pages
+
+- General: immediate theme preview/cancel, language navigation preference, font/density, initial project-collapse preference, shortcut guidance.
+- Providers: add/edit validation, simulated credential slot only, no secret input, explicit probe success/failure/unknown and deletion-impact confirmation.
+- Agent models: shared registry snapshot with Composer, tool incompatibility and removed-account availability. Default affects new tasks only.
+- Vision/plugins: ready/missing/disabled/error rows, compatibility disclosure, simulated install approval, progress, failed verification and retry.
+- Privacy: scoped simulated external-data preference, protected cache cleanup preview; no real files touched. Usage: decimal budget, scope, unknown costs, near/exceeded states.
+- All six pages have explicit loading/empty/read-error/recovery scenarios. Save failure preserves editing; unsaved exit guard also covers project sidebar. Settings save and cancel are consistent controls, not old production form wrappers.
+- Fixed a browser-discovered immutable snapshot defect: probe/install mutated the editor's baseline, incorrectly making remote updates look like local edits. Fixture now copies before writes; both failure and unknown results render.
+- Validation: **15/15 preview browser tests passed**, including six state matrices, settings persistence, dirty guard, install verification, privacy protection, network isolation and core workspace controls. Earlier 2 failing assertions exposed the snapshot defect and now pass.
+- English currently translates navigation and new-task entry; detailed demo narratives/settings descriptions remain Chinese. This is a known UI localization limitation, not a claim of complete English localization.
+
+F3 follows with responsive/artifact coverage, actual screenshots and handoff. No HTTP integration starts before visual approval.
+
 F1: interaction correctness, dialogs/focus, scoped drafts, refresh/navigation guards, image edit controls and fixture semantics. F2: six-page error/save flows, model/provider consistency. F3: browser matrix, screenshots and handoff. No Live tests, no human usability tests, no native browser 200% zoom verification yet.

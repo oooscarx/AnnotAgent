@@ -6,23 +6,23 @@ export function ArtifactPane({
   adapter,
   close,
   onError,
+  image,
+  onImage,
 }: {
   task: Task;
   adapter: WorkspaceAdapter;
   close: () => void;
   onError: (s: string) => void;
+  image:number;
+  onImage:(image:number)=>void;
 }) {
-  const initialImage =
-    Number(new URL(location.href).searchParams.get("image")) || 1;
+  const initialImage = image;
   const [boxes, setBoxes] = useState(
     task.editBoxes?.[initialImage] || (initialImage === 1 ? task.boxes : []),
   );
   const [selected, setSelected] = useState(task.boxes[0]?.id);
   const [compare, setCompare] = useState(false);
   const [original, setOriginal] = useState(false);
-  const [image, setImage] = useState(
-    () => Number(new URL(location.href).searchParams.get("image")) || 1,
-  );
   const [zoom, setZoom] = useState(100);
   const [history, setHistory] = useState<Box[][]>([]);
   const [saving, setSaving] = useState(false);
@@ -52,12 +52,7 @@ export function ArtifactPane({
     );
   };
   const pickImage = (n: number) => {
-    setImage(n);
-    setBoxes(task.editBoxes?.[n] || (n === 1 ? task.boxes : []));
-    setHistory([]);
-    const u = new URL(location.href);
-    u.searchParams.set("image", String(n));
-    window.history.replaceState(null, "", u);
+    onImage(n);
   };
   return (
     <aside className="artifact-pane" aria-label="图片与标注">
@@ -112,9 +107,10 @@ export function ArtifactPane({
           style={{ width: `${zoom}%`, minWidth: `${zoom}%` }}
           onPointerMove={(e) => {
             if (!drag) return;
-            const rect = e.currentTarget.getBoundingClientRect();
-            const dx = ((e.clientX - drag.x) * 960) / rect.width,
-              dy = ((e.clientY - drag.y) * 760) / rect.height;
+            const transform=e.currentTarget.getScreenCTM();
+            if(!transform)return;
+            const dx = (e.clientX - drag.x) / transform.a,
+              dy = (e.clientY - drag.y) / transform.d;
             setBoxes((bs) =>
               bs.map((b) =>
                 b.id !== drag.id
