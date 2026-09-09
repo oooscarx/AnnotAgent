@@ -584,27 +584,68 @@ impl crate::LocalApplication {
                 execution.task_id,
                 execution.call_id,
                 ConversationCallStatus::Failed,
-                json!({"error":"Cancelled before sending the Schema request"}),
+                json!({"error":"Cancelled before sending the Schema request", "failure":annotagent_core::ModelFailure { stage:annotagent_core::ModelFailureStage::PrepareRequest, category:annotagent_core::ModelFailureCategory::Cancelled, http_status:None }}),
             )?);
         }
-        let attempt = propose_conversation_schema(
+        let attempt = propose_conversation_schema_tracked(
             provider,
             &execution.remote_model,
             &goal,
             &schema.tasks,
-            cancellation,
+            cancellation.clone(),
+            |stage| {
+                Ok(self.store.mark_conversation_call_stage(
+                    &owner,
+                    execution.task_id,
+                    execution.call_id,
+                    stage,
+                )?)
+            },
         )
         .await;
         let (status, evidence) = match attempt {
-            Ok(attempt) => (
-                ConversationCallStatus::Completed,
-                serde_json::to_value(attempt)?,
-            ),
+            Ok(attempt) => {
+                let invalid = attempt.decision.is_err();
+                let mut evidence = serde_json::to_value(attempt)?;
+                if invalid {
+                    evidence["failure"] = serde_json::to_value(annotagent_core::ModelFailure {
+                        stage: annotagent_core::ModelFailureStage::StructuredOutput,
+                        category: annotagent_core::ModelFailureCategory::InvalidStructuredOutput,
+                        http_status: None,
+                    })?;
+                }
+                (ConversationCallStatus::Completed, evidence)
+            }
             // The provider may have received the request. Never silently reissue it.
-            Err(_) => (
-                ConversationCallStatus::InDoubt,
-                json!({"error":"Schema request did not return a complete response. Remote completion and cost are unknown; no automatic retry was scheduled."}),
-            ),
+            Err(error) => {
+                use annotagent_core::{
+                    CoreError, ModelFailure, ModelFailureCategory as C, ModelFailureStage as S,
+                };
+                let failure = match error.downcast_ref::<CoreError>() {
+                    Some(CoreError::ModelFailure(failure)) => failure.clone(),
+                    _ => ModelFailure {
+                        stage: if error.downcast_ref::<CoreError>().is_some()
+                            || cancellation.is_cancelled()
+                        {
+                            S::ProviderRequest
+                        } else {
+                            S::Handler
+                        },
+                        category: if cancellation.is_cancelled() {
+                            C::Cancelled
+                        } else if error.downcast_ref::<CoreError>().is_some() {
+                            C::ProviderError
+                        } else {
+                            C::LocalError
+                        },
+                        http_status: None,
+                    },
+                };
+                (
+                    ConversationCallStatus::InDoubt,
+                    json!({"error":"Schema request did not return a complete response. Remote completion and cost are unknown; no automatic retry was scheduled.","failure":failure}),
+                )
+            }
         };
         let receipt = self.store.finish_conversation_call(
             &owner,
@@ -807,6 +848,25 @@ pub async fn propose_conversation_schema(
     existing_tasks: &[TaskConfig],
     cancellation: CancellationToken,
 ) -> Result<ConversationSchemaAttempt> {
+    propose_conversation_schema_tracked(
+        provider,
+        remote_model,
+        goal,
+        existing_tasks,
+        cancellation,
+        |_| Ok(()),
+    )
+    .await
+}
+
+async fn propose_conversation_schema_tracked(
+    provider: &dyn VisionModelProvider,
+    remote_model: &str,
+    goal: &str,
+    existing_tasks: &[TaskConfig],
+    cancellation: CancellationToken,
+    progress: impl Fn(&str) -> Result<()>,
+) -> Result<ConversationSchemaAttempt> {
     if goal.trim().is_empty() || goal.len() > 65_536 {
         bail!("A bounded nonempty saved goal is required");
     }
@@ -816,6 +876,7 @@ pub async fn propose_conversation_schema(
     if content.len() > 131_072 {
         bail!("Schema context is too large for this bounded proposal");
     }
+    progress("provider_request")?;
     let response = provider.complete(ModelRequest {
         model: remote_model.into(), task_id: "conversation_schema_proposal".into(),
         messages: vec![
@@ -824,6 +885,7 @@ pub async fn propose_conversation_schema(
         ], images: Vec::new(), tools: vec![output_tool()], max_output_tokens: 2048, temperature: 0.0,
         extra: BTreeMap::from([("parallel_tool_calls".into(), json!(false))]),
     }, cancellation).await?;
+    progress("response_received")?;
     let decision = parse_conversation_schema_response(&response).map_err(|error| error.to_string());
     Ok(ConversationSchemaAttempt { response, decision })
 }
@@ -1426,6 +1488,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(receipt.status, ConversationCallStatus::Completed);
+        assert!(receipt.started_at.is_some() && receipt.completed_at.is_some());
+        assert!(receipt.duration_ms.is_some_and(|ms| ms >= 0));
+        assert_eq!(receipt.stage.as_deref(), Some("settled"));
+        assert!(receipt.failure.is_none());
         assert_eq!(provider.requests.lock().unwrap().len(), 1);
         assert!(
             app.conversation_schema_for_call("schema-test", conversation, task, execution.call_id)
@@ -2203,6 +2269,13 @@ mod tests {
             })
             .await
             .unwrap();
+            let active = reopened
+                .store
+                .conversation_call(&owner, second_task, stopped.call_id)
+                .unwrap()
+                .unwrap();
+            assert_eq!(active.stage.as_deref(), Some("provider_request"));
+            assert!(active.completed_at.is_none() && active.duration_ms.is_none());
             reopened
                 .cancel_conversation_schema(
                     "schema-test",
@@ -2213,7 +2286,31 @@ mod tests {
                 .unwrap();
         };
         let (result, ()) = tokio::join!(run, cancel);
-        assert_eq!(result.unwrap().status, ConversationCallStatus::InDoubt);
+        let result = result.unwrap();
+        assert_eq!(result.status, ConversationCallStatus::InDoubt);
+        assert_eq!(
+            result.failure.as_ref().unwrap().category,
+            annotagent_core::ModelFailureCategory::Cancelled
+        );
+        assert_eq!(result.stage.as_deref(), Some("settled"));
+        assert!(result.duration_ms.is_some());
+        assert!(
+            !serde_json::to_string(&result)
+                .unwrap()
+                .contains("TEST cancelled transport")
+        );
+        assert_eq!(
+            reopened
+                .execute_conversation_schema(
+                    "schema-test",
+                    &stopped,
+                    &waiting,
+                    CancellationToken::default()
+                )
+                .await
+                .unwrap(),
+            result
+        );
         assert_eq!(waiting.requests.lock().unwrap().len(), 1);
         assert!(
             reopened

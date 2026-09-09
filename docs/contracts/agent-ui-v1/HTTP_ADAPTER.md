@@ -135,3 +135,7 @@ Stop POST 的 `normalized_state=stopping` 与后续 GET 的 `outcome_unknown` �
 4. 若该 call 已有 receipt，精确重试返回原 receipt，不再调用模型；`in_doubt` 仍是未知结果，不能借重试重发。若尚无 receipt，回答后原授权可首次 reservation；同 ID 再次提交仅恢复同一结果。
 
 回归：`http_queue_human_check.py --enable-fixture --manifest <fresh TEST workspace>/manifest.json`。该脚本会回答 seed 的 bbox 问题并创建一次真实测试补充；每次使用新 seed。它验证 pending preview、preview/POST 间新增问题、无授权/预算变化、回答后原 Consent 成功、重复 POST 只有一个 call。存储回归额外验证已冻结授权在人工回答及 SQLite 重开后仍能以原 ID reservation，重复 reservation 为 Existing。无 SQL migration，无自动清理历史授权。
+
+## UIAPI-008：真实调用阶段与原因
+
+现有 calls/workspace/Schema POST 回执增量字段为 `started_at,completed_at,duration_ms,stage,failure`（均可 null）。stage 仅记录 reserved/provider_request/response_received/settled；failure 是安全 `{stage,category,http_status}`。completed_at 是本地结算，不能将 in_doubt 当成功；未知结果不自动重发。完整枚举、旧记录兼容及流式调查见 [UIAPI-008_PROGRESS.md](UIAPI-008_PROGRESS.md)。本轮无文本 delta/SSE 新接口。

@@ -1,0 +1,21 @@
+{
+  "active_receipt_additions": {
+    "started_at": "2026-09-09T04:00:00+00:00",
+    "completed_at": null,
+    "duration_ms": null,
+    "stage": "provider_request",
+    "failure": null
+  },
+  "unknown_receipt_additions": {
+    "started_at": "2026-09-09T04:00:00+00:00",
+    "completed_at": "2026-09-09T04:00:01+00:00",
+    "duration_ms": 1000,
+    "stage": "settled",
+    "failure": {
+      "stage": "response_body",
+      "category": "timeout",
+      "http_status": null
+    }
+  },
+  "note": "Illustrative additional fields, not an observation of the reported real call. Existing status remains in_doubt for the unknown example."
+}
