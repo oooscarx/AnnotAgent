@@ -28,7 +28,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
   onImprove?: (draftId: string, testId: string, imageId?: string) => void;
   navigation?: ReactNode;
   goalOverride?: {kind:string;labels:string[]};
-  humanSubmission?: ({outcomeId:string;additionId?:never}|{additionId:string;outcomeId?:never}) & {save:(revision:SampleFeedbackRevision)=>Promise<SampleFeedbackRevision>};
+  humanSubmission?: ({outcomeId:string;additionId?:never}|{additionId:string;outcomeId?:never}) & {continueAfterSave?:boolean;save:(revision:SampleFeedbackRevision)=>Promise<SampleFeedbackRevision>};
   initialOutcomeId?: string;
 }) {
   const freshness = useSampleFreshness(projectId, draftId, testId);
@@ -206,7 +206,7 @@ export function SampleFeedbackEditor({ sample, image, testId, onDirtyChange, onC
       <span>{t(selected ? "This decision applies only to the selected result." : "This decision applies to this sample image only.")}</span>
       {humanSubmission && <p>Submitting saves this Sandbox correction and prepares a separate revision Draft. It does not call a model or change the tested plan.</p>}
       {humanSubmission?.additionId && !referenceReady && <p role="status">Add a reference target, then adjust its box or enter its category. The initial editing placeholder cannot be submitted.</p>}
-      <button className={onAdopt ? undefined : "primary"} disabled={!loaded || busy || showBefore || !sample.projection || !referenceReady} onClick={() => void save(!humanSubmission)}>{humanSubmission?.additionId ? "Submit reference target" : humanSubmission ? "Submit correction" : t(selected ? "Confirm selected result" : onConfirmed ? "Confirm sample and next" : "Confirm this sample")}</button>
+      <button className={onAdopt ? undefined : "primary"} disabled={!loaded || busy || showBefore || !sample.projection || !referenceReady} onClick={() => void save(!humanSubmission)}>{humanSubmission?.continueAfterSave ? "Submit correction and continue" : humanSubmission?.additionId ? "Submit reference target" : humanSubmission ? "Submit correction" : t(selected ? "Confirm selected result" : onConfirmed ? "Confirm sample and next" : "Confirm this sample")}</button>
       {onAdopt && <button className="primary" disabled={!loaded || busy || dirty || showBefore || !sample.projection || freshness.status !== "current"} onClick={onAdopt}>{t("Continue with this plan")}</button>}
       {saved && <span role="status">{t("Sample feedback saved")}</span>}
       {error && <p role="alert">{error}</p>}

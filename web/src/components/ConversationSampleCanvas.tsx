@@ -70,7 +70,7 @@ export function ConversationSampleCanvas({project, draft, test, image, onDirtyCh
         onReference({image:{image_id:image.image_id,sha256:source.content_hash},reference:{scope:"sample_candidate",task_id:referenceTask.id,project_schema_revision:referenceTask.schema_revision,draft_id:record.draft_id,draft_revision:record.draft_revision,sample_test_id:record.id,candidate_id:id,source_artifact_id:candidates[0].source_artifact_id}},image.name);
       }:undefined}
       initialOutcomeId={requestedId}
-      humanSubmission={humanRequest?.status==="pending" ? {...(referenceId ? {additionId:referenceId} : {outcomeId:humanRequest.input.outcome_id!}),save:async revision=>{const saved=await api.answerHumanRequest(project,humanRequest,revision);if(!saved.answer)throw new Error("Server did not return a saved correction");onAnswered?.(saved);return saved.answer;}} : undefined}
+      humanSubmission={humanRequest?.status==="pending" ? {...(referenceId ? {additionId:referenceId} : {outcomeId:humanRequest.input.outcome_id!}),continueAfterSave:Boolean(humanRequest.authorized_journey_id),save:async revision=>{const saved=await api.answerHumanRequest(project,humanRequest,revision,humanRequest.authorized_journey_id);if(!saved.answer)throw new Error("Server did not return a saved correction");onAnswered?.(saved);return saved.answer;}} : undefined}
       navigation={<nav className="button-row" aria-label="Tested images"><button disabled={index===0} onClick={()=>onOpen(draft,test,record.inputs[index-1].image_id)}>Previous image</button><span>{index+1}/{record.inputs.length}</span><button disabled={index===record.inputs.length-1} onClick={()=>onOpen(draft,test,record.inputs[index+1].image_id)}>Next image</button></nav>} />
   </section>;
 }

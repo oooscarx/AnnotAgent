@@ -27,6 +27,7 @@ export function ConversationHumanRequests({requests,taskId,activeId,ready,loadEr
     <p role="status">{value.deferred ? "Deferred · not reviewed or completed" : value.resume_draft_id ? "Correction saved · revision Draft available" : value.status==="answered" ? "Correction saved · awaiting task continuation" : value.status}</p>
     {value.deferred&&<p className="muted">Reopen when ready to correct this sample. Reopening does not call a model or renew the budget.</p>}
     {value.resume_error&&<p role="alert">Correction saved, but Draft preparation failed: {value.resume_error}</p>}
+    {value.journey_resume?.error&&<p role="alert">Correction saved; automatic continuation needs attention: {value.journey_resume.error}. Review the saved repair authorization below before retrying.</p>}
     <div className="conversation-request-actions">
       <button disabled={Boolean(pending)} onClick={()=>onOpen(value)}>Open requested result</button>
       {value.status==="answered"&&<button disabled={Boolean(pending)} onClick={()=>void act(value,onRetry)}>Retry Draft preparation</button>}

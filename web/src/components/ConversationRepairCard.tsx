@@ -2,14 +2,15 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { HumanRequest } from "../conversation-human-api";
 import { ConversationBuilderCard } from "./ConversationBuilderCard";
+import { ConversationJourneyCard } from "./ConversationJourneyCard";
 import type { OpenConversationSample } from "./ConversationSampleCard";
 import type { ImageClassReview } from "../conversation-image-class-api";
 
 /** Restore the exact Sandbox Schema; fetching this card never invokes a model. */
-export function ConversationRepairCard({project, request, editing, onSample, onAssistance}: {
-  project:string; request:HumanRequest; editing:boolean; onAssistance?:()=>void; onSample:OpenConversationSample;
+export function ConversationRepairCard({project, request, editing, onSample, onAssistance, onPendingConsent}: {
+  project:string; request:HumanRequest; editing:boolean; onAssistance?:()=>void; onSample:OpenConversationSample; onPendingConsent?:(id?:string)=>void;
 }) {
-  return <RepairContext project={project} conversation={request.input.conversation_id} task={request.input.task_id} source={request.input.id} sample={request.input.sample_test_id} draft={request.resume_draft_id!} editing={editing} onSample={onSample} onAssistance={onAssistance} />;
+  return <RepairContext project={project} conversation={request.input.conversation_id} task={request.input.task_id} source={request.input.id} sample={request.input.sample_test_id} draft={request.resume_draft_id ?? request.input.resume_checkpoint_ref} pendingAnswer={request.status==="pending"} onPendingConsent={onPendingConsent} editing={editing} onSample={onSample} onAssistance={onAssistance} />;
 }
 export function ConversationClassRepairCard({project,review,editing,onSample,onAssistance}: {
   project:string;review:ImageClassReview;editing:boolean;onSample:OpenConversationSample;onAssistance?:()=>void;
@@ -17,7 +18,8 @@ export function ConversationClassRepairCard({project,review,editing,onSample,onA
   if(review.status!=="applied" || !review.repair_draft_id)return null;
   return <RepairContext project={project} conversation={review.conversation_id} task={review.task_id} source={review.id} sample={review.scope.sample_test_id} draft={review.repair_draft_id} imageClass editing={editing} onSample={(draft,test,image)=>onSample(draft,test,image ?? review.scope.image_id)} onAssistance={onAssistance} />;
 }
-function RepairContext({project,conversation,task,source,sample,draft,imageClass,editing,onSample,onAssistance}: {
+function RepairContext({project,conversation,task,source,sample,draft,imageClass,pendingAnswer,onPendingConsent,editing,onSample,onAssistance}: {
+  pendingAnswer?:boolean;onPendingConsent?:(id?:string)=>void;
   project:string;conversation:string;task:string;source:string;sample:string;draft:string;imageClass?:boolean;editing:boolean;onSample:OpenConversationSample;onAssistance?:()=>void;
 }) {
   const [schema,setSchema]=useState<{id:string;revision:number}>();
@@ -35,5 +37,6 @@ function RepairContext({project,conversation,task,source,sample,draft,imageClass
   },[project,source,sample]);
   if(error)return <p role="alert">{error}</p>;
   if(!schema)return <p role="status">Loading the saved correction's plan context…</p>;
+  if(pendingAnswer)return <ConversationJourneyCard project={project} conversation={conversation} task={task} schema={schema} repairRequest={{id:source,draft}} pendingAnswer onPendingConsent={onPendingConsent} disabled={false} onSample={onSample} onAssistance={onAssistance}/>;
   return <ConversationBuilderCard project={project} conversation={conversation} task={task} schema={schema} editing={editing} onSample={onSample} onAssistance={onAssistance} repairRequest={imageClass ? undefined : {id:source,draft}} imageClassRepair={imageClass ? {id:source,draft} : undefined} />;
 }

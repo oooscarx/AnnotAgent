@@ -32,7 +32,7 @@ test("preauthorized pending correction waits without inference and the saved ans
   await page.getByLabel("Correct label", { exact: true }).fill("cup");
   await page.getByRole("spinbutton", { name: "width", exact: true }).fill("0.12");
   const answerResponse = page.waitForResponse(response => response.url().endsWith(`/human-requests/${help.input.id}/answer`) && response.request().method() === "POST");
-  await page.getByRole("button", { name: "Submit correction", exact: true }).click();
+  await page.getByRole("button", { name: /^Submit correction( and continue)?$/ }).click();
   const answered = await answerResponse;
   expect(answered.ok(), await answered.text()).toBe(true);
   const receipt = await answered.json();
@@ -48,6 +48,43 @@ test("preauthorized pending correction waits without inference and the saved ans
   expect(await (await request.get(`${state.taskRoot}/calls`)).json()).toEqual(finalCalls);
   await page.reload();
   expect(await (await request.get(`${state.taskRoot}/calls`)).json()).toEqual(finalCalls);
+});
+
+test("pending request UI restores authorization and submits a real correction without request interception", async ({ page, request }) => {
+  test.setTimeout(180_000);
+  const state = await sample(request, page, "pending-repair-ui", true);
+  const help = state.savedRequests[0];
+  await page.goto(`${state.url}&request=${help.input.id}`);
+  const pendingCard = page.getByRole("region", { name: "Build and test annotation plan", exact: true }).filter({has:page.getByRole("heading",{name:"Continue after your correction",exact:true})});
+  await pendingCard.getByRole("button", { name: "Review build and sample authorization", exact:true }).click();
+  const panel = pendingCard.getByLabel("Build and sample authorization",{exact:true});
+  await expect(panel).toContainText("does not authorize future corrections");
+  await panel.getByRole("checkbox",{name:/Allow this plan and sample test/}).check();
+  const consentResponse = page.waitForResponse(response=>response.request().method()==="POST"&&response.url().endsWith(`${state.taskRoot}/journey-consents`));
+  await panel.getByRole("button",{name:"Authorize continuation after this answer",exact:true}).click();
+  const consent = (await (await consentResponse).json()).consent;
+  await expect(pendingCard).toContainText("waiting for your correction");
+  const calls = await (await request.get(`${state.taskRoot}/calls`)).json();
+  await page.reload();
+  await expect(pendingCard).toContainText("waiting for your correction");
+  expect(await (await request.get(`${state.taskRoot}/calls`)).json()).toEqual(calls);
+  await pendingCard.getByRole("button",{name:"Revoke continuation permission",exact:true}).scrollIntoViewIfNeeded();
+  await page.getByRole("region",{name:"Project images",exact:true}).evaluate(element=>element.scrollTo(0,0));
+  await page.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/pending-answer-authorization.png"),fullPage:true});
+  await page.getByLabel("Correct label",{exact:true}).fill("cup");
+  await page.getByRole("spinbutton",{name:"width",exact:true}).fill("0.12");
+  const answerResponse = page.waitForResponse(response=>response.request().method()==="POST"&&response.url().endsWith(`/human-requests/${help.input.id}/answer`));
+  await page.getByRole("button",{name:"Submit correction and continue",exact:true}).click();
+  const answer = await answerResponse;
+  expect(answer.request().postDataJSON().journey_consent_id).toBe(consent.id);
+  expect((await answer.json()).journey_resume.error).toBeUndefined();
+  const repair = page.getByRole("region",{name:"Repair annotation pipeline",exact:true});
+  await expect(repair.getByText("Sample results saved",{exact:true})).toBeVisible({timeout:75_000});
+  await repair.getByRole("button",{name:"View sample results in canvas",exact:true}).click();
+  await expect(page.getByText("Saved workspace loaded",{exact:true})).toBeVisible();
+  await expect(page.getByText("Checking whether this sample still matches the current plan...",{exact:true})).toBeHidden();
+  await page.getByRole("region",{name:"Project images",exact:true}).evaluate(element=>element.scrollTo(0,0));
+  await page.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/pending-answer-result.png"),fullPage:true});
 });
 
 test("one explicit repair consent preserves its exact correction and continues through Builder and sample", async ({ page, request }) => {

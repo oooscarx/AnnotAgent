@@ -5205,3 +5205,38 @@ restore its status/errors, and close the server-restart gap between answer ackno
 and execution admission using durable continuation intent. The current optional body
 link plus saved consent permits explicit safe retry but is not yet a demonstrated
 restart-driven automatic delivery protocol. The whole objective remains active.
+
+### 2026-09-09 — Pending request UI authorizes and restores answer continuation
+
+The selected active Pending human request now reuses its exact source Sample Schema
+and the existing joint Journey card. Users may preview/approve one post-answer repair,
+or save their correction without inference permission. The card lists actual planning
+and image destinations, image/call bounds, unknown cost and expiry, names the frozen
+feedback revision, and excludes future corrections. Saved permission has a visible
+revoke action. History restoration associates it only with the exact request/checkpoint;
+the canvas receives the acknowledged consent ID, never an inferred latest global grant.
+Its button changes to `Submit correction and continue` only after that restoration.
+
+On answer success, the applied request's existing repair card restores the same joint
+execution/result. Continuation errors stay on the human request card and do not replace
+the editable canvas or turn a saved correction into a failed-save report. The optional
+consent ID held in current React request state is not business truth; server history and
+server exact-scope validation remain authoritative. No mount/refresh model POST added.
+
+Browser 43879 passed 4/4; screenshot inspection found an unhelpful scrolled-down view.
+Adjusted screenshot navigation to show the saved authorization and the actual new sample
+canvas. Inspection also removed duplicate waiting text and the unrelated “different
+plan” action while a pending permission is active. Final 57258 passes **4/4 (12.4s)**,
+typecheck and all 228 Web unit tests, in `/tmp/annotagent-guided-e2e-22869`. Production
+build passes (existing chunk warning). The new UI test uses real controls without
+request interception: authorize, reload, edit bbox, submit with exact consent, await
+saved sample, open its result. Earlier contract test still uses explicit interception
+and is not counted as evidence of the new UI control.
+
+Inspected screenshot evidence:
+`/tmp/annotagent-pending-answer-ui-verified/conversational-workspace/pending-answer-authorization.png`
+and `pending-answer-result.png` in the same directory. Synthetic TEST pixels and fixture
+models prove interaction/protocol semantics only, not object-detection accuracy or Live
+model behavior. No real workspace or remote changes and no push. Still pending: durable
+answer-to-dispatch delivery/restart tests, pre-admission error persistence, complete
+combined regressions and the outstanding final acceptance audit.
