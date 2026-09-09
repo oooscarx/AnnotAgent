@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Native rule-proposal actual authorization and execution
+
+Replaced API-only proposal generation in the integration scenario with native controls: open actual preview, assert destination/unchecked launch gate, approve and execute, observe actual draft suggestion, adopt/edit/save, recover and build a new plan. Only preview query model selection is routed to the explicitly registered/probed TEST Profile; no response substitution. Exact browser writes now include one proposal authorization and execution plus scope/save/Builder actions. Full extended real HTTP scenario passed with original sample preserved and older-history navigation. Added parent activity propagation so pending proposal/preview/unknown state blocks rule save/edit and cannot hide the independent Stop control by materializing a rule mid-execution.
+
+Typecheck and isolated build passed; /tmp/annotagent-native-proposal-live-controls-dist, source36a2056 plus slice. Stop/lost-execute/unknown and server-only unexecuted authorization recovery still require dedicated verification/completion. Test is deterministic loopback HTTP, not live quality. True workspace/Provider/Published/user services/remotes unchanged. Goal active.
+
 ## Native model rule-proposal authorization/execution controls
 
 Added FutureProposalControls next to saved suggestion view. Actual preview displays model/destination, text-only image0/call1 scope, cumulative counts, expiry and unknown fee; explicit checkbox required and missing project-budget evidence blocks execution. Exact original authorization/source is persisted before authorization, dispatch intent before execute. Read-only polling restores server receipt; submitted unknown calls cannot auto-resend. Independent Stop stores intent before the existing call-cancellation request, validates receipt IDs and explicitly avoids claiming remote termination/refund. Server-known active proposals can be stopped even without local recovery. Source and pending-envelope validation reuse existing helpers; no new backend engine or Rust edits.
