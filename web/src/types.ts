@@ -776,6 +776,17 @@ export interface WorkflowNodeSummary {
   fallback?: string;
 }
 
+export interface FrozenWorkflowVersion {
+  workflow_id: string;
+  version: number;
+  project_id: string;
+  source_draft_id: string;
+  content_hash: string;
+  published_at: string;
+  draft: WorkflowDraft;
+  snapshot: {schema_version:number;draft:WorkflowDraft|null;models:unknown[];model_profiles:unknown[];plugin_models:unknown[];enabled_skills:unknown;prompt_resources:unknown;safety_compatibility:string};
+}
+
 export interface WorkflowVersion {
   workflow_id: string;
   name: string;

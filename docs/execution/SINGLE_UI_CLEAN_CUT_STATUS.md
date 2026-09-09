@@ -1,5 +1,13 @@
 # Single UI Clean Cut
 
+## Full immutable Workflow version reads integrated
+
+Reviewed complete7c7c8df publication storage/server/application changes and integrated as b5232b2. Documentation conflicts resolved to retain only this publication delivery, excluding unrelated repair admission claims. Independent isolated Rust tests: three publication-command storage regressions and owned-publication HTTP regression passed. Covers exact revision/hash/owner rejection, one-version concurrent replay, transaction rollback, persisted replay after restart, immutable old snapshot after clone edits, and no new model connection/Sample/Run during publication. Formatting passed. Backend native publish contract is available, but frontend publication confirmation is not yet wired.
+
+WorkflowVersionDetail now reads the owner-scoped complete persisted version rather than Project summary. Validates Project/workflow/version/source identity, displays frozen authoring nodes/Label Pipeline and full execution/model/resource snapshot, and preserves legacy null execution-Draft as null. No substitution with current Draft or publication-time hash confusion. Full raw object remains under explicit detail disclosure; version copy/compare still pending.
+
+322 unit tests (one cutover TODO), typecheck/build and actual TEST HTTP browser version deep-link/refresh test passed. Browser compares displayed full object with server GET byte-equivalent formatted JSON and records zero writes; malformed version remains rejected. New fixture uses isolated `/tmp/annotagent-frozen-version-dist`, owned server stopped afterward. No real workspace/schema migration, user service restart, Published modification, paid call or push. Old App/styles and remaining migration gaps remain; goal active.
+
 ## Remove transitional return-parameter helpers
 
 Removed managementReturn/retainManagementContext and their old-root callers. New UI no longer hosts or exports these old `return_task`, `return_image`, `return_pane` compatibility translators. Existing new Review source/queue URL contract remains separate and unchanged. Fixed native taskLocation so switching Project drops the prior Project's query context instead of carrying a foreign Task/Image ID; same-Project work retains its task/image/pane query.

@@ -799,6 +799,8 @@ export const api = {
     );
   },
   workflows: () => request<{ workflows: ProjectWorkflow[] }>("/api/workflows"),
+  frozenWorkflowVersion: (projectId:string,workflowId:string,version:number,signal?:AbortSignal) =>
+    request<import("./types").FrozenWorkflowVersion>(`/api/projects/${encodeURIComponent(projectId)}/workflows/${encodeURIComponent(workflowId)}/versions/${version}`,{signal}),
   workflowDraft: (projectId: string, draftId: string, signal?: AbortSignal) =>
     request<WorkflowDraft>(`/api/workflow-drafts/${encodeURIComponent(draftId)}?project_id=${encodeURIComponent(projectId)}`, {signal}),
   validateWorkflowDraft: (projectId: string, draftId: string, revision: number, signal?: AbortSignal) =>
