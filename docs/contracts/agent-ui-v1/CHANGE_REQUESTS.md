@@ -29,3 +29,7 @@
 ## UIAPI-010 Model Profile CAS
 
 PATCH `/api/model-profiles/:id` accepts optional `expected_revision`; atomic stale edits return 409 `model_profile_revision_conflict` with expected/current revision. Every successful HTTP edit appends a revision, including metadata-only edits. Success remains an unwrapped ModelProfile. `revision` is still not a request field. Exact examples, compatibility and scope: [UIAPI-010_MODEL_CAS.md](UIAPI-010_MODEL_CAS.md).
+
+## UIAPI-012 installation command recovery
+
+POST /api/model-installations adds optional command_id; first admission202, exact replay200 with original operation, changed selection/directory409 model_install_command_conflict. GET /api/model-installations/commands/{command_id} is read-only and never dispatches. Receipts add command_id/scope and unknown status for orphan in-flight work. Full contract, migration0060, compatibility and tests: [UIAPI-012_INSTALL_COMMANDS.md](UIAPI-012_INSTALL_COMMANDS.md).

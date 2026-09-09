@@ -81,6 +81,7 @@ pub use conversations::{
     ConversationImageRef, ConversationMessage, ConversationMessageInput, ConversationSelectionRef,
 };
 mod management;
+mod model_install_commands;
 mod processing_operations;
 mod sample_feedback;
 mod sample_operations;
@@ -706,6 +707,8 @@ impl SqliteStore {
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(56,'conversation_queued_planning',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute_batch(include_str!("../../../migrations/0057_queued_workflow_copies.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0058_conversation_call_progress.sql"))?;
+            transaction.execute_batch(include_str!("../../../migrations/0060_model_install_commands.sql"))?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(60,'model_install_commands',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(58,'conversation_call_progress',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(57,'queued_workflow_copies',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(55,'conversation_message_queue',?1)",[Utc::now().to_rfc3339()])?;
