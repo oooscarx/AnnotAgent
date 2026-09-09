@@ -82,3 +82,13 @@ PATCH adds optional expected_revision and transaction-atomic compare/append. Sta
 Isolated tests: Storage/Server 243 passed, 0 failed, 2 existing ignored; includes independent-connection two-writer race, reopen/old revision/Published snapshot preservation, and HTTP contract/legacy requests. Workspace all-target Clippy with -D warnings, fmt check and diff check passed. Commands and exact contract: docs/contracts/agent-ui-v1/UIAPI-010_MODEL_CAS.md. No paid calls, keys, real workspace mutation, service restart, push or merge. Final SHA is in delivery response.
 
 UIAPI-009 remains blocked/unimplemented. Prior 8cccca5f4f45ba4203ae77c4d74c79a29fa86323 delivered a concrete gap specification only (UIAPI-009_GAP.md); no scope establishment or runtime acceptance is claimed.
+
+## UIAPI-011 round 2: salvage scope repair
+
+Conversation supplies Schema-only target and admitted Registry through input, but outer target=None. Discovery-limit refresh replaced that with global project input, skipping deterministic refinement synthesis. Refresh now retains admitted Schema/goal/task/label/constraints and intersects fresh Registry identities with the admitted sets. Fresh availability still governs; no model identity is invented or newly authorized.
+
+The isolated regression saves a real Conversation Schema, runs a scripted four-turn planning-only Builder without path-discovery calls, and checks actual segmentation binding, LabelPipeline, Schema preservation and static validation. Removing the preservation call reproduces the missing-segmenter failure. Contract and integration boundary: docs/contracts/agent-ui-v1/UIAPI-011_SALVAGE_SCOPE.md. Real VLM/SAM inference remains the integration owner's verification; no paid call or service update was performed here.
+
+Per the integration owner's priority message, UIAPI-009 is paused with uncommitted implementation/tests/migration0059 preserved and excluded from this delivery. UIAPI-010 CAS remains separately committed as 210091a17b1d4ff7b5fe0a306cb9100f1b548aea. Final isolated test totals and delivery SHA are reported in the delivery response.
+
+Isolated delivery-only worktree verification: Application 158 passed / 0 failed / 1 existing ignored; workspace all-target Clippy with `-D warnings`, fmt and diff checks passed. Pre-fix regression failed specifically because the segmenter node was absent.
