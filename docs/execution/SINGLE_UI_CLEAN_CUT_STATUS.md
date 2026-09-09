@@ -43,6 +43,14 @@ Committed visual evidence: `single-ui-clean-cut/m0/disclosure-expanded.png` (144
 
 ## Remaining
 
+### Settings legacy-link cutover
+
+Removed `managementLinks` and its legacy return-URL construction from Agent Settings. Every `/settings/*` now renders only the new UI: canonical sections are parsed by the clean-cut contract, and `/settings/models` is Not Found rather than an alias. New Settings navigation uses canonical section paths. Standalone Settings no longer selects an unrelated first project task implicitly.
+
+Added adapter-backed model profile list and basic editing (display name, remote ID, enabled); locked entries remain protected. Added existing server pricing/budget configuration in the new data/storage area, with refresh-before-save conflict checks and dirty guards. These client checks are not claimed as atomic backend CAS. Full model creation/capability editing and storage statistics/cleanup remain migration work. Published versions and task grants are not mutated by these controls.
+
+Verification: typecheck, 282 unit tests, isolated production build passed; one explicit cutover TODO remains. Read-only actual browser at Vite 5184 against server 8788 verified old model URL Not Found, new model editor/cancel, storage refresh and unchanged-save disabled. Zero POST/PUT/DELETE attempts; zero old `/src/App.tsx` or `/src/styles.css` requests. Real mutation E2E not yet executed. Root legacy App remains for project management until those capabilities migrate; full deletion is not complete.
+
 ### Revised history scope (user clarification)
 
 Migrate history-management functions, but do not include pre-cutover Pipeline/Run records in the new history lists. Preserve old server records and all references. No data deletion is authorized. A persistent server-side cutover scope still needs implementation and verification; browser-local dates or deleting old rows are not acceptable substitutes. Current-task references must remain resolvable independently of history-list filtering.

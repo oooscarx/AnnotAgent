@@ -16,7 +16,7 @@ import { SettingsView } from "./Settings";
 import { ArtifactPane } from "./ArtifactPane";
 import { ExecutionProgress } from "./ExecutionProgress";
 import { routeProject, taskLocation } from "./routes";
-import { conversationSettingsPath, projectWorkPath } from "../navigation";
+import { parseAgentRoute } from "./navigationContract";
 export const phaseNames: Record<Phase, string> = {
   idle: "准备任务",
   planning: "正在模拟规划",
@@ -82,7 +82,7 @@ export function AgentPreviewApp({
   const approvalPending = useRef(false);
   const owner = fixture ? null : routeProject(url);
   const selectedId = url.searchParams.get("task");
-  const task = state.tasks.find(t => (!owner || t.project === owner) &&
+  const task = (url.pathname.startsWith("/settings") && !selectedId) ? undefined : state.tasks.find(t => (!owner || t.project === owner) &&
     (!url.searchParams.get("conversation") || t.conversationId === url.searchParams.get("conversation")) &&
     (selectedId ? t.id === selectedId : owner ? t.id === `new:${owner}` : true));
   useEffect(()=>{
@@ -107,7 +107,10 @@ export function AgentPreviewApp({
   useEffect(() => {
     if (!state.settings.collapsed && state.projects.length) setExpanded(x => x.length ? x : [state.projects[0].id]);
   }, [state.projects.length]);
-  const section = (url.searchParams.get("settings") || (url.pathname === "/settings" ? "general" : null)) as Section | null;
+  const settingsRoute = parseAgentRoute(url);
+  const settingsSections: Record<string, Section> = {general:"general",providers:"providers","agent-models":"agent","vision-models":"vision",plugins:"vision",storage:"privacy",privacy:"privacy",usage:"usage"};
+  const unknownSettings = !fixture && url.pathname.startsWith("/settings/") && settingsRoute.kind !== "settings";
+  const section = (settingsRoute.kind === "settings" ? settingsSections[settingsRoute.page] : url.searchParams.get("settings") || (url.pathname === "/settings" ? "general" : null)) as Section | null;
   const pane = ["image", "artifacts"].includes(url.searchParams.get("pane") || "");
   const theme = previewTheme || state.settings.theme;
   const en = state.settings.language === "en";
@@ -195,11 +198,18 @@ export function AgentPreviewApp({
       if (target) next = taskLocation(next, target.project);
       next.searchParams.delete("conversation");
       next.searchParams.delete("image");
-    } else if (!fixture && values.settings === null && task && next.pathname === "/settings") {
-      next = taskLocation(next, task.project);
+    } else if (!fixture && values.settings === null && next.pathname.startsWith("/settings")) {
+      if(task) next = taskLocation(next, task.project);
+      else next = new URL("/projects", location.origin);
     }
     for (const [k, v] of Object.entries(values))
       v === null ? next.searchParams.delete(k) : next.searchParams.set(k, v);
+    if (!fixture && values.settings) {
+      const paths: Record<string,string> = {general:"general",providers:"providers",agent:"agent-models",vision:"vision-models",privacy:"privacy",usage:"usage"};
+      next.pathname = `/settings/${paths[values.settings] || "general"}`;
+      next.searchParams.delete("settings");
+      for(const key of [...next.searchParams.keys()]) if(!["task","image","pane","conversation"].includes(key)) next.searchParams.delete(key);
+    }
     history.pushState(null, "", next);
     setUrl(next);
     setMobileNav(false);
@@ -409,7 +419,7 @@ export function AgentPreviewApp({
               <button onClick={() => setError("")}>关闭</button>
             </div>
           )}
-          {section ? (
+          {unknownSettings ? <section className="empty"><h1>页面不存在</h1><p>旧设置地址已停用，不会加载旧页面或猜测返回项目。</p><button onClick={()=>navigate({settings:"general"})}>打开设置</button></section> : section ? (
             <SettingsView
               key={section}
               adapter={adapter}
@@ -419,7 +429,6 @@ export function AgentPreviewApp({
               onTheme={setPreviewTheme}
               back={() => navigate({ settings: null })}
               fail={preview?.fail || (() => {})}
-              managementLinks={!fixture ? Object.fromEntries((["models","plugins","storage"] as const).map(s=>[s,task ? conversationSettingsPath(task.project,s,projectWorkPath(task.project,{taskId:task.id.startsWith("new:")?undefined:task.id,pane:pane?"artifacts":"thread",imageId:url.searchParams.get("image") || undefined})) : `/settings/${s}`])) : undefined}
             />
           ) : !task ? (
             <div className="empty">

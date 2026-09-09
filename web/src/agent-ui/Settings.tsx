@@ -12,6 +12,8 @@ import { Dialog } from "./Dialog";
 import { Icon } from "./Icon";
 import { Disclosure } from "./Disclosure";
 import { PluginSettings } from "./PluginSettings";
+import { ModelProfiles } from "./ModelProfiles";
+import { RuntimeSettings } from "./RuntimeSettings";
 function Row({
   title,
   help,
@@ -39,7 +41,6 @@ export function SettingsView({
   onTheme,
   back,
   fail,
-  managementLinks,
 }: {
   adapter: WorkspaceAdapter;
   state: Snapshot;
@@ -48,7 +49,6 @@ export function SettingsView({
   onTheme: (s: string | undefined) => void;
   back: () => void;
   fail: () => void;
-  managementLinks?: Record<string,string>;
 }) {
   const fixture = adapter.kind === "fixture";
   const [draft, setDraft] = useState<Settings>(() =>
@@ -493,13 +493,12 @@ export function SettingsView({
                     ),
                   )}
                   <p>没有执行真实探测。视觉工作流绑定在下一页单独管理。</p>
-                  {managementLinks?.models && <a href={managementLinks.models} onClick={e=>{if(!window.dispatchEvent(new Event("ui-preview:before-navigate",{cancelable:true})))e.preventDefault();}}>管理模型配置 →</a>}
+                  {!fixture && adapter.modelProfileManagement && <ModelProfiles service={adapter.modelProfileManagement} />}
                 </>
               )}
               {section === "vision" && !fixture && adapter.pluginManagement && <PluginSettings service={adapter.pluginManagement} />}
               {section === "vision" && (fixture || !adapter.pluginManagement) && (
                 <>
-                  {managementLinks?.plugins && <p><a href={managementLinks.plugins} onClick={e=>{if(!window.dispatchEvent(new Event("ui-preview:before-navigate",{cancelable:true})))e.preventDefault();}}>打开真实模型与插件管理 →</a> · 安装需单独确认权限和许可证。</p>}
                   {draft.plugins.map((p) => (
                     <Row
                       key={p.id}
@@ -542,7 +541,7 @@ export function SettingsView({
               )}
               {section === "privacy" && (
                 <>
-                  {managementLinks?.storage && <p><a href={managementLinks.storage} onClick={e=>{if(!window.dispatchEvent(new Event("ui-preview:before-navigate",{cancelable:true})))e.preventDefault();}}>查看服务器数据与存储 →</a></p>}
+                  {!fixture && adapter.runtimeSettingsManagement && <RuntimeSettings service={adapter.runtimeSettingsManagement} />}
                   <Row
                     title="工作区"
                     help={fixture ? "隔离的浏览器演示命名空间。没有读取本机真实 workspace。" : "本地服务器工作区；没有将服务器目录误称为浏览器本机目录。"}

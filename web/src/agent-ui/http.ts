@@ -59,6 +59,8 @@ export class HttpAdapter implements WorkspaceAdapter {
   }
   constructor(private transport: Transport = request, private storage?: Storage) {}
   get pluginManagement() { return this.transport === request ? api : undefined; }
+  get modelProfileManagement() { return this.transport === request ? api : undefined; }
+  get runtimeSettingsManagement() { return this.transport === request ? api : undefined; }
   private async testEnvironment() {
     if(this.transport!==request)return false;
     const response=await fetch("/api/health",{credentials:"same-origin"});

@@ -1026,3 +1026,8 @@ caption {
 .ui-app .plugin-settings .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .ui-app .plugin-package-picker { display: grid; gap: 8px; }
 .ui-app .plugin-package-picker input::file-selector-button { font: inherit; color: inherit; border: 1px solid var(--aa-border); border-radius: 6px; padding: 8px 12px; margin-right: 12px; background: var(--aa-surface-muted); cursor: pointer; }
+.ui-app section[aria-label="服务器运行配置"] form,
+.ui-app .confirm-dialog form { display: grid; gap: 16px; }
+.ui-app section[aria-label="服务器运行配置"] fieldset { display: grid; gap: 12px; min-width: 0; border: 1px solid var(--aa-border); border-radius: 8px; padding: 16px; }
+.ui-app section[aria-label="服务器运行配置"] label,
+.ui-app .confirm-dialog form label { display: grid; gap: 6px; overflow-wrap: anywhere; }

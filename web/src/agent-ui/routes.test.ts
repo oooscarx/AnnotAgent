@@ -6,7 +6,10 @@ describe("production Agent routes and retained management", () => {
     for (const path of ["/", "/projects", "/settings", "/projects/p/work?task=t"]) expect(isAgentEntry(url(path))).toBe(true);
   });
   it("keeps creation, history, restore, and settings management reachable", () => {
-    for (const path of ["/projects?new=1", "/projects/p", "/projects/p/runs/r", "/projects/p/build/pipeline", "/trash", "/review/r", "/settings/plugins", "/ui-preview"]) expect(isAgentEntry(url(path))).toBe(false);
+    for (const path of ["/projects?new=1", "/projects/p", "/projects/p/runs/r", "/projects/p/build/pipeline", "/trash", "/review/r", "/ui-preview"]) expect(isAgentEntry(url(path))).toBe(false);
+  });
+  it("never sends Settings subpages or invalid Settings URLs to the old App",()=>{
+    for(const path of ["/settings/plugins","/settings/storage","/settings/agent-models","/settings/models","/settings/unknown"]) expect(isAgentEntry(url(path))).toBe(true);
   });
   it("never derives project ownership from a display name or another task", () => {
     expect(routeProject(url("/projects/p/work?task=foreign"))).toBe("p");
