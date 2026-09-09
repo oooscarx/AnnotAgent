@@ -1,6 +1,48 @@
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
+test("native review preserves failed edits and advances only after a saved decision",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const runs=await(await request.get("/api/runs?limit=50")).json();
+  const run=runs.runs.find((r:{project_name:string})=>r.project_name==="TEST Agent UI HTTP fixture");expect(run).toBeTruthy();
+  const snapshot=await(await request.get(`/api/runs/${run.id}/annotations`)).json();
+  const base=snapshot.annotations[0];expect(base).toBeTruthy();
+  const session=await(await request.get("/api/session")).json();
+  const old=await(await request.get(`/api/projects/${run.project_id}/reviews`)).json();
+  for(const prior of old.reviews){
+    expect(prior.annotation.source).toBe("human");expect(prior.annotation.label).toMatch(/ TEST$/);
+    const outcome=await request.post(`/api/projects/${run.project_id}/reviews/${prior.review_id}/accept-and-next`,{headers:{"x-annotagent-csrf":session.csrf_token},data:{decision:"accept",reason_code:"accepted_as_is",note:"Finish an interrupted isolated review test"}});
+    expect(outcome.ok(),await outcome.text()).toBeTruthy();
+  }
+  const id=randomUUID();
+  const seeded=await request.post(`/api/runs/${run.id}/annotations`,{headers:{"x-annotagent-csrf":session.csrf_token},data:{annotation:{...base,id,source:"human",review_status:"needs_review",created_at:new Date().toISOString()}}});
+  expect(seeded.ok(),await seeded.text()).toBeTruthy();
+  const queue=await(await request.get(`/api/projects/${run.project_id}/reviews`)).json();
+  const review=queue.reviews.find((r:{annotation_id:string})=>r.annotation_id===id);expect(review).toBeTruthy();
+  await page.goto(`/projects/${run.project_id}/manage/review/${review.review_id}`);
+  await expect(page.getByRole("heading",{name:"审核标注",exact:true})).toBeVisible();
+  const label=page.getByLabel("标签",{exact:true});await expect(label).toHaveValue(base.label);
+  await label.fill(`${base.label} TEST`);
+  page.on("dialog",d=>d.accept());await page.reload();
+  await expect(label).toHaveValue(`${base.label} TEST`);
+  await page.route(`**/api/annotations/${id}`,r=>r.abort());
+  await page.getByRole("button",{name:"保存编辑",exact:true}).click();
+  await expect(page.locator(".native-review [role=alert]")).toBeVisible();
+  await expect(label).toHaveValue(`${base.label} TEST`);
+  await expect(page.getByRole("button",{name:"接受这个对象并下一项",exact:true})).toBeDisabled();
+  await page.unroute(`**/api/annotations/${id}`);
+  await page.getByRole("button",{name:"保存编辑",exact:true}).click();
+  await expect(page.getByRole("button",{name:"接受这个对象并下一项",exact:true})).toBeEnabled();
+  await page.getByText("来源与审核证据",{exact:true}).click();
+  await page.getByRole("button",{name:"读取修订记录",exact:true}).click();
+  await page.getByRole("button",{name:"接受这个对象并下一项",exact:true}).click();
+  await expect(page.locator(".native-review")).toContainText("队列已结束");
+  await expect(label).toHaveValue(`${base.label} TEST`);
+  await expect(page.getByRole("button",{name:"接受这个对象并下一项",exact:true})).toBeDisabled();
+  const saved=await(await request.get(`/api/projects/${run.project_id}/reviews/${review.review_id}`)).json();expect(saved.annotation.review_status).toBe("human_accepted");
+  await page.reload();await expect(label).toHaveValue(`${base.label} TEST`);
+  await expect(page.getByRole("button",{name:"接受这个对象并下一项",exact:true})).toBeDisabled();
+});
 test("new UI creates a TEST project, uploads and defines labels through real HTTP", async ({page,request})=>{
   const health=await request.get("/api/health");
   expect(health.headers()["x-annotagent-fixture"]).toBe("external-model-only");

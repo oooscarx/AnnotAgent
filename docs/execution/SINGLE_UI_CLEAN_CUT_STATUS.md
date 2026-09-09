@@ -43,6 +43,16 @@ Committed visual evidence: `single-ui-clean-cut/m0/disclosure-expanded.png` (144
 
 ## Remaining
 
+### Native Review migration (ongoing, not final cutover)
+
+Added `agent-ui/ReviewManagement.tsx` behind the HttpAdapter and canonical project-owned review routes. The new page reuses AnnotationCanvas geometry, not the old Review page or root stylesheet. Project menu includes the native review queue. Owner-checked reads, abort handling, local edit recovery tied to the server base, dirty guards, explicit save, undo, separate accept/reject, revision records and source evidence are present. Last-item success retains the canvas; navigation to the next item occurs only after a successful decision response. Completed decisions stay disabled after refresh. Save preflight is a client conflict check, not an atomic server CAS.
+
+Verification on isolated TEST 8794/8795, backend `34436fd`, frontend `8b19acc` plus this slice: Web typecheck, 284 unit tests (one pending cutover assertion), isolated production build and three real HTTP E2E passed. The new review test seeds a clearly marked human TEST annotation using the existing API, proves local-edit reload, aborts a save request, verifies editing is retained/accept disabled, then saves, accepts and refreshes the last item. Earlier test failures were a hidden Disclosure locator and a test navigation racing the application's successful next-item navigation; these were corrected rather than reported as passes. No paid provider call, real workspace write or user server restart.
+
+Screenshot `single-ui-clean-cut/m2/native-review.png`: actual React application, 1440×900, DPR 1, light, TEST HTTP. URL uses `/projects/TEST-agent-ui-15eb0549-f44e-4ae1-81dd-0ebf67714eb2/manage/review/:annotationId`; source baseline `8b19acc` plus this commit's work. This classification review evidence does not establish bbox drag/resizing, multi-item queue, missing-object creation or source-return restoration; these remain to verify/finish.
+
+The production build still contains the old App and styles chunks. History scope, advanced Workflow/Run surfaces, export, fuller model/bundle operations and final old-root removal remain open. Goal is active; no claim of complete removal and no push.
+
 ### Goal continuation: native lifecycle and Trash
 
 Previous goal turn was goal setup/status only; this continuation changed production source. Added new `LifecycleOperation` and `TrashManagement` (not an old-page wrapper), routed `/projects/:id/manage/trash` into the Agent shell, and added the project menu entry. Existing impact-preview, confirmation-token, expected-revision, privileged-action and idempotency APIs are reused. Bulk selection, restore and typed DELETE purge confirmation are implemented. Preview project/action/object/revision mismatch fails closed. Default replacement/explicit clearing is supported by the shared dialog for subsequent Pipeline migration.

@@ -1045,3 +1045,11 @@ caption {
 .ui-app .lifecycle-impact dd { margin: 4px 0 0; font-weight: 600; }
 .ui-app .native-project-manager > .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-block: 20px; }
 .ui-app .native-project-manager input[type="checkbox"] { width: auto; }
+.ui-app .native-review .canvas-shell { position: relative; min-width: 0; margin-block: 16px; }
+.ui-app .native-review .canvas-dimension-probe { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.ui-app .native-review .annotation-canvas { display: block; width: 100%; max-height: 65vh; touch-action: none; }
+.ui-app .native-review .canvas-tools, .ui-app .native-review .canvas-keyboard-tools { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding-block: 8px; }
+.ui-app .native-review .canvas-zoom-controls { display: inline-flex; gap: 8px; align-items: center; }
+.ui-app .native-review .canvas-annotation-list { list-style: none; padding: 0; }
+.ui-app .native-review .canvas-hint { color: var(--aa-text-muted); }
+.ui-app .native-review .bbox-resize-hit-area { fill: transparent; stroke: none; pointer-events: all; }
