@@ -1107,3 +1107,7 @@ caption {
 .ui-app .pipeline-step-parameters textarea { border: 1px solid var(--aa-border); border-radius: 8px; padding: 10px; color: var(--aa-text); background: var(--aa-bg); font: inherit; }
 .ui-app .native-project-manager .pipeline-review-toggle { display: flex; align-items: center; gap: 8px; margin-block: 12px; }
 .ui-app .pipeline-review-toggle input { flex: none; width: auto; margin: 0; }
+.ui-app .task-trace-record { min-width: 0; padding-block: 16px; border-bottom: 1px solid var(--aa-border); overflow-wrap: anywhere; }
+.ui-app .task-trace-record header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; }
+.ui-app .task-trace-record time { font-size: 12px; }
+.ui-app .task-trace-record li { padding-block: 8px; }

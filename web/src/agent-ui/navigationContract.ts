@@ -1,7 +1,7 @@
 /** Clean-cut URL contract. This parser never redirects or interprets legacy return keys. */
 export const settingsPages = ["general", "providers", "agent-models", "vision-models", "plugins", "storage", "privacy", "usage"] as const;
 export type SettingsPage = typeof settingsPages[number];
-export const managementPages = ["data", "labels", "pipelines", "runs", "review", "export", "trash"] as const;
+export const managementPages = ["data", "labels", "pipelines", "runs", "review", "export", "trash", "tasks"] as const;
 export type ManagementPage = typeof managementPages[number];
 export type AgentRoute =
   | { kind: "projects" }
