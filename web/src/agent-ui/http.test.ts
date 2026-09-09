@@ -5,6 +5,16 @@ const project = { project_id: "TEST-alpha", project_owner_id: "owner-a", title: 
 const settings = { revision: "revision-1", sections: { data_privacy: { workspace_id: "TEST-workspace" }, usage_budget: { future_run_budget: { max_requests: 10, max_cost: "2.50" } } } };
 const navTask = (id: string) => ({ task_id: id, title: `TEST ${id}`, schema_revision: "schema-1", project_owner_id: "owner-a", conversation_id: "conversation-a", state: "idle" });
 const root = "/api/projects/TEST-alpha/conversations/conversation-a/tasks";
+it("shows the latest successful sample instead of an older pending review after repair",async()=>{
+  const {transport,paths}=mockTransport({
+    [`${root}/t1/workspace`]:{project_id:project.project_id,project_owner_id:project.project_owner_id,conversation_id:project.conversation_id,task:{input:{id:"t1",schema_revision:"schema-1"}},agent_model:{revision:0,model_profile_id:null},actions:{},queue:[],calls:[],human_requests:[{input:{id:"old-review",image_id:"image-uuid",sample_test_id:"old"},status:"pending"}],sample_operations:[{id:"old",draft_id:"old-draft",status:"succeeded",created_at:"2026-09-09"},{id:"new",draft_id:"new-draft",status:"succeeded",created_at:"2026-09-10"}]},
+    "/api/workflow-drafts/new-draft/sample-test?test_id=new":{sample_test:{id:"new",project_id:project.project_id,draft_id:"new-draft",draft_revision:2,inputs:[],report:{samples:[]}}},
+  });
+  const adapter=new HttpAdapter(transport);await adapter.refresh();await adapter.loadTask(project.project_id,"t1");
+  const task=adapter.snapshot().tasks.find(t=>t.id==="t1")!;
+  expect(task.sample?.id).toBe("new");expect(task.human).toBeUndefined();
+  expect(paths).not.toContain("/api/workflow-drafts/old-draft/sample-test?test_id=old");
+});
 it("saves an issue-only answer without asserting corrected geometry or invoking a model",async()=>{
   const human={input:{id:"review",sample_test_id:"sample",image_id:"image-uuid",expected_feedback_sequence:0,outcome_id:"candidate"},status:"pending",deferred:false};
   const ws={project_id:project.project_id,project_owner_id:project.project_owner_id,conversation_id:project.conversation_id,task:{input:{id:"t1",schema_revision:"schema-1"}},agent_model:{revision:0,model_profile_id:null},actions:{},queue:[],calls:[],human_requests:[human],sample_operations:[{id:"sample",draft_id:"draft",status:"succeeded"}]};

@@ -246,6 +246,7 @@ export function ArtifactPane({
         ))}
       </div>
       <SampleRepairControls task={task} image={String(image)} adapter={adapter} onError={onError} />
+      {!fixture&&task.sample&&!task.imageResults?.[image]&&<p className="notice">此图未参与当前样例测试，暂时没有可反馈或比较的样例结果。</p>}
       {compare&&beforeBoxes&&<small>虚线：修复前样例 · 实线：当前结果。保留原始证据，不表示结果已通过审核。</small>}
       <Disclosure className="annotation-list" title={`标注列表与精确编辑 · ${boxes.length} 个`}>
         {boxes.map((b) => (
