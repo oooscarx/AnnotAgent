@@ -158,3 +158,30 @@ Verification: publication/clone filter **10 passed**, existing legacy designer H
 ## UIAPI-017 bounded Replay delivery; live-binding gap remains
 
 Existing Replay path now has passive owned GET preview, exact scope-bound POST and durable GET command receipts. Core/frozen Mock sandbox only; live Provider/Plugin/current binding Replay explicitly refuses and remains a parity blocker. No automatic retry, source checkpoint/formal annotation/Published writes. Contract and bounded follow-up requirements: `docs/contracts/agent-ui-v1/UIAPI-017_REPLAY.md`. Additive0063.
+
+## UIAPI-018 — context JSON save/load delivery
+
+Use dedicated [UIAPI-018 contract](../contracts/agent-ui-v1/UIAPI-018_CONTEXT_ARCHIVE.md)
+and [actual TEST JSON](../contracts/agent-ui-v1/UIAPI-018_EXAMPLES.json). Implemented:
+GET owned Conversation context-archive; POST project context-imports/preview; explicit
+POST context-imports with command_id/preview_hash/confirm_archive_only; passive owned
+GET command receipt/context and cursor-paged archived-contexts. Storage migration0064
+is additive, no backfill or active-Conversation uniqueness change. Application owns
+canonical project resolution; server retains existing session/CSRF controls.
+
+Import is not a second runtime: only context_archives is written. New local context
+and per-record IDs map to original inert evidence; no history overwrite, restored
+budget/grant, pending answer/queue dispatch, model call or Published change. UI must
+keep archived-context identity separate from live Task mutation URLs. Exact original
+JSON is retained for export, including honest missing-resource/redaction limitations.
+Raw model HTTP transcripts are not available from current persistence. Builder
+proposal/tool arguments/results and actual call receipt/timing/failure are retained.
+
+Verification: full selected library suite413 passed/3 pre-existing ignored; final
+Storage7 targeted cases cover121 messages, ordering, concurrent snapshot, owned
+Schema/Draft/Sample/feedback traversal, no foreign leakage, redaction/caps/tamper,
+preview no writes, simultaneous writers, command conflict, restart recovery and no
+live-table changes. Server2 includes random-port real loopback HTTP session/CSRF,
+exact POST replay and passive GET recovery. Strict clippy/fmt/diff checks passed.
+Commands are in contract; tests create/remove only their own tempfile workspace.
+No installs, paid calls, user services, real workspace, frontend changes, merge/push.

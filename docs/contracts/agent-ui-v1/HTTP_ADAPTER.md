@@ -170,3 +170,16 @@ Existing version clone POST now accepts complete `{project_id,source_snapshot_ha
 ## UIAPI-017 bounded Replay delivery; live-binding gap remains
 
 Existing Replay path now has passive owned GET preview, exact scope-bound POST and durable GET command receipts. Core/frozen Mock sandbox only; live Provider/Plugin/current binding Replay explicitly refuses and remains a parity blocker. No automatic retry, source checkpoint/formal annotation/Published writes. Contract and bounded follow-up requirements: `docs/contracts/agent-ui-v1/UIAPI-017_REPLAY.md`. Additive0063.
+
+## UIAPI-018 archive loading
+
+Use the separate `archived-contexts` identity space; never send imported object IDs
+to live Task/Draft mutation endpoints. Full route/request/record-field mapping:
+[UIAPI-018_CONTEXT_ARCHIVE.md](UIAPI-018_CONTEXT_ARCHIVE.md).
+GET export returns `{format,version,payload,archive_hash}`. Keep this object unchanged
+for preview/confirmation. POST preview `{archive}`; confirmation requires
+`{command_id,preview_hash,archive,confirm_archive_only:true}`. Recover a lost response
+through owned GET `context-imports/{command_id}` or repeat the identical POST.
+Loaded GET returns `{receipt,archive,objects,trust:"untrusted_import"}`; only
+`receipt.continuation.available_actions` (`view`, `export`) are allowed. `id_map`
+assigns new local identities while retaining original reference IDs in inert data.

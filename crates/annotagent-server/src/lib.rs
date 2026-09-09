@@ -2,6 +2,7 @@
 
 mod agent_ui;
 mod agent_ui_settings;
+mod context_archives;
 mod conversation_builder;
 mod conversation_feedback;
 mod conversation_future_proposal;

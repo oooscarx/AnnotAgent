@@ -104,3 +104,12 @@ Existing version clone POST now accepts complete `{project_id,source_snapshot_ha
 ## UIAPI-017 bounded Replay delivery; live-binding gap remains
 
 Existing Replay path now has passive owned GET preview, exact scope-bound POST and durable GET command receipts. Core/frozen Mock sandbox only; live Provider/Plugin/current binding Replay explicitly refuses and remains a parity blocker. No automatic retry, source checkpoint/formal annotation/Published writes. Contract and bounded follow-up requirements: `docs/contracts/agent-ui-v1/UIAPI-017_REPLAY.md`. Additive0063.
+
+## UIAPI-018 context JSON archives
+
+Implemented owned, atomic context export; read-only import preview; explicit exact
+command import; durable receipt/isolated context GET and owner-filtered pagination.
+See [UIAPI-018_CONTEXT_ARCHIVE.md](UIAPI-018_CONTEXT_ARCHIVE.md) for exact URLs,
+JSON paths, limits, redaction, errors and additive0064. Actual TEST responses:
+[UIAPI-018_EXAMPLES.json](UIAPI-018_EXAMPLES.json). Imported history is inert;
+no active Conversation, queue, grant, outbox, Draft or Published restoration.
