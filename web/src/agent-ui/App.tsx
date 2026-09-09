@@ -36,9 +36,10 @@ export function AgentPreviewApp({
   preview,
 }: {
   adapter: WorkspaceAdapter;
-  preview: { scenario: (id: string, phase: Phase) => void; fail: () => void };
+  preview?: { scenario: (id: string, phase: Phase) => void; fail: () => void };
 }) {
   const state = useSyncExternalStore(adapter.subscribe, adapter.snapshot);
+  const fixture = adapter.kind === "fixture";
   const [url, setUrl] = useState(() => new URL(location.href));
   const [expanded, setExpanded] = useState(
     state.settings.collapsed ? [] : state.projects.slice(0, 1).map((p) => p.id),
@@ -73,6 +74,13 @@ export function AgentPreviewApp({
   const task = state.tasks.find(
     (t) => t.id === (url.searchParams.get("task") || state.tasks[0]?.id),
   );
+  const allowed = (action: "send" | "stop" | "resume" | "approve" | "answer") => fixture || task?.actions?.[action]?.available === true;
+  useEffect(() => {
+    if (task && adapter.loadTask) void adapter.loadTask(task.project, task.id).catch(e => setError(e.message));
+  }, [adapter, task?.id, task?.project]);
+  useEffect(() => {
+    if (!state.settings.collapsed && state.projects.length) setExpanded(x => x.length ? x : [state.projects[0].id]);
+  }, [state.projects.length]);
   const section = url.searchParams.get("settings") as Section | null;
   const pane = url.searchParams.get("pane") === "image";
   const theme = previewTheme || state.settings.theme;
@@ -162,7 +170,7 @@ export function AgentPreviewApp({
     }
   };
   const send = async () => {
-    if (!task || sendPending.current || !task.draft.trim()) return;
+    if (!task || sendPending.current || !task.draft.trim() || !allowed("send")) return;
     sendPending.current = true;
     setBusy(true);
     const signature = JSON.stringify([
@@ -199,10 +207,11 @@ export function AgentPreviewApp({
   return (
     <div
       className="ui-app"
+      data-adapter={adapter.kind}
       style={{ fontSize: state.settings.font === "大" ? "17px" : "14px" }}
       data-density={state.settings.density}
     >
-      <div className="preview-banner">
+      {preview && <div className="preview-banner">
         <span>UI 预览 · 演示数据 · 无真实模型调用</span>
         <details>
           <summary>演示场景</summary>
@@ -219,7 +228,7 @@ export function AgentPreviewApp({
             <button onClick={preview.fail}>下一次保存失败</button>
           </div>
         </details>
-      </div>
+      </div>}
       <div className="app-body">
         <aside
           className={`project-sidebar ${mobileNav ? "mobile-open" : ""}`}
@@ -299,7 +308,7 @@ export function AgentPreviewApp({
             <button onClick={() => navigate({ settings: "general" })}>
               ⚙ {text("设置", "Settings")}
             </button>
-            <small>本地 UI Preview 工作区</small>
+            <small>{fixture ? "本地 UI Preview 工作区" : "本地工作区 · HTTP"}</small>
           </footer>
         </aside>
         <main className="workspace-main">
@@ -334,21 +343,21 @@ export function AgentPreviewApp({
                   <details>
                     <summary aria-label="项目管理菜单">···</summary>
                     <div className="project-menu">
-                      <strong>项目管理 · 预览</strong>
+                      <strong>项目管理{fixture ? " · 预览" : ""}</strong>
                       <p>
                         原应用中的数据、方案、处理记录、审核、导出与回收站保持不变。
                       </p>
-                      <p>此隔离界面尚未连接这些真实管理操作。</p>
+                      {fixture ? <p>此隔离界面尚未连接这些真实管理操作。</p> : <a href={`/projects/${encodeURIComponent(task.project)}`}>项目管理 →</a>}
                     </div>
                   </details>
                 </>
               )}
-              <span className="preview-chip">UI Preview</span>
+              <span className="preview-chip">{fixture ? "UI Preview" : "HTTP 联调"}</span>
             </div>
           </header>
-          {error && (
+          {(error || state.error) && (
             <div className="error" role="alert">
-              {error}
+              {error || state.error}
               <button onClick={() => setError("")}>关闭</button>
             </div>
           )}
@@ -361,14 +370,14 @@ export function AgentPreviewApp({
               navigate={(s) => navigate({ settings: s })}
               onTheme={setPreviewTheme}
               back={() => navigate({ settings: null })}
-              fail={preview.fail}
+              fail={preview?.fail || (() => {})}
             />
           ) : !task ? (
             <div className="empty">
-              <h1>找不到这个任务</h1>
-              <p>没有自动打开其他项目。</p>
-              <button onClick={() => navigate({ task: "new" })}>
-                返回示例项目
+              <h1>{state.loading ? "正在读取工作区…" : "找不到这个任务"}</h1>
+              <p>没有自动打开其他项目，也没有回退到演示数据。</p>
+              <button onClick={() => fixture ? navigate({ task: "new" }) : void act(() => adapter.refresh!())}>
+                {fixture ? "返回示例项目" : "重新读取"}
               </button>
             </div>
           ) : (
@@ -423,15 +432,15 @@ export function AgentPreviewApp({
                             )}
                             {item.role === "user" && (
                               <small>
-                                演示输入 ·{" "}
+                                {fixture ? "演示输入" : "已保存输入"} ·{" "}
                                 {state.models.find((m) => m.id === item.model)
-                                  ?.name || "示意图片"}
+                                  ?.name || (fixture ? "示意图片" : "模型未记录")}
                               </small>
                             )}
                           </article>
                         ))}
                         <div className="operation" aria-live="polite">
-                          {phaseNames[task.phase]}
+                          {fixture ? phaseNames[task.phase] : ({ planning: "正在规划", running: "执行中", completed: "已完成", failed: "执行失败" } as Partial<Record<Phase, string>>)[task.phase] || phaseNames[task.phase]}
                           {task.operationModel && (
                             <small>
                               本次模型：
@@ -447,22 +456,25 @@ export function AgentPreviewApp({
                           <PlanBlock
                             plan={task.plan}
                             expanded={task.phase === "awaiting_approval"}
+                            fixture={fixture}
                           />
                         )}
                         {task.phase === "awaiting_approval" && (
                           <button
                             className="primary"
+                            disabled={!allowed("approve")}
                             onClick={() => setApproval(command(task))}
                           >
-                            批准并试跑 3 张
+                            {fixture ? "批准并试跑 3 张" : "查看并批准当前操作"}
                           </button>
                         )}
                         {task.phase === "interrupted" && (
                           <div className="notice">
-                            <strong>已在模拟安全边界停止</strong>
-                            <p>保留已有结果；继续不会重新提交已保存的修正。</p>
+                            <strong>{fixture ? "已在模拟安全边界停止" : "停止回执已确认"}</strong>
+                            <p>{fixture ? "保留已有结果；继续不会重新提交已保存的修正。" : task.actions?.resume?.reason}</p>
                             <button
                               className="primary"
+                              disabled={!allowed("resume")}
                               onClick={() =>
                                 void act(() =>
                                   adapter.resumeOperation(command(task)),
@@ -475,13 +487,13 @@ export function AgentPreviewApp({
                         )}
                         {task.phase === "waiting_for_human" && (
                           <div className="notice">
-                            <strong>请确认杯柄是否包含在框内</strong>
+                            <strong>{fixture ? "请确认杯柄是否包含在框内" : task.humanQuestion || "需要人工确认；正在读取具体问题"}</strong>
                             <p>
-                              打开图片，拖动边界或在标注列表里精确修改。只保存当前演示候选。
+                              打开图片，拖动边界或在标注列表里精确修改。{fixture ? "只保存当前演示候选。" : "修改的作用域以当前人工请求为准。"}
                             </p>
                             <button
                               onClick={() =>
-                                navigate({ pane: "image", image: "1" })
+                                navigate({ pane: "image", image: String(task.image) })
                               }
                             >
                               定位需要修正的目标 →
@@ -496,16 +508,16 @@ export function AgentPreviewApp({
                         )}
                         {task.phase === "failed" && (
                           <div className="error">
-                            演示失败：输入和计划保留。可以修改需求后重新发送。
+                            {fixture ? "演示失败：输入和计划保留。可以修改需求后重新发送。" : task.error || "执行失败，请查看已保存的执行记录；不会自动重试收费请求。"}
                           </div>
                         )}
-                        {task.phase === "completed" && (
+                        {fixture && task.phase === "completed" && (
                           <p>
                             修正已保存在 UI
                             Preview。没有创建正式标注或真实导出文件。
                           </p>
                         )}
-                        {task.phase === "running" && (
+                        {fixture && task.phase === "running" && (
                           <details>
                             <summary>查看模拟执行记录</summary>
                             <p>
@@ -524,7 +536,7 @@ export function AgentPreviewApp({
                   {task.queue.length > 0 && (
                     <details className="queue">
                       <summary>
-                        {task.queue.length} 条排队输入 · 模拟，未自动执行
+                        {task.queue.length} 条排队输入 · {fixture ? "模拟，" : ""}未自动执行
                       </summary>
                       {task.queue.map((q, i) => (
                         <p key={i}>{q}</p>
@@ -690,7 +702,7 @@ export function AgentPreviewApp({
                                         {m.name}
                                         {m.id === task.model ? " ✓" : ""}
                                         <small>
-                                          {m.reason || "文本 / 工具调用 · 演示"}
+                                          {m.reason || `文本 / 工具调用${fixture ? " · 演示" : ""}`}
                                         </small>
                                       </span>
                                     </button>
@@ -714,7 +726,7 @@ export function AgentPreviewApp({
                       {active && (
                         <button
                           type="button"
-                          disabled={task.phase === "stopping"}
+                          disabled={task.phase === "stopping" || !allowed("stop")}
                           onClick={() =>
                             void act(() =>
                               adapter.interruptOperation(command(task)),
@@ -726,7 +738,7 @@ export function AgentPreviewApp({
                       )}
                       <button
                         className="primary"
-                        disabled={!task.draft.trim() || busy}
+                        disabled={!task.draft.trim() || busy || !allowed("send")}
                         type="submit"
                       >
                         {active ? "排队" : "↑ 发送"}
@@ -734,7 +746,7 @@ export function AgentPreviewApp({
                     </div>
                   </form>
                   <small className="composer-hint">
-                    {mode === "plan"
+                    {!fixture ? "目标先保存；模型调用、数据外传和执行需单独批准。" : mode === "plan"
                       ? "仅规划；本预览不调用模型、不上传图片。"
                       : "执行前需要批准具体范围；本预览只模拟。"}
                     　↵ 发送 / Shift+Enter 换行
@@ -756,9 +768,9 @@ export function AgentPreviewApp({
                           </button>
                         ))}
                         <small>
-                          3 张原创示意图
+                          {fixture ? "3 张原创示意图" : `${state.artifacts.length} 张项目图片`}
                           <br />
-                          不含真实模型输出
+                          {fixture ? "不含真实模型输出" : "原始图片"}
                         </small>
                       </div>
                       <button
@@ -824,14 +836,11 @@ export function AgentPreviewApp({
                     }}
                   />
                   <ArtifactPane
-                    key={`${task.id}:${url.searchParams.get("image") || "1"}`}
+                    key={`${task.id}:${url.searchParams.get("image") || task.image}`}
                     task={task}
                     adapter={adapter}
-                    assets={state.artifacts}
-                    image={Math.max(
-                      1,
-                      Math.min(3, Number(url.searchParams.get("image")) || 1),
-                    )}
+                    assets={state.artifacts.filter(a => !a.project || a.project === task.project)}
+                    image={fixture ? Math.max(1, Math.min(3, Number(url.searchParams.get("image")) || 1)) : url.searchParams.get("image") || task.image}
                     onImage={(n) => navigate({ image: String(n) })}
                     onReference={(candidate, image) =>
                       setReference({

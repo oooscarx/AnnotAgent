@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { WorkspaceAdapter, Task, Box, Snapshot } from "./adapter";
+import type { WorkspaceAdapter, Task, Box, Snapshot, ImageId } from "./adapter";
 import { command } from "./App";
 export function ArtifactPane({
   task,
@@ -15,17 +15,21 @@ export function ArtifactPane({
   adapter: WorkspaceAdapter;
   close: () => void;
   onError: (s: string) => void;
-  image: number;
-  onImage: (image: number) => void;
-  onReference: (candidate: string, image: number) => void;
+  image: ImageId;
+  onImage: (image: ImageId) => void;
+  onReference: (candidate: string, image: ImageId) => void;
   assets: Snapshot["artifacts"];
 }) {
   const asset = assets.find((a) => a.id === image);
-  const width = asset?.width || 960,
-    height = asset?.height || 760;
+  const fixture = adapter.kind === "fixture";
+  const [natural, setNatural] = useState({width: 960, height: 760});
+  useEffect(() => { if (!asset) return; const img = new Image(); let current = true; img.onload = () => { if (current) setNatural({width: img.naturalWidth, height: img.naturalHeight}); }; img.src = asset.src; return () => { current = false; }; }, [asset?.src]);
+  const width = asset?.width || natural.width,
+    height = asset?.height || natural.height;
+  const savedBoxes = task.boxesByImage?.[image] || (image === 1 ? task.boxes : []);
   const initialImage = image;
   const [boxes, setBoxes] = useState(
-    task.editBoxes?.[initialImage] || (initialImage === 1 ? task.boxes : []),
+    task.editBoxes?.[initialImage] || savedBoxes,
   );
   const [selected, setSelected] = useState(task.boxes[0]?.id);
   const [compare, setCompare] = useState(false);
@@ -58,14 +62,14 @@ export function ArtifactPane({
       }),
     );
   };
-  const pickImage = (n: number) => {
+  const pickImage = (n: ImageId) => {
     onImage(n);
   };
   return (
     <aside className="artifact-pane" aria-label="图片与标注">
       <div className="artifact-toolbar">
         <strong>
-          示意图片 · {image}/{assets.length}
+          {fixture ? "示意图片" : "图片"} · {assets.findIndex(a => a.id === image) + 1}/{assets.length}
         </strong>
         <button aria-pressed={original} onClick={() => setOriginal(!original)}>
           原图
@@ -112,7 +116,7 @@ export function ArtifactPane({
       <div className="canvas-region">
         <svg
           viewBox={`0 0 ${width} ${height}`}
-          aria-label="演示标注画布"
+          aria-label={fixture ? "演示标注画布" : "标注画布"}
           style={{ width: `${zoom}%`, minWidth: `${zoom}%` }}
           onPointerMove={(e) => {
             if (!drag) return;
@@ -143,7 +147,7 @@ export function ArtifactPane({
           <image href={asset?.src} width={width} height={height} />
           {!original &&
             compare &&
-            (image === 1 ? task.boxes : []).map((b) => (
+            savedBoxes.map((b) => (
               <rect
                 key={b.id}
                 x={b.x}
@@ -197,7 +201,7 @@ export function ArtifactPane({
                   fontSize="20"
                   fill="var(--aa-annotation-1)"
                 >
-                  {b.label} · 演示
+                  {b.label}{fixture ? " · 演示" : ""}
                 </text>
                 {selected === b.id && (
                   <circle

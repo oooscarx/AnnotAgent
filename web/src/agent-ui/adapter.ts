@@ -1,4 +1,6 @@
-/** Transport-neutral UI contract. HTTP binding is deliberately not connected before visual approval. */
+/** Shared presentation contract. Fixture is preview-only; HTTP fails closed. */
+export type ImageId = number | string;
+export type Action = { available: boolean; reason: string };
 export type Phase =
   | "idle"
   | "planning"
@@ -42,7 +44,7 @@ export type Provider = {
 };
 export type ThreadItem = {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   text: string;
   model?: string;
   reference?: Command["selection"];
@@ -59,8 +61,12 @@ export type Task = {
   model: string;
   operationModel?: string;
   boxes: Box[];
-  image: number;
-  editBoxes?: Record<number, Box[]>;
+  image: ImageId;
+  editBoxes?: Record<ImageId, Box[]>;
+  boxesByImage?: Record<ImageId, Box[]>;
+  actions?: Partial<Record<"send" | "stop" | "resume" | "approve" | "answer", Action>>;
+  humanQuestion?: string;
+  error?: string;
   plan?: {
     revision: string;
     steps: string[];
@@ -86,8 +92,12 @@ export type Settings = {
   range: string;
 };
 export type Snapshot = {
+  loading?: boolean;
+  error?: string;
+  workspaceId?: string;
   artifacts: {
-    id: number;
+    id: ImageId;
+    project?: string;
     name: string;
     src: string;
     width: number;
@@ -114,7 +124,9 @@ export interface WorkspaceAdapter {
   subscribe(listener: () => void): () => void;
   createTask(project: string): Promise<string>;
   saveDraft(task: string, text: string): void;
-  saveArtifactDraft(task: string, image: number, boxes: Box[]): void;
+  saveArtifactDraft(task: string, image: ImageId, boxes: Box[]): void;
+  loadTask?(project: string, task: string): Promise<void>;
+  refresh?(): Promise<void>;
   sendMessage(
     command: Command,
     text: string,

@@ -2,9 +2,11 @@ import type { Task } from "./adapter";
 export function PlanBlock({
   plan,
   expanded,
+  fixture = true,
 }: {
   plan: NonNullable<Task["plan"]>;
   expanded: boolean;
+  fixture?: boolean;
 }) {
   const content = (
     <section className="plan-block">
@@ -14,7 +16,7 @@ export function PlanBlock({
           <li key={step}>{step}</li>
         ))}
       </ol>
-      <small>{plan.destination} · 费用未知（演示不收费）</small>
+      <small>{plan.destination} · {plan.budget ?? "费用未知"}{fixture ? "（演示不收费）" : ""}</small>
       <details>
         <summary>计划详情</summary>
         <p>精确版本：{plan.revision}</p>
@@ -26,7 +28,7 @@ export function PlanBlock({
     content
   ) : (
     <details className="plan-history">
-      <summary>☷ 查看演示计划 · {plan.steps.length} 个步骤</summary>
+      <summary>☷ 查看{fixture ? "演示" : ""}计划 · {plan.steps.length} 个步骤</summary>
       {content}
     </details>
   );

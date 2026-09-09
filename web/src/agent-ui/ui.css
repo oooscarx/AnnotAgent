@@ -91,6 +91,7 @@ button.primary:hover:not(:disabled) {
   display: grid;
   grid-template-rows: 30px minmax(0, 1fr);
 }
+.ui-app[data-adapter="http"] { grid-template-rows: minmax(0, 1fr); }
 .preview-banner {
   background: var(--aa-sidebar);
   border-bottom: 1px solid var(--aa-border);
