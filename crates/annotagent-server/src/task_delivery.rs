@@ -417,7 +417,7 @@ mod tests {
             json!(["dataset_scope", "training_target"])
         );
         assert_eq!(saved["execution_authorized"], false);
-        let planning_uri = uri.replace("delivery-intent", "schema-preview");
+        let planning_uri = uri.replace("delivery-intent", "delivery-schema");
         let blocked = request(&service, Method::GET, &planning_uri, None).await;
         assert!(!blocked.status().is_success());
         assert!(

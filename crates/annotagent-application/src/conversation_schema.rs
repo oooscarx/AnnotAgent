@@ -500,8 +500,11 @@ impl crate::LocalApplication {
         cancellation: CancellationToken,
     ) -> Result<annotagent_storage::ConversationCallReceipt> {
         use annotagent_storage::{ConversationCallAdmission, ConversationCallStatus};
-        let delivery =
-            self.require_delivery_intake(project_id, execution.conversation_id, execution.task_id)?;
+        // Text-only clarification may resolve missing slots. Visual/Builder admission
+        // still uses require_delivery_intake; this path retains explicit call consent.
+        let delivery = self
+            .task_delivery_intent(project_id, execution.conversation_id, execution.task_id)?
+            .saved;
         let owner = self.conversation_project_identity(project_id)?;
         let task = self
             .conversation_tasks(project_id, execution.conversation_id)?
@@ -976,6 +979,134 @@ mod tests {
     use super::*;
     use annotagent_core::{CoreResult, ModelCapabilities, ModelToolCall, TokenUsage};
     use std::sync::Mutex;
+
+    #[tokio::test]
+    async fn partial_delivery_allows_only_authorized_text_clarification_not_visual_admission() {
+        use annotagent_storage::{
+            BeginConversationTask, ConversationCallGrant, ConversationMessageInput,
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let app = crate::LocalApplication::new(temp.path()).unwrap();
+        app.create_project("partial-delivery","version: 1\nproject:\n  name: TEST partial\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n").unwrap();
+        let conversation = app.create_project_conversation("partial-delivery").unwrap();
+        let message = ConversationMessageInput {
+            id: Uuid::new_v4(),
+            text: "杯子，YOLO".into(),
+            image: None,
+            reference: None,
+        };
+        app.append_project_conversation_message("partial-delivery", conversation, &message)
+            .unwrap();
+        let task = Uuid::new_v4();
+        app.begin_conversation_task(
+            "partial-delivery",
+            conversation,
+            &BeginConversationTask {
+                id: task,
+                source_message_id: message.id,
+                schema_revision: app.project_goal("partial-delivery").unwrap()["revision"]
+                    .as_str()
+                    .unwrap()
+                    .into(),
+            },
+        )
+        .unwrap();
+        app.save_task_delivery_intent(
+            "partial-delivery",
+            conversation,
+            task,
+            crate::SaveTaskDeliveryIntent {
+                command_id: Uuid::new_v4(),
+                expected_revision: 0,
+                image_ids: None,
+                label_spec: Some(vec![annotagent_core::dataset_delivery::DeliveryLabel {
+                    stable_id: "cup".into(),
+                    display_name: "杯子".into(),
+                    aliases: vec![],
+                    include: String::new(),
+                    exclude: "图案".into(),
+                }]),
+                training_target: None,
+                split_policy: annotagent_core::dataset_delivery::DeliverySplitPolicy::default(),
+            },
+        )
+        .unwrap();
+        let execution = ConversationSchemaExecution {
+            conversation_id: conversation,
+            task_id: task,
+            call_id: Uuid::new_v4(),
+            remote_model: "TEST".into(),
+            scope_hash: "a".repeat(64),
+        };
+        let model = provider(
+            json!({"decision":"clarify","question":"框出目标还是整图分类？","rationale":"Training output missing","delivery":{"labels":[],"training_target":null}}),
+        );
+        assert!(
+            app.execute_conversation_schema(
+                "partial-delivery",
+                &execution,
+                &model,
+                CancellationToken::default()
+            )
+            .await
+            .is_err()
+        );
+        assert!(model.requests.lock().unwrap().is_empty());
+        let owner = app
+            .conversation_project_identity("partial-delivery")
+            .unwrap();
+        app.store
+            .authorize_conversation_calls(
+                &owner,
+                &ConversationCallGrant {
+                    id: Uuid::new_v4(),
+                    task_id: task,
+                    scope_hash: execution.scope_hash.clone(),
+                    maximum_calls: 1,
+                    expires_at: chrono::Utc::now() + chrono::Duration::minutes(5),
+                },
+            )
+            .unwrap();
+        let receipt = app
+            .execute_conversation_schema(
+                "partial-delivery",
+                &execution,
+                &model,
+                CancellationToken::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            receipt.status,
+            annotagent_storage::ConversationCallStatus::Completed
+        );
+        assert!(
+            app.require_delivery_intake("partial-delivery", conversation, task)
+                .is_err()
+        );
+        assert!(
+            app.conversation_schema_for_call(
+                "partial-delivery",
+                conversation,
+                task,
+                execution.call_id
+            )
+            .unwrap()
+            .is_none()
+        );
+        let requests = model.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].images.is_empty());
+        let body: serde_json::Value =
+            serde_json::from_str(&requests[0].messages[1].content).unwrap();
+        let context: serde_json::Value =
+            serde_json::from_str(body["saved_user_goal"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            context["saved_delivery"]["missing_slots"],
+            json!(["dataset_scope", "training_target"])
+        );
+        assert_eq!(context["saved_delivery"]["labels"][0]["exclude"], "图案");
+    }
 
     #[test]
     fn human_schema_needs_no_provider_and_preserves_goal_owner_and_validation() {

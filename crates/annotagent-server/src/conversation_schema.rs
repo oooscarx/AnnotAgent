@@ -231,9 +231,9 @@ pub(super) fn preview_scope(
     task: uuid::Uuid,
     model_id: Option<ModelProfileId>,
 ) -> ApiResult<(PipelineBuilderModelRuntime, Value)> {
-    state
+    let delivery = state
         .application
-        .require_delivery_intake(project, conversation, task)
+        .task_delivery_intent(project, conversation, task)
         .map_err(ApiError::bad_request)?;
     let task_record = state
         .application
@@ -266,20 +266,24 @@ pub(super) fn preview_scope(
     config.max_retries = 0;
     config.max_output_tokens = config.max_output_tokens.min(2048);
     // Hash complete server-resolved configuration; never include credentials in public output.
+    let mut consent_scope = json!({
+        "contract":"conversation-schema-consent-v1", "task":task_record,
+        "model":selected.model, "provider":selected.provider, "config":config,
+        "maximum_calls":1, "image_count":0,
+    });
+    if let Some(saved) = &delivery.saved {
+        consent_scope["delivery"] =
+            json!({"revision":saved.revision,"sha256":saved.content_sha256});
+    }
     let scope_hash = annotagent_image_tools::sha256(
-        &serde_json::to_vec(&json!({
-            "contract":"conversation-schema-consent-v1", "task":task_record,
-            "model":selected.model, "provider":selected.provider, "config":config,
-            "maximum_calls":1, "image_count":0,
-        }))
-        .map_err(ApiError::internal)?,
+        &serde_json::to_vec(&consent_scope).map_err(ApiError::internal)?,
     );
     let preview = json!({
         "task_id":task,"model_id":selected.model.id,"model_name":selected.model.display_name,
         "remote_model":selected.model.remote_model_id,"destination":selected.provider.endpoint_summary(),
         "scope_hash":scope_hash,"maximum_calls":1,"image_count":0,"estimated_cost":null,
         "maximum_output_tokens":config.max_output_tokens,"expires_at":Utc::now()+Duration::minutes(30),
-        "data_scope":"Saved goal text and existing label/schema definitions only. No image pixels.",
+        "data_scope":"Saved goal text, saved delivery labels/rules/training target and existing schema definitions only. No image pixels.",
         "operation":"Propose annotation Schema only; does not publish, run the dataset or accept annotations.",
     });
     Ok((selected, preview))
