@@ -1,6 +1,18 @@
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
+test("native workflow editor saves an exact TEST draft and never publishes or runs",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const projects=await(await request.get("/api/projects")).json();const project=projects.projects.find((p:{name:string})=>p.name.startsWith("TEST clean-cut"));expect(project).toBeTruthy();
+  const session=await(await request.get("/api/session")).json();const response=await request.post("/api/workflow-drafts",{headers:{"x-annotagent-csrf":session.csrf_token},data:{project_id:project.id,from_template:false}});expect(response.ok()).toBeTruthy();const draft=await response.json();
+  const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});
+  await page.goto(`/projects/${project.id}/manage/pipelines/${draft.id}`);
+  const name=`TEST native editor ${randomUUID()}`;await page.getByLabel("方案名称",{exact:true}).fill(name);
+  await page.getByRole("button",{name:"保存草稿",exact:true}).click();await expect(page.getByRole("status")).toContainText("草稿已保存");
+  await page.reload();await expect(page.getByLabel("方案名称",{exact:true})).toHaveValue(name);
+  expect(writes).toEqual([`http://127.0.0.1:8794/api/workflow-drafts/${draft.id}`]);
+  await page.goto(`/projects/wrong-owner/manage/pipelines/${draft.id}`);await expect(page.getByRole("alert")).toBeVisible();await expect(page.getByLabel("方案名称",{exact:true})).toHaveCount(0);
+});
 test("native bundle import rejects a real invalid TEST package without installing",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
   const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});

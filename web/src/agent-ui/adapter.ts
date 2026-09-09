@@ -137,6 +137,7 @@ export interface WorkspaceAdapter {
   readonly reviewManagement?: import("./ReviewManagement").ReviewService;
   readonly runDetail?: import("./RunDetail").RunDetailService;
   readonly batchDetail?: import("./BatchDetail").BatchDetailService;
+  readonly workflowEditor?: import("./WorkflowEditor").WorkflowEditorService;
   readonly exportManagement?: import("./ExportManagement").ExportService;
   readonly trashManagement?: import("./TrashManagement").TrashService;
   readonly projectManagement?: import("./ProjectManagement").ProjectManagementService;

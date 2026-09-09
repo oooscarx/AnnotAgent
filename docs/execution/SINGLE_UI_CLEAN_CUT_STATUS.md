@@ -1,5 +1,13 @@
 # Single UI Clean Cut
 
+## Native advanced Draft editing
+
+Added new WorkflowEditor on `/projects/:project/manage/pipelines/:draft`; sample conversation references now offer an owned direct link. Uses existing project-filtered draft read plus exact ID/project match (no single-Draft GET exists yet), PATCH If-Match and unchanged revision. Advanced execution JSON is explicitly whitelisted to configuration fields; identity/revision/status/timestamps cannot be edited. Published/archived drafts are read-only, save errors preserve input, dirty navigation/unload guard retained. Saved node/binding summary is separate from unsaved editing. No old page component imported.
+
+Source audit found existing `/dry-run` with empty image indices automatically chooses up to three images and resolves/invokes real models. It cannot be repurposed as a no-cost static validation button. UIAPI-013 requested a single-Draft GET and revision-bound no-network static validation endpoint from confirmed Backend UUID, queue `01a086f4-f666-78a1-a840-07167bde76f8`; no static-validation control is falsely advertised in this slice.
+
+Typecheck, 305 unit tests plus one cutover TODO, isolated build and thirteen browser tests passed (twelve actual TEST HTTP; one controlled Worker response fixture). New HTTP test creates TEST Draft, edits name, saves once, refreshes persisted name and rejects foreign project; request log proves no publication or inference. Saved JSON editing beyond name, stale Draft conflict browser case, node catalog controls, sample authorization, publication, version/clone/diff management, screenshot and final root deletion remain incomplete. The JSON editor is an advanced management capability, not a replacement for the approved Agent experience. Owned TEST service uses `912006a` plus slice and `/tmp/annotagent-workflow-editor-dist`, stopped afterward; user services untouched. Goal active, no push.
+
 ## Native local Model Bundle import
 
 Added a native `BundleImport` under the plugin Settings disclosure, using existing package inspection/import endpoints. Selection is explicitly unsaved until upload, inspection does not import, license acceptance is a separate control, and the same retained File is submitted only after confirmation. Receipt identity checks bundle ID/version/hash; no number of instances is presented as Ready without checking actual instance statuses. Cancel, dirty navigation/unload guard, failure retention and no automatic retries are implemented. Whole old page is not embedded. Unknown import outcome blocks that file in the current view; cross-refresh receipt recovery remains an interface limitation, not claimed solved by this slice.
