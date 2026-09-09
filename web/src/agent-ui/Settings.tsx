@@ -14,6 +14,7 @@ import { Disclosure } from "./Disclosure";
 import { PluginSettings } from "./PluginSettings";
 import { ModelProfiles } from "./ModelProfiles";
 import { RuntimeSettings } from "./RuntimeSettings";
+import { VisionWorkers } from "./VisionWorkers";
 function Row({
   title,
   help,
@@ -497,6 +498,7 @@ export function SettingsView({
               )}
               {(section === "agent" || section === "vision") && !fixture && adapter.modelProfileManagement && <ModelProfiles service={adapter.modelProfileManagement} />}
               {section === "vision" && !fixture && adapter.pluginManagement && <PluginSettings service={adapter.pluginManagement} />}
+              {section === "vision" && !fixture && adapter.visionWorkerManagement && <Disclosure title="HTTP Vision 协议绑定"><VisionWorkers service={adapter.visionWorkerManagement} /></Disclosure>}
               {section === "vision" && (fixture || !adapter.pluginManagement) && (
                 <>
                   {draft.plugins.map((p) => (

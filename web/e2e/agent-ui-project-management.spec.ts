@@ -1,6 +1,34 @@
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
+test("native HTTP worker area reads the real empty registry without discovery", async ({page,request}) => {
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});
+  await page.goto("/settings/vision-models");
+  await page.getByText("HTTP Vision 协议绑定",{exact:true}).click();
+  const area=page.getByRole("region",{name:"HTTP Vision 模型绑定",exact:true});
+  await expect(area).toContainText("尚无 HTTP Vision 模型绑定");
+  await area.getByRole("button",{name:"重新读取模型绑定",exact:true}).click();
+  await expect(area).toContainText("尚无 HTTP Vision 模型绑定");expect(writes).toEqual([]);
+});
+test("controlled Worker response fixture verifies confirmation, failure and no automatic retry", async ({page,request}) => {
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  // UI-only response fixture: deliberately not evidence of real worker discovery.
+  const worker={id:"TEST-worker-ui",model:"TEST response fixture",scope:"workspace_worker",role:"detector",endpoint:"http://127.0.0.1:1/TEST-only",health_status:"unknown",availability_group:"configured_unavailable"};
+  let calls=0;
+  await page.route("**/api/models",r=>r.fulfill({json:{models:[worker]}}));
+  await page.route("**/api/models/TEST-worker-ui/test",r=>{calls++;return r.fulfill({json:{model_id:worker.id,passed:false,availability:"unreachable",failed_stage:"health",error:"TEST explicit discovery failure"}});});
+  await page.goto("/settings/vision-models");await page.getByText("HTTP Vision 协议绑定",{exact:true}).click();
+  const area=page.getByRole("region",{name:"HTTP Vision 模型绑定",exact:true});
+  await area.getByRole("button",{name:"发现检查…",exact:true}).click();
+  let dialog=page.getByRole("dialog",{name:"确认 HTTP Vision 发现检查",exact:true});
+  await expect(dialog.getByRole("button",{name:"确认发现检查",exact:true})).toBeDisabled();
+  await dialog.getByRole("button",{name:"取消",exact:true}).click();expect(calls).toBe(0);
+  await area.getByRole("button",{name:"发现检查…",exact:true}).click();dialog=page.getByRole("dialog",{name:"确认 HTTP Vision 发现检查",exact:true});
+  await dialog.getByRole("checkbox").check();await dialog.getByRole("button",{name:"确认发现检查",exact:true}).click();
+  await expect(area.getByRole("status")).toContainText("检查未通过：health");expect(calls).toBe(1);
+  await page.reload();expect(calls).toBe(1);
+});
 test("native model CAS keeps a stale editor without overwriting the winning writer",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
   const providers=await(await request.get("/api/providers")).json();

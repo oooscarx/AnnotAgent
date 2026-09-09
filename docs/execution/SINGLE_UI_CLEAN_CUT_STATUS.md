@@ -1,5 +1,13 @@
 # Single UI Clean Cut
 
+## Native HTTP Vision binding controls
+
+Moved the old page's Worker binding inspection/discovery capability into new Settings → visual models/plugins → HTTP Vision protocol disclosure via a dedicated `VisionWorkerService` adapter boundary. Native rows show actual status, endpoint, capabilities, score semantics, identity, labels and declared price. Discovery is explicitly confirmed, preflight-rechecks the selected binding, validates response ownership, distinguishes discovery from inference, and never automatically retries or calls sample inference. Failure never renders a successful test. No old page/component/styles imported.
+
+Verification: typecheck, 292 unit tests plus one pending final-cutover TODO, isolated production build passed. Ten browser tests passed: nine use actual TEST HTTP APIs, one explicitly intercepts Worker discovery responses to verify confirmation/cancel/failure/no-retry UI semantics (not real discovery evidence). The real TEST registry has no configured HTTP workers; live discovery and changed-binding races are not yet browser-verified. Initial browser attempt failed with real 404 because the isolated server started before its new build directory existed; stopped that owned process, restarted after build completion, verified HTML response, then reran successfully. User 8788/8787 unchanged.
+
+Actual screenshot inspected: `/tmp/annotagent-native-http-workers.png`, URL `http://127.0.0.1:8794/settings/vision-models`, 1440×900, DPR 1, light, TEST HTTP, source `9a896bc` plus this slice. New region is visible under the same approved Settings shell; empty-state screenshot is not installed-model or accuracy evidence. Remaining old root, advanced Workflow/Batch, bundle provisioning and persisted history scope work is unchanged and incomplete. No push.
+
 ## Latest continuation — atomic model edits
 
 Integrated backend UIAPI-010 `210091a17b1d4ff7b5fe0a306cb9100f1b548aea` as `7d1948cf9ceae6cb7e40e0a07acff349c337f759`. Documentation conflicts were resolved section-by-section, preserving existing material without importing unrelated backend deliveries. Native model editing and lock/unlock now send `expected_revision`; the server atomically checks and appends a revision. A 409 leaves local edits intact and never automatically retries against a newer revision.
