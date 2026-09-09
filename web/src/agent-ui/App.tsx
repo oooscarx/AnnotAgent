@@ -260,7 +260,9 @@ export function AgentPreviewApp({
     sendPending.current = false;
     setBusy(false);
   };
-  const currentProject = state.projects.find((p) => p.id === task?.project);
+  const managementPage = settingsRoute.kind === "management" || settingsRoute.kind === "detail" ? settingsRoute : undefined;
+  const currentProject = state.projects.find((p) => p.id === (managementPage?.projectId || task?.project));
+  const managementTitle = managementPage ? ({data:"图片数据",labels:"标签定义",pipelines:"自动化方案",runs:"处理记录",batches:"批量处理",review:"审核标注",export:"导出",trash:"回收站"})[managementPage.page] : undefined;
   const active =
     task && ["running", "planning", "stopping"].includes(task.phase);
   return (
@@ -387,8 +389,8 @@ export function AgentPreviewApp({
                 text("设置", "Settings")
               ) : (
                 <>
-                  <span>{currentProject?.title || "项目不存在"}</span>
-                  <b> / {task?.title || "任务不存在"}</b>
+                  <span>{settingsRoute.kind === "projects" ? "我的项目" : settingsRoute.kind === "create-project" ? "新建项目" : currentProject?.title || "项目不存在"}</span>
+                  {(managementTitle || task) && <b> / {managementTitle || task?.title}</b>}
                 </>
               )}
             </div>

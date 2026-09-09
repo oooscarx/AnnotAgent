@@ -53,6 +53,8 @@ Screenshot `single-ui-clean-cut/m2/native-review.png`: actual React application,
 
 The production build still contains the old App and styles chunks. History scope, advanced Workflow/Run surfaces, export, fuller model/bundle operations and final old-root removal remain open. Goal is active; no claim of complete removal and no push.
 
+Visual inspection of the first review screenshot exposed an incorrect `Project missing / Task missing` header on management deep links. Fixed header ownership to derive from the parsed management route, not selected conversation. Added an actual HTTP header assertion and reran all three management E2E plus unit/typecheck/build. Corrected screenshot `m2/native-review-owned-header.png` uses the same TEST server/viewport/DPR/theme, source `153019b` plus this correction. The first screenshot is retained as evidence of the detected defect, not a final approved visual. Review workflow commit: `153019b`.
+
 ### Goal continuation: native lifecycle and Trash
 
 Previous goal turn was goal setup/status only; this continuation changed production source. Added new `LifecycleOperation` and `TrashManagement` (not an old-page wrapper), routed `/projects/:id/manage/trash` into the Agent shell, and added the project menu entry. Existing impact-preview, confirmation-token, expected-revision, privileged-action and idempotency APIs are reused. Bulk selection, restore and typed DELETE purge confirmation are implemented. Preview project/action/object/revision mismatch fails closed. Default replacement/explicit clearing is supported by the shared dialog for subsequent Pipeline migration.
