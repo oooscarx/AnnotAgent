@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Future-rule Builder positive execution and old scope form removal
+
+Extended the native real HTTP scenario beyond preview/cancel: explicitly confirmed the loopback TEST Builder, verified exact new Schema ID/revision in request and completed operation, a distinct new Workflow Draft ID and its native management link, with original Sample Test unchanged. Browser writes were exactly scope answer, future-schema save and one Builder launch; refresh/older history did not redispatch. Extended scenario passed on owned8794/8795 using /tmp/annotagent-native-future-builder-dist (source40da00e). This proves wiring, not live-model quality or separate sample execution.
+
+Removed the unreferenced ConversationFeedbackScope.tsx after migrating its intent choices, reasons, frozen-command recovery, ownership/context conflicts and saved/cancelled state presentation to native TaskFeedback with real HTTP coverage. Shared conversation-feedback-scope domain and tests remain. Model-assisted future proposals, image-class correction, standalone sample continuation, broader Replay and full acceptance still required. No user services/workspace, Published, paid API or remote mutation; goal active.
+
 ## Future-rule Draft to exact Builder boundary
 
 Code/API and original future-schema tests clarify the actual continuation: a saved future semantic Draft is used by a fresh bounded Builder authorization on its owning task, then independently authorized samples. There is no discovered dedicated adopt-overwrite-Project/new-task endpoint to invent. Native FutureRules now offers the existing SchemaBuilder on demand for its actual saved Schema ID/revision, sharing the same authorization/recovery/stop implementation as normal task semantic drafts. It does not duplicate execution or auto-adopt rules.
