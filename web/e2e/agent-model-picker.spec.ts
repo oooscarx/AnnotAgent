@@ -62,6 +62,26 @@ test("Registry picker persists next-scope model without probes, sends or changin
   const consent = {call_id:randomUUID(),model_id:models[0].id,scope_hash:original.scope_hash,expires_at:original.expires_at,allow_unknown_cost:true};
   const running = request.post(`${taskRoot}/schema-proposals`,{data:consent});
   await expect.poll(async()=> (await (await request.get(`${taskRoot}/calls`)).json())[0]?.status).toBe("reserved");
+  // Real TEST in-flight call; follow-up admission and cancellation cannot mutate
+  // that request or its budget. This inbox has no automatic consumer yet.
+  const followup={message:{id:randomUUID(),text:"TEST queued supplement",image:null},task_id:send.task_id,schema_revision:revision,mode:"plan"};
+  const queued=await (await request.post(`${root}/send`,{data:followup})).json();
+  const queuePath=`${taskRoot}/message-queue`;
+  const queue=await (await request.get(queuePath)).json();
+  expect(queue).toHaveLength(1);
+  expect(queue[0].input).toEqual(followup);
+  expect(queue[0].receipt).toEqual(queued);
+  expect(queue[0].status).toBe("waiting_for_dispatch");
+  expect(queue[0].receipt.agent_model.model_profile_id).toBe(models[0].id);
+  expect((await request.get(`/api/projects/foreign-owner/conversations/${conversation}/tasks/${send.task_id}/message-queue`)).ok()).toBe(false);
+  const cancelPath=`${queuePath}/${followup.message.id}/cancel`;
+  expect((await request.post(cancelPath,{data:{execute:true}})).ok()).toBe(false);
+  const cancelled=await (await request.post(cancelPath,{data:{}})).json();
+  expect(cancelled.status).toBe("cancelled");
+  expect(await (await request.post(cancelPath,{data:{}})).json()).toEqual(cancelled);
+  expect(await (await request.post(`${root}/send`,{data:followup})).json()).toEqual(queued);
+  expect(await (await request.get(queuePath)).json()).toEqual([cancelled]);
+  expect((await (await request.get(`${taskRoot}/budget`)).json()).total_reserved_calls).toBe(1);
   expect((await request.post(`${root}/agent-model`,{data:{request_id:randomUUID(),expected_revision:before.revision+1,model_profile_id:models[1].id}})).ok()).toBe(true);
   const launched = await running;
   expect(launched.ok(),await launched.text()).toBe(true);

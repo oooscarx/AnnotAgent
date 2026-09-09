@@ -9550,6 +9550,32 @@ impl LocalApplication {
             .conversation_send_receipt(&owner, conversation, message)?)
     }
 
+    pub fn project_conversation_message_queue(
+        &self,
+        project: &str,
+        conversation: uuid::Uuid,
+        task: uuid::Uuid,
+        after: i64,
+    ) -> Result<Vec<annotagent_storage::ConversationQueuedMessage>> {
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self
+            .store
+            .conversation_message_queue(&owner, conversation, task, after)?)
+    }
+
+    pub fn cancel_project_queued_message(
+        &self,
+        project: &str,
+        conversation: uuid::Uuid,
+        task: uuid::Uuid,
+        message: uuid::Uuid,
+    ) -> Result<annotagent_storage::ConversationQueuedMessage> {
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self
+            .store
+            .cancel_queued_conversation_message(&owner, conversation, task, message)?)
+    }
+
     /// Admit one frozen send command without granting inference or execution.
     pub fn send_project_conversation_message(
         &self,

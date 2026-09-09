@@ -113,6 +113,12 @@ impl SqliteStore {
             }
             let receipt=ConversationSendReceipt{message,task_id,disposition,agent_model:Some(agent_model),mode:input.mode};
             tx.execute("INSERT INTO conversation_send_receipts(conversation_id,message_id,input_json,receipt_json) VALUES(?1,?2,?3,?4)",params![conversation.to_string(),input.message.id.to_string(),serde_json::to_string(input)?,serde_json::to_string(&receipt)?])?;
+            // Only modern, ordinary follow-ups enter this coordinator inbox.
+            // Legacy history is not backfilled; candidate-scoped feedback keeps
+            // its existing separately authorized interpretation path for now.
+            if receipt.disposition==ConversationSendDisposition::TaskMessage && input.mode.is_some() {
+                tx.execute("INSERT INTO conversation_message_queue(conversation_id,message_id,task_id,sequence) VALUES(?1,?2,?3,?4)",params![conversation.to_string(),input.message.id.to_string(),task_id.to_string(),receipt.message.sequence])?;
+            }
             tx.commit()?;
             Ok(receipt)
         })
@@ -122,6 +128,143 @@ impl SqliteStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn followup_queue_is_atomic_ordered_owned_and_cancellation_is_terminal() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TEST-queue.sqlite");
+        let store = SqliteStore::open(&path).unwrap();
+        let project = Uuid::new_v4().to_string();
+        let conversation = store.create_conversation(&project).unwrap();
+        let first = store
+            .send_conversation_message(&project, conversation, &input())
+            .unwrap();
+        let mut followup = input();
+        followup.task_id = Some(first.task_id);
+        followup.mode = Some(ConversationSendMode::Plan);
+        let sent = store
+            .send_conversation_message(&project, conversation, &followup)
+            .unwrap();
+        let mut second = followup.clone();
+        second.message.id = Uuid::new_v4();
+        second.message.text = "TEST later instruction".into();
+        second.mode = Some(ConversationSendMode::Execute);
+        store
+            .send_conversation_message(&project, conversation, &second)
+            .unwrap();
+        let queue = store
+            .conversation_message_queue(&project, conversation, first.task_id, 0)
+            .unwrap();
+        assert_eq!(queue.len(), 2);
+        assert_eq!(queue[0].receipt, sent);
+        assert_eq!(queue[0].input, followup);
+        assert_eq!(queue[1].input, second);
+        assert!(
+            store
+                .conversation_message_queue("foreign", conversation, first.task_id, 0)
+                .is_err()
+        );
+        assert!(
+            store
+                .conversation_message_queue(&project, conversation, Uuid::new_v4(), 0)
+                .is_err()
+        );
+        assert!(
+            store
+                .conversation_message_queue(&project, conversation, first.task_id, -1)
+                .is_err()
+        );
+        assert!(
+            store
+                .cancel_queued_conversation_message(
+                    &project,
+                    conversation,
+                    Uuid::new_v4(),
+                    followup.message.id
+                )
+                .is_err()
+        );
+        let cancelled = store
+            .cancel_queued_conversation_message(
+                &project,
+                conversation,
+                first.task_id,
+                followup.message.id,
+            )
+            .unwrap();
+        assert_eq!(
+            cancelled.status,
+            crate::ConversationQueuedMessageStatus::Cancelled
+        );
+        assert!(cancelled.cancelled_at.is_some());
+        drop(store);
+        let store = SqliteStore::open(&path).unwrap();
+        assert_eq!(
+            store
+                .cancel_queued_conversation_message(
+                    &project,
+                    conversation,
+                    first.task_id,
+                    followup.message.id
+                )
+                .unwrap(),
+            cancelled
+        );
+        assert_eq!(
+            store
+                .send_conversation_message(&project, conversation, &followup)
+                .unwrap(),
+            sent
+        );
+        let queue = store
+            .conversation_message_queue(&project, conversation, first.task_id, 0)
+            .unwrap();
+        assert_eq!(queue[0], cancelled);
+        assert_eq!(
+            queue[1].status,
+            crate::ConversationQueuedMessageStatus::WaitingForDispatch
+        );
+        assert_eq!(
+            store
+                .conversation_message_queue(
+                    &project,
+                    conversation,
+                    first.task_id,
+                    sent.message.sequence
+                )
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .conversation_messages(&project, conversation, 0, 100)
+                .unwrap()
+                .len(),
+            3
+        );
+        // Queue failure must not leave behind a logged-but-unqueued modern Send.
+        store.with_connection(|db| {db.execute_batch("CREATE TRIGGER TEST_queue_failure BEFORE INSERT ON conversation_message_queue BEGIN SELECT RAISE(ABORT,'TEST queue failure'); END;")?;Ok(())}).unwrap();
+        let mut failed = followup.clone();
+        failed.message.id = Uuid::new_v4();
+        assert!(
+            store
+                .send_conversation_message(&project, conversation, &failed)
+                .is_err()
+        );
+        assert!(
+            store
+                .conversation_send_receipt(&project, conversation, failed.message.id)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .conversation_message(&project, conversation, failed.message.id)
+                .unwrap()
+                .is_none()
+        );
+    }
+
     #[test]
     fn send_mode_is_immutable_per_message_and_survives_restart() {
         let dir = tempfile::tempdir().unwrap();

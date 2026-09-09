@@ -32,6 +32,8 @@ pub(super) fn routes() -> Router<ServerState> {
         .route("/api/projects/{project_id}/conversations/{conversation_id}/send", post(super::conversations::send))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/agent-model", get(super::conversations::agent_model).post(super::conversations::select_agent_model))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/send/{message_id}", get(super::conversations::send_receipt))
+        .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/message-queue", get(super::conversations::message_queue))
+        .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/message-queue/{message_id}/cancel", post(super::conversations::cancel_queued_message))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/stop-requests", post(super::conversation_stop::begin))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/stop-requests/{message_id}", get(super::conversation_stop::get))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/stop-requests/{message_id}/select", post(super::conversation_stop::select))

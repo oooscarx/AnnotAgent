@@ -2,6 +2,46 @@
 use super::*;
 use annotagent_storage::{ConversationMessage, ConversationMessageInput};
 
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub(super) struct QueuePage {
+    #[serde(default)]
+    after: i64,
+}
+
+pub(super) async fn message_queue(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+    Query(page): Query<QueuePage>,
+) -> ApiResult<Json<Vec<annotagent_storage::ConversationQueuedMessage>>> {
+    state
+        .application
+        .project_conversation_message_queue(&project, conversation, task, page.after)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CancelQueuedMessage {}
+
+pub(super) async fn cancel_queued_message(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task, message)): AxumPath<(
+        String,
+        uuid::Uuid,
+        uuid::Uuid,
+        uuid::Uuid,
+    )>,
+    Json(_input): Json<CancelQueuedMessage>,
+) -> ApiResult<Json<annotagent_storage::ConversationQueuedMessage>> {
+    state
+        .application
+        .cancel_project_queued_message(&project, conversation, task, message)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
 pub(super) async fn agent_model(
     State(state): State<ServerState>,
     AxumPath((project, conversation)): AxumPath<(String, uuid::Uuid)>,

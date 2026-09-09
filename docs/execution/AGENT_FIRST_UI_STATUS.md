@@ -774,3 +774,46 @@ Verification:
 All test images are repository synthetic fixtures; no real workspace, paid Provider,
 historical Published Version, remote or push was touched. Queue dispatch, continuation,
 compact Plan/tool blocks and full final regression remain incomplete.
+
+## M3 continuation — durable follow-up inbox boundary, 2026-09-09
+
+Previous goal turn made verified progress in 2790f5b. Inspection confirmed ordinary
+follow-ups were only journal entries, with no cancellable dispatch record. Migration
+0055 now records modern ordinary TaskMessage sends in an ordered coordinator inbox,
+inside the existing Send transaction. It references the frozen Send input/receipt
+instead of copying or re-resolving image, model, mode, task or schema context. Queue
+insert failure rolls the entire Send back. Legacy messages are not backfilled.
+
+Added owned, read-only paginated history and idempotent terminal cancellation:
+`GET .../conversations/:conversation/tasks/:task/message-queue?after=:sequence`
+and `POST .../message-queue/:message/cancel` with an empty, strict JSON body.
+Cancellation preserves the message and its original Send receipt, changes no grant,
+stops no current call/Batch and cannot be reversed by retrying the original Send.
+These routes use existing same-origin workspace routing and stable Project ownership.
+
+This is intentionally **not a finished execution queue**. Entries truthfully have
+`waiting_for_dispatch` or `cancelled`; there is no pretend running/completed state.
+No consumer is connected yet, and no UI says these instructions have been applied.
+Candidate-scoped feedback still follows its existing explicit authorization path and
+is not included in this ordinary-message inbox. Next required work: guarded dispatch
+into the existing planning/feedback coordination, correct authorization for the queued
+snapshot, scope-aware cancellation/redirect UI, and proving no reexecution/renewed
+budget across interruption and continuation. Do not count this as requirement 8 passed.
+
+Verification:
+- Send/storage tests 5/5 passed (32753), including transaction rollback on queue failure,
+  task/Project rejection, ordered snapshots, paging, cancellation/retry and restart.
+- Full Storage library suite 159/159 passed (79832), including existing call-budget,
+  immutable workflow, feedback, ownership, review and stop persistence regressions.
+- Strict Storage/Application/Server all-target/all-feature Clippy passed (78704).
+- Actual HTTP TEST model picker + Send tests 5/5 passed (53992), isolated
+  `/tmp/annotagent-guided-e2e-70794`. While the Alpha planning call is reserved, the test
+  admits a follow-up, reads its frozen Alpha snapshot, rejects foreign ownership and
+  an injected execute field, cancels twice with the same outcome, retries the Send
+  without reactivating the entry, then observes the original Alpha call complete once.
+  Budget remains one reserved call; later model preference changes do not rewrite it.
+- Browser production build and diff check passed; existing chunk-size warning remains.
+  No Live model quality or final six-state visual evidence is claimed.
+
+No user workspace cleanup, Published Version modification, remote change or push.
+Full Agent-first goal remains active and incomplete.
