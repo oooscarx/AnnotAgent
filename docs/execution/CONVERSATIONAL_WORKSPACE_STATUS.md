@@ -46,13 +46,58 @@ sample services continue under that grant. A real SIGKILL/restart test verifies 
 operation resumes once, without another feedback revision or budget reset (027b8ea). An expired,
 revoked or changed binding still blocks inference without discarding the saved correction.
 
-Still open: requirement-by-requirement completion audit, visual/setup request-kind coverage,
-remaining metadata transfer and long-history performance, assistive-technology/native IME/
-actual 200-percent browser zoom, and final full-browser regression results. Live model quality
-and real-human novice usability are not proven. The current browser sweep contains 178 tests,
-not the obsolete 170 count. Its terminal result is pending. The prior Rust process handle was
-no longer available without a captured terminal result; fresh logged run 53088 has now exited
-successfully for all four required Rust commands. Actual evidence and limitations follow.
+Latest production code is 2502ab3. Full Rust fmt/clippy/test/build process 6393 exited 0
+(713 tests passed, 6 explicitly ignored); see `/tmp/annotagent-rust-post-binding-20260909.log`.
+Web typecheck, 231 unit tests and production build passed. The current 178-case browser sweep
+37872 remains in progress, logged to `/tmp/annotagent-web-combined-20260909.log`; its terminal
+result must not be inferred from individual passing cases. The earlier run numbers and counts
+below are historical, not the current final result.
+
+Default-goal discovery now uses one bounded owned query rather than downloading the full
+message journal (6eee1e0). Dataset metadata still uses a full index; visible thumbnails and
+decoded browse previews are bounded. New Draft review boundaries retain explicit task/label
+identity through export (e4d1659, eba14b0, 2502ab3); historical immutable exports are not rewritten.
+Run ownership no longer depends on the Project inventory's current page (909980d).
+
+Remaining verification: terminal full-browser result and consolidated requirement/evidence
+audit. Actual 200% browser zoom, native IME and assistive-technology checks are unverified;
+automated reflow/composition tests are not substitutes. Live model quality and real-human novice
+usability have not been tested. Point-only and general candidate-comparison request protocols
+are not claimed; the implemented visual requests use reference boxes/classes and corrections.
+
+## Consolidated verification map (current sweep still pending)
+
+This map locates executable evidence; it does not substitute a test file's existence for
+its result. The current full log is authoritative. TEST HTTP transports call real Rust
+Application/Storage/Runtime services but provide scripted predictions, not model accuracy.
+
+| Requirement group | Executable evidence / boundary |
+| --- | --- |
+| Default entry, persistent messages, input order, independent goals, frozen image references | `conversation-entry`, `conversation-workspace`, `conversation-goals` browser suites; bounded history unit/storage/server tests. Viewing and refresh do not authorize inference. |
+| Automatic bbox/classification Schema, clarification, manual fallback | `conversation-schema`, `conversation-human-schema`, `conversation-initial-journey`, `conversation-clarification`; exact Schema/Builder/Sample receipts, not free text as business truth. |
+| One bounded initial authorization and resumed clarification | `conversation-initial-journey`, `conversation-budget`; grants preserve model, image, revision, expiry and call ceilings across child services. |
+| Missing model and setup return/cancel | `journey-model`, `journey-local-model` and task setup checks; fixture setup is not evidence of installing real model weights. |
+| Scoped feedback, stale answers, no focus theft, future rules | `conversation-feedback`, `conversation-image-class`, `conversation-future-schema`, `conversation-future-schema-proposal`; new rules fork rather than mutate old Runs. |
+| Reference box/class and correction as structured input | `conversation-reference-target`, `conversation-joint-repair`, `conversation-samples`; explicit geometry/class, subject and expected revision are validated and saved to Sandbox. |
+| Answer delivery, idempotence and restart | `conversation-answer-restart`; real killed writer at Application commit/pre-dispatch boundary, production startup recovery, unchanged second-restart dispatch/budget. Not arbitrary Provider exactly-once billing. |
+| Stop, independent tasks, cancelled/unknown inference | `conversation-stop`, `conversation-stop-executors`, `conversation-schema-background`, feedback/sample unknown-outcome cases; unknown external outcomes are not blindly retried. |
+| Sample terminal results, correction, compare and formal separation | `conversation-samples` bbox/classification and human variants; samples do not become formal annotations merely by being corrected. |
+| Immutable publication, processing retry, actual Review/export | `conversation-samples`, `guided-workspace`; actual archive payload checks include non-empty/non-unbound task identity. Existing snapshots are not rewritten. |
+| Owner-scoped detail, management, deletion/recovery | `guided-workspace`, route unit tests; resolved Run owner works outside the paged Project inventory. Existing management pages remain reused. |
+| History, previews, responsive layout and keyboard | `conversation-history`, `conversation-previews`, `conversation-workspace`, stop composition cases; native zoom/IME/screen-reader checks remain unverified. |
+
+Fresh screenshots inspected from `/tmp/annotagent-conversation-combined-verified`:
+`sample-bbox.png` shows the actual two-pane TEST workspace and editable terminal candidate;
+`formal-export-bbox.png` shows one accepted annotation, zero unresolved reviews and a real
+download receipt. The synthetic green image is a protocol fixture; its cup prediction is
+not a correct semantic annotation and must never be used as accuracy or marketing evidence.
+The export page clearly identifies the result folder as a server path, not the user's device.
+
+Role separation remains: LLM proposes Schema/method or interprets bounded feedback; existing
+validators/evidence logic assess feasibility and geometry risks; deterministic Runtime executes
+the frozen Workflow; human UI supplies verified edits and explicit processing authorization.
+No permission to install plugins, read credentials or delete history is added to the model.
+Detailed historical commit hashes, object chains and failure/fix observations follow below.
 
 ## Direction and baseline (M0, 2026-09-08)
 
