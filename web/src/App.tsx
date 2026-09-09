@@ -1973,7 +1973,7 @@ function SettingsWorkspace({
         <SettingsPage view="workers" onError={onError} />
       )}
       {section === "storage" && <SettingsPage view="storage" onError={onError} />}
-      {section === "usage" && <RegistryUsagePage onError={onError} />}
+      {section === "usage" && <a href="/settings/usage">查看用量与预算（新设置）</a>}
     </section>
   );
 }
@@ -6245,19 +6245,6 @@ function ExpertModelPluginsPage({ onError }: { onError: (value: string) => void 
 
 
 
-function RegistryUsagePage({ onError }: { onError: (value: string) => void }) {
-  const [models, setModels] = useState<RegistryModelProfile[]>([]);
-  const [usage, setUsage] = useState<ProviderProbeUsage[]>([]);
-  useEffect(() => {
-    void api.modelProfiles().then(async (result) => {
-      setModels(result.models);
-      const records = await Promise.all(result.models.map((model) => api.modelProfileUsage(model.id)));
-      setUsage(records.flatMap((record) => record.active_probes).sort((left, right) => right.created_at.localeCompare(left.created_at)));
-    }).catch((error: Error) => onError(error.message));
-  }, []);
-  const totals = usage.reduce((current, record) => ({ tokens: current.tokens + (record.total_tokens ?? 0), cost: current.cost + Number(record.cost || 0) }), { tokens: 0, cost: 0 });
-  return <section className="registry-page"><div className="toolbar-panel"><div><span className="eyebrow">Recorded Registry operations</span><h2>{t("Usage")}</h2><p>Active model probes are listed separately from normal Run usage because each probe requires explicit billable confirmation.</p></div></div><div className="metrics-grid"><Metric label="Active probes" value={usage.length} detail="explicitly confirmed" /><Metric label="Probe tokens" value={totals.tokens.toLocaleString(localeTag())} detail="reported by Providers" /><Metric label="Estimated probe cost" value={`$${totals.cost.toFixed(6)}`} detail="configured pricing snapshots" /></div>{usage.length ? <div className="registry-usage-list">{usage.map((record) => { const model = models.find((candidate) => candidate.id === record.model_profile_id); return <article key={record.id}><span><strong>{model?.display_name ?? record.model_profile_id}</strong><small>{new Date(record.created_at).toLocaleString(localeTag())} · revision {record.model_profile_revision}</small></span><span>{record.total_tokens ?? t("Unknown")}{" "}{t("tokens")}</span><span>{record.currency} {record.cost}</span><Status status={record.succeeded ? "succeeded" : "failed"} /></article>; })}</div> : <Empty title="No active probe usage" detail="Passive connection checks do not generate usage records." />}</section>;
-}
 
 function WorkflowDetail({
   project,

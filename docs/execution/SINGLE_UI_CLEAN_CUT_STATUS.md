@@ -1,5 +1,13 @@
 # Single UI Clean Cut
 
+## Native probe usage; old Registry usage page deleted
+
+Moved cross-model active-probe records to a lazy native Usage disclosure using existing real model/profile-usage APIs, bounded four-at-a-time reads, identity validation, partial-read error reporting, search and25-row client display pages. Clearly scoped to current Registry models, excluding normal Run/Task and deleted-model records; no invented full-system totals. Unknown/zero/invalid price records are not presented as free. Closed disclosure dispatches no subsequent read groups, stale responses cannot overwrite the current view. Removed old RegistryUsagePage and changed its old embedded caller to canonical `/settings/usage`.
+
+321 unit tests plus one remaining cutover TODO, typecheck and isolated production build passed. Real TEST HTTP browser case passed: lazy opening, actual seeded record display, search-empty, refresh closes view, zero writes/inference requests. No new screenshot claimed. Owned fixture stopped; real workspace/services/dist untouched; no paid calls or push.
+
+Backend coordination: UIAPI-015 queued to confirmed UUID01a0855e-9c39-7c33-9f18-93e084d14816, receipt01a08741-25b1-7371-9286-2455015180ed. Renumbered previous full-snapshot/publication request to avoid collision with backend's unrelated014 localization repair. Requested owner-checked full immutable version GET and revision/hash-bound recoverable publish/clone contract or existing processing-boundary guidance, with concrete tests. Current inspected backend220576f is unrelated repair work, not this delivery, and was not imported. Remaining migration work continues without editing backend-owned Rust. Old root/styles and remaining legacy pages still exist; goal active.
+
 ## Old Provider page removed
 
 Added server Registry preset picker to native new-account form; selection fills only name/Endpoint and does not save, probe or claim model availability. Native credential editor now supports workspace-file (default), server environment reference and process-only storage. Invalid environment variable names block submission; switching source clears the input. Credential responses must match Provider/source/configured status; no key is read back or placed in browser storage. Existing editor dirty guard remains. Keychain selection/migration is intentionally not restored, honoring the user's no-keychain requirement. Old optional compatibility Registry import UI is removed as part of the old-UI clean cut; existing server connections/credential references remain untouched and there is no automatic migration.

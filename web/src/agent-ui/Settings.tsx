@@ -17,6 +17,7 @@ import { RuntimeSettings } from "./RuntimeSettings";
 import { VisionWorkers } from "./VisionWorkers";
 import { ProviderControls } from "./ProviderControls";
 import { ProviderPresetPicker } from "./ProviderPresetPicker";
+import { ProbeUsage } from "./ProbeUsage";
 import { isEnvironmentVariableName } from "../providerCatalog";
 function Row({
   title,
@@ -604,6 +605,7 @@ export function SettingsView({
               )}
               {section === "usage" && (
                 <>
+                  {!fixture && adapter.modelProfileManagement && <ProbeUsage service={adapter.modelProfileManagement}/>}
                   <Row title="统计范围" help={fixture ? "示例数据不是你的真实 API 用量。" : "仅未来 Run 默认预算；Task 账本、Provider probe 与正式执行不是同一个统计范围。"}>
                     <select
                       disabled={!fixture}

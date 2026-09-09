@@ -1,6 +1,10 @@
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
+test("native probe usage is lazy and does not generate billable requests",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});
+  await page.goto("/settings/usage");const region=page.getByRole("region",{name:"模型探测用量",exact:true});await expect(region).toHaveCount(0);await page.locator("summary").filter({hasText:"模型探测用量记录"}).click();await expect(region).toContainText("不是全系统费用");await expect(region).toContainText("当前匹配");await expect(region).toContainText("TEST");await region.getByRole("textbox",{name:"搜索模型",exact:true}).fill("TEST-NO-SUCH-MODEL");await expect(region).toContainText("当前匹配 0 条");await page.reload();await expect(region).toHaveCount(0);expect(writes).toEqual([]);
+});
 test("native Provider controls read status and cancel discovery without remote calls",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
   const providers=(await(await request.get("/api/providers")).json()).providers;const provider=providers.find((p:{adapter:string;enabled:boolean})=>p.adapter==="open_ai_compatible"&&p.enabled);expect(provider).toBeTruthy();
