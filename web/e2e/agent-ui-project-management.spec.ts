@@ -1,6 +1,13 @@
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
+test("native version summary restores exact version and rejects missing versions without writes",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const project="TEST-agent-ui-15eb0549-f44e-4ae1-81dd-0ebf67714eb2";const summary=await(await request.get(`/api/projects/${project}/summary`)).json();const version=summary.project.available_workflow_versions[0];expect(version).toBeTruthy();
+  const url=`/projects/${project}/manage/pipelines/${encodeURIComponent(version.workflow_id)}?version=${version.version}`;const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});
+  await page.goto(url);await expect(page.getByRole("heading",{name:`${version.name} · v${version.version}`,exact:true})).toBeVisible();await page.reload();await expect(page.getByRole("region",{name:"Workflow 版本详情",exact:true})).toContainText("不是当前可编辑 Draft");
+  await page.goto(url.replace(`version=${version.version}`,"version=0001"));await expect(page.getByRole("alert")).toContainText("无效的 Workflow 版本号");expect(writes).toEqual([]);
+});
 test("native Skill registry is lazy, searchable, server-backed and read-only",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");const skills=await(await request.get("/api/skills")).json();expect(skills.length).toBeGreaterThan(0);
   const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});await page.goto("/settings/plugins");

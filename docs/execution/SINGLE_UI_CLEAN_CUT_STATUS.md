@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Owned Workflow version summary
+
+Native Pipeline detail now distinguishes explicit `?version=N` from editable Draft identity. Reads the exact Project's available version summary, checks owner/workflow ID/version, rejects malformed or missing versions without default fallback, and shows actual node/model/dependency/validator/refiner/review/fallback metadata. Run links parse server `workflow@version` references instead of treating that compound string as a Draft ID. It clearly states summary-only: complete frozen snapshot, clone, compare and publication remain migration gaps; no fake buttons or latest-Draft substitution.
+
+Verified314 unit tests plus one cutover TODO, typecheck/isolated build,20 management E2E (18 real TEST HTTP, two controlled responses). New browser case checks exact version, refresh, invalid version and zero writes. Existing publication immutability tests remain passing. No Rust changes or real model calls. UIAPI-014 sent to confirmed backend task for authoritative version GET and revision-bound publication guidance/delivery; it does not supersede history-scope009 priority. Old root/styles remain. Owned TEST service stopped; user workspace/services/dist unchanged, no push. Goal active.
+
 ## Skill Registry moved into native Settings
 
 New Plugin Settings disclosure mounts a real `SkillRegistry` only when opened. It reads `/api/skills` with cancellation, searchable identity/description and details for nodes, tools, capabilities/requirements, validators, refiners, policies, correction taxonomy, resources, project usage and Workflow/project templates. Errors never fall back to fixture lists; registered metadata is explicitly distinct from installed/Ready models. No new global Skills navigation. Audited old SkillsPage had no remaining invocation and deleted the whole obsolete function plus its type import from old App after migrating its information.
