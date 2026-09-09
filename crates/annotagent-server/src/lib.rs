@@ -10784,6 +10784,91 @@ mod tests {
             .expect("state")
     }
 
+    /// Explicitly opted-in real HTTP server for the external E2E transport.
+    /// Test-only: no production registry, credential router, or alternate runtime.
+    #[tokio::test]
+    #[ignore = "foreground integration server; requires isolated TEST input"]
+    async fn integration_http_fixture() {
+        let raw = std::env::var("ANNOTAGENT_TEST_HTTP_FIXTURE")
+            .expect("explicit TEST HTTP fixture input");
+        let input: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(input["enabled"], true);
+        let workspace = Path::new(input["workspace"].as_str().unwrap())
+            .canonicalize()
+            .unwrap();
+        assert!(workspace.starts_with(std::env::temp_dir().canonicalize().unwrap()));
+        assert!(
+            workspace
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("TEST-agent-ui-")
+        );
+        assert_eq!(
+            std::fs::read_to_string(workspace.join("FIXTURE_ONLY")).unwrap(),
+            "AnnotAgent HTTP integration fixture\n"
+        );
+        let port = u16::try_from(input["port"].as_u64().unwrap()).unwrap();
+        assert_ne!(port, 8787);
+        let application = Arc::new(LocalApplication::new(&workspace).unwrap());
+        let secrets = Arc::new(InMemorySecretStore::default());
+        // Restore only a literal synthetic credential for this exact local
+        // transport before invoking the normal startup recovery path.
+        let provider_port = u16::try_from(input["provider_port"].as_u64().unwrap()).unwrap();
+        assert_ne!(provider_port, 8787);
+        let endpoint = format!("http://127.0.0.1:{provider_port}/openai/v1");
+        for provider in application.store().list_provider_profiles().unwrap() {
+            if provider.display_name == "TEST integration external HTTP"
+                && provider.base_url.as_str() == endpoint
+                && let Some(reference) = provider.credential_ref
+                && reference.source == CredentialSource::SessionOnly
+            {
+                secrets
+                    .put(
+                        SecretScope {
+                            provider_id: reference.provider_id,
+                            source: reference.source,
+                            locator: reference.locator,
+                        },
+                        SecretValue::new("TEST-integration-only").unwrap(),
+                    )
+                    .await
+                    .unwrap();
+            }
+        }
+        let state = test_state(application.clone(), secrets).await;
+        // test_state normally seeds offline unit-test models. This HTTP fixture
+        // instead exercises the existing OpenAI-compatible external transport.
+        application
+            .store()
+            .purge_provider_adapter(ProviderAdapterKind::Mock)
+            .unwrap();
+        application.store().purge_mock_agent_sessions().unwrap();
+        let web_dist = input["web_dist"].as_str().map(Path::new);
+        let app = router(state.clone(), web_dist).layer(axum::middleware::map_response(
+            |mut response: Response| async move {
+                response.headers_mut().insert(
+                    "x-annotagent-fixture",
+                    HeaderValue::from_static("external-model-only"),
+                );
+                response
+            },
+        ));
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port))
+            .await
+            .unwrap();
+        tokio::spawn(conversation_journey::recover_answers(state));
+        println!(
+            "TEST HTTP fixture: {} workspace={} external models only",
+            listener.local_addr().unwrap(),
+            workspace.display()
+        );
+        axum::serve(listener, app)
+            .with_graceful_shutdown(shutdown_signal())
+            .await
+            .unwrap();
+    }
+
     #[tokio::test]
     async fn conversation_history_pages_preserve_exact_message_ownership() {
         let temporary = tempfile::tempdir().unwrap();
