@@ -48,6 +48,10 @@ pub struct ConversationSendReceipt {
     pub agent_model: Option<crate::ConversationAgentModel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<ConversationSendMode>,
+    /// Resolved at Send when setup exists. Historical/unconfigured messages have None.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_agent_model_id: Option<annotagent_core::ModelProfileId>,
+
 }
 
 fn invalid(message: &str) -> StorageError {
@@ -76,6 +80,16 @@ impl SqliteStore {
         conversation: Uuid,
         input: &ConversationSendInput,
     ) -> Result<ConversationSendReceipt, StorageError> {
+        self.send_conversation_message_with_model(project,conversation,input,None,None)
+    }
+
+    /// Application supplies the passive resolved default and observed preference.
+    /// CAS is in the same transaction as the message, receipt and queue insertion.
+    pub fn send_conversation_message_with_model(
+        &self, project: &str, conversation: Uuid, input: &ConversationSendInput,
+        resolved_agent_model_id: Option<annotagent_core::ModelProfileId>,
+        observed: Option<&crate::ConversationAgentModel>,
+    ) -> Result<ConversationSendReceipt, StorageError> {
         self.with_connection(|db| {
             let tx = db.unchecked_transaction()?;
             crate::conversations::require_owner(&tx, project, conversation)?;
@@ -86,7 +100,7 @@ impl SqliteStore {
             }
             if input.schema_revision.len()!=64 || !input.schema_revision.bytes().all(|b|b.is_ascii_hexdigit()) { return Err(invalid("Send requires a schema revision digest")); }
             let agent_model=crate::conversation_agent_model::read(&tx,conversation)?;
-            if input.agent_model.as_ref().is_some_and(|observed| *observed!=agent_model) {
+            if observed.is_some_and(|value| *value != agent_model) || input.agent_model.as_ref().is_some_and(|observed| *observed!=agent_model) {
                 return Err(StorageError::StaleConversationAgentModel);
             }
             // A legacy journal ID cannot silently acquire a new dispatch meaning.
@@ -111,7 +125,7 @@ impl SqliteStore {
             if disposition==ConversationSendDisposition::NewTask {
                 tx.execute("INSERT INTO conversation_tasks(id,conversation_id,source_message_id,schema_revision,created_at) VALUES(?1,?2,?3,?4,?5)",params![task_id.to_string(),conversation.to_string(),message.input.id.to_string(),input.schema_revision,chrono::Utc::now().to_rfc3339()])?;
             }
-            let receipt=ConversationSendReceipt{message,task_id,disposition,agent_model:Some(agent_model),mode:input.mode};
+            let receipt=ConversationSendReceipt{message,task_id,disposition,agent_model:Some(agent_model),mode:input.mode,resolved_agent_model_id};
             tx.execute("INSERT INTO conversation_send_receipts(conversation_id,message_id,input_json,receipt_json) VALUES(?1,?2,?3,?4)",params![conversation.to_string(),input.message.id.to_string(),serde_json::to_string(input)?,serde_json::to_string(&receipt)?])?;
             // Only modern, ordinary follow-ups enter this coordinator inbox.
             // Legacy history is not backfilled; candidate-scoped feedback keeps
@@ -529,18 +543,14 @@ mod tests {
                 )
                 .is_err()
         );
-        assert_eq!(
-            store
-                .reserve_conversation_call(
-                    &owner,
-                    task,
-                    approval.grant.id,
-                    &approval.grant.scope_hash,
-                    &approval.request_hash
-                )
-                .unwrap(),
-            ConversationCallAdmission::Admitted
-        );
+        let admissions = std::thread::scope(|scope| {
+            let reserve = || store.reserve_conversation_call(&owner,task,approval.grant.id,&approval.grant.scope_hash,&approval.request_hash).unwrap();
+            let first = scope.spawn(reserve);
+            let second = scope.spawn(reserve);
+            [first.join().unwrap(),second.join().unwrap()]
+        });
+        assert_eq!(admissions.iter().filter(|result| matches!(result,ConversationCallAdmission::Admitted)).count(),1);
+        assert_eq!(admissions.iter().filter(|result| matches!(result,ConversationCallAdmission::Existing(_))).count(),1);
         assert!(
             store
                 .cancel_queued_conversation_message(&owner, conversation, task, first.message.id)
@@ -618,6 +628,8 @@ mod tests {
                 .unwrap(),
             ConversationCallAdmission::Existing(_)
         ));
+        println!("AGENT_UI_TRACE {}",serde_json::json!({"fixture":true,"test":"queued_planning_preserves_budget_and_requires_exact_fifo_call","dispatch_admitted_count":1,"duplicate_dispatch_existing_count":1,"after_restart":store.conversation_message_queue(&owner,conversation,task,0).unwrap(),"budget":store.conversation_call_budget(&owner,task).unwrap()}));
+
     }
 
     fn input() -> ConversationSendInput {

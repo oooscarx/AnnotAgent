@@ -434,17 +434,27 @@ struct ApiError {
 }
 
 impl ApiError {
+    fn conversation(error: anyhow::Error) -> Self {
+        if let Some(StorageError::FeedbackRevisionConflict { current }) = error.downcast_ref::<StorageError>() {
+            return Self { status:StatusCode::CONFLICT, body:json!({"error":error.to_string(),"status":409,"code":"stale_revision","suggested_action":"reload_human_request","current_revision":current}) };
+        }
+        if let Some(StorageError::ConversationContract { code, .. }) = error.downcast_ref::<StorageError>() {
+            return Self { status:StatusCode::BAD_REQUEST, body:json!({"error":error.to_string(),"status":400,"code":code,"suggested_action":"reload_owner_snapshot","current_revision":null}) };
+        }
+        Self::bad_request(error)
+    }
+
     fn bad_request(error: impl std::fmt::Display) -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
-            body: json!({"error": error.to_string(), "status": StatusCode::BAD_REQUEST.as_u16()}),
+            body: json!({"error": error.to_string(), "status": StatusCode::BAD_REQUEST.as_u16(), "code":"invalid_request", "suggested_action":"review_request_or_reload_scope", "current_revision":null}),
         }
     }
 
     fn not_found(error: impl std::fmt::Display) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
-            body: json!({"error": error.to_string(), "status": StatusCode::NOT_FOUND.as_u16()}),
+            body: json!({"error": error.to_string(), "status": StatusCode::NOT_FOUND.as_u16(), "code":"not_found", "suggested_action":"reload_owner_snapshot", "current_revision":null}),
         }
     }
 
@@ -458,7 +468,7 @@ impl ApiError {
     fn forbidden(error: impl std::fmt::Display) -> Self {
         Self {
             status: StatusCode::FORBIDDEN,
-            body: json!({"error": error.to_string(), "status": StatusCode::FORBIDDEN.as_u16()}),
+            body: json!({"error": error.to_string(), "status": StatusCode::FORBIDDEN.as_u16(), "code":"forbidden", "suggested_action":"review_required_authorization", "current_revision":null}),
         }
     }
 
@@ -8139,7 +8149,7 @@ struct EventQuery {
     last_event_id: Option<String>,
 }
 
-async fn events(
+fn events(
     State(state): State<ServerState>,
     Query(query): Query<EventQuery>,
 ) -> ApiResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
@@ -8148,8 +8158,9 @@ async fn events(
     })?;
     let receiver = state.application.subscribe();
     let stream = stream::unfold(
-        (receiver, query.run_id, permit),
-        |(mut receiver, run_id, permit)| async move {
+        (receiver, query.run_id, permit, false),
+        |(mut receiver, run_id, permit, done)| async move {
+            if done { return None; }
             loop {
                 match receiver.recv().await {
                     Ok(value) if run_id.is_none_or(|filter| filter == value.run_id) => {
@@ -8157,13 +8168,16 @@ async fn events(
                             .event(serde_json::to_value(value.kind).ok()?.as_str()?)
                             .json_data(&value)
                             .ok()?;
-                        return Some((Ok(event), (receiver, run_id, permit)));
+                        return Some((Ok(event), (receiver, run_id, permit, false)));
                     }
                     Ok(_) => {}
                     Err(
                         tokio::sync::broadcast::error::RecvError::Lagged(_)
                         | tokio::sync::broadcast::error::RecvError::Closed,
-                    ) => return None,
+                    ) => {
+                        let event=Event::default().event("resync_required").json_data(json!({"code":"live_event_gap","snapshot_url":"/api/navigation","suggested_action":"reload_exact_task_and_run_snapshots"})).ok()?;
+                        return Some((Ok(event),(receiver,run_id,permit,true)));
+                    },
                 }
             }
         },

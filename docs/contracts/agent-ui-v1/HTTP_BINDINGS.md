@@ -46,3 +46,19 @@ DTO 权威源：`crates/annotagent-storage/src/conversation_{send,tasks,agent_mo
 - Stop 输出仍是原 ConversationStopRequest 的顶层字段（不是 request wrapper），另带 observation/dispatch_error/normalized_state/resume。`cancel_pending→stopping`、`unknown→outcome_unknown`、`cancelled→interrupted`；原 `finished` 只表示已经结束，normalized_state=null，需查原实体的终态。
 
 B1 HTTP 验证：navigation_snapshot_thread_keep_real_ownership_without_execution、safe_settings_are_passive_and_budget_patch_rejects_stale_revision、sse_reconnect_replays_exact_run_and_reports_cursor_gap；完整 server lib 55 passed / 1 ignored。
+
+## B2 控制语义与冻结修复
+
+SendReceipt 新增可选 `resolved_agent_model_id`：新消息在发送时被动解析并保存实际规划模型 ID；与 observed preference 的比较和 message/queue 写入同一事务。改变偏好会让竞态发送拒绝，旧 command 重试还原原 receipt。不会修改任何视觉绑定。显式后续请求不得覆盖已冻结模型；旧/未配置回执无此字段，仍需模型设置与精确批准，不回填伪造历史。注册 Profile 的 revision/Provider/config/预算仍由既有批准 scope_hash 冻结。
+
+Task 导航新增 `state/state_scope=task_activity`。这是当前活动观察（含待人工、未批准队列、在途规划/Sample/Batch），不是一个覆盖所有对象终态的项目状态。快照新增 `sample_operations/resume_actions`；只有真实 paused Batch 或已保存待继续 HumanRequest 在已结算调用条件下提供 available resume。Queue、HumanRequest、每个 Operation 必须独立展示。
+
+所有 legacy bad_request/not_found/forbidden 输出新增通用 code、suggested_action、current_revision。已类型化的 Conversation/Task 不存在与跨所有权分别返回 `not_found/owner_mismatch`，保持历史 400 兼容。Human feedback sequence 竞态返回 `409 stale_revision/current_revision`。其他复杂旧校验仍可能为 `400 invalid_request`，不要把 message 文案用作授权判断。
+
+Plan 工具曝光同时检查 planning_only 和 maximum_dry_runs；强制 model tool-call 仍经过原有 Plan permission denial。现有 Builder 始终 planning_only；Sample/Publish/Batch 必须走独立精确授权。
+
+并发队列测试在真实 SQLite reservation 上启动两个线程：仅一个 Admitted，另一个 Existing。FIFO、累计 calls、取消、restart、旧 source working-copy 校验继续复用现有事务。派发是显式 POST 驱动，页面 GET 不派发，未承诺后台无人值守自动 worker。
+
+Trace：TRACES.json 为测试产生的数据；停止中/未知/已中断预算不变；Batch restart/resume 100 图片只有 100 个 child Run，累计账本与历史用量一致；queue 已完成项返回 Existing，未执行 cancelled 项重启不复活。Mock 费用不能作真实模型计费或精度证据。
+
+Schema：SCHEMAS.json 覆盖常用命令/投影；复杂 Builder/Journey/Human DTO 的精确定义见 DTO_INVENTORY.json 与对应 Rust serde attributes。EXAMPLES.json 为 TEST 安全示例，scope_hash 必须实际 preview 获取，示例授权不可用于生产。

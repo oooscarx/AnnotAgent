@@ -1,0 +1,272 @@
+[
+  {
+    "budget_after": {
+      "planning_authorized_calls": 2,
+      "planning_reserved_calls": 1,
+      "processing_authorized_calls": 0,
+      "processing_reserved_calls": 0,
+      "project_authorized_calls": 2,
+      "project_reserved_calls": 1,
+      "total_authorized_calls": 2,
+      "total_reserved_calls": 1
+    },
+    "budget_before": {
+      "planning_authorized_calls": 2,
+      "planning_reserved_calls": 1,
+      "processing_authorized_calls": 0,
+      "processing_reserved_calls": 0,
+      "project_authorized_calls": 2,
+      "project_reserved_calls": 1,
+      "total_authorized_calls": 2,
+      "total_reserved_calls": 1
+    },
+    "fixture": true,
+    "requested": {
+      "created_at": "2026-09-09T09:07:56.992409+00:00",
+      "dispatch_error": null,
+      "message": {
+        "conversation_id": "1197cbc4-e4ff-450d-a570-d11f13bd625d",
+        "input": {
+          "id": "c9707c51-1cbe-459e-bbdd-07de54eee80c",
+          "image": null,
+          "reference": {
+            "scope": "stop_request",
+            "task_id": "dc54a3ff-93f0-4115-ac75-2dca29367b09"
+          },
+          "text": "stop"
+        },
+        "sequence": 2
+      },
+      "normalized_state": "stopping",
+      "observation": {
+        "description": "Cancellation is saved; the selected worker is still settling. Previously sent requests may still incur charges.",
+        "state": "cancel_pending"
+      },
+      "resume": {
+        "available": false,
+        "reason": "A stop receipt is not a resumable checkpoint. Use the exact paused Run/Batch or saved HumanRequest; never automatically resend an unknown Provider call."
+      },
+      "selected_target": {
+        "id": "ba6770d4-1c84-4775-9b5f-0ef772c93431",
+        "kind": "call",
+        "task_id": "dc54a3ff-93f0-4115-ac75-2dca29367b09"
+      },
+      "status": "cancel_requested",
+      "targets": [
+        {
+          "id": "ba6770d4-1c84-4775-9b5f-0ef772c93431",
+          "kind": "call",
+          "parent_journey_ids": [],
+          "state": "reserved",
+          "task_id": "dc54a3ff-93f0-4115-ac75-2dca29367b09"
+        }
+      ]
+    },
+    "retry": {
+      "created_at": "2026-09-09T09:07:56.992409+00:00",
+      "dispatch_error": null,
+      "message": {
+        "conversation_id": "1197cbc4-e4ff-450d-a570-d11f13bd625d",
+        "input": {
+          "id": "c9707c51-1cbe-459e-bbdd-07de54eee80c",
+          "image": null,
+          "reference": {
+            "scope": "stop_request",
+            "task_id": "dc54a3ff-93f0-4115-ac75-2dca29367b09"
+          },
+          "text": "stop"
+        },
+        "sequence": 2
+      },
+      "normalized_state": "outcome_unknown",
+      "observation": {
+        "description": "Local execution ended. The remote completion and cost are unknown; no automatic retry was started.",
+        "state": "unknown"
+      },
+      "resume": {
+        "available": false,
+        "reason": "A stop receipt is not a resumable checkpoint. Use the exact paused Run/Batch or saved HumanRequest; never automatically resend an unknown Provider call."
+      },
+      "selected_target": {
+        "id": "ba6770d4-1c84-4775-9b5f-0ef772c93431",
+        "kind": "call",
+        "task_id": "dc54a3ff-93f0-4115-ac75-2dca29367b09"
+      },
+      "status": "cancel_requested",
+      "targets": [
+        {
+          "id": "ba6770d4-1c84-4775-9b5f-0ef772c93431",
+          "kind": "call",
+          "parent_journey_ids": [],
+          "state": "reserved",
+          "task_id": "dc54a3ff-93f0-4115-ac75-2dca29367b09"
+        }
+      ]
+    },
+    "settled": {
+      "created_at": "2026-09-09T09:07:56.992409+00:00",
+      "dispatch_error": null,
+      "message": {
+        "conversation_id": "1197cbc4-e4ff-450d-a570-d11f13bd625d",
+        "input": {
+          "id": "c9707c51-1cbe-459e-bbdd-07de54eee80c",
+          "image": null,
+          "reference": {
+            "scope": "stop_request",
+            "task_id": "dc54a3ff-93f0-4115-ac75-2dca29367b09"
+          },
+          "text": "stop"
+        },
+        "sequence": 2
+      },
+      "normalized_state": "outcome_unknown",
+      "observation": {
+        "description": "Local execution ended. The remote completion and cost are unknown; no automatic retry was started.",
+        "state": "unknown"
+      },
+      "resume": {
+        "available": false,
+        "reason": "A stop receipt is not a resumable checkpoint. Use the exact paused Run/Batch or saved HumanRequest; never automatically resend an unknown Provider call."
+      },
+      "selected_target": {
+        "id": "ba6770d4-1c84-4775-9b5f-0ef772c93431",
+        "kind": "call",
+        "task_id": "dc54a3ff-93f0-4115-ac75-2dca29367b09"
+      },
+      "status": "cancel_requested",
+      "targets": [
+        {
+          "id": "ba6770d4-1c84-4775-9b5f-0ef772c93431",
+          "kind": "call",
+          "parent_journey_ids": [],
+          "state": "reserved",
+          "task_id": "dc54a3ff-93f0-4115-ac75-2dca29367b09"
+        }
+      ]
+    },
+    "test": "stop_http_trace_keeps_unknown_receipt_and_spent_budget_on_retry"
+  },
+  {
+    "after_restart": [
+      {
+        "cancelled_at": null,
+        "input": {
+          "message": {
+            "id": "da1aaf04-549c-4ca3-96f2-db38cfeec0f4",
+            "image": null,
+            "text": "TEST find cups"
+          },
+          "mode": "plan",
+          "schema_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "task_id": "f613d25c-0406-43e1-9b83-4f0a025e2e76"
+        },
+        "planning_call_id": "e02ca951-359f-4108-815f-32c69cbb22a0",
+        "receipt": {
+          "agent_model": {
+            "model_profile_id": null,
+            "revision": 0
+          },
+          "disposition": "task_message",
+          "message": {
+            "conversation_id": "0c9b96ee-c572-45e0-a0d4-9bea44ea1f91",
+            "input": {
+              "id": "da1aaf04-549c-4ca3-96f2-db38cfeec0f4",
+              "image": null,
+              "text": "TEST find cups"
+            },
+            "sequence": 2
+          },
+          "mode": "plan",
+          "task_id": "f613d25c-0406-43e1-9b83-4f0a025e2e76"
+        },
+        "status": "completed"
+      },
+      {
+        "cancelled_at": "2026-09-09T09:08:28.096068+00:00",
+        "input": {
+          "message": {
+            "id": "5d41b67c-4d07-4cb3-a69f-209acded8968",
+            "image": null,
+            "text": "TEST find cups"
+          },
+          "mode": "plan",
+          "schema_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "task_id": "f613d25c-0406-43e1-9b83-4f0a025e2e76"
+        },
+        "planning_call_id": "8f682a2d-e5a7-44a2-ab11-6d20dfc069cb",
+        "receipt": {
+          "agent_model": {
+            "model_profile_id": null,
+            "revision": 0
+          },
+          "disposition": "task_message",
+          "message": {
+            "conversation_id": "0c9b96ee-c572-45e0-a0d4-9bea44ea1f91",
+            "input": {
+              "id": "5d41b67c-4d07-4cb3-a69f-209acded8968",
+              "image": null,
+              "text": "TEST find cups"
+            },
+            "sequence": 3
+          },
+          "mode": "plan",
+          "task_id": "f613d25c-0406-43e1-9b83-4f0a025e2e76"
+        },
+        "status": "cancelled"
+      }
+    ],
+    "budget": {
+      "current_grant": {
+        "expires_at": "2026-09-09T09:18:28.090626Z",
+        "id": "8f682a2d-e5a7-44a2-ab11-6d20dfc069cb",
+        "maximum_calls": 3,
+        "scope_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "task_id": "f613d25c-0406-43e1-9b83-4f0a025e2e76"
+      },
+      "revoked": false,
+      "used_calls": 2
+    },
+    "dispatch_admitted_count": 1,
+    "duplicate_dispatch_existing_count": 1,
+    "fixture": true,
+    "test": "queued_planning_preserves_budget_and_requires_exact_fifo_call"
+  },
+  {
+    "batch_id": "f5301262-86ce-470c-bda3-a0202ece8828",
+    "fixture": true,
+    "persisted_usage": {
+      "cost": "0.01600",
+      "images": 100,
+      "input_tokens": 8000,
+      "output_tokens": 2000,
+      "requests": 100,
+      "total_tokens": 10000
+    },
+    "run_count": 100,
+    "test": "persistent_batch_pauses_restarts_and_resumes_one_hundred_images",
+    "checkpoint": {
+      "status": "completed",
+      "budget_ledger": {
+        "consumed": {
+          "cost": "0.01600",
+          "image_count": 100,
+          "input_tokens": 8000,
+          "output_tokens": 2000,
+          "request_count": 100,
+          "total_tokens": 10000
+        },
+        "reserved": {
+          "cost": "0.000000",
+          "image_count": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "request_count": 0,
+          "total_tokens": 0
+        }
+      },
+      "completed_count": 100,
+      "remaining_count": 0,
+      "event_sequence": 306
+    }
+  }
+]

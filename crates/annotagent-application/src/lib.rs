@@ -1426,7 +1426,7 @@ fn pipeline_builder_visible_tools(
     let planning_only = session
         .builder_constraints
         .as_ref()
-        .is_some_and(|constraints| constraints.maximum_dry_runs == 0);
+        .is_some_and(|constraints| constraints.planning_only || constraints.maximum_dry_runs == 0);
     let remaining = session.remaining_builder_tool_calls();
     let finalization_reserve = session
         .builder_budget
@@ -9476,10 +9476,9 @@ impl LocalApplication {
         )
     }
 
-    /// A concrete choice admitted with a message takes precedence over later
-    /// preferences. A saved consent's explicit ID remains the strongest scope.
-    /// Legacy receipts and messages sent without a selected model still require
-    /// explicit setup/authorization through the existing default resolver.
+    /// A concrete model resolved at Send wins over later preferences/defaults.
+    /// Explicit consent must agree with that identity. Legacy/unconfigured receipts
+    /// retain setup compatibility but still require a fresh exact-scope approval.
     pub fn resolve_conversation_message_model(
         &self,
         project_id: &str,
@@ -9487,11 +9486,17 @@ impl LocalApplication {
         message: uuid::Uuid,
         explicit_model: Option<ModelProfileId>,
     ) -> Result<PipelineBuilderModelRuntime> {
-        let snapshot = self
-            .project_conversation_send_receipt(project_id, conversation, message)?
-            .and_then(|(_, receipt)| receipt.agent_model)
-            .and_then(|preference| preference.model_profile_id);
-        self.resolve_conversation_agent_model(project_id, conversation, explicit_model.or(snapshot))
+        let receipt = self.project_conversation_send_receipt(project_id,conversation,message)?.map(|(_,receipt)|receipt);
+        let snapshot=receipt.as_ref().and_then(|r|r.resolved_agent_model_id.or_else(||r.agent_model.as_ref().and_then(|p|p.model_profile_id)));
+        if explicit_model.zip(snapshot).is_some_and(|(requested,frozen)|requested!=frozen) {
+            bail!("Agent model conflicts with the model frozen at Send");
+        }
+        // Never apply a later conversation preference to an admitted message.
+        // A historical/unconfigured default still needs explicit setup and exact consent.
+        if receipt.is_some() {
+            return self.resolve_pipeline_builder_model(project_id,snapshot.or(explicit_model));
+        }
+        self.resolve_conversation_agent_model(project_id,conversation,explicit_model)
     }
 
     /// Save a next-request preference, not a call grant. Resolution is passive;
@@ -9607,9 +9612,9 @@ impl LocalApplication {
             bail!("Project schema changed before send admission. No message or task was saved.");
         }
         self.validate_conversation_message_selection(project_id, conversation, &input.message)?;
-        Ok(self
-            .store
-            .send_conversation_message(&owner, conversation, input)?)
+        let observed=self.store.conversation_agent_model(&owner,conversation)?;
+        let resolved=self.resolve_pipeline_builder_model(project_id,observed.model_profile_id).ok().map(|runtime|runtime.model.id);
+        Ok(self.store.send_conversation_message_with_model(&owner,conversation,input,resolved,Some(&observed))?)
     }
 
     pub fn append_project_conversation_message(
@@ -30659,6 +30664,8 @@ export:
                 .active_batch
                 .is_none()
         );
+        println!("AGENT_UI_TRACE {}",json!({"fixture":true,"test":"persistent_batch_pauses_restarts_and_resumes_one_hundred_images","batch_id":batch_id,"checkpoint":checkpoint,"persisted_usage":persisted_usage,"run_count":runs.len()}));
+
     }
 
     #[test]

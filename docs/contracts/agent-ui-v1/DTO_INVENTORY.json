@@ -1,0 +1,522 @@
+[
+  {
+    "name": "Consent",
+    "source": "crates/annotagent-server/src/conversation_queue.rs",
+    "definition": "pub(super) struct Consent {\n    call_id: Uuid,\n    model_id: ModelProfileId,\n    scope_hash: String,\n    request_hash: String,\n    previous_grant_id: Option<Uuid>,\n    maximum_calls: u32,\n    expires_at: DateTime<Utc>,\n    allow_unknown_cost: bool,\n}"
+  },
+  {
+    "name": "Selection",
+    "source": "crates/annotagent-server/src/conversation_feedback.rs",
+    "definition": "pub(super) struct Selection {\n    #[serde(rename = \"message_id\")]\n    message: uuid::Uuid,\n    #[serde(rename = \"call_id\")]\n    call: uuid::Uuid,\n    #[serde(rename = \"model_id\")]\n    model: Option<ModelProfileId>,\n}"
+  },
+  {
+    "name": "MessageQuery",
+    "source": "crates/annotagent-server/src/conversation_feedback.rs",
+    "definition": "pub(super) struct MessageQuery {\n    message_id: uuid::Uuid,\n}"
+  },
+  {
+    "name": "Execute",
+    "source": "crates/annotagent-server/src/conversation_feedback.rs",
+    "definition": "pub(super) struct Execute {}"
+  },
+  {
+    "name": "SchemaRevisionQuery",
+    "source": "crates/annotagent-server/src/conversation_schema.rs",
+    "definition": "pub(super) struct SchemaRevisionQuery {\n    revision: Option<u64>,\n}"
+  },
+  {
+    "name": "SchemaEdit",
+    "source": "crates/annotagent-server/src/conversation_schema.rs",
+    "definition": "pub(super) struct SchemaEdit {\n    request_id: uuid::Uuid,\n    expected_revision: u64,\n    decision: annotagent_application::ConversationSchemaDecision,\n}"
+  },
+  {
+    "name": "HumanSchemaInput",
+    "source": "crates/annotagent-server/src/conversation_schema.rs",
+    "definition": "pub(super) struct HumanSchemaInput {\n    request_id: uuid::Uuid,\n    decision: annotagent_application::ConversationSchemaDecision,\n    clarification: Option<annotagent_storage::SchemaClarificationRef>,\n    journey_consent_id: Option<uuid::Uuid>,\n}"
+  },
+  {
+    "name": "ModelSelection",
+    "source": "crates/annotagent-server/src/conversation_schema.rs",
+    "definition": "pub(super) struct ModelSelection {\n    model_id: Option<ModelProfileId>,\n}"
+  },
+  {
+    "name": "QueuePage",
+    "source": "crates/annotagent-server/src/conversations.rs",
+    "definition": "pub(super) struct QueuePage {\n    #[serde(default)]\n    after: i64,\n}"
+  },
+  {
+    "name": "CancelQueuedMessage",
+    "source": "crates/annotagent-server/src/conversations.rs",
+    "definition": "pub(super) struct CancelQueuedMessage {}"
+  },
+  {
+    "name": "MessagePage",
+    "source": "crates/annotagent-server/src/conversations.rs",
+    "definition": "pub(super) struct MessagePage {\n    #[serde(default)]\n    after: i64,\n    before: Option<i64>,\n    #[serde(default)]\n    latest: bool,\n    #[serde(default)]\n    first_goal: bool,\n    limit: Option<u32>,\n}"
+  },
+  {
+    "name": "SelectStop",
+    "source": "crates/annotagent-server/src/conversation_stop.rs",
+    "definition": "pub(super) struct SelectStop {\n    target: ConversationStopTargetRef,\n}"
+  },
+  {
+    "name": "HumanAnswer",
+    "source": "crates/annotagent-server/src/conversation_human_requests.rs",
+    "definition": "pub(super) struct HumanAnswer {\n    answer: SampleFeedbackRevision,\n    journey_consent_id: Option<Uuid>,\n}"
+  },
+  {
+    "name": "BuilderSelection",
+    "source": "crates/annotagent-server/src/conversation_builder.rs",
+    "definition": "pub(super) struct BuilderSelection {\n    pub(super) operation_id: uuid::Uuid,\n    pub(super) schema_id: uuid::Uuid,\n    pub(super) schema_revision: u64,\n    pub(super) model_id: Option<ModelProfileId>,\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub(super) repair_request_id: Option<uuid::Uuid>,\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub(super) image_class_review_id: Option<uuid::Uuid>,\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub(super) queued_message_id: Option<uuid::Uuid>,\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub(super) source_draft_id: Option<String>,\n}"
+  },
+  {
+    "name": "BuilderConsent",
+    "source": "crates/annotagent-server/src/conversation_builder.rs",
+    "definition": "pub(super) struct BuilderConsent {\n    selection: BuilderSelection,\n    previous_grant_id: Option<uuid::Uuid>,\n    scope_hash: String,\n    expires_at: DateTime<Utc>,\n    allow_unknown_cost: bool,\n    #[serde(default)]\n    repair: Option<ConversationBuilderRepair>,\n    #[serde(default)]\n    image_class_repair: Option<annotagent_application::ConversationImageClassBuilderRepair>,\n    #[serde(default)]\n    queued_plan: Option<annotagent_application::QueuedWorkflowSource>,\n}"
+  },
+  {
+    "name": "AuthorizationBase",
+    "source": "crates/annotagent-server/src/conversation_builder.rs",
+    "definition": "pub(super) enum AuthorizationBase {\n    Preview,\n    Initial,\n    Existing(uuid::Uuid),\n}"
+  },
+  {
+    "name": "BuilderHistoryQuery",
+    "source": "crates/annotagent-server/src/conversation_builder.rs",
+    "definition": "pub(super) struct BuilderHistoryQuery {\n    #[serde(rename = \"operation_id\")]\n    operation: Option<uuid::Uuid>,\n    #[serde(rename = \"image_class_review_id\")]\n    image_class_review: Option<uuid::Uuid>,\n    #[serde(rename = \"repair_request_id\")]\n    repair_request: Option<uuid::Uuid>,\n}"
+  },
+  {
+    "name": "Selection",
+    "source": "crates/annotagent-server/src/conversation_image_class.rs",
+    "definition": "pub(super) struct Selection {\n    target_label: Option<String>,\n}"
+  },
+  {
+    "name": "Empty",
+    "source": "crates/annotagent-server/src/conversation_image_class.rs",
+    "definition": "pub(super) struct Empty {}"
+  },
+  {
+    "name": "Selection",
+    "source": "crates/annotagent-server/src/conversation_future_proposal.rs",
+    "definition": "pub(super) struct Selection {\n    call_id: uuid::Uuid,\n    model_id: Option<ModelProfileId>,\n}"
+  },
+  {
+    "name": "Execute",
+    "source": "crates/annotagent-server/src/conversation_future_proposal.rs",
+    "definition": "pub(super) struct Execute {\n    call_id: uuid::Uuid,\n}"
+  },
+  {
+    "name": "JourneySelection",
+    "source": "crates/annotagent-server/src/conversation_journey.rs",
+    "definition": "pub(super) struct JourneySelection {\n    consent_id: uuid::Uuid,\n    builder_operation_id: uuid::Uuid,\n    sample_operation_id: uuid::Uuid,\n    #[serde(default)]\n    schema_id: uuid::Uuid,\n    #[serde(default)]\n    schema_revision: u64,\n    schema_call_id: Option<uuid::Uuid>,\n    planner_model_id: Option<ModelProfileId>,\n    repair_request_id: Option<uuid::Uuid>,\n    pending_request_id: Option<uuid::Uuid>,\n    /// JSON array of exact Model Profile / Plugin selection IDs, not model hashes.\n    allowed_models: String,\n}"
+  },
+  {
+    "name": "ExecuteJourney",
+    "source": "crates/annotagent-server/src/conversation_journey.rs",
+    "definition": "pub(super) struct ExecuteJourney {}"
+  },
+  {
+    "name": "StartSampleRequest",
+    "source": "crates/annotagent-server/src/sample_operations.rs",
+    "definition": "pub(super) struct StartSampleRequest {\n    request_id: String,\n    draft_id: String,\n    image_indices: Vec<usize>,\n    expected_revision: u64,\n    authorization_fingerprint: String,\n    #[serde(default)]\n    conversation: Option<ConversationSampleConsent>,\n}"
+  },
+  {
+    "name": "ConversationSampleConsent",
+    "source": "crates/annotagent-server/src/sample_operations.rs",
+    "definition": "pub(super) struct ConversationSampleConsent {\n    conversation_id: uuid::Uuid,\n    task_id: uuid::Uuid,\n    previous_grant_id: uuid::Uuid,\n    scope_hash: String,\n    expires_at: chrono::DateTime<chrono::Utc>,\n    allow_unknown_cost: bool,\n    #[serde(default, skip_serializing_if = \"std::ops::Not::not\")]\n    human_review: bool,\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    journey_consent_id: Option<uuid::Uuid>,\n}"
+  },
+  {
+    "name": "ConversationSampleSelection",
+    "source": "crates/annotagent-server/src/sample_operations.rs",
+    "definition": "pub(super) struct ConversationSampleSelection {\n    draft_id: String,\n    request_id: uuid::Uuid,\n}"
+  },
+  {
+    "name": "ProcessingSelection",
+    "source": "crates/annotagent-server/src/processing_operations.rs",
+    "definition": "pub(super) struct ProcessingSelection {\n    draft_id: String,\n    sample_test_id: String,\n    #[serde(skip_serializing_if = \"Option::is_none\")]\n    limit: Option<usize>,\n}"
+  },
+  {
+    "name": "ConfirmProcessing",
+    "source": "crates/annotagent-server/src/processing_operations.rs",
+    "definition": "pub(super) struct ConfirmProcessing {\n    request_id: String,\n    selection: ProcessingSelection,\n    expected_revision: u64,\n    authorization_fingerprint: String,\n}"
+  },
+  {
+    "name": "ConversationFutureSchemaInput",
+    "source": "crates/annotagent-storage/src/conversation_future_schema.rs",
+    "definition": "pub struct ConversationFutureSchemaInput {\n    pub command_id: Uuid,\n    pub feedback_call_id: Uuid,\n    pub scope_answer_command_id: Uuid,\n    pub context_digest: String,\n    pub base_schema_id: Uuid,\n    pub base_schema_revision: u64,\n    pub definition: ConversationSchemaDefinition,\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub proposal_call_id: Option<Uuid>,\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub proposal_digest: Option<String>,\n}"
+  },
+  {
+    "name": "ConversationFutureSchemaRecord",
+    "source": "crates/annotagent-storage/src/conversation_future_schema.rs",
+    "definition": "pub struct ConversationFutureSchemaRecord {\n    pub input: ConversationFutureSchemaInput,\n    pub schema_id: Uuid,\n    pub created_at: String,\n}"
+  },
+  {
+    "name": "TestedSample",
+    "source": "crates/annotagent-storage/src/conversation_future_schema.rs",
+    "definition": "struct TestedSample {\n    project: String,\n    draft: String,\n    revision: i64,\n    hash: String,\n    images: String,\n    request: String,\n    operation_project: String,\n    operation_draft: String,\n}"
+  },
+  {
+    "name": "Fixture",
+    "source": "crates/annotagent-storage/src/conversation_future_schema.rs",
+    "definition": "pub(crate) struct Fixture {\n        pub(crate) source: crate::conversation_feedback_scope::tests::Fixture,\n        pub(crate) input: ConversationFutureSchemaInput,\n        pub(crate) base: ConversationSchemaDraft,\n    }"
+  },
+  {
+    "name": "BeginConversationTask",
+    "source": "crates/annotagent-storage/src/conversation_tasks.rs",
+    "definition": "pub struct BeginConversationTask {\n    pub id: Uuid,\n    pub source_message_id: Uuid,\n    pub schema_revision: String,\n}"
+  },
+  {
+    "name": "ConversationTask",
+    "source": "crates/annotagent-storage/src/conversation_tasks.rs",
+    "definition": "pub struct ConversationTask {\n    pub conversation_id: Uuid,\n    pub input: BeginConversationTask,\n    pub created_at: String,\n}"
+  },
+  {
+    "name": "ConversationFeedbackAuthorization",
+    "source": "crates/annotagent-storage/src/conversation_feedback.rs",
+    "definition": "pub struct ConversationFeedbackAuthorization {\n    pub call_id: Uuid,\n    pub message_id: Uuid,\n    pub model_id: annotagent_core::ModelProfileId,\n    pub previous_grant_id: Option<Uuid>,\n    pub scope_hash: String,\n    pub expires_at: DateTime<Utc>,\n    pub allow_unknown_cost: bool,\n}"
+  },
+  {
+    "name": "ConversationFeedbackAuthorizationRecord",
+    "source": "crates/annotagent-storage/src/conversation_feedback.rs",
+    "definition": "pub struct ConversationFeedbackAuthorizationRecord {\n    pub consent: ConversationFeedbackAuthorization,\n    /// Application validates live pixels and terminal Artifact identity. Storage\n    /// binds the embedded saved message and optimistic image feedback sequence.\n    pub context: Value,\n    /// Server-resolved display metadata; never refresh old consent from new settings.\n    pub summary: Value,\n    pub grant: ConversationCallGrant,\n}"
+  },
+  {
+    "name": "ConversationFutureSchemaProposalSource",
+    "source": "crates/annotagent-storage/src/conversation_future_schema_proposal.rs",
+    "definition": "pub struct ConversationFutureSchemaProposalSource {\n    pub feedback_call_id: Uuid,\n    pub scope_answer_command_id: Uuid,\n    pub context_digest: String,\n    pub base_schema_id: Uuid,\n    pub base_schema_revision: u64,\n}"
+  },
+  {
+    "name": "ConversationFutureSchemaProposalAuthorizationRecord",
+    "source": "crates/annotagent-storage/src/conversation_future_schema_proposal.rs",
+    "definition": "pub struct ConversationFutureSchemaProposalAuthorizationRecord {\n    pub consent: ConversationFeedbackAuthorization,\n    pub grant: ConversationCallGrant,\n    pub source: ConversationFutureSchemaProposalSource,\n    pub context: Value,\n    pub summary: Value,\n}"
+  },
+  {
+    "name": "RawProposal",
+    "source": "crates/annotagent-storage/src/conversation_future_schema_proposal.rs",
+    "definition": "enum RawProposal {\n    Draft {\n        goal: String,\n        kind: annotagent_core::TaskKind,\n        labels: Vec<String>,\n        multi_label: bool,\n        attributes: BTreeMap<String, annotagent_core::AttributeDefinition>,\n        boundary_rules: Vec<String>,\n        rationale: String,\n    },\n    Clarify {\n        goal: String,\n        question: String,\n        rationale: String,\n    },\n}"
+  },
+  {
+    "name": "ConversationQueuedMessageStatus",
+    "source": "crates/annotagent-storage/src/conversation_message_queue.rs",
+    "definition": "pub enum ConversationQueuedMessageStatus {\n    WaitingForDispatch,\n    Authorized,\n    Running,\n    Completed,\n    Failed,\n    InDoubt,\n    Cancelled,\n}"
+  },
+  {
+    "name": "ConversationQueuedMessage",
+    "source": "crates/annotagent-storage/src/conversation_message_queue.rs",
+    "definition": "pub struct ConversationQueuedMessage {\n    pub input: ConversationSendInput,\n    pub receipt: ConversationSendReceipt,\n    pub status: ConversationQueuedMessageStatus,\n    pub cancelled_at: Option<String>,\n    pub planning_call_id: Option<Uuid>,\n}"
+  },
+  {
+    "name": "QueuedPlanningAuthorization",
+    "source": "crates/annotagent-storage/src/conversation_queued_planning.rs",
+    "definition": "pub struct QueuedPlanningAuthorization {\n    pub conversation_id: Uuid,\n    pub message_id: Uuid,\n    pub previous_grant_id: Option<Uuid>,\n    pub grant: ConversationCallGrant,\n    pub model_id: ModelProfileId,\n    /// Server-computed exact model request digest, not merely the consent hash.\n    pub request_hash: String,\n}"
+  },
+  {
+    "name": "ConversationSchemaDefinition",
+    "source": "crates/annotagent-storage/src/conversation_schema.rs",
+    "definition": "pub struct ConversationSchemaDefinition {\n    pub goal: String,\n    pub task: TaskConfig,\n    pub boundary_rules: Vec<String>,\n}"
+  },
+  {
+    "name": "ConversationSchemaDraft",
+    "source": "crates/annotagent-storage/src/conversation_schema.rs",
+    "definition": "pub struct ConversationSchemaDraft {\n    pub id: Uuid,\n    pub task_id: Uuid,\n    pub source_call_id: Option<Uuid>,\n    /// Human confirmation command; model-assisted future forks retain their proposal\n    /// provenance in the linked future-Schema record. Never an inference receipt.\n    pub source_request_id: Option<Uuid>,\n    pub base_schema_revision: String,\n    pub revision: u64,\n    pub definition: ConversationSchemaDefinition,\n}"
+  },
+  {
+    "name": "ConversationExport",
+    "source": "crates/annotagent-storage/src/conversation_exports.rs",
+    "definition": "pub struct ConversationExport {\n    pub id: Uuid,\n    pub format: String,\n    pub created_at: String,\n    pub result: Option<serde_json::Value>,\n    pub error: Option<String>,\n}"
+  },
+  {
+    "name": "ConversationExportEvent",
+    "source": "crates/annotagent-storage/src/conversation_exports.rs",
+    "definition": "pub struct ConversationExportEvent {\n    pub sequence: i64,\n    pub export_id: Uuid,\n    pub kind: String,\n}"
+  },
+  {
+    "name": "ConversationImageRef",
+    "source": "crates/annotagent-storage/src/conversations.rs",
+    "definition": "pub struct ConversationImageRef {\n    pub image_id: String,\n    pub sha256: String,\n}"
+  },
+  {
+    "name": "ConversationSelectionRef",
+    "source": "crates/annotagent-storage/src/conversations.rs",
+    "definition": "pub enum ConversationSelectionRef {\n    StopRequest {\n        task_id: Option<Uuid>,\n    },\n    SampleCandidate {\n        task_id: Uuid,\n        project_schema_revision: String,\n        draft_id: String,\n        draft_revision: u64,\n        sample_test_id: String,\n        candidate_id: String,\n        source_artifact_id: Uuid,\n    },\n}"
+  },
+  {
+    "name": "ConversationMessageInput",
+    "source": "crates/annotagent-storage/src/conversations.rs",
+    "definition": "pub struct ConversationMessageInput {\n    pub id: Uuid,\n    pub text: String,\n    pub image: Option<ConversationImageRef>,\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub reference: Option<ConversationSelectionRef>,\n}"
+  },
+  {
+    "name": "ConversationMessage",
+    "source": "crates/annotagent-storage/src/conversations.rs",
+    "definition": "pub struct ConversationMessage {\n    pub conversation_id: Uuid,\n    pub sequence: i64,\n    pub input: ConversationMessageInput,\n}"
+  },
+  {
+    "name": "ConversationSendMode",
+    "source": "crates/annotagent-storage/src/conversation_send.rs",
+    "definition": "pub enum ConversationSendMode {\n    Plan,\n    Execute,\n}"
+  },
+  {
+    "name": "ConversationSendInput",
+    "source": "crates/annotagent-storage/src/conversation_send.rs",
+    "definition": "pub struct ConversationSendInput {\n    pub message: ConversationMessageInput,\n    pub task_id: Option<Uuid>,\n    pub schema_revision: String,\n    /// Optional observed preference for CAS admission; absent for older clients.\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub agent_model: Option<crate::ConversationAgentModel>,\n    /// Missing means a legacy command, not implicit execution permission.\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub mode: Option<ConversationSendMode>,\n}"
+  },
+  {
+    "name": "ConversationSendDisposition",
+    "source": "crates/annotagent-storage/src/conversation_send.rs",
+    "definition": "pub enum ConversationSendDisposition {\n    NewTask,\n    TaskMessage,\n    CandidateFeedback,\n}"
+  },
+  {
+    "name": "ConversationSendReceipt",
+    "source": "crates/annotagent-storage/src/conversation_send.rs",
+    "definition": "pub struct ConversationSendReceipt {\n    pub message: ConversationMessage,\n    pub task_id: Uuid,\n    pub disposition: ConversationSendDisposition,\n    /// None means a historical receipt predating model snapshots, not default.\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub agent_model: Option<crate::ConversationAgentModel>,\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub mode: Option<ConversationSendMode>,\n    /// Resolved at Send when setup exists. Historical/unconfigured messages have None.\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub resolved_agent_model_id: Option<annotagent_core::ModelProfileId>,\n\n}"
+  },
+  {
+    "name": "SelectConversationTask",
+    "source": "crates/annotagent-storage/src/conversation_task_selection.rs",
+    "definition": "pub struct SelectConversationTask {\n    pub request_id: Uuid,\n    pub expected_revision: u64,\n    pub task_id: Uuid,\n}"
+  },
+  {
+    "name": "ConversationTaskSelection",
+    "source": "crates/annotagent-storage/src/conversation_task_selection.rs",
+    "definition": "pub struct ConversationTaskSelection {\n    pub revision: u64,\n    pub task_id: Option<Uuid>,\n}"
+  },
+  {
+    "name": "ConversationStopTargetKind",
+    "source": "crates/annotagent-storage/src/conversation_stop.rs",
+    "definition": "pub enum ConversationStopTargetKind {\n    Call,\n    Builder,\n    Journey,\n    Sample,\n    Processing,\n    Authorization,\n}"
+  },
+  {
+    "name": "ConversationStopTargetRef",
+    "source": "crates/annotagent-storage/src/conversation_stop.rs",
+    "definition": "pub struct ConversationStopTargetRef {\n    pub kind: ConversationStopTargetKind,\n    pub id: String,\n    pub task_id: Uuid,\n}"
+  },
+  {
+    "name": "ConversationStopTarget",
+    "source": "crates/annotagent-storage/src/conversation_stop.rs",
+    "definition": "pub struct ConversationStopTarget {\n    pub kind: ConversationStopTargetKind,\n    pub id: String,\n    pub task_id: Uuid,\n    pub state: String,\n    pub parent_journey_ids: Vec<Uuid>,\n}"
+  },
+  {
+    "name": "ConversationStopStatus",
+    "source": "crates/annotagent-storage/src/conversation_stop.rs",
+    "definition": "pub enum ConversationStopStatus {\n    NoActiveWork,\n    NeedsSelection,\n    CancelRequested,\n    Finished,\n}"
+  },
+  {
+    "name": "ConversationStopRequest",
+    "source": "crates/annotagent-storage/src/conversation_stop.rs",
+    "definition": "pub struct ConversationStopRequest {\n    pub message: ConversationMessage,\n    pub targets: Vec<ConversationStopTarget>,\n    pub selected_target: Option<ConversationStopTargetRef>,\n    pub status: ConversationStopStatus,\n    pub created_at: String,\n}"
+  },
+  {
+    "name": "ConversationOperationCallState",
+    "source": "crates/annotagent-storage/src/conversation_stop.rs",
+    "definition": "pub struct ConversationOperationCallState {\n    pub reserved: u64,\n    pub in_doubt: u64,\n}"
+  },
+  {
+    "name": "Journey",
+    "source": "crates/annotagent-storage/src/conversation_stop.rs",
+    "definition": "struct Journey {\n    consent: crate::ConversationJourneyConsent,\n    revoked: bool,\n    dispatch: Option<String>,\n}"
+  },
+  {
+    "name": "ProjectCallLimitInput",
+    "source": "crates/annotagent-storage/src/conversation_project_budget.rs",
+    "definition": "pub struct ProjectCallLimitInput {\n    pub id: Uuid,\n    pub expected_revision: u64,\n    pub maximum_calls: u64,\n}"
+  },
+  {
+    "name": "ProjectCallLimit",
+    "source": "crates/annotagent-storage/src/conversation_project_budget.rs",
+    "definition": "pub struct ProjectCallLimit {\n    pub revision: u64,\n    pub maximum_calls: Option<u64>,\n    pub reserved_calls: u64,\n}"
+  },
+  {
+    "name": "ConversationHumanRequestInput",
+    "source": "crates/annotagent-storage/src/conversation_human_requests.rs",
+    "definition": "pub struct ConversationHumanRequestInput {\n    pub id: Uuid,\n    pub task_id: Uuid,\n    pub conversation_id: Uuid,\n    pub sample_test_id: String,\n    pub image_id: String,\n    pub content_hash: String,\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub outcome_id: Option<String>,\n    /// A new human reference has its own identity, never a fabricated model outcome.\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub addition_id: Option<String>,\n    pub expected_feedback_sequence: u64,\n    pub reason_code: String,\n    pub question: String,\n    /// Stable operation/checkpoint identity, not executable code or an arbitrary URL.\n    pub resume_checkpoint_ref: Uuid,\n}"
+  },
+  {
+    "name": "ConversationHumanRequestStatus",
+    "source": "crates/annotagent-storage/src/conversation_human_requests.rs",
+    "definition": "pub enum ConversationHumanRequestStatus {\n    Pending,\n    Answered,\n    Applied,\n    Cancelled,\n    Stale,\n}"
+  },
+  {
+    "name": "ConversationHumanRequest",
+    "source": "crates/annotagent-storage/src/conversation_human_requests.rs",
+    "definition": "pub struct ConversationHumanRequest {\n    pub input: ConversationHumanRequestInput,\n    pub status: ConversationHumanRequestStatus,\n    pub answer: Option<SampleFeedbackRevision>,\n    pub resume_draft_id: Option<String>,\n    pub resume_error: Option<String>,\n    #[serde(default)]\n    pub deferred: bool,\n    #[serde(default)]\n    pub deferral_revision: i64,\n}"
+  },
+  {
+    "name": "ConversationHumanDeferral",
+    "source": "crates/annotagent-storage/src/conversation_human_requests.rs",
+    "definition": "pub struct ConversationHumanDeferral {\n    pub command_id: Uuid,\n    pub expected_revision: i64,\n    pub deferred: bool,\n}"
+  },
+  {
+    "name": "ConversationResumeEvent",
+    "source": "crates/annotagent-storage/src/conversation_human_requests.rs",
+    "definition": "pub struct ConversationResumeEvent {\n    pub request_id: Uuid,\n    pub task_id: Uuid,\n    pub checkpoint_ref: Uuid,\n    pub feedback_revision_id: String,\n}"
+  },
+  {
+    "name": "ConversationBuilderOperation",
+    "source": "crates/annotagent-storage/src/conversation_builder.rs",
+    "definition": "pub struct ConversationBuilderOperation {\n    pub id: Uuid,\n    pub task_id: Uuid,\n    pub request_hash: String,\n    pub status: String,\n    pub evidence: Option<serde_json::Value>,\n}"
+  },
+  {
+    "name": "ConversationCallGrant",
+    "source": "crates/annotagent-storage/src/conversation_calls.rs",
+    "definition": "pub struct ConversationCallGrant {\n    pub id: Uuid,\n    pub task_id: Uuid,\n    /// Server-computed binding/data/schema/permission snapshot digest.\n    pub scope_hash: String,\n    pub maximum_calls: u32,\n    pub expires_at: DateTime<Utc>,\n}"
+  },
+  {
+    "name": "ConversationSchemaAuthorization",
+    "source": "crates/annotagent-storage/src/conversation_calls.rs",
+    "definition": "pub struct ConversationSchemaAuthorization {\n    pub call_id: Uuid,\n    pub model_id: annotagent_core::ModelProfileId,\n    pub scope_hash: String,\n    pub expires_at: DateTime<Utc>,\n    pub allow_unknown_cost: bool,\n}"
+  },
+  {
+    "name": "ConversationCallBudget",
+    "source": "crates/annotagent-storage/src/conversation_calls.rs",
+    "definition": "pub struct ConversationCallBudget {\n    pub current_grant: ConversationCallGrant,\n    pub used_calls: u32,\n    pub revoked: bool,\n}"
+  },
+  {
+    "name": "ConversationTaskBudget",
+    "source": "crates/annotagent-storage/src/conversation_calls.rs",
+    "definition": "pub struct ConversationTaskBudget {\n    pub planning_authorized_calls: u64,\n    pub planning_reserved_calls: u64,\n    pub processing_authorized_calls: u64,\n    pub processing_reserved_calls: u64,\n    pub total_authorized_calls: u64,\n    pub total_reserved_calls: u64,\n    /// Conversation-owned planning and Batch allocations across this stable Project.\n    /// These are cumulative ledger totals, not an additional spending authorization.\n    pub project_authorized_calls: u64,\n    pub project_reserved_calls: u64,\n}"
+  },
+  {
+    "name": "ConversationCallStatus",
+    "source": "crates/annotagent-storage/src/conversation_calls.rs",
+    "definition": "pub enum ConversationCallStatus {\n    Reserved,\n    Completed,\n    Failed,\n    InDoubt,\n}"
+  },
+  {
+    "name": "ConversationCallReceipt",
+    "source": "crates/annotagent-storage/src/conversation_calls.rs",
+    "definition": "pub struct ConversationCallReceipt {\n    pub id: Uuid,\n    pub task_id: Uuid,\n    pub request_hash: String,\n    pub status: ConversationCallStatus,\n    pub evidence: Option<serde_json::Value>,\n}"
+  },
+  {
+    "name": "ConversationCallAdmission",
+    "source": "crates/annotagent-storage/src/conversation_calls.rs",
+    "definition": "pub enum ConversationCallAdmission {\n    /// Only this result permits a caller to send a model request.\n    Admitted,\n    /// Never re-execute. Reserved means running or indeterminate after interruption.\n    Existing(ConversationCallReceipt),\n}"
+  },
+  {
+    "name": "ConversationCallCancellation",
+    "source": "crates/annotagent-storage/src/conversation_calls.rs",
+    "definition": "pub struct ConversationCallCancellation {\n    pub call_id: Uuid,\n    pub task_id: Uuid,\n    pub requested_at: String,\n}"
+  },
+  {
+    "name": "ConversationFeedbackCorrectionReason",
+    "source": "crates/annotagent-storage/src/conversation_feedback_scope.rs",
+    "definition": "pub enum ConversationFeedbackCorrectionReason {\n    PoorBoundary,\n    WrongLabel,\n    WrongTarget,\n}"
+  },
+  {
+    "name": "ConversationFeedbackScopeChoice",
+    "source": "crates/annotagent-storage/src/conversation_feedback_scope.rs",
+    "definition": "pub enum ConversationFeedbackScopeChoice {\n    CurrentCandidate {\n        reason: ConversationFeedbackCorrectionReason,\n    },\n    CurrentImageClass,\n    ProjectFutureRule,\n}"
+  },
+  {
+    "name": "StrictChoice",
+    "source": "crates/annotagent-storage/src/conversation_feedback_scope.rs",
+    "definition": "enum StrictChoice {\n            CurrentCandidate {\n                reason: ConversationFeedbackCorrectionReason,\n            },\n            CurrentImageClass {},\n            ProjectFutureRule {},\n        }"
+  },
+  {
+    "name": "ConversationFeedbackScopeAnswerInput",
+    "source": "crates/annotagent-storage/src/conversation_feedback_scope.rs",
+    "definition": "pub struct ConversationFeedbackScopeAnswerInput {\n    pub command_id: Uuid,\n    pub expected_context_digest: String,\n    pub choice: ConversationFeedbackScopeChoice,\n}"
+  },
+  {
+    "name": "ConversationFeedbackScopeAnswer",
+    "source": "crates/annotagent-storage/src/conversation_feedback_scope.rs",
+    "definition": "pub struct ConversationFeedbackScopeAnswer {\n    pub call_id: Uuid,\n    pub task_id: Uuid,\n    pub conversation_id: Uuid,\n    pub input: ConversationFeedbackScopeAnswerInput,\n    pub created_at: String,\n}"
+  },
+  {
+    "name": "ClarificationProposal",
+    "source": "crates/annotagent-storage/src/conversation_feedback_scope.rs",
+    "definition": "struct ClarificationProposal {\n    decision: String,\n    question: String,\n    rationale: String,\n}"
+  },
+  {
+    "name": "Fixture",
+    "source": "crates/annotagent-storage/src/conversation_feedback_scope.rs",
+    "definition": "pub(crate) struct Fixture {\n        pub(crate) project: String,\n        pub(crate) conversation: Uuid,\n        pub(crate) task: Uuid,\n        pub(crate) record: ConversationFeedbackAuthorizationRecord,\n        pub(crate) source: ConversationCallReceipt,\n        pub(crate) answer: ConversationFeedbackScopeAnswerInput,\n    }"
+  },
+  {
+    "name": "ConversationImageClassScope",
+    "source": "crates/annotagent-storage/src/conversation_image_class.rs",
+    "definition": "pub struct ConversationImageClassScope {\n    pub feedback_call_id: Uuid,\n    pub scope_answer: ConversationFeedbackScopeAnswer,\n    pub feedback_receipt: ConversationCallReceipt,\n    pub feedback_context: Value,\n    pub sample_test_id: String,\n    pub draft_id: String,\n    pub draft_revision: u64,\n    pub draft_content_hash: String,\n    pub image_id: String,\n    pub content_hash: String,\n    pub baseline_sequence: u64,\n    pub baseline_feedback: Vec<SampleFeedbackRevision>,\n    pub kind: TaskKind,\n    pub target_label: String,\n    pub members: Vec<FinalCandidateProjection>,\n}"
+  },
+  {
+    "name": "ConversationImageClassCreateInput",
+    "source": "crates/annotagent-storage/src/conversation_image_class.rs",
+    "definition": "pub struct ConversationImageClassCreateInput {\n    pub id: Uuid,\n    pub feedback_call_id: Uuid,\n    pub target_label: Option<String>,\n    pub expected_scope_digest: String,\n}"
+  },
+  {
+    "name": "ConversationImageClassAction",
+    "source": "crates/annotagent-storage/src/conversation_image_class.rs",
+    "definition": "pub enum ConversationImageClassAction {\n    Keep {\n        outcome_id: String,\n        source_artifact_id: Uuid,\n    },\n    Edit {\n        outcome_id: String,\n        source_artifact_id: Uuid,\n        corrected_value: VisionArtifactValue,\n        corrected_label: String,\n    },\n    ReplaceLabel {\n        outcome_id: String,\n        source_artifact_id: Uuid,\n        replacement: String,\n    },\n    Exclude {\n        outcome_id: String,\n        source_artifact_id: Uuid,\n    },\n}"
+  },
+  {
+    "name": "ConversationImageClassAnswerInput",
+    "source": "crates/annotagent-storage/src/conversation_image_class.rs",
+    "definition": "pub struct ConversationImageClassAnswerInput {\n    pub command_id: Uuid,\n    pub expected_scope_digest: String,\n    pub actions: Vec<ConversationImageClassAction>,\n}"
+  },
+  {
+    "name": "ConversationImageClassStatus",
+    "source": "crates/annotagent-storage/src/conversation_image_class.rs",
+    "definition": "pub enum ConversationImageClassStatus {\n    Pending,\n    Answered,\n    Applied,\n    Cancelled,\n}"
+  },
+  {
+    "name": "ConversationImageClassReview",
+    "source": "crates/annotagent-storage/src/conversation_image_class.rs",
+    "definition": "pub struct ConversationImageClassReview {\n    pub id: Uuid,\n    pub task_id: Uuid,\n    pub conversation_id: Uuid,\n    pub input: ConversationImageClassCreateInput,\n    pub scope: ConversationImageClassScope,\n    pub scope_digest: String,\n    pub status: ConversationImageClassStatus,\n    pub answer: Option<ConversationImageClassAnswerInput>,\n    pub revisions: Vec<SampleFeedbackRevision>,\n    pub resume_checkpoint_ref: Uuid,\n    pub repair_draft_id: Option<String>,\n    pub resume_error: Option<String>,\n    pub created_at: String,\n}"
+  },
+  {
+    "name": "ConversationAgentModel",
+    "source": "crates/annotagent-storage/src/conversation_agent_model.rs",
+    "definition": "pub struct ConversationAgentModel {\n    pub revision: u64,\n    pub model_profile_id: Option<ModelProfileId>,\n}"
+  },
+  {
+    "name": "SelectConversationAgentModel",
+    "source": "crates/annotagent-storage/src/conversation_agent_model.rs",
+    "definition": "pub struct SelectConversationAgentModel {\n    pub request_id: Uuid,\n    pub expected_revision: u64,\n    /// None explicitly returns to the existing project/default resolver.\n    pub model_profile_id: Option<ModelProfileId>,\n}"
+  },
+  {
+    "name": "SchemaClarificationRef",
+    "source": "crates/annotagent-storage/src/conversation_clarifications.rs",
+    "definition": "pub struct SchemaClarificationRef {\n    pub call_id: Uuid,\n    pub expected_schema_revision: String,\n}"
+  },
+  {
+    "name": "SchemaClarification",
+    "source": "crates/annotagent-storage/src/conversation_clarifications.rs",
+    "definition": "pub struct SchemaClarification {\n    pub id: Uuid,\n    pub task_id: Uuid,\n    pub conversation_id: Uuid,\n    pub source_message_id: Uuid,\n    pub kind: String,\n    pub question: String,\n    pub reason_code: String,\n    pub expected_schema_revision: String,\n    pub schema_draft_id: Option<Uuid>,\n    pub status: String,\n}"
+  },
+  {
+    "name": "JourneyModelScope",
+    "source": "crates/annotagent-storage/src/conversation_journey.rs",
+    "definition": "pub struct JourneyModelScope {\n    pub model_id: String,\n    /// Hash of server-resolved model, provider destination and permission snapshots;\n    /// never a hash supplied by the LLM or a raw credential.\n    pub binding_digest: String,\n}"
+  },
+  {
+    "name": "JourneyImageScope",
+    "source": "crates/annotagent-storage/src/conversation_journey.rs",
+    "definition": "pub struct JourneyImageScope {\n    pub image_id: Uuid,\n    pub content_hash: String,\n}"
+  },
+  {
+    "name": "ConversationBuilderRepair",
+    "source": "crates/annotagent-storage/src/conversation_journey.rs",
+    "definition": "pub struct ConversationBuilderRepair {\n    pub request_id: Uuid,\n    pub draft_id: String,\n    pub revision: u64,\n    pub content_hash: String,\n}"
+  },
+  {
+    "name": "ConversationJourneyConsent",
+    "source": "crates/annotagent-storage/src/conversation_journey.rs",
+    "definition": "pub struct ConversationJourneyConsent {\n    /// Permission for this one pending request only. It must resolve to an exact\n    /// acknowledged repair snapshot before any Builder/sample execution.\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub repair_after_answer: Option<crate::ConversationHumanRequestInput>,\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub repair: Option<ConversationBuilderRepair>,\n    /// Present only when the authorized text call must first produce a Schema.\n    /// Nil `schema_id` and revision zero mean unresolved, never a fake Schema.\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub schema_proposal: Option<crate::ConversationSchemaAuthorization>,\n    /// Only newly acknowledged envelopes may resume after a linked human answer.\n    /// Older saved consents never acquire this permission through deserialization.\n    #[serde(default, skip_serializing_if = \"is_false\")]\n    pub continue_after_clarification: bool,\n    pub id: Uuid,\n    pub task_id: Uuid,\n    pub builder_operation_id: Uuid,\n    #[serde(default)]\n    pub builder_model_id: Option<annotagent_core::ModelProfileId>,\n    #[serde(default)]\n    pub previous_grant_id: Option<Uuid>,\n    pub sample_operation_id: Uuid,\n    pub builder_scope_hash: String,\n    pub schema_id: Uuid,\n    pub schema_revision: u64,\n    /// SHA-256 of the persisted Schema definition JSON.\n    pub schema_digest: String,\n    pub images: Vec<JourneyImageScope>,\n    pub allowed_models: Vec<JourneyModelScope>,\n    pub maximum_builder_calls: u32,\n    pub maximum_sample_calls: u32,\n    pub expires_at: DateTime<Utc>,\n    pub allow_unknown_cost: bool,\n}"
+  },
+  {
+    "name": "JourneySampleScope",
+    "source": "crates/annotagent-storage/src/conversation_journey.rs",
+    "definition": "pub struct JourneySampleScope {\n    pub operation_id: Uuid,\n    pub draft_id: Uuid,\n    pub draft_revision: u64,\n    pub authorization_fingerprint: String,\n    pub schema_id: Uuid,\n    pub schema_revision: u64,\n    pub schema_digest: String,\n    pub images: Vec<JourneyImageScope>,\n    pub models: Vec<JourneyModelScope>,\n    pub maximum_calls: u32,\n}"
+  },
+  {
+    "name": "ConversationJourneyRecord",
+    "source": "crates/annotagent-storage/src/conversation_journey.rs",
+    "definition": "pub struct ConversationJourneyRecord {\n    pub consent: ConversationJourneyConsent,\n    pub revoked: bool,\n    pub sample: Option<JourneySampleScope>,\n    pub resolved_consent: Option<ConversationJourneyConsent>,\n}"
+  },
+  {
+    "name": "SampleFeedbackReason",
+    "source": "crates/annotagent-storage/src/sample_feedback.rs",
+    "definition": "pub enum SampleFeedbackReason {\n    Correct,\n    WrongTarget,\n    ExcludeTarget,\n    PoorBoundary,\n    MissingTarget,\n    CannotJudge,\n}"
+  },
+  {
+    "name": "SampleFeedbackRevision",
+    "source": "crates/annotagent-storage/src/sample_feedback.rs",
+    "definition": "pub struct SampleFeedbackRevision {\n    pub revision_id: String,\n    pub sample_test_id: String,\n    pub image_id: String,\n    pub sequence: u64,\n    pub reason: SampleFeedbackReason,\n    pub outcome_id: Option<String>,\n    pub corrected_value: Option<annotagent_core::VisionArtifactValue>,\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub corrected_label: Option<String>,\n    /// Stable human-authored subject under this Sample Test image, never a model outcome.\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub addition_id: Option<String>,\n    pub note: String,\n    pub created_at: DateTime<Utc>,\n}"
+  }
+]

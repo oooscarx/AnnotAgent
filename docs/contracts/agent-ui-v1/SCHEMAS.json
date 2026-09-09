@@ -1,0 +1,671 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:annotagent:agent-ui-v1",
+  "title": "Agent UI request and projection schemas",
+  "description": "Additive bindings. UUIDs and scope digests must come from owned persisted records/previews. Budget wire output is decimal string; existing Rust parser may also accept numbers. Older endpoints may return additive fields.",
+  "$comment": "No client permission can be inferred from this schema.",
+  "$defs": {
+    "AgentModel": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "model_profile_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "revision",
+        "model_profile_id"
+      ],
+      "additionalProperties": false
+    },
+    "ImageRef": {
+      "type": "object",
+      "properties": {
+        "image_id": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        }
+      },
+      "required": [
+        "image_id",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "StopRef": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "const": "stop_request"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "scope",
+        "task_id"
+      ],
+      "additionalProperties": false
+    },
+    "CandidateRef": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "const": "sample_candidate"
+        },
+        "task_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "project_schema_revision": {
+          "type": "string"
+        },
+        "draft_id": {
+          "type": "string"
+        },
+        "draft_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sample_test_id": {
+          "type": "string"
+        },
+        "candidate_id": {
+          "type": "string"
+        },
+        "source_artifact_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "scope",
+        "task_id",
+        "project_schema_revision",
+        "draft_id",
+        "draft_revision",
+        "sample_test_id",
+        "candidate_id",
+        "source_artifact_id"
+      ],
+      "additionalProperties": false
+    },
+    "MessageInput": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "text": {
+          "type": "string"
+        },
+        "image": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImageRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/StopRef"
+                },
+                {
+                  "$ref": "#/$defs/CandidateRef"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "Message": {
+      "type": "object",
+      "properties": {
+        "conversation_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "input": {
+          "$ref": "#/$defs/MessageInput"
+        }
+      },
+      "required": [
+        "conversation_id",
+        "sequence",
+        "input"
+      ],
+      "additionalProperties": false
+    },
+    "SendInput": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "$ref": "#/$defs/MessageInput"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "schema_revision": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        },
+        "agent_model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentModel"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "plan",
+                "execute"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "message",
+        "schema_revision"
+      ],
+      "additionalProperties": false
+    },
+    "SendReceipt": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "$ref": "#/$defs/Message"
+        },
+        "task_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "disposition": {
+          "enum": [
+            "new_task",
+            "task_message",
+            "candidate_feedback"
+          ]
+        },
+        "agent_model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentModel"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "plan",
+                "execute"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resolved_agent_model_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "message",
+        "task_id",
+        "disposition"
+      ],
+      "additionalProperties": false
+    },
+    "SelectAgentModel": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "model_profile_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "request_id",
+        "expected_revision",
+        "model_profile_id"
+      ],
+      "additionalProperties": false
+    },
+    "StopTarget": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "call",
+            "builder",
+            "journey",
+            "sample",
+            "processing",
+            "authorization"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "task_id"
+      ],
+      "additionalProperties": false
+    },
+    "SelectStop": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/StopTarget"
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "Budget": {
+      "type": "object",
+      "properties": {
+        "max_input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_output_tokens": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_total_tokens": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_requests": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_images": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_wall_clock_seconds": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_cost": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9]+(\\.[0-9]+)?$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "BudgetPatch": {
+      "type": "object",
+      "properties": {
+        "expected_revision": {
+          "type": "string"
+        },
+        "budget": {
+          "$ref": "#/$defs/Budget"
+        }
+      },
+      "required": [
+        "expected_revision",
+        "budget"
+      ],
+      "additionalProperties": false
+    },
+    "CallLimit": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maximum_calls": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "expected_revision",
+        "maximum_calls"
+      ],
+      "additionalProperties": false
+    },
+    "SchemaConsent": {
+      "type": "object",
+      "properties": {
+        "call_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "model_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "scope_hash": {
+          "type": "string"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "allow_unknown_cost": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "call_id",
+        "model_id",
+        "scope_hash",
+        "expires_at",
+        "allow_unknown_cost"
+      ],
+      "additionalProperties": false
+    },
+    "QueueConsent": {
+      "type": "object",
+      "properties": {
+        "call_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "model_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "scope_hash": {
+          "type": "string"
+        },
+        "request_hash": {
+          "type": "string"
+        },
+        "previous_grant_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "maximum_calls": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "allow_unknown_cost": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "call_id",
+        "model_id",
+        "scope_hash",
+        "request_hash",
+        "previous_grant_id",
+        "maximum_calls",
+        "expires_at",
+        "allow_unknown_cost"
+      ],
+      "additionalProperties": false
+    },
+    "NavigationItem": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": "string"
+        },
+        "project_owner_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "title": {
+          "type": "string"
+        },
+        "group_id": {
+          "type": "null"
+        },
+        "conversation_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "project_id",
+        "project_owner_id",
+        "title",
+        "group_id",
+        "conversation_id"
+      ],
+      "additionalProperties": false
+    },
+    "NavigationPage": {
+      "type": "object",
+      "properties": {
+        "workspace_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NavigationItem"
+          }
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "workspace_id",
+        "items",
+        "next_cursor"
+      ],
+      "additionalProperties": false
+    },
+    "Action": {
+      "type": "object",
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "available",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "Error": {
+      "type": "object",
+      "properties": {
+        "error": {
+          "type": "string"
+        },
+        "status": {
+          "type": "integer"
+        },
+        "code": {
+          "type": "string"
+        },
+        "suggested_action": {
+          "type": "string"
+        },
+        "current_revision": {}
+      },
+      "required": [
+        "error",
+        "status"
+      ],
+      "additionalProperties": true
+    }
+  }
+}

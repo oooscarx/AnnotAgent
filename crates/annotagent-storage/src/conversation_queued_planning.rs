@@ -68,11 +68,7 @@ fn validate_source(
             "Queued message was cancelled; no planning call is permitted",
         ));
     }
-    if queued
-        .receipt
-        .agent_model
-        .as_ref()
-        .and_then(|model| model.model_profile_id)
+    if queued.receipt.resolved_agent_model_id.or_else(|| queued.receipt.agent_model.as_ref().and_then(|model| model.model_profile_id))
         .is_some_and(|model| model != input.model_id)
     {
         return Err(invalid("Queued planning must use the model frozen at Send"));

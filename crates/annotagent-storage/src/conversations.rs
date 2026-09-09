@@ -63,7 +63,8 @@ pub(crate) fn require_owner(
         |row| row.get(0),
     )?;
     if !owned {
-        return Err(invalid("conversation does not belong to this Project"));
+        let exists: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM project_conversations WHERE id=?1)",[conversation.to_string()],|row|row.get(0))?;
+        return Err(StorageError::ConversationContract { code: if exists { "owner_mismatch" } else { "not_found" }, message:"conversation does not belong to this Project".into() });
     }
     Ok(())
 }

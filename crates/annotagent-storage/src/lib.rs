@@ -155,6 +155,10 @@ const PIPELINE_LIFECYCLE_MIGRATION: &str =
 
 #[derive(Debug, Error)]
 pub enum StorageError {
+    #[error("Feedback changed in another window; reload before saving")]
+    FeedbackRevisionConflict { current: u64 },
+    #[error("invalid conversation operation: {message}")]
+    ConversationContract { code: &'static str, message: String },
     #[error(
         "Agent model choice changed before Send; review the current selection before sending this message"
     )]

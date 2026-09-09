@@ -18,7 +18,7 @@ pub(super) async fn message_queue(
         .application
         .project_conversation_message_queue(&project, conversation, task, page.after)
         .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::conversation)
 }
 
 #[derive(Deserialize)]
@@ -39,7 +39,7 @@ pub(super) async fn cancel_queued_message(
         .application
         .cancel_project_queued_message(&project, conversation, task, message)
         .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::conversation)
 }
 
 pub(super) async fn agent_model(
@@ -50,7 +50,7 @@ pub(super) async fn agent_model(
         .application
         .project_conversation_agent_model(&project, conversation)
         .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::conversation)
 }
 
 pub(super) async fn select_agent_model(
@@ -62,7 +62,7 @@ pub(super) async fn select_agent_model(
         .application
         .select_project_conversation_agent_model(&project, conversation, &input)
         .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::conversation)
 }
 
 pub(super) async fn call_limit(
@@ -73,7 +73,7 @@ pub(super) async fn call_limit(
         .application
         .project_conversation_call_limit(&project)
         .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::conversation)
 }
 pub(super) async fn set_call_limit(
     State(state): State<ServerState>,
@@ -84,7 +84,7 @@ pub(super) async fn set_call_limit(
         .application
         .set_project_conversation_call_limit(&project, &input)
         .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::conversation)
 }
 
 #[derive(Deserialize, Default)]
@@ -107,7 +107,7 @@ pub(super) async fn create(
     let id = state
         .application
         .create_project_conversation(&project)
-        .map_err(ApiError::bad_request)?;
+        .map_err(ApiError::conversation)?;
     Ok(Json(json!({ "conversation_id": id })))
 }
 
@@ -118,7 +118,7 @@ pub(super) async fn current(
     let id = state
         .application
         .project_conversation(&project)
-        .map_err(ApiError::bad_request)?;
+        .map_err(ApiError::conversation)?;
     Ok(Json(json!({ "conversation_id": id })))
 }
 
@@ -137,7 +137,7 @@ pub(super) async fn messages(
             .application
             .project_conversation_first_goal(&project, conversation)
             .map(|goal| Json(goal.into_iter().collect()))
-            .map_err(ApiError::bad_request);
+            .map_err(ApiError::conversation);
     }
     if page.latest || page.before.is_some() {
         if page.after != 0 || (page.latest && page.before.is_some()) {
@@ -152,7 +152,7 @@ pub(super) async fn messages(
                 page.limit.unwrap_or(100),
             )
             .map(Json)
-            .map_err(ApiError::bad_request);
+            .map_err(ApiError::conversation);
     }
     state
         .application
@@ -163,7 +163,7 @@ pub(super) async fn messages(
             page.limit.unwrap_or(100),
         )
         .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::conversation)
 }
 
 pub(super) async fn message(
@@ -186,7 +186,7 @@ pub(super) async fn append(
         .application
         .append_project_conversation_message(&project, conversation, &input)
         .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::conversation)
 }
 
 pub(super) async fn send(
@@ -212,7 +212,7 @@ pub(super) async fn send_receipt(
     let receipt = state
         .application
         .project_conversation_send_receipt(&project, conversation, message)
-        .map_err(ApiError::bad_request)?;
+        .map_err(ApiError::conversation)?;
     Ok(Json(receipt.map_or(
         Value::Null,
         |(input, receipt)| json!({"input":input,"receipt":receipt}),
@@ -227,7 +227,7 @@ pub(super) async fn tasks(
         .application
         .conversation_tasks(&project, conversation)
         .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::conversation)
 }
 
 pub(super) async fn selection(
@@ -238,7 +238,7 @@ pub(super) async fn selection(
         .application
         .conversation_task_selection(&project, conversation)
         .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::conversation)
 }
 pub(super) async fn select_task(
     State(state): State<ServerState>,
@@ -249,7 +249,7 @@ pub(super) async fn select_task(
         .application
         .select_conversation_task(&project, conversation, &input)
         .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::conversation)
 }
 
 pub(super) async fn begin_task(
@@ -261,5 +261,5 @@ pub(super) async fn begin_task(
         .application
         .begin_conversation_task(&project, conversation, &input)
         .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::conversation)
 }
