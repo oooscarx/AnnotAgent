@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { agentPath, parseAgentRoute, settingsPages, managementPages } from "./navigationContract";
+import entry from "../main.tsx?raw";
 const parse = (path: string) => parseAgentRoute(new URL(path, "http://localhost"));
 describe("single UI route contract (cutover target)", () => {
   it("round-trips every new Settings page without a project or task", () => {
@@ -18,5 +19,9 @@ describe("single UI route contract (cutover target)", () => {
     expect(parse("/projects/new")).toEqual({kind:"create-project"});
     expect(()=>agentPath({kind:"work",projectId:"a/b"})).toThrow();
   });
-  it.todo("production entry imports only Agent App after all legacy-only capabilities migrate (M2)");
+  it("production entry always loads the native HTTP application, never old root/styles or fixture",()=>{
+    expect(entry).toContain('import("./agent-ui/App")');expect(entry).toContain('import("./agent-ui/http")');
+    expect(entry).not.toMatch(/import\(["']\.\/(App|styles\.css)["']\)/);
+    expect(entry).not.toMatch(/isAgentEntry|FixtureAdapter|fixture\.ts/);
+  });
 });

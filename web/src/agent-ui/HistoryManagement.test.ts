@@ -1,11 +1,11 @@
 import { expect,it } from "vitest";
 import { removeCoveredChildren } from "./HistoryManagement";
-import { isAgentEntry } from "./routes";
+import { parseAgentRoute } from "./navigationContract";
 import { trashTargets } from "./TrashManagement";
 import type { TrashEntry } from "../types";
 import type { PipelineLifecycleSummary,ManagementObjectRef } from "../types";
-it("native history routes never load the legacy root",()=>{
-  for(const page of ["runs","pipelines","trash"])expect(isAgentEntry(new URL(`https://local/projects/project/manage/${page}`))).toBe(true);
+it("native history routes resolve exact management page and owner",()=>{
+  for(const page of ["runs","pipelines","trash"])expect(parseAgentRoute(new URL(`https://local/projects/project/manage/${page}`))).toEqual({kind:"management",projectId:"project",page});
 });
 it("Trash selection removes a Pipeline's same-identity child before requesting its impact",()=>{
   const objects:ManagementObjectRef[]=[{kind:"pipeline",id:"a",expected_revision:2},{kind:"workflow_draft",id:"a",expected_revision:2},{kind:"workflow_version",id:"a",version:1,expected_revision:3},{kind:"workflow_draft",id:"b",expected_revision:4}];

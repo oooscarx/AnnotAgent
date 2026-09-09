@@ -1,10 +1,10 @@
 import { expect, it } from "vitest";
 import { batchControls, ownedBatch } from "./BatchDetail";
-import { isAgentEntry } from "./routes";
+import { parseAgentRoute } from "./navigationContract";
 import type { DatasetBatchSummary } from "../types";
 const batch={id:"b",project_id:"p",status:"running",in_trash:false} as DatasetBatchSummary;
 it("uses native Batch detail and rejects foreign ownership",()=>{
-  expect(isAgentEntry(new URL("http://localhost/projects/p/manage/batches/b"))).toBe(true);
+  expect(parseAgentRoute(new URL("http://localhost/projects/p/manage/batches/b"))).toEqual({kind:"detail",projectId:"p",page:"batches",objectId:"b"});
   expect(ownedBatch(batch,"p","b")).toBe(batch);
   expect(()=>ownedBatch(batch,"other","b")).toThrow();expect(()=>ownedBatch(batch,"p","other")).toThrow();
 });

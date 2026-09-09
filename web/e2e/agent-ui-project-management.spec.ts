@@ -1,6 +1,15 @@
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
+test("production rejects every old page through native UI without loading legacy modules or making writes",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const writes:string[]=[];const loaded:string[]=[];page.on("request",r=>{loaded.push(r.url());if(r.method()!=="GET")writes.push(r.url());});
+  for(const path of ["/runs","/review/old","/trash","/workflows","/projects/old","/projects/old/build/test","/projects/old/build/pipeline","/projects/old/runs/r","/settings/models","/settings","/unknown?settings=providers&workspace_return=https://example.invalid"]){
+    await page.goto(path);await expect(page.getByRole("heading",{name:"页面不存在",exact:true})).toBeVisible();await expect(page.locator(".ui-app")).toHaveCount(1);await expect(page.locator(".sidebar")).toHaveCount(0);await expect(page.locator(".composer textarea")).toHaveCount(0);
+  }
+  await page.reload();await expect(page.getByRole("heading",{name:"页面不存在",exact:true})).toBeVisible();await page.getByRole("link",{name:"返回项目列表",exact:true}).click();await expect(page.getByRole("heading",{name:"我的项目",exact:true})).toBeVisible();expect(writes).toEqual([]);
+  expect(loaded.filter(u=>/\/src\/App\.tsx|\/src\/styles\.css|\/assets\/styles-/.test(u))).toEqual([]);
+});
 test("native exact clone recovers lost receipt without overwriting edited copy or frozen source",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
   const nav=await(await request.get("/api/navigation")).json();const project=nav.items.find((p:{title:string})=>p.title==="TEST Agent UI HTTP fixture").project_id;const summary=await(await request.get(`/api/projects/${project}/summary`)).json();const version=summary.project.available_workflow_versions[0];const frozenUrl=`/api/projects/${project}/workflows/${version.workflow_id}/versions/${version.version}`;const frozen=await(await request.get(frozenUrl)).json();
