@@ -1,5 +1,13 @@
 # Single UI Clean Cut
 
+## Native calibration creation boundary
+
+Inspected application create_geometry_calibration end to end: it resolves Project, exact published snapshot, bounding-box task/label, model/node calibration key and each explicitly selected Run's immutable version/hash, then evaluates existing saved correction/acceptance evidence and persists a report. It does not run inference. Server POST currently has no client idempotency key.
+
+Added GeometryCalibration in native Workflow detail using existing adapter/API. Users choose current real bbox task/label, a bound node from the frozen source, and explicit Run UUIDs (deduplicated, bounded100; no old history automatically listed). Exact request is reviewed before explicit computation. Pending body is saved before POST and locks replay after uncertain response; known report recovery re-reads actual server records rather than trusting browser success. Dirty navigation guard protects unsent input. Insufficient evidence remains a real report status, not claimed success. Unknown-response reconciliation/release and repeat-calibration UX still need completion; no unsafe retry introduced.
+
+320 unit tests across98 files and typecheck/build passed (final recovery-read/dirty-guard edit included in build typecheck). Build /tmp/annotagent-native-calibration-create-dist, source9044b45 plus slice. Actual positive/negative calibration creation HTTP and browser evidence are NOT yet executed for this slice; required next. Old GeometrySafetyPanel remains unmounted but retained until improvement/calibration parity verified. Goal active, no user-service/real data/paid model/Rust/remote changes.
+
 ## Native geometry policy and calibration evidence
 
 Added GeometryEvidence to native immutable Workflow detail behind an unmounted-until-open disclosure. Reuses actual HttpAdapter geometry policy/calibration reads; no old GeometrySafetyPanel import. Shows project-level requirements, effective/original calibration state, measured metrics versus unknown, stale reasons and exact evidence scope. Explicitly does not claim a project report calibrates the viewed version. Generation cleanup prevents old reads replacing a newer project/read.

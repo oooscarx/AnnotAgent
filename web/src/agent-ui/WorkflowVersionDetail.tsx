@@ -6,7 +6,8 @@ import {agentPath} from "./navigationContract";
 import {WorkflowComparison} from "./WorkflowComparison";
 import {WorkflowClone,type WorkflowCloneService} from "./WorkflowClone";
 import {GeometryEvidence,type GeometryEvidenceService} from "./GeometryEvidence";
-export type WorkflowVersionService=Pick<typeof api,"frozenWorkflowVersion"> & WorkflowCloneService & GeometryEvidenceService;
+import {GeometryCalibration,type GeometryCalibrationService} from "./GeometryCalibration";
+export type WorkflowVersionService=Pick<typeof api,"frozenWorkflowVersion"> & WorkflowCloneService & GeometryEvidenceService & GeometryCalibrationService;
 export function verifyFrozenVersion(value:FrozenWorkflowVersion,projectId:string,workflowId:string,version:number) {
   if(value.project_id!==projectId||value.workflow_id!==workflowId||value.version!==version||value.draft.project_id!==projectId||value.source_draft_id!==value.draft.id||!value.content_hash)throw new Error("冻结版本身份不匹配，没有用当前 Draft 替代。");
   return value;
@@ -32,7 +33,7 @@ export function WorkflowVersionDetail({service,projectId,workflowId,version,work
       <Disclosure title="完整冻结配置与模型资源"><pre>{JSON.stringify(value.snapshot,null,2)}</pre></Disclosure>
       <Disclosure title="完整发布对象（只读）"><pre>{JSON.stringify(value,null,2)}</pre></Disclosure>
       <WorkflowComparison key={`${value.workflow_id}@${value.version}`} source={value} service={service}/>
-      <Disclosure title="项目几何策略与校准证据" onToggle={e=>setEvidenceOpen(e.currentTarget.open)}>{evidenceOpen&&<GeometryEvidence key={projectId} service={service} projectId={projectId}/>}</Disclosure>
+      <Disclosure title="项目几何策略与校准证据" onToggle={e=>setEvidenceOpen(e.currentTarget.open)}>{evidenceOpen&&<><GeometryEvidence key={projectId} service={service} projectId={projectId}/>{workspaceId&&<GeometryCalibration key={`${workspaceId}:${value.content_hash}`} service={service} source={value} workspaceId={workspaceId}/>}</>}</Disclosure>
       {workspaceId&&<WorkflowClone key={`${workspaceId}:${value.workflow_id}@${value.version}`} source={value} workspaceId={workspaceId} service={service}/>}
     </>}
   </section>;
