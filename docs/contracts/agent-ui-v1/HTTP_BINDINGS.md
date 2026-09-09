@@ -1,5 +1,7 @@
 # Agent UI v1 — 实际 HTTP bindings
 
+当前接线优先读 [HTTP_ADAPTER.md](HTTP_ADAPTER.md) 的逐字段映射和 [INTEGRATION_ENVIRONMENT.md](INTEGRATION_ENVIRONMENT.md) 的隔离命令。下表为 B0 历史盘点，新增支持见 B1/B2 与 Adapter，不将表中“缺”误判为当前缺口。
+
 B0 基线：`c41b281b49252d520117029d39611865133798af`。以下为源码核验，尚未声称新增能力通过测试。
 
 `{C}=/api/projects/{p}/conversations/{conversation}`；`{T}={C}/tasks/{task}`。`p` 是现有项目 route ID，稳定 UUID owner 由服务端解析，绝不以 display_name 判断归属。
@@ -11,7 +13,7 @@ B0 基线：`c41b281b49252d520117029d39611865133798af`。以下为源码核验�
 |listThreadItems|GET {C}/messages?after=0&limit=100; GET {C}/messages/{message}|ConversationMessage{conversation_id,sequence,input:{id,text,image,reference}}[]|真实 user journal；工具/结果须从各业务对象读取；缺 exact task thread|
 |sendMessage|POST {C}/send; GET {C}/send/{message}|ConversationSendInput → ConversationSendReceipt|message.id 是 command_id；相同 ID 不同 payload 拒绝；mode 记录不等于授权|
 |previewApproval / approveAction|GET {T}/schema-preview; POST {T}/schema-proposals; GET {T}/builder-preview; POST {T}/builder-operations; GET {T}/journey-preview; POST {T}/journey-consents|各 preview 返回 scope_hash/model/request/预算；显式 consent DTO 见源文件|已有精确 scope/expiry/budget；需核验 Plan 的直接调用边界|
-|interruptOperation|POST {C}/stop-requests; POST {C}/stop-requests/{message}/select; GET {C}/stop-requests/{message}|ConversationMessageInput(reference=stop_request) / {target:{kind,id,task_id}} → {request,observation,dispatch_error}|已有 frozen targets；cancel_requested ≠ 停止完成；以 observation 为准|
+|interruptOperation|POST {C}/stop-requests; POST {C}/stop-requests/{message}/select; GET {C}/stop-requests/{message}|ConversationMessageInput(reference=stop_request) / {target:{kind,id,task_id}} → 顶层 ConversationStopRequest + observation/dispatch_error|已有 frozen targets；cancel_requested ≠ 停止完成；以 observation 为准|
 |resumeOperation|POST /api/runs/{run}/resume; POST /api/batches/{batch}/resume; POST {T}/human-requests/{id}/resume; POST {T}/journey-consents/{id}/execution|按既有实体恢复 DTO；run/batch control 无通用 command DTO|已有 checkpoint 与预算；不支持任意 cancelled Operation 原地复活|
 |queue|GET {T}/message-queue?after=0; POST {T}/message-queue/{message}/cancel; GET {T}/message-queue/{message}/schema-preview; POST {T}/message-queue/{message}/schema-proposals|ConversationQueuedMessage[]; cancel {}; Consent → ConversationCallReceipt|已有持久 inbox/冻结 send/单次授权；核验 FIFO 派发与恢复|
 |list/selectAgentModel|GET /api/providers; GET /api/model-profiles; GET/POST {C}/agent-model; GET/PUT /api/agent-model-bindings|ConversationAgentModel{revision,model_profile_id}; SelectConversationAgentModel{request_id,expected_revision,model_profile_id}|已有 next request CAS；不可改 Workflow 视觉绑定|
@@ -19,7 +21,7 @@ B0 基线：`c41b281b49252d520117029d39611865133798af`。以下为源码核验�
 |getArtifacts|GET /api/runs/{run}/result-summary; GET /api/runs/{run}/debug-summary; GET {T}/sample-operations; GET {T}/processing-operations|RunResultSummary / debug lineage / persisted operations|已有终端投影；中间阶段不得计作重复目标|
 |answerHumanRequest|GET/POST {T}/human-requests; POST {T}/human-requests/{id}/answer|ConversationHumanRequestInput / HumanAnswer → 保存的反馈及恢复状态|已有 revision/outbox/stale 防护；答案先保存再派发|
 |settings.general|GET/PUT /api/settings|Settings + configured/persisted flags；展示偏好前端本地|已有 legacy 设置；缺 revision CAS 与安全白名单摘要|
-|settings.providers|GET/POST /api/providers; GET/PATCH/DELETE /api/providers/{id}; PUT /api/providers/{id}/credential; POST /api/providers/{id}/check; POST /api/providers/{id}/active-probe|安全 profile DTO；凭据 write-only；probe 显式 consent|已有本地 session/CSRF/privileged confirmation；读取不 probe|
+|settings.providers|GET/POST /api/providers; GET/PATCH/DELETE /api/providers/{id}; POST /api/providers/{id}/credential; POST /api/providers/{id}/check; POST /api/providers/{id}/active-probe|安全 profile DTO；凭据 write-only；probe 显式 consent|已有本地 session/CSRF/privileged confirmation；读取不 probe|
 |settings.agentModels|GET /api/model-profiles; GET/PUT /api/agent-model-bindings; GET/POST {C}/agent-model|registry model capabilities + preferences|已有；模型不可用理由来自兼容检查|
 |settings.visionPlugins|GET /api/plugins; GET /api/model-instances; GET /api/model-bundles; POST /api/model-installations|plugin/model asset 独立状态；安装显式请求|已有安装/许可/引用保护；本轮不安装|
 |settings.privacy|GET /api/projects/{p}/management/usage; POST /api/projects/{p}/management/preview; POST /api/projects/{p}/management/actions|ManagementPreview / ManagementRequest / ManagementReceipt|已有引用保护、回收站、占用；缺 workspace 安全摘要|
