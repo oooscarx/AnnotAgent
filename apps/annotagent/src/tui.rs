@@ -1139,6 +1139,7 @@ impl TuiState {
                 .context("Pipeline was not found in this Project")?,
         };
         let mut request = ManagementRequest {
+            history_scope: None,
             project_id,
             objects: vec![ManagementObjectRef {
                 kind,

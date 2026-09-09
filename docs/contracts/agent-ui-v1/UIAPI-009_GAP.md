@@ -1,3 +1,5 @@
+> Superseded by implemented [UIAPI-009_HISTORY_SCOPE.md](UIAPI-009_HISTORY_SCOPE.md). The audit below is historical, not the current API status.
+
 # UIAPI-009 — audited gap; proposed contract, NOT implemented
 
 Status: **history cutover remains blocked**. This delivery is the requested concrete gap specification, not an executable scope API. No GET/POST below should be wired as if already available. No real workspace was read or changed, and no historical rows were hidden/deleted by this audit.

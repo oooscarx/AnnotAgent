@@ -621,6 +621,8 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route("/api/navigation", get(agent_ui::navigation))
         .route("/api/health", get(health))
         .route("/api/session", get(local_session))
+        .route("/api/history-scope", get(get_history_scope).post(establish_history_scope))
+        .route("/api/history-scope/preview", post(preview_history_scope))
         .route(
             "/api/session/privileged-confirmation",
             post(issue_privileged_confirmation),
@@ -3289,13 +3291,86 @@ fn run_summary(
     }
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct HistoryScopeQuery {
+    history_scope: Option<String>,
+}
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HistoryScopePreviewRequest {
+    policy: String,
+}
+fn history_error(error: StorageError) -> ApiError {
+    let mut result = ApiError::management(error.into());
+    if result.body["code"] == "invalid_history_scope_request" {
+        result.status = StatusCode::BAD_REQUEST;
+        result.body["status"] = json!(400);
+    }
+    result.body["admitted"] = json!(false);
+    result
+}
+async fn get_history_scope(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
+    Ok(Json(
+        json!({"scope":state.application.store().history_scope().map_err(history_error)?}),
+    ))
+}
+async fn preview_history_scope(
+    State(state): State<ServerState>,
+    Json(request): Json<HistoryScopePreviewRequest>,
+) -> ApiResult<Json<annotagent_storage::HistoryScopePreview>> {
+    if request.policy != annotagent_storage::HISTORY_POLICY {
+        return Err(ApiError::bad_request("unsupported history scope policy"));
+    }
+    state
+        .application
+        .store()
+        .preview_history_scope()
+        .map(Json)
+        .map_err(history_error)
+}
+async fn establish_history_scope(
+    State(state): State<ServerState>,
+    Json(request): Json<annotagent_storage::EstablishHistoryScope>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    match state.application.store().establish_history_scope(&request) {
+        Ok((scope, created)) => Ok((
+            if created {
+                StatusCode::CREATED
+            } else {
+                StatusCode::OK
+            },
+            Json(json!({"scope":scope})),
+        )),
+        Err(error) => {
+            let mut result = history_error(error);
+            if result.body["code"] == "history_scope_already_established" {
+                result.body["scope"] = serde_json::to_value(
+                    state
+                        .application
+                        .store()
+                        .history_scope()
+                        .map_err(history_error)?,
+                )
+                .map_err(ApiError::internal)?;
+            }
+            Err(result)
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct TrashQuery {
+    history_scope: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
     kind: Option<ManagementObjectKind>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 struct PipelineLifecycleQuery {
+    history_scope: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
     #[serde(default)]
     include_archived: bool,
     #[serde(default)]
@@ -3307,6 +3382,26 @@ async fn list_project_pipeline_lifecycle(
     AxumPath(project_id): AxumPath<String>,
     Query(query): Query<PipelineLifecycleQuery>,
 ) -> ApiResult<Json<Value>> {
+    if let Some(id) = query.history_scope.as_deref() {
+        let owner = state
+            .application
+            .management_scope(&project_id)
+            .map_err(ApiError::management)?;
+        let page = state
+            .application
+            .store()
+            .list_pipeline_lifecycle_scoped(
+                &owner,
+                id,
+                query.include_archived,
+                query.include_deleted,
+                PageRequest::bounded(query.limit, query.offset),
+            )
+            .map_err(history_error)?;
+        return Ok(Json(
+            json!({"pipelines":page.items,"page":{"total":page.total,"limit":page.limit,"offset":page.offset,"next_offset":page.next_offset}}),
+        ));
+    }
     let pipelines = state
         .application
         .list_pipeline_lifecycle(&project_id, query.include_archived, query.include_deleted)
@@ -3317,8 +3412,13 @@ async fn list_project_pipeline_lifecycle(
 async fn preview_project_management(
     State(state): State<ServerState>,
     AxumPath(project_id): AxumPath<String>,
+    Query(query): Query<HistoryScopeQuery>,
     Json(mut request): Json<ManagementRequest>,
 ) -> ApiResult<Json<ManagementPreview>> {
+    if request.history_scope.is_some() && request.history_scope != query.history_scope {
+        return Err(ApiError::bad_request("history_scope must match the query"));
+    }
+    request.history_scope = query.history_scope;
     if request.project_id != project_id {
         return Err(ApiError::bad_request(
             "request project_id must match the Project route",
@@ -3335,8 +3435,13 @@ async fn preview_project_management(
 async fn execute_project_management(
     State(state): State<ServerState>,
     AxumPath(project_id): AxumPath<String>,
-    Json(request): Json<ManagementRequest>,
+    Query(query): Query<HistoryScopeQuery>,
+    Json(mut request): Json<ManagementRequest>,
 ) -> ApiResult<(StatusCode, Json<ManagementReceipt>)> {
+    if request.history_scope.is_some() && request.history_scope != query.history_scope {
+        return Err(ApiError::bad_request("history_scope must match the query"));
+    }
+    request.history_scope = query.history_scope;
     if request.project_id != project_id {
         return Err(ApiError::bad_request(
             "request project_id must match the Project route",
@@ -3355,6 +3460,25 @@ async fn list_project_trash(
     AxumPath(project_id): AxumPath<String>,
     Query(query): Query<TrashQuery>,
 ) -> ApiResult<Json<Value>> {
+    if let Some(id) = query.history_scope.as_deref() {
+        let owner = state
+            .application
+            .management_scope(&project_id)
+            .map_err(ApiError::management)?;
+        let page = state
+            .application
+            .store()
+            .list_trash_scoped(
+                &owner,
+                id,
+                query.kind,
+                PageRequest::bounded(query.limit, query.offset),
+            )
+            .map_err(history_error)?;
+        return Ok(Json(
+            json!({"items":page.items,"page":{"total":page.total,"limit":page.limit,"offset":page.offset,"next_offset":page.next_offset}}),
+        ));
+    }
     let entries: Vec<TrashEntry> = state
         .application
         .list_trash(&project_id, query.kind)
@@ -3396,16 +3520,20 @@ fn product_runs(
     project_id: Option<ProjectId>,
     request: PageRequest,
 ) -> ApiResult<SummaryPage<RunSummary>> {
+    product_runs_scoped(state, project_id, request, None)
+}
+fn product_runs_scoped(
+    state: &ServerState,
+    project_id: Option<ProjectId>,
+    request: PageRequest,
+    history_scope: Option<&str>,
+) -> ApiResult<SummaryPage<RunSummary>> {
     let route_ids = project_route_ids(state)?;
-    let page = if let Some(project_id) = project_id {
-        state
-            .application
-            .store()
-            .list_project_runs_summary(project_id, request)
-    } else {
-        state.application.store().list_executions_summary(request)
-    }
-    .map_err(ApiError::internal)?;
+    let page = state
+        .application
+        .store()
+        .list_run_summaries_scoped(project_id, request, history_scope)
+        .map_err(history_error)?;
     Ok(SummaryPage {
         items: page
             .items
@@ -5343,6 +5471,7 @@ fn pipeline_artifact_coordinates(artifact: &PipelineArtifact) -> Value {
 
 #[derive(Debug, Default, Deserialize)]
 struct SummaryPageQuery {
+    history_scope: Option<String>,
     limit: Option<usize>,
     offset: Option<usize>,
     project_id: Option<String>,
@@ -5367,10 +5496,11 @@ async fn list_run_summaries(
                 })
         })
         .transpose()?;
-    let page = product_runs(
+    let page = product_runs_scoped(
         &state,
         stable_project_id,
         PageRequest::bounded(query.limit, query.offset),
+        query.history_scope.as_deref(),
     )?;
     Ok(Json(json!({
         "runs": page.items,
@@ -6117,11 +6247,12 @@ async fn list_batches(
     let page = state
         .application
         .store()
-        .list_batch_summaries(
+        .list_batch_summaries_scoped(
             query.project_id.as_deref(),
             PageRequest::bounded(query.limit, query.offset),
+            query.history_scope.as_deref(),
         )
-        .map_err(ApiError::internal)?;
+        .map_err(history_error)?;
     let batches = page
         .items
         .into_iter()
@@ -11689,6 +11820,322 @@ mod tests {
                 .get("installation_root")
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn history_scope_http_confirmation_restart_lists_and_management_fail_closed() {
+        let temp = tempfile::tempdir().unwrap();
+        let app = Arc::new(LocalApplication::new(temp.path()).unwrap());
+        let yaml = "version: 1\nproject:\n  name: TEST history\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n";
+        for project in ["TEST-owner", "TEST-other"] {
+            app.create_project(project, yaml).unwrap();
+        }
+        let draft = |id: &str, project: &str| {
+            serde_json::from_value::<WorkflowDraft>(json!({"id":id,"project_id":project,"name":id,"status":"editing","nodes":[],"edges":[],"created_at":Utc::now(),"updated_at":Utc::now()})).unwrap()
+        };
+        app.store()
+            .save_workflow_draft(&draft("TEST-old", "TEST-owner"))
+            .unwrap();
+        let service = router(
+            test_state(app.clone(), Arc::new(InMemorySecretStore::default())).await,
+            None,
+        );
+        for _ in 0..2 {
+            let (status, body) = call_json(
+                &service,
+                axum::http::Method::GET,
+                "/api/history-scope",
+                Value::Null,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(body["scope"].is_null());
+        }
+        let (status, body) = call_json(
+            &service,
+            axum::http::Method::GET,
+            "/api/projects/TEST-owner/pipelines?history_scope=unknown",
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["code"], "history_scope_not_established");
+        let (_, preview) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/history-scope/preview",
+            json!({"policy":annotagent_storage::HISTORY_POLICY}),
+        )
+        .await;
+        assert_eq!(preview["excluded_counts"]["pipeline"], 1);
+        let mut command = json!({"command_id":uuid::Uuid::new_v4(),"expected_scope_revision":null,"expected_snapshot_hash":preview["expected_snapshot_hash"],"policy":annotagent_storage::HISTORY_POLICY,"confirmed":true});
+        // Valid same-origin/CSRF without the privileged nonce cannot establish a boundary.
+        let mut headers =
+            security_headers(&service, &axum::http::Method::POST, "/api/history-scope").await;
+        headers.remove(security::PRIVILEGED_CONFIRMATION_HEADER);
+        let mut request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/history-scope")
+            .header("content-type", "application/json")
+            .body(Body::from(command.to_string()))
+            .unwrap();
+        request.headers_mut().extend(headers);
+        assert_eq!(
+            service.clone().oneshot(request).await.unwrap().status(),
+            StatusCode::FORBIDDEN
+        );
+        assert!(app.store().history_scope().unwrap().is_none());
+        let mut unconfirmed = command.clone();
+        unconfirmed["confirmed"] = json!(false);
+        assert_eq!(
+            call_json(
+                &service,
+                axum::http::Method::POST,
+                "/api/history-scope",
+                unconfirmed
+            )
+            .await
+            .0,
+            StatusCode::BAD_REQUEST
+        );
+        app.store()
+            .save_workflow_draft(&draft("TEST-old2", "TEST-owner"))
+            .unwrap();
+        let (status, error) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/history-scope",
+            command.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(error["code"], "history_scope_snapshot_changed");
+        assert_eq!(error["admitted"], false);
+        assert!(app.store().history_scope().unwrap().is_none());
+        let (_, preview) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/history-scope/preview",
+            json!({"policy":annotagent_storage::HISTORY_POLICY}),
+        )
+        .await;
+        command["expected_snapshot_hash"] = preview["expected_snapshot_hash"].clone();
+        let (status, established) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/history-scope",
+            command.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{established}");
+        let id = established["scope"]["id"].as_str().unwrap();
+        let (status, replay) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/history-scope",
+            command.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(replay, established);
+        let mut changed = command.clone();
+        changed["expected_snapshot_hash"] = json!("changed");
+        let (status, error) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/history-scope",
+            changed,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(error["code"], "history_scope_command_conflict");
+        let mut different = command.clone();
+        different["command_id"] = json!(uuid::Uuid::new_v4());
+        let (status, error) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/history-scope",
+            different,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(error["code"], "history_scope_already_established");
+        assert_eq!(error["scope"], established["scope"]);
+        let reopened = Arc::new(LocalApplication::new(temp.path()).unwrap());
+        let second = router(
+            test_state(reopened, Arc::new(InMemorySecretStore::default())).await,
+            None,
+        );
+        assert_eq!(
+            call_json(
+                &second,
+                axum::http::Method::GET,
+                "/api/history-scope",
+                Value::Null
+            )
+            .await
+            .1,
+            established
+        );
+        assert_eq!(
+            call_json(
+                &second,
+                axum::http::Method::POST,
+                "/api/history-scope",
+                command
+            )
+            .await,
+            (StatusCode::OK, established.clone())
+        );
+        for path in [
+            "/api/projects/TEST-owner/pipelines",
+            "/api/projects/TEST-owner/trash",
+            "/api/runs",
+            "/api/batches",
+        ] {
+            let (status, error) = call_json(
+                &service,
+                axum::http::Method::GET,
+                &format!("{path}?history_scope=foreign"),
+                Value::Null,
+            )
+            .await;
+            assert_eq!(status, StatusCode::CONFLICT, "{path}: {error}");
+            assert_eq!(error["code"], "history_scope_mismatch");
+        }
+        for (key, project) in [
+            ("TEST-new-a", "TEST-owner"),
+            ("TEST-new-b", "TEST-owner"),
+            ("TEST-foreign", "TEST-other"),
+        ] {
+            app.store()
+                .save_workflow_draft(&draft(key, project))
+                .unwrap();
+        }
+        let (_, first) = call_json(
+            &service,
+            axum::http::Method::GET,
+            &format!("/api/projects/TEST-owner/pipelines?history_scope={id}&limit=1"),
+            Value::Null,
+        )
+        .await;
+        let (_, second_page) = call_json(
+            &service,
+            axum::http::Method::GET,
+            &format!("/api/projects/TEST-owner/pipelines?history_scope={id}&limit=1&offset=1"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(first["page"]["total"], 2);
+        assert_eq!(first["page"]["next_offset"], 1);
+        assert_eq!(first["pipelines"].as_array().unwrap().len(), 1);
+        assert_eq!(second_page["page"]["total"], 2);
+        assert!(second_page["page"]["next_offset"].is_null());
+        assert_ne!(
+            first["pipelines"][0]["workflow_id"],
+            second_page["pipelines"][0]["workflow_id"]
+        );
+        let (_, legacy) = call_json(
+            &service,
+            axum::http::Method::GET,
+            "/api/projects/TEST-owner/pipelines",
+            Value::Null,
+        )
+        .await;
+        assert_eq!(legacy["pipelines"].as_array().unwrap().len(), 4);
+        assert_eq!(
+            call_json(
+                &service,
+                axum::http::Method::GET,
+                "/api/workflow-drafts/TEST-old?project_id=TEST-owner",
+                Value::Null
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        let management = |target: &str| json!({"project_id":"TEST-owner","objects":[{"kind":"workflow_draft","id":target,"expected_revision":1}],"action":"move_to_trash","idempotency_key":format!("TEST-{target}")});
+        for action in ["preview", "actions"] {
+            let (status, error) = call_json(
+                &service,
+                axum::http::Method::POST,
+                &format!("/api/projects/TEST-owner/management/{action}?history_scope={id}"),
+                management("TEST-old"),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CONFLICT);
+            assert_eq!(error["code"], "history_object_out_of_scope");
+        }
+        let (status, foreign_preview) = call_json(
+            &service,
+            axum::http::Method::POST,
+            &format!("/api/projects/TEST-owner/management/preview?history_scope={id}"),
+            management("TEST-foreign"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(foreign_preview["can_execute"], false);
+        assert!(
+            foreign_preview["blockers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|b| b["code"] == "foreign_project_object")
+        );
+        let mut foreign_request = management("TEST-foreign");
+        foreign_request["confirmation_token"] = foreign_preview["confirmation_token"].clone();
+        let (status, error) = call_json(
+            &service,
+            axum::http::Method::POST,
+            &format!("/api/projects/TEST-owner/management/actions?history_scope={id}"),
+            foreign_request,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(error["code"], "foreign_project_object");
+        let mut deletion = management("TEST-new-a");
+        let (_, preview) = call_json(
+            &service,
+            axum::http::Method::POST,
+            &format!("/api/projects/TEST-owner/management/preview?history_scope={id}"),
+            deletion.clone(),
+        )
+        .await;
+        assert_eq!(preview["can_execute"], true, "{preview}");
+        deletion["confirmation_token"] = preview["confirmation_token"].clone();
+        // Dropping scope cannot reuse a scoped preview's confirmation.
+        assert_eq!(
+            call_json(
+                &service,
+                axum::http::Method::POST,
+                "/api/projects/TEST-owner/management/actions",
+                deletion.clone()
+            )
+            .await
+            .0,
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            call_json(
+                &service,
+                axum::http::Method::POST,
+                &format!("/api/projects/TEST-owner/management/actions?history_scope={id}"),
+                deletion
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        let (_, trash) = call_json(
+            &service,
+            axum::http::Method::GET,
+            &format!("/api/projects/TEST-owner/trash?history_scope={id}&limit=1"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(trash["page"]["total"], 1);
+        assert_eq!(trash["items"][0]["object"]["id"], "TEST-new-a");
+        assert!(app.store().get_workflow_draft("TEST-old").is_ok());
     }
 
     #[tokio::test]

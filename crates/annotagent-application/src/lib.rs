@@ -16821,6 +16821,7 @@ impl LocalApplication {
             .find(|item| item.object.id == draft_id)
             .ok_or_else(|| anyhow!("Pipeline Draft lifecycle was not found"))?;
         let mut request = annotagent_core::ManagementRequest {
+            history_scope: None,
             project_id: draft.project_id.clone(),
             objects: vec![lifecycle.object],
             action: annotagent_core::ManagementAction::Archive,
@@ -24592,6 +24593,7 @@ export:
             annotagent_core::ManagementAction::Purge,
         ] {
             let mut request = annotagent_core::ManagementRequest {
+                history_scope: None,
                 project_id: "label-classification".into(),
                 objects: vec![object],
                 action,
