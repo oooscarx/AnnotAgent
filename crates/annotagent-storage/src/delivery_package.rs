@@ -142,6 +142,28 @@ impl SqliteStore {
         task: Uuid,
         input: &DeliveryPackageInput,
     ) -> Result<(DeliveryPackageJob, bool), StorageError> {
+        self.begin_delivery_package_impl(project, conversation, task, input, false)
+    }
+
+    /// Server event path: atomically consumes the matching one-shot local permission.
+    pub fn begin_authorized_delivery_package(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        input: &DeliveryPackageInput,
+    ) -> Result<(DeliveryPackageJob, bool), StorageError> {
+        self.begin_delivery_package_impl(project, conversation, task, input, true)
+    }
+
+    fn begin_delivery_package_impl(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        input: &DeliveryPackageInput,
+        require_consent: bool,
+    ) -> Result<(DeliveryPackageJob, bool), StorageError> {
         if !input.confirmed || input.command_id.is_nil() {
             return Err(invalid("explicit package scope confirmation is required"));
         }
@@ -153,6 +175,10 @@ impl SqliteStore {
                 let old=job(&tx,project,conversation,task,input.command_id)?;
                 if old.input!=*input { return Err(invalid("package retry cannot change its frozen request")); }
                 return Ok((old,false));
+            }
+            if require_consent {
+                let consent=crate::delivery_package_consent::read(&tx,project,conversation,task,input.command_id)?;
+                if consent.state!="armed"||consent.input.intent_revision!=input.intent_revision||consent.input.intent_sha256!=input.intent_sha256{return Err(invalid("Automatic packaging permission is cancelled, consumed or stale"));}
             }
             if saved.revision!=input.intent_revision || saved.content_sha256!=input.intent_sha256 || !saved.intent.missing_slots().is_empty() || !saved.intent.training_target.as_ref().is_some_and(annotagent_core::dataset_delivery::TrainingTarget::is_detection_preset) { return Err(invalid("package intent is stale, incomplete or unsupported")); }
             let scope=saved.intent.dataset_scope.as_ref().ok_or_else(||invalid("missing package scope"))?;
@@ -185,6 +211,7 @@ impl SqliteStore {
             let json=serde_json::to_string(&frozen)?;
             let hash=format!("{:x}",Sha256::digest(json.as_bytes()));
             let now=chrono::Utc::now().to_rfc3339();
+            if require_consent {tx.execute("UPDATE delivery_package_consents SET state='consumed' WHERE id=?1 AND state='armed'",[input.command_id.to_string()])?;}
             tx.execute("INSERT INTO conversation_exports(id,project_id,conversation_id,task_id,format,created_at) VALUES(?1,?2,?3,?4,?5,?6)",params![input.command_id.to_string(),project,conversation.to_string(),task.to_string(),DETECTION_PROFILE,now])?;
             tx.execute("INSERT INTO delivery_export_snapshots(export_id,input_json,snapshot_json,snapshot_sha256,phase,updated_at) VALUES(?1,?2,?3,?4,'preparing',?5)",params![input.command_id.to_string(),serde_json::to_string(input)?,json,hash,now])?;
             phase_event(&tx,input.command_id,DeliveryPackagePhase::Preparing)?;

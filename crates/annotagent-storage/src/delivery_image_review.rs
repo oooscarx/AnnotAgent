@@ -866,6 +866,127 @@ mod tests {
     }
 
     #[test]
+    fn automatic_package_permission_is_one_shot_and_consumed_only_with_ready_snapshot() {
+        use crate::{DeliveryPackageConsentInput, DeliveryPackageInput};
+        let dir = tempfile::tempdir().unwrap();
+        let f = TestData::new(dir.path());
+        let i = &f.saved.intent;
+        let grant = DeliveryPackageConsentInput {
+            id: Uuid::new_v4(),
+            intent_revision: 1,
+            intent_sha256: f.saved.content_sha256.clone(),
+            confirmed: true,
+        };
+        let authorize = |g: &DeliveryPackageConsentInput| {
+            f.store
+                .authorize_delivery_package(&i.project_id, i.conversation_id, i.task_id, g)
+        };
+        let read = || {
+            f.store
+                .delivery_package_consent(&i.project_id, i.conversation_id, i.task_id, grant.id)
+                .unwrap()
+        };
+        assert_eq!(authorize(&grant).unwrap().state, "armed");
+        assert_eq!(authorize(&grant).unwrap().input, grant);
+        let reopened = SqliteStore::open(dir.path().join("TEST-whole-image.db")).unwrap();
+        assert_eq!(
+            reopened
+                .delivery_package_consent(&i.project_id, i.conversation_id, i.task_id, grant.id)
+                .unwrap()
+                .state,
+            "armed"
+        );
+        let mut changed = grant.clone();
+        changed.intent_revision = 2;
+        assert!(authorize(&changed).is_err());
+        changed = grant.clone();
+        changed.id = Uuid::new_v4();
+        assert!(authorize(&changed).is_err());
+        let input = DeliveryPackageInput {
+            command_id: grant.id,
+            intent_revision: 1,
+            intent_sha256: grant.intent_sha256.clone(),
+            image_reviews: std::collections::BTreeMap::from([(f.image, 1)]),
+            confirmed: true,
+        };
+        assert!(
+            f.store
+                .begin_authorized_delivery_package(
+                    &i.project_id,
+                    i.conversation_id,
+                    i.task_id,
+                    &input
+                )
+                .is_err()
+        );
+        assert_eq!(read().state, "armed");
+        f.put(&f.annotation);
+        f.confirm(&f.input(DeliveryImageDecision::PositiveComplete))
+            .unwrap();
+        let (_, created) = f
+            .store
+            .begin_authorized_delivery_package(&i.project_id, i.conversation_id, i.task_id, &input)
+            .unwrap();
+        assert!(created);
+        assert_eq!(read().state, "consumed");
+        assert!(
+            !f.store
+                .begin_authorized_delivery_package(
+                    &i.project_id,
+                    i.conversation_id,
+                    i.task_id,
+                    &input
+                )
+                .unwrap()
+                .1
+        );
+        assert!(
+            f.store
+                .cancel_delivery_package_consent(
+                    &i.project_id,
+                    i.conversation_id,
+                    i.task_id,
+                    grant.id
+                )
+                .is_err()
+        );
+        assert!(
+            f.store
+                .delivery_package_consent(
+                    &Uuid::new_v4().to_string(),
+                    i.conversation_id,
+                    i.task_id,
+                    grant.id
+                )
+                .is_err()
+        );
+        let mut cancelled = grant.clone();
+        cancelled.id = Uuid::new_v4();
+        authorize(&cancelled).unwrap();
+        f.store
+            .cancel_delivery_package_consent(
+                &i.project_id,
+                i.conversation_id,
+                i.task_id,
+                cancelled.id,
+            )
+            .unwrap();
+        assert_eq!(authorize(&cancelled).unwrap().state, "cancelled");
+        let mut cancelled_input = input;
+        cancelled_input.command_id = cancelled.id;
+        assert!(
+            f.store
+                .begin_authorized_delivery_package(
+                    &i.project_id,
+                    i.conversation_id,
+                    i.task_id,
+                    &cancelled_input
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
     fn package_cancel_and_worker_claim_are_terminal_cas_and_not_generic_success() {
         use crate::{DeliveryPackageInput, DeliveryPackagePhase as Phase};
         let dir = tempfile::tempdir().unwrap();
