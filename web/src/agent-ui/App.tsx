@@ -8,6 +8,7 @@ import type {
 } from "./adapter";
 import { Dialog } from "./Dialog";
 import { Disclosure } from "./Disclosure";
+import { TaskExportHistory } from "./TaskExportHistory";
 import { SidebarTitle } from "./SidebarTitle";
 import { ProjectManagement } from "./ProjectManagement";
 import { TrashManagement } from "./TrashManagement";
@@ -536,6 +537,7 @@ export function AgentPreviewApp({
                         {!fixture && !!task.stopTargets?.length && <div className="notice"><strong>请选择停止哪一项</strong>{task.stopTargets.map(t=><button key={t.id} onClick={()=>void act(()=>adapter.selectStop!(command(task),t.id))}>{t.label}</button>)}</div>}
                         {!fixture && task.processing?.map(p=><p key={p.id}>处理批次 · {p.status} <a href={p.url}>查看本次结果 →</a></p>)}
                         {!fixture && task.exports?.map(e=><p key={e.id}>导出 · {e.status} · {e.detail} {e.url && <a href={e.url} download>下载真实导出文件</a>}</p>)}
+                        {!fixture && task.conversationId && adapter.taskExportHistory && <TaskExportHistory key={`${task.project}:${task.id}`} project={task.project} conversation={task.conversationId} task={task.id} service={adapter.taskExportHistory}/>}
                         {!fixture && task.approval && <section className="plan-block"><strong>{task.approval.title}</strong><ul>{task.approval.scope.map((s,i)=><li key={i}>{s}</li>)}</ul><p>费用：{task.approval.budget ?? "未知；可能产生费用"}</p><button className="primary" disabled={approvalBusy} onClick={()=>setApproval(command(task))}>查看并确认授权</button>{approvalBusy && <p role="status">请求已提交，正在读取服务器执行状态；离开不会取消。</p>}</section>}
                         {task.plan && (
                           <PlanBlock

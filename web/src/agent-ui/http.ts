@@ -75,6 +75,7 @@ export class HttpAdapter implements WorkspaceAdapter {
   get workflowEditor() { return this.transport === request ? api : undefined; }
   get workflowVersion() { return this.transport === request ? api : undefined; }
   get exportManagement() { return this.transport === request ? api : undefined; }
+  get taskExportHistory() { return this.transport === request ? api : undefined; }
   private async testEnvironment() {
     if(this.transport!==request)return false;
     const response=await fetch("/api/health",{credentials:"same-origin"});

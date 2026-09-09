@@ -1,6 +1,25 @@
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
+test("native task export history reads actual owned records and refreshes without mutation",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const nav=await(await request.get("/api/navigation")).json();const p=nav.items.find((p:{title:string})=>p.title==="TEST Agent UI HTTP fixture");const root=`/api/projects/${p.project_id}/conversations/${p.conversation_id}`;
+  const tasks=await(await request.get(`${root}/task-navigation`)).json();const task=tasks.items[0].task_id;const expected=await(await request.get(`${root}/tasks/${task}/exports?limit=20`)).json();
+  const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});await page.goto(`/projects/${p.project_id}/work?task=${task}`);
+  const summary=page.locator("summary").filter({hasText:"导出历史与兼容性报告"});await summary.click();const history=page.getByRole("region",{name:"任务导出历史",exact:true});await expect(history).toContainText("由当前任务请求的项目级导出");
+  if(expected.length===0)await expect(history).toContainText("当前页没有导出记录");else await expect(history.locator("article")).toHaveCount(expected.length);
+  await history.getByRole("button",{name:"刷新导出记录",exact:true}).click();await expect(history.getByRole("button",{name:"较新记录",exact:true})).toBeDisabled();await page.reload();await expect(history).toHaveCount(0);await summary.click();await expect(history).toBeVisible();expect(writes).toEqual([]);
+});
+test("controlled task export pages retain reports and show inactive work as unknown",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const nav=await(await request.get("/api/navigation")).json();const p=nav.items.find((p:{title:string})=>p.title==="TEST Agent UI HTTP fixture");const root=`/api/projects/${p.project_id}/conversations/${p.conversation_id}`;const tasks=await(await request.get(`${root}/task-navigation`)).json();const task=tasks.items[0].task_id;const path=`${root}/tasks/${task}/exports`;
+  // Explicit read-only browser response fixture, not a backend export or file.
+  await page.route(`**${path}*`,async r=>{const before=new URL(r.request().url()).searchParams.get("before");await r.fulfill({json:before?[]:Array.from({length:20},(_,i)=>({id:`TEST-export-${i}`,format:"TEST format",created_at:"TEST date",result:i?{report:{exported_count:1,skipped_count:0,warnings:["TEST format omits attributes"]}}:null}))});});
+  await page.route(`**${path}/TEST-export-0`,async r=>r.fulfill({json:{job:{id:"TEST-export-0",result:null,error:null},active:false}}));
+  const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});await page.goto(`/projects/${p.project_id}/work?task=${task}`);await page.locator("summary").filter({hasText:"导出历史与兼容性报告"}).click();const history=page.getByRole("region",{name:"任务导出历史",exact:true});await expect(history.locator("article")).toHaveCount(20);await expect(history).toContainText("完成状态未确认");
+  await history.locator("summary").filter({hasText:"兼容性报告"}).first().click();await expect(history.getByText("TEST format omits attributes",{exact:true}).first()).toBeVisible();await expect(history.getByRole("link",{name:"下载标注文件",exact:true})).toHaveCount(0);
+  await history.getByRole("button",{name:"较早记录",exact:true}).click();await expect(history).toContainText("当前页没有导出记录");await history.getByRole("button",{name:"较新记录",exact:true}).click();await expect(history.locator("article")).toHaveCount(20);expect(writes).toEqual([]);
+});
 test("production rejects every old page through native UI without loading legacy modules or making writes",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
   const writes:string[]=[];const loaded:string[]=[];page.on("request",r=>{loaded.push(r.url());if(r.method()!=="GET")writes.push(r.url());});
