@@ -8,6 +8,7 @@ import type {
 } from "./adapter";
 import { Dialog } from "./Dialog";
 import { Disclosure } from "./Disclosure";
+import { SidebarTitle } from "./SidebarTitle";
 import { Icon, BrandMark } from "./Icon";
 import { ProjectMenu } from "./ProjectMenu";
 import { PlanBlock } from "./PlanBlock";
@@ -319,7 +320,6 @@ export function AgentPreviewApp({
               <div key={p.id}>
                 <button
                   className="project-folder"
-                  title={p.title}
                   aria-expanded={expanded.includes(p.id)}
                   onClick={() =>
                     setExpanded((x) =>
@@ -329,7 +329,7 @@ export function AgentPreviewApp({
                     )
                   }
                 >
-                  <span className="project-tree-chevron"><Icon name="chevron-right" size={14} /></span><Icon name="folder" /><span>{p.title}</span>
+                  <span className="project-tree-chevron"><Icon name="chevron-right" size={14} /></span><Icon name="folder" /><SidebarTitle>{p.title}</SidebarTitle>
                 </button>
                 {(expanded.includes(p.id) || search) &&
                   state.tasks
@@ -343,12 +343,11 @@ export function AgentPreviewApp({
                           !section && t.id === task?.id ? "page" : undefined
                         }
                         key={t.id}
-                        title={t.title}
                         onClick={() =>
                           navigate({ settings: null, task: t.id, pane: null })
                         }
                       >
-                        <span className="task-dot" aria-hidden="true" /><span>{t.title}</span>
+                        <span className="task-dot" aria-hidden="true" /><SidebarTitle>{t.title}</SidebarTitle>
                       </button>
                     ))}
               </div>

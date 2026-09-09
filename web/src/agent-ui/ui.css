@@ -946,8 +946,16 @@ caption {
 .ui-app .project-sidebar > small { padding: 12px 11px 8px; }
 .ui-app .project-sidebar nav { flex: 1; min-height: 0; scrollbar-width: thin; }
 .ui-app .project-sidebar nav > div { margin-bottom: 12px; }
-.ui-app .project-sidebar nav .project-folder { display: grid; grid-template-columns: 12px 18px minmax(0,1fr); gap: 7px; min-height: 36px; padding: 8px 10px; font-size: 13px; }
-.ui-app .project-folder > span, .ui-app .task-link > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-app .project-sidebar nav .project-folder { display: grid; grid-template-columns: 14px 18px minmax(0,1fr); gap: 7px; min-height: 36px; padding: 8px 10px; font-size: 13px; }
+.ui-app .project-sidebar .sidebar-title { display: block; min-width: 0; overflow: hidden; text-overflow: clip; white-space: nowrap; }
+.ui-app .sidebar-title-text { display: block; width: max-content; transform: translateX(0); transition: transform 180ms ease-out; }
+.ui-app .sidebar-title[data-overflow="true"] { mask-image: linear-gradient(to right, black calc(100% - 12px), transparent); }
+.ui-app .project-sidebar button:is(:hover, :focus-visible) .sidebar-title { mask-image: none; }
+.ui-app .project-sidebar button:is(:hover, :focus-visible) .sidebar-title-text { transform: translateX(var(--title-offset)); transition: transform var(--title-duration) linear 250ms; }
+@media (prefers-reduced-motion: reduce) {
+  .ui-app .project-sidebar button .sidebar-title-text,
+  .ui-app .project-sidebar button:is(:hover, :focus-visible) .sidebar-title-text { transition: none; }
+}
 .ui-app .project-sidebar nav .task-link { display: grid; grid-template-columns: 5px minmax(0,1fr); gap: 8px; padding: 8px 10px 8px 31px; margin-top: 4px; min-height: 34px; font-size: 12px; }
 .ui-app .task-dot { width: 4px; height: 4px; background: var(--aa-text-muted); border-radius: 50%; }
 .ui-app .project-sidebar footer { margin-top: 12px; gap: 8px; }
