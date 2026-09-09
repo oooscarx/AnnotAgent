@@ -103,8 +103,27 @@ pub(super) async fn answer(
         .application
         .continue_conversation_correction(&project, conversation, task, id)
         .map_err(ApiError::bad_request)?;
+    deliver_saved_answer(
+        state,
+        project,
+        conversation,
+        task,
+        saved,
+        input.journey_consent_id,
+    )
+    .await
+}
+
+async fn deliver_saved_answer(
+    state: ServerState,
+    project: String,
+    conversation: Uuid,
+    task: Uuid,
+    saved: ConversationHumanRequest,
+    consent: Option<Uuid>,
+) -> ApiResult<Json<Value>> {
     let mut result = serde_json::to_value(saved).map_err(ApiError::internal)?;
-    if let Some(consent_id) = input.journey_consent_id {
+    if let Some(consent_id) = consent {
         // Saving the answer succeeded. A continuation failure must not be
         // reported as if the human edit were lost or require rewriting it.
         result["journey_resume"] = match conversation_journey::execute(
@@ -136,10 +155,14 @@ pub(super) async fn answer(
 pub(super) async fn resume(
     State(state): State<ServerState>,
     AxumPath((project, conversation, task, id)): AxumPath<(String, Uuid, Uuid, Uuid)>,
-) -> ApiResult<Json<ConversationHumanRequest>> {
-    state
+) -> ApiResult<Json<Value>> {
+    let consent = state
+        .application
+        .conversation_answer_consent(&project, conversation, task, id)
+        .map_err(ApiError::bad_request)?;
+    let saved = state
         .application
         .continue_conversation_correction(&project, conversation, task, id)
-        .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::bad_request)?;
+    deliver_saved_answer(state, project, conversation, task, saved, consent).await
 }

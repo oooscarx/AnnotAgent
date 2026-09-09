@@ -90,6 +90,15 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(saved["status"], "pending");
+        assert_eq!(
+            store.conversation_answer_consent(&owner, input.id).unwrap(),
+            Some(consent.id)
+        );
+        assert!(
+            store
+                .conversation_answer_consent("TEST-foreign", input.id)
+                .is_err()
+        );
         assert_eq!(saved["feedback_revision_id"], answer.revision_id);
         drop(store);
         let store = SqliteStore::open(&path).unwrap();

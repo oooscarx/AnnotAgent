@@ -29,6 +29,23 @@ pub struct ConversationJourneyDataScope {
 }
 
 impl LocalApplication {
+    pub fn conversation_answer_consent(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        request: Uuid,
+    ) -> Result<Option<Uuid>> {
+        if !self
+            .conversation_human_requests(project, conversation, task)?
+            .iter()
+            .any(|item| item.input.id == request)
+        {
+            bail!("Human request not found in this task");
+        }
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self.store.conversation_answer_consent(&owner, request)?)
+    }
     /// Resolve one pre-authorized human answer without invoking a model. Both
     /// the original and resulting data/Registry scopes must still be valid.
     pub fn resolve_answer_journey_repair(

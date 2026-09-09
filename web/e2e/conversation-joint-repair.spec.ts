@@ -46,13 +46,19 @@ test("preauthorized pending correction waits without inference and the saved ans
   const duplicate = await request.post(`${state.taskRoot}/human-requests/${help.input.id}/answer`, { data: answerBody });
   expect(duplicate.ok(), await duplicate.text()).toBe(true);
   expect(await (await request.get(`${state.taskRoot}/calls`)).json()).toEqual(finalCalls);
+  const resumed = await request.post(`${state.taskRoot}/human-requests/${help.input.id}/resume`, {data:{}});
+  expect(resumed.ok(), await resumed.text()).toBe(true);
+  const resumedReceipt = await resumed.json();
+  expect(resumedReceipt.journey_resume.consent_id).toBe(consent.id);
+  expect(resumedReceipt.journey_resume.error).toBeUndefined();
+  expect(await (await request.get(`${state.taskRoot}/calls`)).json()).toEqual(finalCalls);
   await page.reload();
   expect(await (await request.get(`${state.taskRoot}/calls`)).json()).toEqual(finalCalls);
 });
 
-test("pending request UI restores authorization and submits a real correction without request interception", async ({ page, request }) => {
+for (const retryAdmission of [false,true]) test(`pending request UI restores authorization and submits a real correction without request interception${retryAdmission ? " after admission failure" : ""}`, async ({ page, request }) => {
   test.setTimeout(180_000);
-  const state = await sample(request, page, "pending-repair-ui", true);
+  const state = await sample(request, page, `pending-repair-ui-${retryAdmission}`, true);
   const help = state.savedRequests[0];
   await page.goto(`${state.url}&request=${help.input.id}`);
   const pendingCard = page.getByRole("region", { name: "Build and test annotation plan", exact: true }).filter({has:page.getByRole("heading",{name:"Continue after your correction",exact:true})});
@@ -73,11 +79,37 @@ test("pending request UI restores authorization and submits a real correction wi
   await page.screenshot({path:isolatedEvidencePath("../docs/execution/conversational-workspace/pending-answer-authorization.png"),fullPage:true});
   await page.getByLabel("Correct label",{exact:true}).fill("cup");
   await page.getByRole("spinbutton",{name:"width",exact:true}).fill("0.12");
+  if(retryAdmission)expect((await request.patch(`/api/model-profiles/${state.model.id}`,{data:{enabled:false}})).ok()).toBe(true);
   const answerResponse = page.waitForResponse(response=>response.request().method()==="POST"&&response.url().endsWith(`/human-requests/${help.input.id}/answer`));
   await page.getByRole("button",{name:"Submit correction and continue",exact:true}).click();
   const answer = await answerResponse;
   expect(answer.request().postDataJSON().journey_consent_id).toBe(consent.id);
-  expect((await answer.json()).journey_resume.error).toBeUndefined();
+  const answered=await answer.json();
+  expect(answered.status).toBe("applied");
+  if(retryAdmission){
+    expect( answered.journey_resume.error).toBeTruthy();
+    const execution=`${state.taskRoot}/journey-consents/${consent.id}/execution`;
+    const failed=await (await request.get(execution)).json();
+    expect(failed.answer_delivery.status).toBe("failed");
+    expect(failed.answer_delivery.error).toBeTruthy();
+    expect(failed.dispatch).toBeNull();
+    expect(await (await request.get(`${state.taskRoot}/calls`)).json()).toEqual(calls);
+    await page.reload();
+    await expect(page.getByRole("alert").filter({hasText:"Correction saved; continuation needs attention:"})).toBeVisible();
+    expect((await request.patch(`/api/model-profiles/${state.model.id}`,{data:{enabled:true}})).ok()).toBe(true);
+    const retry=await request.post(`${state.taskRoot}/human-requests/${help.input.id}/resume`,{data:{}});
+    expect(retry.ok(),await retry.text()).toBe(true);
+    // Disabling/re-enabling changes the Model Profile revision. Availability
+    // alone cannot restore an old grant for a different frozen binding.
+    const retried=await retry.json();
+    expect(retried.status).toBe("applied");
+    expect(retried.journey_resume.consent_id).toBe(consent.id);
+    expect(retried.journey_resume.error).toBeTruthy();
+    expect(await (await request.get(`${state.taskRoot}/calls`)).json()).toEqual(calls);
+    await page.reload();
+    await expect(page.getByRole("alert").filter({hasText:"Correction saved; continuation needs attention:"})).toBeVisible();
+    return;
+  }else expect(answered.journey_resume.error).toBeUndefined();
   const repair = page.getByRole("region",{name:"Repair annotation pipeline",exact:true});
   await expect(repair.getByText("Sample results saved",{exact:true})).toBeVisible({timeout:75_000});
   await repair.getByRole("button",{name:"View sample results in canvas",exact:true}).click();

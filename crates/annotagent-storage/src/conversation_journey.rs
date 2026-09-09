@@ -272,6 +272,27 @@ pub(crate) fn read(
 }
 
 impl SqliteStore {
+    pub fn conversation_answer_consent(
+        &self,
+        project: &str,
+        request: Uuid,
+    ) -> Result<Option<Uuid>, StorageError> {
+        self.with_connection(|db| {
+            crate::conversation_human_requests::read(db, project, request)?;
+            let value: Option<String> = db
+                .query_row(
+                    "SELECT consent_id FROM conversation_answer_delivery WHERE request_id=?1",
+                    [request.to_string()],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            value
+                .map(|value| {
+                    Uuid::parse_str(&value).map_err(|_| invalid("Invalid saved answer consent"))
+                })
+                .transpose()
+        })
+    }
     pub fn pending_conversation_answer_deliveries(
         &self,
     ) -> Result<Vec<(String, Uuid, Uuid, Uuid)>, StorageError> {

@@ -5276,3 +5276,30 @@ Database reopen tests are not a substitute for that test. Also inspect explicit 
 Draft-preparation retry: an Answered request whose first local resume failed has saved
 intent, but its manual preparation endpoint still needs to dispatch that intent after
 successful preparation. These remain required follow-up work, not completion claims.
+
+### 2026-09-09 — Explicit preparation retry uses the original delivery link
+
+The human-request resume endpoint now reads its owned persisted answer-delivery consent,
+finishes local revision preparation and invokes the same saved-answer delivery helper
+as initial submission. It never selects a latest grant or creates one. No linked intent
+means local-only recovery as before. Answers remain saved when continuation admission
+fails. Request UI explains that retry can also continue already-authorized inference.
+The resume route uses expensive-action admission, not the control lane; the new guard
+assertion failed before the fix (76614). Storage tests reject foreign-owner link reads.
+
+Normal 4-case browser regression passed (9896). Added an admission-failure variant:
+disable the fixture Model Profile after consent, save the real canvas correction, check
+persisted failure/no worker/no added calls and reload the visible error. The first test
+incorrectly expected re-enabling the profile to restore old permission; 32155 rejected
+it because enabling changes profile revision and leaves it unverified. That rejection
+is correct: current availability cannot override a frozen binding. The final assertion
+requires the same consent's explicit retry to preserve the correction and remain blocked
+without calls, not silently expand permission. Unchanged completed-task retries reuse
+the original operation without more calls. This is not a forced local-copy failure test.
+
+Final browser **80423: 5/5 (13.8s)** in `/tmp/annotagent-guided-e2e-24278`; 48 server tests
+and server clippy pass (90487), answer delivery storage test passes (5010), typecheck
+and 228 Web unit tests pass (17077). Existing production chunk warning only. No real
+Provider/data/remote changes and no push. Actual process-kill/restart delivery testing
+and a forced local preparation-failure integration case remain to be demonstrated;
+the full acceptance matrix and combined regression sweep remain open.
