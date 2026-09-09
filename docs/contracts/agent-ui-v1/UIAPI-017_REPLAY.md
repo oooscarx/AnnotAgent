@@ -1,5 +1,8 @@
 # UIAPI-017 — bounded Replay commands and explicit live-binding gap
 
+**Superseded for supported live adapters by the implemented [round 3 contract](UIAPI-017_LIVE_REPLAY.md). The boundary/dependency notes below describe earlier deliveries.**
+
+
 ## Delivery boundary
 
 This increment implements passive owned exact preview and durable no-duplicate command/receipt around the existing sandbox DAG replay. It supports Core and frozen Mock adapters only. **It does not unblock live classifier Replay with current permitted Model Profile/Plugin bindings.** Preview explicitly refuses that scope. Do not remove the old live-binding guard or describe this delivery as full Replay parity.

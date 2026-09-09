@@ -89,6 +89,7 @@ impl ApplicationImageRuntime for AgentRuntime {
 }
 
 pub(crate) struct PublishedWorkflowRuntime {
+    replay_overlay: Option<crate::ReplayOverlay>,
     call_allowance: Option<crate::sample_limits::SampleCalls>,
     workflow: PublishedWorkflowVersion,
     provider_name: String,
@@ -116,6 +117,18 @@ struct ModelExecution {
 }
 
 impl PublishedWorkflowRuntime {
+    pub(crate) fn install_replay_overlay(
+        &mut self,
+        source: PublishedWorkflowVersion,
+        overlay: crate::ReplayOverlay,
+        limit: u64,
+        guard: crate::sample_limits::ReplayPermissionCheck,
+    ) {
+        self.workflow = source;
+        self.replay_overlay = Some(overlay);
+        self.apply_request_allowance(&crate::sample_limits::SampleCalls::replay(limit, guard));
+    }
+
     pub(crate) fn with_sample_request_limit(
         mut self,
         limit: u64,
@@ -171,7 +184,7 @@ impl PublishedWorkflowRuntime {
     ) -> Result<Self> {
         let mut pipeline_provider = None;
         let external_backend: Option<Arc<dyn VisionModelBackend>> = match provider_kind {
-            "mock" | "core" => None,
+            "mock" | "core" | "replay" => None,
             "openai_compatible" => {
                 let provider: Arc<dyn VisionModelProvider> = Arc::new(
                     OpenAiCompatibleProvider::new_with_api_key(
@@ -220,13 +233,17 @@ impl PublishedWorkflowRuntime {
                     config.supports_tool_calls = profile.protocol_features.tool_calls;
                     config.supports_json_schema = profile.protocol_features.structured_output
                         || profile.protocol_features.json_schema;
-                    let provider: Arc<dyn VisionModelProvider> = Arc::new(
-                        OpenAiCompatibleProvider::new_with_api_key(
-                            config.clone(),
-                            temporary_api_key.map(str::to_owned),
-                        )
-                        .map_err(|error| anyhow!(error))?,
-                    );
+                    let provider = OpenAiCompatibleProvider::new_with_api_key(
+                        config.clone(),
+                        temporary_api_key.map(str::to_owned),
+                    )
+                    .map_err(|e| anyhow!(e))?;
+                    let provider: Arc<dyn VisionModelProvider> =
+                        Arc::new(if provider_kind == "replay" {
+                            provider.prohibit_redirects().map_err(|e| anyhow!(e))?
+                        } else {
+                            provider
+                        });
                     ModelExecution {
                         provider_name: "openai_compatible".to_owned(),
                         model_name: config.model.clone(),
@@ -267,6 +284,7 @@ impl PublishedWorkflowRuntime {
         };
         let (events, _) = broadcast::channel(512);
         Ok(Self {
+            replay_overlay: None,
             call_allowance: None,
             workflow,
             provider_name,
@@ -437,7 +455,10 @@ impl PublishedWorkflowRuntime {
                             model_image: request.model_image.clone(),
                             plugin_registry: self.plugin_registry.clone(),
                             model_bundle_registry: self.model_bundle_registry.clone(),
-                            plugin_models: self.workflow.snapshot.plugin_models.clone(),
+                            plugin_models: self.replay_overlay.as_ref().map_or_else(
+                                || self.workflow.snapshot.plugin_models.clone(),
+                                |o| o.plugins.clone(),
+                            ),
                         }),
                         false,
                     )?;
@@ -502,7 +523,10 @@ impl PublishedWorkflowRuntime {
                             detection_workers: self.detection_workers.clone(),
                             plugin_registry: self.plugin_registry.clone(),
                             model_bundle_registry: self.model_bundle_registry.clone(),
-                            plugin_models: self.workflow.snapshot.plugin_models.clone(),
+                            plugin_models: self.replay_overlay.as_ref().map_or_else(
+                                || self.workflow.snapshot.plugin_models.clone(),
+                                |o| o.plugins.clone(),
+                            ),
                         }),
                         true,
                     )?;
@@ -517,7 +541,10 @@ impl PublishedWorkflowRuntime {
                             allow_test_fixtures: self.provider_name == "mock",
                             plugin_registry: self.plugin_registry.clone(),
                             model_bundle_registry: self.model_bundle_registry.clone(),
-                            plugin_models: self.workflow.snapshot.plugin_models.clone(),
+                            plugin_models: self.replay_overlay.as_ref().map_or_else(
+                                || self.workflow.snapshot.plugin_models.clone(),
+                                |o| o.plugins.clone(),
+                            ),
                         }),
                         true,
                     )?;
@@ -637,7 +664,20 @@ impl PublishedWorkflowRuntime {
                 break;
             }
         }
-        let executor = self.executor_for_nodes(request, Some(&replayed_node_ids))?;
+        let mut executor = self.executor_for_nodes(request, Some(&replayed_node_ids))?;
+        if let Some(overlay) = &self.replay_overlay {
+            let nodes = Arc::new(overlay.nodes.clone());
+            let calls = self.call_allowance.clone();
+            let serial = Arc::new(tokio::sync::Mutex::new(()));
+            executor.transform_runners(|inner| {
+                Arc::new(ReplayBindingRunner {
+                    inner,
+                    nodes: nodes.clone(),
+                    calls: calls.clone(),
+                    serial: serial.clone(),
+                })
+            });
+        }
         let dag_request = self.dag_request(request);
         Ok(executor
             .replay_from(&self.workflow, &dag_request, checkpoint, node_id)
@@ -1164,7 +1204,10 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                             model_image: request.model_image.clone(),
                             plugin_registry: self.plugin_registry.clone(),
                             model_bundle_registry: self.model_bundle_registry.clone(),
-                            plugin_models: self.workflow.snapshot.plugin_models.clone(),
+                            plugin_models: self.replay_overlay.as_ref().map_or_else(
+                                || self.workflow.snapshot.plugin_models.clone(),
+                                |o| o.plugins.clone(),
+                            ),
                         }),
                         false,
                     )?;
@@ -1229,7 +1272,10 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                             detection_workers: self.detection_workers.clone(),
                             plugin_registry: self.plugin_registry.clone(),
                             model_bundle_registry: self.model_bundle_registry.clone(),
-                            plugin_models: self.workflow.snapshot.plugin_models.clone(),
+                            plugin_models: self.replay_overlay.as_ref().map_or_else(
+                                || self.workflow.snapshot.plugin_models.clone(),
+                                |o| o.plugins.clone(),
+                            ),
                         }),
                         true,
                     )?;
@@ -1244,7 +1290,10 @@ impl ApplicationImageRuntime for PublishedWorkflowRuntime {
                             allow_test_fixtures: self.provider_name == "mock",
                             plugin_registry: self.plugin_registry.clone(),
                             model_bundle_registry: self.model_bundle_registry.clone(),
-                            plugin_models: self.workflow.snapshot.plugin_models.clone(),
+                            plugin_models: self.replay_overlay.as_ref().map_or_else(
+                                || self.workflow.snapshot.plugin_models.clone(),
+                                |o| o.plugins.clone(),
+                            ),
                         }),
                         true,
                     )?;
@@ -3365,5 +3414,34 @@ fn runtime_issue(code: &str, message: &str, node_id: &str) -> ValidationIssue {
         evidence: ValidationEvidence::Rule {
             facts: BTreeMap::from([("node_id".to_owned(), node_id.to_owned())]),
         },
+    }
+}
+
+struct ReplayBindingRunner {
+    serial: Arc<tokio::sync::Mutex<()>>,
+    inner: Arc<dyn DagNodeRunner>,
+    nodes: Arc<BTreeMap<String, WorkflowDraftNode>>,
+    calls: Option<crate::sample_limits::SampleCalls>,
+}
+#[async_trait]
+impl DagNodeRunner for ReplayBindingRunner {
+    async fn run(&self, mut context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+        let _serial = if self.nodes.contains_key(&context.node.id) {
+            Some(self.serial.lock().await)
+        } else {
+            None
+        };
+        if let Some(node) = self.nodes.get(&context.node.id) {
+            if let Some(calls) = &self.calls {
+                calls.preflight().map_err(|_| {
+                    DagNodeFailure::terminal(
+                        "replay_permission_changed",
+                        "Current replay binding permission changed",
+                    )
+                })?;
+            }
+            context.node = node;
+        }
+        self.inner.run(context).await
     }
 }

@@ -166,3 +166,10 @@ Existing Replay path now has passive owned GET preview, exact scope-bound POST a
 ## UIAPI-017 round 2 dependency evidence — live scope still blocked
 
 Added an executable immutable-snapshot/checkpoint substitution regression and exact internal overlay/per-call permission interfaces needed for live Replay. No live protocol success or parity completion claimed. See `docs/contracts/agent-ui-v1/UIAPI-017_OVERLAY_DEPENDENCY.md`. No runtime behavior changed; no paid or real-workspace calls.
+
+
+## UIAPI-017 round 3 implemented live overlay
+
+Current per-descendant Model Profile/Plugin bindings are admitted by exact permission digest and executed through existing adapters with immutable source Workflow/checkpoint. GET preview accepts optional JSON `bindings`; POST repeats them with explicit1–12 request limit/unknown-cost confirmation for external models. Shared allowance and permission guard precede invocations; no redirects/Provider auto-retry. Durable receipts add `authorized_scope`; results add `execution_bindings`. No new migration. Actual loopback HTTP classification positive/stale/revoked/duplicate/source-preservation regression passed. Full contract and bounded operation-family limits: `docs/contracts/agent-ui-v1/UIAPI-017_LIVE_REPLAY.md`.
+
+Round3 verification: 323 full-suite passes/3 existing ignored, plus1 durable Storage command pass. Final actual loopback HTTP verifies current TEST auth/model, stale/revoked/duplicate rejection and unchanged source/Published/full Annotation objects. Strict clippy/fmt passed.

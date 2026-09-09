@@ -1,5 +1,8 @@
 # UIAPI-017 round 2 — concrete execution-overlay dependency
 
+**Superseded for supported live adapters by the implemented [round 3 contract](UIAPI-017_LIVE_REPLAY.md). The boundary/dependency notes below describe earlier deliveries.**
+
+
 **Status: live Replay remains unimplemented.** This delivery is an executable boundary regression and a minimum scoped interface specification, not a live HTTP success claim. The existing Core/Mock command contract is unchanged. No credential or external model was accessed.
 
 ## Verified interfaces that prevent a safe adapter-only change

@@ -24,12 +24,25 @@ impl SqliteStore {
         request: &Value,
         epoch: &str,
     ) -> Result<(Value, bool), StorageError> {
+        self.reserve_replay_command_with_scope(id, project, run, node, request, epoch, None)
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn reserve_replay_command_with_scope(
+        &self,
+        id: Uuid,
+        project: &str,
+        run: &str,
+        node: &str,
+        request: &Value,
+        epoch: &str,
+        scope: Option<&Value>,
+    ) -> Result<(Value, bool), StorageError> {
         self.with_connection(|db|{
             let tx=rusqlite::Transaction::new_unchecked(db,rusqlite::TransactionBehavior::Immediate)?;
             let old:Option<String>=tx.query_row("SELECT receipt_json FROM replay_commands WHERE id=?1",[id.to_string()],|r|r.get(0)).optional()?;
             if let Some(old)=old {let old:Value=serde_json::from_str(&old)?;if old["request"]!=*request || old["project_id"]!=project || old["run_id"]!=run || old["node_id"]!=node {return Err(StorageError::Management{code:"replay_command_conflict".into(),message:"Replay command already has another scope".into()});}return Ok((old,false));}
             let now=chrono::Utc::now().to_rfc3339();
-            let value=json!({"command_id":id,"project_id":project,"run_id":run,"node_id":node,"request":request,"status":"running","started_at":now,"completed_at":null,"result":null,"failure":null,"epoch":epoch});
+            let value=json!({"command_id":id,"project_id":project,"run_id":run,"node_id":node,"request":request,"authorized_scope":scope,"status":"running","started_at":now,"completed_at":null,"result":null,"failure":null,"epoch":epoch});
             tx.execute("INSERT INTO replay_commands(id,project_id,run_id,node_id,receipt_json) VALUES(?1,?2,?3,?4,?5)",params![id.to_string(),project,run,node,serde_json::to_string(&value)?])?;tx.commit()?;Ok((value,true))
         })
     }

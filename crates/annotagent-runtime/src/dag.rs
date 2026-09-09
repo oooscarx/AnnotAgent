@@ -280,6 +280,17 @@ impl PublishedDagExecutor {
         Ok(())
     }
 
+    /// Transforms adapters for one isolated executor without changing the frozen graph.
+    pub fn transform_runners(
+        &mut self,
+        transform: impl Fn(Arc<dyn DagNodeRunner>) -> Arc<dyn DagNodeRunner>,
+    ) {
+        for runner in self.runners.values_mut() {
+            runner.runner = transform(runner.runner.clone());
+            runner.deterministic = false;
+        }
+    }
+
     pub async fn execute(
         &self,
         workflow: &PublishedWorkflowVersion,

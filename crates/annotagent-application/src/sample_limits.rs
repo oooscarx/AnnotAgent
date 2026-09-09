@@ -14,7 +14,9 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
 pub(crate) struct SampleCalls(Arc<CallAllowance>);
+pub type ReplayPermissionCheck = Arc<dyn Fn() -> CoreResult<()> + Send + Sync>;
 enum CallAllowance {
+    Replay(AtomicU64, ReplayPermissionCheck),
     Sample(AtomicU64),
     Batch(
         Arc<annotagent_storage::SqliteStore>,
@@ -27,6 +29,19 @@ enum CallAllowance {
     },
 }
 impl SampleCalls {
+    pub(crate) fn replay(limit: u64, guard: ReplayPermissionCheck) -> Self {
+        Self(Arc::new(CallAllowance::Replay(
+            AtomicU64::new(limit),
+            guard,
+        )))
+    }
+    pub(crate) fn preflight(&self) -> CoreResult<()> {
+        if let CallAllowance::Replay(_, guard) = self.0.as_ref() {
+            guard()?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn bounded_conversation(limit: u64, calls: crate::ConversationVisionCalls) -> Self {
         Self(Arc::new(CallAllowance::BoundedConversation {
             local: Self::new(limit),
@@ -89,6 +104,10 @@ impl SampleCalls {
                 return store
                     .reserve_batch_model_call(*id)
                     .map_err(|error| CoreError::Validation(error.to_string()));
+            }
+            CallAllowance::Replay(remaining, guard) => {
+                guard()?;
+                remaining
             }
             CallAllowance::Sample(remaining) => remaining,
         };
@@ -303,5 +322,44 @@ mod tests {
         });
         assert_eq!(successes, 12);
         assert!(calls.reserve().is_err());
+    }
+    #[tokio::test]
+    async fn replay_guard_rechecks_revocation_before_every_adapter_call() {
+        let allowed = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let check = allowed.clone();
+        let calls = SampleCalls::replay(
+            2,
+            Arc::new(move || {
+                if check.load(Ordering::SeqCst) {
+                    Ok(())
+                } else {
+                    Err(CoreError::Validation("TEST revoked".into()))
+                }
+            }),
+        );
+        let invoked = Arc::new(AtomicU64::new(0));
+        let a = calls.pipeline(Arc::new(CountingPipeline(invoked.clone())));
+        let b = calls.pipeline(Arc::new(CountingPipeline(invoked.clone())));
+        a.infer_pipeline(pipeline_request(), CancellationToken::new())
+            .await
+            .unwrap();
+        allowed.store(false, Ordering::SeqCst);
+        assert!(calls.preflight().is_err());
+        assert!(
+            b.infer_pipeline(pipeline_request(), CancellationToken::new())
+                .await
+                .is_err()
+        );
+        assert_eq!(invoked.load(Ordering::SeqCst), 1);
+        allowed.store(true, Ordering::SeqCst);
+        b.infer_pipeline(pipeline_request(), CancellationToken::new())
+            .await
+            .unwrap();
+        assert!(
+            a.infer_pipeline(pipeline_request(), CancellationToken::new())
+                .await
+                .is_err()
+        );
+        assert_eq!(invoked.load(Ordering::SeqCst), 2);
     }
 }

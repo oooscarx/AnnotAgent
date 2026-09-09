@@ -1,8 +1,8 @@
 use super::{LocalApplication, sha256, stable_project_id};
-use annotagent_core::{PublishedWorkflowVersion, RunId, RunStatus, WorkflowNodeKind};
+use annotagent_core::{PublishedWorkflowVersion, RunId, RunStatus};
 use annotagent_runtime::{DagCheckpoint, DagNodeStatus};
 use anyhow::{Result, anyhow, ensure};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 impl LocalApplication {
     /// Passive exact scope. Live binding substitution is deliberately refused.
@@ -12,6 +12,16 @@ impl LocalApplication {
         run_id: RunId,
         node_id: &str,
     ) -> Result<serde_json::Value> {
+        self.preview_node_replay_bindings(project_id, run_id, node_id, &BTreeMap::new())
+            .map(|v| v.0)
+    }
+    pub fn preview_node_replay_bindings(
+        &self,
+        project_id: &str,
+        run_id: RunId,
+        node_id: &str,
+        selections: &BTreeMap<String, String>,
+    ) -> Result<(serde_json::Value, super::ReplayOverlay)> {
         let path = self.project_path(project_id)?;
         let owner = stable_project_id(path.parent().unwrap_or(&self.workspace));
         let history = self
@@ -53,43 +63,34 @@ impl LocalApplication {
             }
         }
         let nodes=draft.nodes.iter().filter(|n|downstream.contains(&n.id)).map(|n|serde_json::json!({"node_id":n.id,"kind":n.kind,"model_profile_binding":n.model_profile_binding,"model_binding":n.model_binding})).collect::<Vec<_>>();
-        // Runtime construction currently initializes frozen provider executions,
-        // including ancestors. Refuse all non-Mock model bindings until a scoped
-        // current-binding resolver can initialize only approved descendants.
-        let external = draft.nodes.iter().any(|n| {
-            n.model_profile_binding.as_ref().is_some_and(|binding| {
-                !workflow.snapshot.model_profiles.iter().any(|profile| {
-                    profile.model_profile_id == binding.model_profile_id
-                        && profile.provider_adapter == annotagent_core::ProviderAdapterKind::Mock
-                })
-            }) || n
-                .model_binding
-                .as_ref()
-                .is_some_and(|m| !m.starts_with("mock-"))
-        });
         let mut blockers = Vec::new();
-        if external
-            || workflow
-                .snapshot
-                .model_profiles
-                .iter()
-                .any(|p| p.provider_adapter != annotagent_core::ProviderAdapterKind::Mock)
-            || !matches!(history.provider.as_str(), "mock" | "core")
-            || (history.provider != "mock"
-                && draft.nodes.iter().any(|n| {
-                    matches!(
-                        n.kind,
-                        WorkflowNodeKind::VisionModel | WorkflowNodeKind::VisionLanguageModel
-                    )
-                }))
-        {
-            blockers.push("current_binding_replay_unsupported");
-        }
+        let overlay = self
+            .replay_overlay(&workflow, &downstream, selections)
+            .unwrap_or_else(|error| {
+                blockers.push(match error.to_string().as_str() {
+                    "Replay supports one current Provider connection" => {
+                        "multiple_current_providers_unsupported"
+                    }
+                    "Replay adapter is unsupported for this model operation" => {
+                        "model_operation_unsupported"
+                    }
+                    _ => "current_binding_unavailable_or_unsupported",
+                });
+                super::ReplayOverlay {
+                    nodes: BTreeMap::new(),
+                    profiles: vec![],
+                    plugins: vec![],
+                    bindings: vec![],
+                }
+            });
         if matches!(
             history.status,
             RunStatus::Pending | RunStatus::Running | RunStatus::Paused | RunStatus::AwaitingReview
         ) {
             blockers.push("source_run_not_terminal");
+        }
+        if sha256(&workflow.snapshot.content_hash_material()?) != workflow.content_hash {
+            blockers.push("snapshot_integrity_mismatch");
         }
         if checkpoint.workflow_content_hash != workflow.content_hash {
             blockers.push("checkpoint_snapshot_mismatch");
@@ -126,9 +127,9 @@ impl LocalApplication {
             .filter(|id| !downstream.contains(*id))
             .cloned()
             .collect::<Vec<_>>();
-        let mut scope = serde_json::json!({"project_id":project_id,"source_run_id":run_id,"node_id":node_id,"source_record_hash":sha256(history.workflow_snapshot_json.as_deref().unwrap_or("").as_bytes()),"source_snapshot_hash":workflow.content_hash,"checkpoint_hash":sha256(&serde_json::to_vec(&checkpoint)?),"image_hash":image_hash,"downstream_nodes":nodes,"preserved_upstream_nodes":preserved,"destinations":{"sandbox":true,"formal_annotations":false,"source_checkpoint_write":false,"published_write":false},"limits":{"maximum_model_requests":0,"timeout_seconds":30,"unknown_cost":false},"current_bindings":[],"available":blockers.is_empty(),"refusal_reasons":blockers});
+        let mut scope = serde_json::json!({"project_id":project_id,"source_run_id":run_id,"node_id":node_id,"source_record_hash":sha256(history.workflow_snapshot_json.as_deref().unwrap_or("").as_bytes()),"source_snapshot_hash":workflow.content_hash,"checkpoint_hash":sha256(&serde_json::to_vec(&checkpoint)?),"image_hash":image_hash,"downstream_nodes":nodes,"preserved_upstream_nodes":preserved,"destinations":{"sandbox":true,"formal_annotations":false,"source_checkpoint_write":false,"published_write":false},"limits":{"maximum_model_requests":if overlay.uses_external_calls(){12}else{0},"timeout_seconds":30,"unknown_cost":overlay.uses_external_calls(),"parallel_model_nodes":1,"provider_retries":0,"http_redirects":false},"current_bindings":overlay.bindings,"binding_selections":selections,"available":blockers.is_empty(),"refusal_reasons":blockers});
         let hash = sha256(&serde_json::to_vec(&scope)?);
         scope["scope_hash"] = serde_json::json!(hash);
-        Ok(scope)
+        Ok((scope, overlay))
     }
 }

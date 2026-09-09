@@ -41,7 +41,10 @@ mod management;
 pub use export_delivery::ExportDelivery;
 mod localization_repair;
 mod published_run;
+mod replay_overlay;
 mod replay_preview;
+pub use replay_overlay::ReplayOverlay;
+pub use sample_limits::ReplayPermissionCheck;
 mod result_projection;
 mod sample_limits;
 mod sample_repair_evidence;
@@ -11041,7 +11044,7 @@ impl LocalApplication {
         node_id: &str,
         settings: &Settings,
     ) -> Result<NodeReplayReport> {
-        self.replay_run_from_node_inner(run_id, node_id, settings, None)
+        self.replay_run_from_node_inner(run_id, node_id, settings, None, None)
             .await
     }
 
@@ -11052,8 +11055,30 @@ impl LocalApplication {
         settings: &Settings,
         source_record_hash: &str,
     ) -> Result<NodeReplayReport> {
-        self.replay_run_from_node_inner(run_id, node_id, settings, Some(source_record_hash))
+        self.replay_run_from_node_inner(run_id, node_id, settings, Some(source_record_hash), None)
             .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn replay_run_with_overlay(
+        &self,
+        run_id: RunId,
+        node_id: &str,
+        settings: &Settings,
+        source_record_hash: &str,
+        overlay: ReplayOverlay,
+        credential: Option<String>,
+        limit: u64,
+        guard: ReplayPermissionCheck,
+    ) -> Result<NodeReplayReport> {
+        self.replay_run_from_node_inner(
+            run_id,
+            node_id,
+            settings,
+            Some(source_record_hash),
+            Some((overlay, credential, limit, guard)),
+        )
+        .await
     }
 
     async fn replay_run_from_node_inner(
@@ -11062,6 +11087,7 @@ impl LocalApplication {
         node_id: &str,
         settings: &Settings,
         source_record_hash: Option<&str>,
+        overlay: Option<(ReplayOverlay, Option<String>, u64, ReplayPermissionCheck)>,
     ) -> Result<NodeReplayReport> {
         let history = self
             .store
@@ -11115,7 +11141,7 @@ impl LocalApplication {
                         !model.starts_with("mock-") && !plugin_model_selection(model)
                     }))
         });
-        if history.provider != "mock" && has_live_provider_model_binding {
+        if overlay.is_none() && history.provider != "mock" && has_live_provider_model_binding {
             bail!(
                 "Replay of live model nodes requires an explicit current binding; credentials are never recovered from Run history"
             );
@@ -11148,18 +11174,36 @@ impl LocalApplication {
             .collect::<Vec<_>>();
         let (validators, refiners) =
             workflow_extension_implementations(&self.skills, &enabled_ids)?;
+        let mut execution_workflow = workflow.clone();
+        if let Some((overlay, _, _, guard)) = &overlay {
+            guard().map_err(|e| anyhow!(e))?;
+            execution_workflow.snapshot.model_profiles = overlay.profiles.clone();
+            execution_workflow.snapshot.plugin_models = overlay.plugins.clone();
+        }
         let mut runtime = PublishedWorkflowRuntime::new(
-            workflow.clone(),
-            &history.provider,
+            execution_workflow,
+            if overlay
+                .as_ref()
+                .is_some_and(|o| o.0.profiles.is_empty() && o.0.plugins.is_empty())
+                && history.provider == "mock"
+            {
+                "mock"
+            } else if overlay.is_some() {
+                "replay"
+            } else {
+                &history.provider
+            },
             settings,
-            None,
+            overlay.as_ref().and_then(|o| o.1.as_deref()),
             self.store.clone(),
             validators,
             refiners,
             self.plugin_registry.clone(),
             self.model_bundle_registry.clone(),
         )?;
-        if source_record_hash.is_some() {
+        if let Some((overlay, _, limit, guard)) = overlay {
+            runtime.install_replay_overlay(workflow.clone(), overlay, limit, guard);
+        } else if source_record_hash.is_some() {
             runtime = runtime.with_sample_request_limit(0, None);
         }
         let image = Arc::new(load_image(image_path, 40_000_000).map_err(|error| anyhow!(error))?);
@@ -24429,9 +24473,14 @@ export:
             .workflow_snapshot_json
             .unwrap();
         let mut live: serde_json::Value = serde_json::from_str(&before_snapshot).unwrap();
-        live["selected_workflow"]["draft"]["nodes"][0]["model_binding"] = json!("TEST-live-model");
-        live["selected_workflow"]["snapshot"]["draft"]["nodes"][0]["model_binding"] =
-            json!("TEST-live-model");
+        for pointer in [
+            "/selected_workflow/draft/nodes",
+            "/selected_workflow/snapshot/draft/nodes",
+        ] {
+            let nodes = live.pointer_mut(pointer).unwrap().as_array_mut().unwrap();
+            nodes.iter_mut().find(|n| n["id"] == "classifier").unwrap()["model_binding"] =
+                json!("TEST-live-model");
+        }
         application
             .store
             .update_run_workflow_snapshot(started.run_id, &live.to_string())
@@ -24444,7 +24493,7 @@ export:
             refused["refusal_reasons"]
                 .as_array()
                 .unwrap()
-                .contains(&json!("current_binding_replay_unsupported"))
+                .contains(&json!("current_binding_unavailable_or_unsupported"))
         );
         application
             .store

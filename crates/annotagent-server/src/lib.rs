@@ -16748,7 +16748,7 @@ export:
             Arc::new(InMemorySecretStore::default()),
         )
         .await;
-        let service = router(state, None);
+        let service = router(state.clone(), None);
         let project_yaml = r"
 version: 1
 project:
@@ -17137,6 +17137,261 @@ export:
                 .as_array()
                 .is_some_and(|nodes| nodes.contains(&json!("core.image_input")))
         );
+
+        // Real loopback OpenAI-compatible transport, with only synthetic output.
+        let annotations_before = serde_json::to_value(
+            application
+                .store()
+                .list_annotations(parse_run_id(run_id).unwrap())
+                .unwrap(),
+        )
+        .unwrap();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = calls.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let provider_service=Router::new().route("/v1/chat/completions",post(move|headers:axum::http::HeaderMap,Json(input):Json<Value>|{let counted=counted.clone();async move {
+            assert_eq!(headers.get("authorization").unwrap(),"Bearer TEST-replay-only");
+            assert_eq!(input["model"],"TEST-loopback-classifier");
+            counted.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
+            let subject=input.pointer("/tools/0/function/parameters/properties/classifications/items/properties/subject_artifact_id/enum/0").unwrap().clone();
+            let args=json!({"classifications":[{"subject_artifact_id":subject,"subject_item_id":null,"label":"day","confidence":0.96,"scores":{"day":0.96}}]});
+            Json(json!({"id":"TEST-replay","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":null,"tool_calls":[{"id":"TEST-call","type":"function","function":{"name":"submit_classifications","arguments":args.to_string()}}]}}],"usage":{"prompt_tokens":5,"completion_tokens":4,"total_tokens":9}}))
+        }}));
+        let provider_task = tokio::spawn(async move {
+            axum::serve(listener, provider_service).await.unwrap();
+        });
+        let old_id = preview["downstream_nodes"][0]["model_profile_binding"]["model_profile_id"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let mut current = application.store().get_model_profile(old_id, None).unwrap();
+        let mut provider = application
+            .store()
+            .get_provider_profile(current.provider_id)
+            .unwrap();
+        provider.id = ProviderId::new();
+        provider.adapter = ProviderAdapterKind::OpenAiCompatible;
+        provider.base_url = format!("http://{address}/v1").parse().unwrap();
+        provider.credential_ref = None;
+        application
+            .store()
+            .save_provider_profile(&provider)
+            .unwrap();
+        let (status, _) = call_json(
+            &service,
+            axum::http::Method::POST,
+            &format!("/api/providers/{}/credential", provider.id),
+            json!({"source":"session_only","secret":"TEST-replay-only"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        current.id = ModelProfileId::new();
+        current.provider_id = provider.id;
+        current.remote_model_id = "TEST-loopback-classifier".into();
+        current.protocol_features.tool_calls = true;
+        application.store().save_model_profile(&current).unwrap();
+        let selections = BTreeMap::from([(
+            "scene.day.classifier".to_owned(),
+            format!("model-profile:{}", current.id),
+        )]);
+        let source_before = application
+            .store()
+            .list_runs()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.id.to_string() == run_id)
+            .unwrap()
+            .workflow_snapshot_json;
+        let (live_preview, _) = application
+            .preview_node_replay_bindings(
+                "http-label",
+                parse_run_id(run_id).unwrap(),
+                "scene.day.classifier",
+                &selections,
+            )
+            .unwrap();
+        assert_eq!(live_preview["available"], true, "{live_preview}");
+        let encoded = serde_json::to_string(&selections).unwrap().bytes().fold(
+            String::new(),
+            |mut encoded, b| {
+                use std::fmt::Write;
+                write!(&mut encoded, "%{b:02X}").unwrap();
+                encoded
+            },
+        );
+        assert_eq!(
+            response_json(
+                request(
+                    &service,
+                    axum::http::Method::GET,
+                    &format!("{replay_path}?project_id=http-label&bindings={encoded}"),
+                    None
+                )
+                .await
+            )
+            .await,
+            live_preview
+        );
+
+        let live_body = json!({"project_id":"http-label","command_id":uuid::Uuid::new_v4(),"scope_hash":live_preview["scope_hash"],"bindings":selections,"maximum_model_requests":1,"allow_unknown_cost":true});
+        let receipt = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                &replay_path,
+                Some(live_body.clone()),
+            )
+            .await,
+        )
+        .await;
+        let live_receipt_path = format!(
+            "{replay_path}/commands/{}?project_id=http-label",
+            receipt["command_id"].as_str().unwrap()
+        );
+        let mut live_result = receipt;
+        for _ in 0..200 {
+            live_result = response_json(
+                request(&service, axum::http::Method::GET, &live_receipt_path, None).await,
+            )
+            .await;
+            if live_result["status"] != "running" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(live_result["status"], "completed", "{live_result}");
+        assert!(
+            live_result["result"]["inspection"]["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|n| n["node_id"] == "scene.day.classifier" && n["status"] == "succeeded"),
+            "{live_result}"
+        );
+
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "{live_result}"
+        );
+        assert_eq!(
+            response_json(
+                request(
+                    &service,
+                    axum::http::Method::POST,
+                    &replay_path,
+                    Some(live_body.clone())
+                )
+                .await
+            )
+            .await,
+            live_result
+        );
+
+        current.remote_model_id = "TEST-revised-model".into();
+        current.revision += 1;
+        application.store().save_model_profile(&current).unwrap();
+        let mut changed_binding = live_body.clone();
+        changed_binding["command_id"] = json!(uuid::Uuid::new_v4());
+        assert_eq!(
+            request(
+                &service,
+                axum::http::Method::POST,
+                &replay_path,
+                Some(changed_binding)
+            )
+            .await
+            .status(),
+            StatusCode::CONFLICT
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let (current_preview, _) = application
+            .preview_node_replay_bindings(
+                "http-label",
+                parse_run_id(run_id).unwrap(),
+                "scene.day.classifier",
+                &selections,
+            )
+            .unwrap();
+        let mut disabled = application
+            .store()
+            .get_provider_profile(provider.id)
+            .unwrap();
+        disabled.enabled = false;
+        disabled.health.status = ProviderHealthStatus::Disabled;
+        application
+            .store()
+            .save_provider_profile(&disabled)
+            .unwrap();
+        let mut revoked_request = live_body.clone();
+        revoked_request["scope_hash"] = current_preview["scope_hash"].clone();
+        revoked_request["command_id"] = json!(uuid::Uuid::new_v4());
+        assert_eq!(
+            request(
+                &service,
+                axum::http::Method::POST,
+                &replay_path,
+                Some(revoked_request)
+            )
+            .await
+            .status(),
+            StatusCode::CONFLICT
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            application
+                .store()
+                .list_runs()
+                .unwrap()
+                .into_iter()
+                .find(|r| r.id.to_string() == run_id)
+                .unwrap()
+                .workflow_snapshot_json,
+            source_before
+        );
+
+        assert_eq!(
+            response_json(
+                request(
+                    &service,
+                    axum::http::Method::POST,
+                    &replay_path,
+                    Some(live_body)
+                )
+                .await
+            )
+            .await,
+            live_result
+        );
+        let source_frozen: Value = serde_json::from_str(source_before.as_deref().unwrap()).unwrap();
+        let frozen = &source_frozen["selected_workflow"];
+        assert_eq!(
+            serde_json::to_value(
+                application
+                    .store()
+                    .get_published_workflow_version(
+                        frozen["workflow_id"].as_str().unwrap(),
+                        u32::try_from(frozen["version"].as_u64().unwrap()).unwrap()
+                    )
+                    .unwrap()
+            )
+            .unwrap(),
+            *frozen
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            serde_json::to_value(
+                application
+                    .store()
+                    .list_annotations(parse_run_id(run_id).unwrap())
+                    .unwrap()
+            )
+            .unwrap(),
+            annotations_before
+        );
+        provider_task.abort();
         let ready = response_json(
             request(
                 &service,

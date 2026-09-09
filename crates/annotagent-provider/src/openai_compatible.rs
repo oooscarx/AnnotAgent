@@ -96,6 +96,16 @@ impl OpenAiCompatibleProvider {
         })
     }
 
+    /// Keeps an explicitly authorized request at its exact destination.
+    pub fn prohibit_redirects(mut self) -> CoreResult<Self> {
+        self.client = Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(self.config.request_timeout_seconds))
+            .build()
+            .map_err(|e| CoreError::Provider(format!("cannot build HTTP client: {e}")))?;
+        Ok(self)
+    }
+
     #[must_use]
     pub fn endpoint_summary(&self) -> String {
         reqwest::Url::parse(&self.config.endpoint).map_or_else(

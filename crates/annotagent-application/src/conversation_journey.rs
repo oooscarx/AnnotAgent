@@ -256,7 +256,10 @@ impl LocalApplication {
             .revoke_conversation_journey(&owner, conversation, task, id)?)
     }
 
-    fn journey_model_description(&self, selection: &str) -> Result<JourneyModelDescription> {
+    pub(crate) fn journey_model_description(
+        &self,
+        selection: &str,
+    ) -> Result<JourneyModelDescription> {
         if let Some(id) = selection.strip_prefix("model-profile:") {
             let id: ModelProfileId = id.parse()?;
             let model = self.store.get_model_profile(id, None)?;
