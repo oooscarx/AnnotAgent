@@ -15,6 +15,7 @@ import { PluginSettings } from "./PluginSettings";
 import { ModelProfiles } from "./ModelProfiles";
 import { RuntimeSettings } from "./RuntimeSettings";
 import { VisionWorkers } from "./VisionWorkers";
+import { ProviderControls } from "./ProviderControls";
 function Row({
   title,
   help,
@@ -328,6 +329,7 @@ export function SettingsView({
                       <p>
                         {fixture ? "不提供 API Key 输入框。" : "只显示凭证是否已配置，不会读取原密钥。"}不要在名称或 Endpoint 中填写密钥。
                       </p>
+                      {!fixture && !editor.id.startsWith("new-") && adapter.providerControls && <ProviderControls providerId={editor.id} service={adapter.providerControls} onChanged={async()=>{await adapter.refresh?.();}}/>}
                       <div className="actions">
                         <button onClick={() => setEditor(null)}>
                           取消账户编辑

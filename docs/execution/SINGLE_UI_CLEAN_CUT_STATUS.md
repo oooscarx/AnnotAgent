@@ -1,5 +1,13 @@
 # Single UI Clean Cut
 
+## Native Provider advanced controls and dead legacy components
+
+Audited old ProviderRegistryPage/Card against native Settings. Existing native flow already supports account edit/create/delete, passive connection check and write-only workspace-file credential saving. Added an HttpAdapter-only ProviderControls disclosure for real status, explicit remote model discovery (not inference/registration), enable/disable and credential removal. Confirmation names the destination and effects, rereads configuration before action, validates response identity and never retries automatically. It does not claim atomic CAS. Existing workspace-file default and no-keychain behavior remain. Credential alternatives, presets and old compatibility import policy are still parity decisions before deleting the old Provider page; no blanket completion claim.
+
+Deleted unused legacy ModelQualityContracts and VisionWorkersRegistryPage functions after confirming zero call sites and existing native ModelProfiles/VisionWorkers counterparts. Backend has no newer delivery beyond dbe4fae; full Workflow snapshot/publication gap remains.
+
+320 unit tests (one cutover TODO), typecheck and isolated production builds passed. Focused real TEST HTTP browser case passed: native Provider status read, discovery and disable confirmations cancelled, refresh, zero POST/PUT/DELETE. No actual discovery, enable/disable or credential deletion performed by this test; mutation coverage pending. Viewed screenshot `/tmp/annotagent-native-provider-controls.png`: actual new React UI,1440×960,DPR1,light,TEST HTTP8794 `/settings/providers`, source8cce708 plus this commit. Fixture's preexisting probe status is TEST seeding, not a Live call from this turn. Final isolated build `/tmp/annotagent-provider-final-dist`; real dist/workspace/user services unchanged. Owned fixture stopped, no push, no paid model call. Legacy root/styles and remaining old pages persist; goal active.
+
 ## Native scoped Pipeline / Run / Batch indexes
 
 Project `/manage/pipelines` and `/manage/runs` now mount new Agent UI, not the legacy root. Project menu links directly to these indexes. Added actual scoped pagination, Pipeline Draft/Version links, archive/unarchive, display rename, default-version actions, page selection with parent/child deduplication, Run/Batch detail links and lifecycle confirmation/recovery. Native Trash uses the same scope and now deduplicates same-identity Pipeline children before impact preview; the strict preview identity check remains. Scoped history layout uses aligned compact rows instead of Settings' two-column form grid.

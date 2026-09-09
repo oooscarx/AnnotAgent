@@ -1,6 +1,17 @@
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
+test("native Provider controls read status and cancel discovery without remote calls",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const providers=(await(await request.get("/api/providers")).json()).providers;const provider=providers.find((p:{adapter:string;enabled:boolean})=>p.adapter==="open_ai_compatible"&&p.enabled);expect(provider).toBeTruthy();
+  const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});
+  await page.goto("/settings/providers");await page.locator(".settings-row").filter({has:page.getByText(provider.display_name,{exact:true})}).getByRole("button",{name:"编辑",exact:true}).click();
+  await page.locator("summary").filter({hasText:"连接状态与模型发现"}).click();const region=page.getByRole("region",{name:"Provider 高级控制"});await expect(region).toContainText(provider.endpoint_summary);
+  await region.getByRole("button",{name:"发现模型…"}).click();await expect(page.getByRole("dialog")).toContainText("不发送图片");await page.getByRole("dialog").getByRole("button",{name:"取消",exact:true}).click();
+  await region.getByRole("button",{name:"停用连接…"}).click();await page.getByRole("dialog").getByRole("button",{name:"取消",exact:true}).click();
+  await region.getByRole("button",{name:"刷新连接状态"}).click();await expect(region.getByRole("button",{name:"发现模型…"})).toBeEnabled();expect(writes).toEqual([]);
+  await page.screenshot({path:"/tmp/annotagent-native-provider-controls.png",fullPage:true});
+});
 test("native global default editor reads real compatible models and cancels without writes",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");const base=await(await request.get("/api/agent-model-bindings")).json();
   const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});await page.goto("/settings/agent-models");await page.locator("summary").filter({hasText:"全局默认模型"}).click();

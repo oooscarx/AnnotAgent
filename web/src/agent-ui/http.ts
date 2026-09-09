@@ -66,6 +66,7 @@ export class HttpAdapter implements WorkspaceAdapter {
   get modelProfileManagement() { return this.transport === request ? api : undefined; }
   get runtimeSettingsManagement() { return this.transport === request ? api : undefined; }
   get projectManagement() { return this.transport === request ? api : undefined; }
+  get providerControls() { return this.transport === request ? api : undefined; }
   get trashManagement() { return this.transport === request ? nativeTrashService : undefined; }
   get historyManagement() { return this.transport === request ? historyManagementApi : undefined; }
   get reviewManagement() { return this.transport === request ? api : undefined; }

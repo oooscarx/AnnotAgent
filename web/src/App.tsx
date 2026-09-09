@@ -6534,61 +6534,6 @@ function ProviderRegistryCard({
 }
 
 
-function ModelQualityContracts({
-  modelId,
-  onError,
-}: {
-  modelId: string;
-  onError: (message: string) => void;
-}) {
-  const [contracts, setContracts] = useState<ModelCapabilityQualityContract[]>();
-  const [loading, setLoading] = useState(false);
-  const load = () => {
-    if (contracts || loading) return;
-    setLoading(true);
-    void api.modelQualityContracts(modelId)
-      .then((result) => setContracts(result.contracts))
-      .catch((error: Error) => onError(error.message))
-      .finally(() => setLoading(false));
-  };
-  return <details className="model-quality-contracts" onToggle={(event) => event.currentTarget.open && load()}>
-    <summary><span><strong>{t("Score and box quality")}</strong><small>{t("Operation-scoped safety contract")}</small></span><b>{contracts?.length ?? t("View")}</b></summary>
-    {loading && <p>{t("Loading quality contracts…")}</p>}
-    {contracts?.map((contract) => <article key={`${contract.operation}:${contract.capability}`}>
-      <header><strong>{contract.operation.replaceAll("_", " ")}</strong><small>{t("Model revision")}{" "}{contract.model_profile_revision}</small></header>
-      <dl>
-        <div><dt>{t("Geometry output")}</dt><dd>{geometrySemanticsLabel(contract.output_geometry)}</dd></div>
-        <div><dt>{t("Score meaning")}</dt><dd>{scoreSemanticsLabel(contract.score_semantics)}</dd></div>
-        <div><dt>{t("Automatic acceptance")}</dt><dd>{contract.auto_accept_eligibility === "never_from_score_alone" ? t("Never from score alone") : contract.auto_accept_eligibility.replaceAll("_", " ")}</dd></div>
-        <div><dt>{t("Evidence")}</dt><dd>{contract.evidence_source.replaceAll("_", " ")}</dd></div>
-      </dl>
-      {contract.requires_geometry_verification && <p>Project calibration, measured refinement, or Human Review is required before box auto-acceptance.</p>}
-    </article>)}
-    {contracts && !contracts.length && <p>This Model Profile has no geometric operation contract.</p>}
-  </details>;
-}
-
-function VisionWorkersRegistryPage({
-  models,
-  onOpenSettings,
-  onError,
-}: {
-  models: ModelBinding[];
-  onOpenSettings: () => void;
-  onError: (value: string) => void;
-}) {
-  const [workers, setWorkers] = useState(models.filter((model) => model.scope === "workspace_worker"));
-  const [testing, setTesting] = useState("");
-  const [results, setResults] = useState<Record<string, DetectionWorkerTestResult>>({});
-  useEffect(() => {
-    void api.models().then((result) => setWorkers(result.models.filter((model) => model.scope === "workspace_worker"))).catch((error: Error) => onError(error.message));
-  }, []);
-  const test = (worker: ModelBinding) => {
-    setTesting(worker.id);
-    void api.testModel(worker.id).then((result) => setResults((current) => ({ ...current, [worker.id]: result }))).catch((error: Error) => onError(error.message)).finally(() => setTesting(""));
-  };
-  return <section className="registry-page"><div className="toolbar-panel"><div><span className="eyebrow">Read-only migration compatibility</span><h2>Legacy HTTP models</h2><p>Existing versioned HTTP Vision Protocol bindings remain inspectable. New native expert models should be installed as isolated Rust packages.</p></div><button onClick={onOpenSettings}>Open compatibility settings</button></div>{workers.length ? <div className="registry-card-grid">{workers.map((worker) => <article className="registry-model-card" key={worker.id}><header><span><strong>{worker.id}</strong><small>{worker.model} · {worker.role}</small></span><Status status={worker.health_status} /></header><code>{worker.endpoint ?? t("No endpoint")}</code><div className="tag-group">{worker.capabilities?.map((capability) => <span key={capability}>{t(capability.replaceAll("_", " "))}</span>)}</div><div className="worker-contract-summary">{worker.score_semantics && <small>{t("Confidence")}{" "}{worker.score_semantics.replaceAll("_", " ")}</small>}{worker.label_space?.length ? <small>Label space · {worker.label_space.join(" · ")}</small> : null}{worker.checkpoint_sha256 && <small>Checkpoint · {worker.checkpoint_sha256.slice(0, 12)}…</small>}{worker.architecture && <small>Architecture · {worker.architecture}</small>}{worker.cost_per_request !== undefined && <small>Estimated cost · ${worker.cost_per_request} / request</small>}</div><p>{worker.health_detail}</p><button disabled={testing === worker.id} onClick={() => test(worker)}>{testing === worker.id ? t("Discovering…") : t("Refresh discovery")}</button>{results[worker.id] && <div className="registry-safe-message" role="status"><strong>{results[worker.id].passed ? t("Discovery passed") : `Stopped at ${results[worker.id].failed_stage ?? "discovery"}`}</strong><span>{results[worker.id].capabilities?.capabilities.join(" · ") || results[worker.id].error}</span><span>{results[worker.id].evidence?.detail}</span></div>}</article>)}</div> : <Empty title="No legacy HTTP models configured" detail="Install a native Rust Expert Model Plugin for new Workflows." />}</section>;
-}
 
 function RegistryUsagePage({ onError }: { onError: (value: string) => void }) {
   const [models, setModels] = useState<RegistryModelProfile[]>([]);
