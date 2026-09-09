@@ -1,5 +1,9 @@
 # Single UI Clean Cut
 
+## Saved model-assisted proposal actual adoption
+
+Extended the real feedback/future-rule browser path using an explicitly created and actively probed loopback TEST future proposer. API setup used its real bounded preview/authorization/execute and required a completed draft response (no fabricated HTTP body). New UI read actual rationale, confirmed replacement, loaded proposed labels, allowed manual boundary edits, saved through the existing future-schema provenance contract, recovered the lost save response and continued to a distinct Builder Draft. Original sample unchanged; older-history recovery remained green. Full extended scenario passed on /tmp/annotagent-native-saved-future-proposal-dist, source9e5b432, owned8794/8795. This is real HTTP deterministic TEST evidence, not paid/live model quality. Model suggestion creation is still API test setup, NOT evidence of a native authorize/execute/stop UI; that entry remains required. No true workspace/Provider/Published/user service or remote mutation. Goal active.
+
 ## Native saved model-assisted future proposal adoption
 
 Future-rule editor now reads the existing future-proposal endpoint through the adapter service. SavedFutureProposal verifies exact feedback/scope command/context/base Schema ID+revision, owned task and future-only scope before presenting actual goal/rationale/labels/rules. Existing phase semantics distinguish draft, clarification, cancellation, failure and unknown; only completed valid draft can be adopted. Explicit replacement confirmation fills the local editor, preserving proposal call/digest/definition provenance for existing server save validation. Frozen/invalid/saved rule editing cannot be replaced. No new model request or authorization is created by read/adopt/refresh.
