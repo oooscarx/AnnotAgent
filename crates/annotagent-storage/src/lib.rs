@@ -1,5 +1,7 @@
 //! `SQLite` persistence for projects, auditable runs, revisions, and correction memory.
 
+mod agent_ui;
+mod event_replay;
 mod batch;
 mod conversation_builder;
 mod conversation_calls;

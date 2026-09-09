@@ -1,5 +1,6 @@
 //! Shared application service used by CLI/TUI and HTTP frontends.
 
+mod agent_ui;
 mod conversation_builder;
 mod conversation_journey;
 pub use conversation_journey::{ConversationJourneyDataScope, JourneyModelDescription};

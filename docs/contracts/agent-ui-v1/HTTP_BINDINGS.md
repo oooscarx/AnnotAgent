@@ -33,3 +33,16 @@ B0 基线：`c41b281b49252d520117029d39611865133798af`。以下为源码核验�
 DTO 权威源：`crates/annotagent-storage/src/conversation_{send,tasks,agent_model,stop,human_requests,queued_planning,project_budget}.rs`；`crates/annotagent-server/src/conversation_*.rs`；路由完整清单见 ROUTES.json。
 
 已有回归测试（B0 仅定位，执行结果后补）：conversation_http_journal_is_owned_idempotent_and_csrf_protected、conversation_agent_model_http_is_passive_owned_and_versioned、followup_queue_is_atomic_ordered_owned_and_cancellation_is_terminal、registry_api_keeps_credentials_write_only_and_records_confirmed_probes、planning_only_http_advisor_does_not_create_a_sample_test、run_api_uses_stable_project_ownership_across_duplicate_names_and_rename、processing_retry_recovers_created_batch_without_scope_reauthorization_or_execution、batch_api_exposes_durable_progress_and_controls。
+
+## B1 已实现的只读投影与兼容扩展
+
+- `GET /api/navigation?limit=1..100&cursor=<owner UUID>` → `{workspace_id,items:[{project_id,project_owner_id,title,group_id:null,conversation_id:null|UUID}],next_cursor}`。稳定 UUID 顺序，仅读 Project Schema 和 Conversation 身份，不加载 Artifact/history。无游标时首页；失效游标需重新读取。
+- `GET {C}/task-navigation?limit=1..100&cursor=<sequence>` → `{items:[{task_id,source_message_id,schema_revision,created_at,sequence,title,project_owner_id,conversation_id}],next_cursor}`。现有 source message sequence 的 keyset 分页。
+- `GET {T}/thread?limit=1..100&cursor=<sequence>` → `{items:[{id,role:"user",source:"persisted_user_message",sequence,task_id,conversation_id,project_owner_id,message}],next_cursor}`。只返回有明确任务归属的真实用户消息；未绑定任务的旧消息继续从 Conversation journal 读取，不能编造绑定。模型工具回执在 snapshot.calls/builder_operations 中；不得伪装为助手自然语言。
+- `GET {T}/workspace` → exact task、calls、active operations、pending/history HumanRequests、queue 首页、Builder/Processing/Journey objects、budget、actions 与 thread_url。`consistency=individually_committed_records`：跨多个已有存储查询的投影，不承诺跨实体原子快照。
+- `GET /api/settings?view=agent-ui` → `{revision,sections:{general,providers,agent_models,vision_plugins,data_privacy,usage_budget}}`。安全白名单，六组已有接口引用；无密钥、host path、endpoint 参数。
+- `PATCH /api/settings` → `{expected_revision:string,budget:Budget}`，保存未来 Run 默认预算；返回安全设置视图。冲突 `409 settings_revision_conflict/current_revision/suggested_action=reload_settings`。不覆盖已冻结运行/Task ledger。旧 PUT 接受可选 expected_revision，原客户端兼容；都共享进程内写锁。预算 PATCH 无通用 command_id，未知结果通过 GET 比较已保存版本，不能换预算盲重试。
+- `GET /api/events?run_id=<UUID>&last_event_id=<Event UUID>`，也接受 `Last-Event-ID` header（优先）。已有 event_id 为 SSE id；按持久 sequence 分页，250ms 检查已保存新事件。无 cursor 从该 Run 首事件重放。不存在或跨 Run 游标返回 `409 event_cursor_gap`，带 snapshot_url/history_url。流中存储错误/游标缺口发 `resync_required` 后关闭。无 run_id 的旧全局流仍是 live-only，不能请求恢复。
+- Stop 输出仍是原 ConversationStopRequest 的顶层字段（不是 request wrapper），另带 observation/dispatch_error/normalized_state/resume。`cancel_pending→stopping`、`unknown→outcome_unknown`、`cancelled→interrupted`；原 `finished` 只表示已经结束，normalized_state=null，需查原实体的终态。
+
+B1 HTTP 验证：navigation_snapshot_thread_keep_real_ownership_without_execution、safe_settings_are_passive_and_budget_patch_rejects_stale_revision、sse_reconnect_replays_exact_run_and_reports_cursor_gap；完整 server lib 55 passed / 1 ignored。

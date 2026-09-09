@@ -1,5 +1,7 @@
 //! Thin HTTP/SSE adapter over the shared application service.
 
+mod agent_ui;
+mod agent_ui_settings;
 mod conversation_builder;
 mod conversation_feedback;
 mod conversation_future_proposal;
@@ -10,6 +12,7 @@ mod conversation_queue;
 mod conversation_schema;
 mod conversation_stop;
 mod conversations;
+mod event_replay;
 mod export_jobs;
 mod image_previews;
 mod processing_operations;
@@ -134,6 +137,7 @@ pub struct ServerState {
     export_workers: Arc<tokio::sync::Semaphore>,
     export_jobs: Arc<tokio::sync::Mutex<BTreeMap<uuid::Uuid, tokio::task::JoinHandle<()>>>>,
     processing_gate: Arc<tokio::sync::Mutex<()>>,
+    settings_writes: Arc<tokio::sync::Mutex<()>>,
     security: security::LocalSecurity,
 }
 
@@ -244,6 +248,7 @@ impl ServerState {
             export_workers: Arc::new(tokio::sync::Semaphore::new(2)),
             export_jobs: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
             processing_gate: Arc::new(tokio::sync::Mutex::new(())),
+            settings_writes: Arc::new(tokio::sync::Mutex::new(())),
             security: security::LocalSecurity::default(),
         })
     }
@@ -593,6 +598,7 @@ type ApiResult<T> = Result<T, ApiError>;
 pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
     let local_security = state.security.clone();
     let api = Router::new()
+        .route("/api/navigation", get(agent_ui::navigation))
         .route("/api/health", get(health))
         .route("/api/session", get(local_session))
         .route(
@@ -846,8 +852,8 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
             "/api/agent-sessions/{session_id}/cancel",
             post(cancel_agent_session),
         )
-        .route("/api/settings", get(get_settings).put(put_settings))
-        .route("/api/events", get(events))
+        .route("/api/settings", get(agent_ui_settings::get).put(put_settings).patch(agent_ui_settings::patch))
+        .route("/api/events", get(event_replay::events))
         .with_state(state)
         .layer(DefaultBodyLimit::max(security::MAX_JSON_BODY_BYTES))
         .layer(middleware::from_fn_with_state(
@@ -7986,7 +7992,9 @@ async fn download_export(
 
 async fn get_settings(State(state): State<ServerState>) -> Json<Value> {
     let settings = state.settings.read().await.clone();
+    let revision = agent_ui_settings::revision(&settings);
     let mut settings = serde_json::to_value(settings).expect("Settings always serialize");
+    settings["revision"] = json!(revision);
     if let Some(object) = settings.as_object_mut() {
         let api_key_persisted = *state.api_key_persisted.read().await;
         let api_key_configured = state.api_key.read().await.is_some();
@@ -8031,9 +8039,17 @@ async fn put_settings(
     State(state): State<ServerState>,
     Json(mut settings): Json<Value>,
 ) -> ApiResult<Json<Value>> {
+    let _write = state.settings_writes.lock().await;
     let object = settings
         .as_object_mut()
         .ok_or_else(|| ApiError::bad_request("settings must be a JSON object"))?;
+    if let Some(expected) = object.remove("expected_revision") {
+        let current = agent_ui_settings::revision(&*state.settings.read().await);
+        if expected.as_str() != Some(current.as_str()) {
+            return Err(agent_ui_settings::conflict(&current));
+        }
+    }
+    object.remove("revision");
     let api_key = object
         .remove("api_key")
         .or_else(|| object.remove("temporary_api_key"))
@@ -8114,12 +8130,13 @@ async fn put_settings(
         *state.credential_store_error.write().await = None;
     }
 
-    Ok(get_settings(State(state)).await)
+    Ok(get_settings(State(state.clone())).await)
 }
 
 #[derive(Debug, Deserialize)]
 struct EventQuery {
     run_id: Option<RunId>,
+    last_event_id: Option<String>,
 }
 
 async fn events(
@@ -8136,7 +8153,7 @@ async fn events(
             loop {
                 match receiver.recv().await {
                     Ok(value) if run_id.is_none_or(|filter| filter == value.run_id) => {
-                        let event = Event::default()
+                        let event = Event::default().id(value.event_id.to_string())
                             .event(serde_json::to_value(value.kind).ok()?.as_str()?)
                             .json_data(&value)
                             .ok()?;
@@ -8151,7 +8168,7 @@ async fn events(
             }
         },
     );
-    Ok(Sse::new(stream).keep_alive(
+    Ok(Sse::new(stream.boxed()).keep_alive(
         axum::response::sse::KeepAlive::new()
             .interval(Duration::from_secs(10))
             .text("keep-alive"),
@@ -10726,7 +10743,7 @@ mod tests {
 
     use super::*;
 
-    async fn test_state(
+    pub(super) async fn test_state(
         application: Arc<LocalApplication>,
         secret_store: Arc<InMemorySecretStore>,
     ) -> ServerState {
@@ -15924,7 +15941,7 @@ export:
         );
     }
 
-    async fn request(
+    pub(super) async fn request(
         service: &Router,
         method: axum::http::Method,
         uri: &str,
@@ -15952,7 +15969,7 @@ export:
         service.clone().oneshot(request).await.expect("response")
     }
 
-    async fn response_json(response: Response) -> Value {
+    pub(super) async fn response_json(response: Response) -> Value {
         let bytes = to_bytes(response.into_body(), 2 * 1024 * 1024)
             .await
             .expect("response body");
