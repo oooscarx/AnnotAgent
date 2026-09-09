@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { routeProject, taskLocation } from "./routes";
+import { routeProject, taskLocation, settingsTaskReturn } from "./routes";
 const url = (path: string) => new URL(path, "http://localhost");
 describe("production task navigation uses the single native route tree", () => {
+  it("restores a resolved task from Settings without accepting arbitrary return URLs",()=>{
+    const next=settingsTaskReturn(url("/settings/providers?task=old&image=i&pane=image&conversation=c&workspace_return=https://evil.invalid"),"owner","real-task");
+    expect(next.pathname).toBe("/projects/owner/work");expect(Object.fromEntries(next.searchParams)).toEqual({image:"i",pane:"image",conversation:"c",task:"real-task"});
+  });
   it("never derives project ownership from a display name or another task", () => {
     expect(routeProject(url("/projects/p/work?task=foreign"))).toBe("p");
     expect(routeProject(url("/projects/%broken/work"))).toBe("invalid-project-id");

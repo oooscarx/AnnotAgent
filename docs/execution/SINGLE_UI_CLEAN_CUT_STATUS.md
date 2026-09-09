@@ -1,5 +1,15 @@
 # Single UI Clean Cut
 
+## Canonical HTTP journeys and Settings-return fix
+
+Updated the actual HttpAdapter E2E scenarios from root ?task/?settings and old management/model links to canonical Project work/management and Settings pages. No new alias added. Removed production brand's ?task=new destination and first-task guess: it opens Projects with the dirty guard. Unknown/root URLs cannot activate a task merely via a task query. Settings retains only the existing resolved task context, and its explicit return copies task/image/pane/conversation into that task's canonical Project path; legacy return keys are discarded. This fixes the real context loss where generic taskLocation correctly cleared cross-owner queries but was incorrectly used for Settings return.
+
+Corrected stale test selectors to actual ExecutionProgress status and write-only credential-reference wording; retained server call-count and secret non-persistence checks. One mechanical edit initially interpreted a JavaScript replacement-string token and duplicated text; repaired the affected test from its unchanged HEAD baseline using literal callback replacements before verification. No unrelated edits overwritten.
+
+Verification: typecheck/build and326 unit tests passed. Four focused actual HTTP tests passed after explicit TEST fixture-ready output: six Settings pages/save/return with task and pane, approved deterministic text planning with one persisted call, owned management/back/model-settings return, and TEST credential write-only/no local secret. New native source has no workspace_return/return_project/return_task references. User8787/8788 and workspace/dist remain untouched; the TEST service served /tmp/annotagent-one-root-final-dist and was stopped afterward.
+
+Important invalid run: the first full16-scenario attempt started before a fresh fixture finished seeding, raced its control Batch setup, and caused fixture initialization to fail. Its9pass/6fail/1skip result is NOT a valid full-product regression. Apparent changed Batch child IDs and absent bbox fixture came from this overlap and have not been classified as product defects or reported to backend. A subsequent attempt against the now-stopped failed fixture also failed connection checks; no success claimed. Reused the already-marked TEST-agent-ui-e2acz_um only after receiving explicit ready output for the four focused tests. Full16-scenario validation still needs a fresh fixture that has finished seeding, plus final migration/cleanup and wider regressions. Goal remains active; no push.
+
 ## Production root cut and physical legacy-root deletion
 
 Removed production main.tsx's URL-based old-App fallback. Every production URL now uses Agent UI + HttpAdapter; parseAgentRoute determines valid screens or a native Not Found surface. Unsupported old Run/Review/Trash/Build/Workflow/Settings paths no longer mount any old application. Removed the production query-only settings override (Fixture preview alone retains its demonstration selector). Explicit task navigation from an error page enters the task's canonical work path and clears stale hashes/cross-project context.

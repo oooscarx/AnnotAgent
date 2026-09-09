@@ -15,9 +15,9 @@ async function identity(request: import("@playwright/test").APIRequestContext) {
   return {p,root,tasks:tasks.items};
 }
 test("a: real owned thread/image reads, Back/refresh, no execution on GET",async({page,request})=>{
-  const {root,tasks}=await identity(request);
+  const {p,root,tasks}=await identity(request);
   const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});
-  await page.goto(`/?task=${tasks[0].task_id}`);
+  await page.goto(`/projects/${p.project_id}/work?task=${tasks[0].task_id}`);
   await expect(page.getByText("本地工作区")).toBeVisible();
   await expect(page.locator(".user-message").first()).toContainText(tasks[0].title);
   await page.getByRole("button",{name:"打开数据",exact:true}).click();
@@ -33,8 +33,8 @@ test("a: real owned thread/image reads, Back/refresh, no execution on GET",async
   expect(ws.project_owner_id).toBeTruthy();
 });
 test("b: six real Settings reads, local preference save/cancel and return context",async({page,request})=>{
-  const {tasks}=await identity(request);
-  await page.goto(`/?task=${tasks[0].task_id}&pane=image`);
+  const {p,tasks}=await identity(request);
+  await page.goto(`/projects/${p.project_id}/work?task=${tasks[0].task_id}&pane=image`);
   await page.getByRole("button",{name:"设置"}).click();
   for(const title of ["通用","Providers 与账户","Agent 模型","视觉模型与插件","数据与隐私","用量与预算"]){
     await page.getByRole("button",{name:title,exact:true}).click();
@@ -53,7 +53,7 @@ test("b: six real Settings reads, local preference save/cancel and return contex
 });
 test("c: IME does not send; explicit Send stores one real task; refresh never executes",async({page,request})=>{
   const {p,root}=await identity(request);
-  await page.goto(`/?task=${encodeURIComponent(`new:${p.project_id}`)}`);
+  await page.goto(`/projects/${p.project_id}/work?task=${encodeURIComponent(`new:${p.project_id}`)}`);
   const input=page.getByRole("textbox",{name:"给 AnnotAgent 的需求"});
   const writes:string[]=[];page.on("request",r=>{if(r.method()==="POST"&&r.url().endsWith("/send"))writes.push(r.url());});
   await input.fill("TEST HTTP UI classify indoor or outdoor");
@@ -70,7 +70,7 @@ test("c: IME does not send; explicit Send stores one real task; refresh never ex
 });
 test("c: explicit Plan approval calls TEST provider once and persisted receipts survive refresh",async({page,request})=>{
   const {p,root}=await identity(request);
-  await page.goto(`/?task=${encodeURIComponent(`new:${p.project_id}`)}`);
+  await page.goto(`/projects/${p.project_id}/work?task=${encodeURIComponent(`new:${p.project_id}`)}`);
   await page.getByRole("textbox",{name:"给 AnnotAgent 的需求"}).fill("按室内和室外给图片分类 TEST authorized schema");
   await page.getByRole("button",{name:"发送"}).click();
   await expect(page.locator(".user-message")).toContainText("TEST authorized schema");
@@ -80,13 +80,13 @@ test("c: explicit Plan approval calls TEST provider once and persisted receipts 
   const before=await (await request.get(`${root}/tasks/${task}/workspace`)).json();expect(before.calls).toEqual([]);
   await page.getByRole("button",{name:"查看并确认授权"}).click();
   await page.getByRole("button",{name:"接受未知费用并执行此范围"}).click();
-  await expect(page.locator(".plan-history").filter({hasText:"模型结构化决策"}).first()).toBeVisible();
+  await expect(page.getByRole("region",{name:"当前执行状态",exact:true})).toBeVisible();
   await expect.poll(async()=>{const ws=await(await request.get(`${root}/tasks/${task}/workspace`)).json();return ws.calls[0]?.status;}).toBe("completed");
-  await page.reload();await expect(page.locator(".plan-history").filter({hasText:"模型结构化决策"}).first()).toBeVisible();
+  await page.reload();await expect(page.getByRole("region",{name:"当前执行状态",exact:true})).toBeVisible();
   const after=await(await request.get(`${root}/tasks/${task}/workspace`)).json();expect(after.calls).toHaveLength(1);
 });
 test("e: current HumanRequest reads final classification and saves exact sandbox answer",async({page,request})=>{
-  const {tasks,root}=await identity(request);
+  const {p,tasks,root}=await identity(request);
   const task=tasks[0].task_id;
   const initial=await(await request.get(`${root}/tasks/${task}/workspace`)).json();
   const prior=initial.human_requests[0];
@@ -95,7 +95,7 @@ test("e: current HumanRequest reads final classification and saves exact sandbox
   const human={...prior.input,id:crypto.randomUUID(),expected_feedback_sequence:feedback.revisions.at(-1)?.sequence || 0,question:"TEST UI manual classification save"};
   const created=await request.post(`${root}/tasks/${task}/human-requests`,{headers:{"x-annotagent-csrf":session.csrf_token},data:human});expect(created.ok()).toBe(true);
   // Existing pending request may precede the test request. Both refer to the same exact current sample.
-  await page.goto(`/?task=${task}&pane=image`);
+  await page.goto(`/projects/${p.project_id}/work?task=${task}&pane=image`);
   await expect(page.getByLabel("确认类别",{exact:true})).toBeVisible();
   await page.getByLabel("确认类别",{exact:true}).selectOption("室外");
   await page.getByRole("button",{name:"保存当前样例修正"}).click();
@@ -104,7 +104,7 @@ test("e: current HumanRequest reads final classification and saves exact sandbox
 });
 test("c: a separately approved Sample Journey produces saved terminal results",async({page,request})=>{
   const {p,root}=await identity(request);
-  await page.goto(`/?task=${encodeURIComponent(`new:${p.project_id}`)}`);
+  await page.goto(`/projects/${p.project_id}/work?task=${encodeURIComponent(`new:${p.project_id}`)}`);
   await page.getByRole("textbox",{name:"给 AnnotAgent 的需求"}).fill("按室内和室外给图片分类 TEST UI sample");
   await page.getByRole("button",{name:"发送"}).click();
   await expect(page.locator(".user-message")).toContainText("TEST UI sample");
@@ -129,8 +129,8 @@ test("c: a separately approved Sample Journey produces saved terminal results",a
   await expect(page.getByRole("link",{name:"查看本次结果 →"}).first()).toHaveAttribute("href",new RegExp(`/projects/${p.project_id}/`));
 });
 test("f: explicit native Export produces a real downloadable file, not a server path link",async({page,request})=>{
-  const {tasks}=await identity(request);
-  await page.goto(`/?task=${tasks[0].task_id}`);
+  const {p,tasks}=await identity(request);
+  await page.goto(`/projects/${p.project_id}/work?task=${tasks[0].task_id}`);
   await page.locator(".secondary-task-actions > summary").click();
   await page.getByRole("button",{name:"导出…",exact:true}).click();
   await expect(page.locator(".plan-block").filter({hasText:"导出为 Native"})).toContainText("条已确认标注");
@@ -147,7 +147,7 @@ test("d: saved interrupted state cannot become a fictional resume; paused Batch 
   const paused=nav.items.find((p:{project_id:string})=>p.project_id.startsWith("TEST-agent-ui-resumable-"));
   expect(interrupted).toBeTruthy();expect(paused).toBeTruthy();
   const interruptedTasks=await(await request.get(`/api/projects/${interrupted.project_id}/conversations/${interrupted.conversation_id}/task-navigation`)).json();
-  await page.goto(`/?task=${interruptedTasks.items[0].task_id}`);
+  await page.goto(`/projects/${interrupted.project_id}/work?task=${interruptedTasks.items[0].task_id}`);
   await expect(page.getByText("停止回执已确认",{exact:true})).toBeVisible();
   await expect(page.getByRole("button",{name:"继续任务",exact:true})).toBeDisabled();
   const cr=`/api/projects/${paused.project_id}/conversations/${paused.conversation_id}`;
@@ -157,7 +157,7 @@ test("d: saved interrupted state cannot become a fictional resume; paused Batch 
   const batch=ws.resume_actions.find((a:{kind:string;available:boolean})=>a.kind==="batch"&&a.available);
   expect(batch).toBeTruthy();
   const before=await(await request.get(`/api/batches/${batch.id}`)).json();
-  await page.goto(`/?task=${tasks.items[0].task_id}`);
+  await page.goto(`/projects/${paused.project_id}/work?task=${tasks.items[0].task_id}`);
   await page.getByRole("button",{name:"继续 batch",exact:true}).click();
   await expect.poll(async()=>{const b=await(await request.get(`/api/batches/${batch.id}`)).json();return b.batch.status;},{timeout:30_000}).toBe("completed");
   const after=await(await request.get(`/api/batches/${batch.id}`)).json();
@@ -175,26 +175,26 @@ test("production routes reject foreign tasks and preserve management return with
   await expect(page.locator(".sidebar,.agent-conversation-navigation")).toHaveCount(0);
   await expect(page.locator(".project-sidebar")).toHaveCount(1);
   await page.getByLabel("项目管理菜单").click();
-  await page.getByRole("link",{name:"项目管理 →",exact:true}).click();
-  await expect(page).toHaveURL(new RegExp(`/projects/${p.project_id}\\?return_task=`));
+  await page.getByRole("link",{name:"图片数据",exact:true}).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${p.project_id}/manage/data$`));
   await expect(page.locator(".sidebar,.agent-conversation-navigation")).toHaveCount(0);
   await page.goBack();await expect(page.locator(".ui-app")).toHaveAttribute("data-adapter","http");
   await expect(page).toHaveURL(new RegExp(`task=${tasks[0].task_id}`));
   await expect(page.locator("svg image")).toBeVisible();
   await page.getByRole("button",{name:"设置"}).click();
   await page.getByRole("button",{name:"Agent 模型",exact:true}).click();
-  await page.getByRole("link",{name:"管理模型配置 →",exact:true}).click();
-  await expect(page.getByRole("button",{name:"Return to annotation task",exact:true})).toBeVisible();
-  await page.getByRole("button",{name:"Return to annotation task",exact:true}).click();
+  await expect(page).toHaveURL(/\/settings\/agent-models/);
+  await expect(page.getByRole("link",{name:"管理模型配置 →",exact:true})).toHaveCount(0);
+  await page.getByRole("button",{name:"返回任务",exact:false}).click();
   await expect(page.locator(".ui-app")).toHaveAttribute("data-adapter","http");
   await expect(page).toHaveURL(new RegExp(`task=${tasks[0].task_id}`));
   await expect(page.locator("svg image")).toBeVisible();
 });
 
 test("b: Provider metadata and future budget persist through real server writes",async({page,request})=>{
-  const {tasks}=await identity(request);
+  const {p,tasks}=await identity(request);
   page.on("dialog",dialog=>void dialog.accept());
-  await page.goto(`/?task=${tasks[0].task_id}&settings=providers`);
+  await page.goto(`/settings/providers?task=${tasks[0].task_id}`);
   await page.getByRole("button",{name:"编辑",exact:true}).first().click();
   await page.getByLabel("显示名称",{exact:true}).fill("TEST HTTP edited provider");
   await page.getByRole("button",{name:"保存账户",exact:true}).click();
@@ -257,11 +257,11 @@ test("b: next-request model selection uses a CAS command without a model probe",
 });
 
 test("b: new TEST Provider credential is write-only and not browser-persisted",async({page,request})=>{
-  const {tasks}=await identity(request);
+  const {p,tasks}=await identity(request);
   page.on("dialog",dialog=>void dialog.accept());
   const name=`TEST credential account ${crypto.randomUUID()}`;
   const secret="TEST-NOT-A-REAL-KEY-ui-write-only";
-  await page.goto(`/?task=${tasks[0].task_id}&settings=providers`);
+  await page.goto(`/settings/providers?task=${tasks[0].task_id}`);
   await page.getByRole("button",{name:"添加 Provider",exact:true}).click();
   await page.getByLabel("显示名称",{exact:true}).fill(name);
   await page.getByLabel("Endpoint",{exact:true}).fill("http://127.0.0.1:8797/openai/v1");
@@ -270,7 +270,7 @@ test("b: new TEST Provider credential is write-only and not browser-persisted",a
   await page.locator(".settings-row").filter({hasText:name}).getByRole("button",{name:"编辑",exact:true}).click();
   await page.getByLabel("替换 API Key（只写）",{exact:true}).fill(secret);
   await page.getByRole("button",{name:"保存新凭证",exact:true}).click();
-  await expect(page.getByRole("status")).toContainText("凭证已由服务器保存");
+  await expect(page.getByRole("status")).toContainText("凭证引用已由服务器保存");
   const providers=await(await request.get("/api/providers")).json();
   expect(providers.providers.find((p:{display_name:string})=>p.display_name===name)?.credential_configured).toBe(true);
   expect(JSON.stringify(providers)).not.toContain(secret);

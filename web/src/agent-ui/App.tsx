@@ -24,7 +24,7 @@ import { PlanBlock } from "./PlanBlock";
 import { SettingsView } from "./Settings";
 import { ArtifactPane } from "./ArtifactPane";
 import { ExecutionProgress } from "./ExecutionProgress";
-import { routeProject, taskLocation } from "./routes";
+import { routeProject, taskLocation, settingsTaskReturn } from "./routes";
 import { parseAgentRoute } from "./navigationContract";
 export const phaseNames: Record<Phase, string> = {
   idle: "准备任务",
@@ -91,7 +91,7 @@ export function AgentPreviewApp({
   const approvalPending = useRef(false);
   const owner = fixture ? null : routeProject(url);
   const selectedId = url.searchParams.get("task");
-  const task = (!fixture && !owner && !selectedId) ? undefined : state.tasks.find(t => (!owner || t.project === owner) &&
+  const task = (!fixture && !owner && (!selectedId || parseAgentRoute(url).kind !== "settings")) ? undefined : state.tasks.find(t => (!owner || t.project === owner) &&
     (!url.searchParams.get("conversation") || t.conversationId === url.searchParams.get("conversation")) &&
     (selectedId ? t.id === selectedId : owner ? t.id === `new:${owner}` : true));
   useEffect(()=>{
@@ -208,7 +208,7 @@ export function AgentPreviewApp({
       next.searchParams.delete("conversation");
       next.searchParams.delete("image");
     } else if (!fixture && values.settings === null && next.pathname.startsWith("/settings")) {
-      if(task) next = taskLocation(next, task.project);
+      if(task) next = settingsTaskReturn(next, task.project, task.id);
       else next = new URL("/projects", location.origin);
     }
     for (const [k, v] of Object.entries(values))
@@ -302,10 +302,11 @@ export function AgentPreviewApp({
         >
           <a
             className="brand"
-            href="?task=new"
+            href={fixture?"?task=new":"/projects"}
             onClick={(e) => {
               e.preventDefault();
-              navigate({ settings: null, task: state.tasks[0]?.id || null });
+              if(fixture)navigate({ settings: null, task: state.tasks[0]?.id || null });
+              else if(canNavigate()){history.pushState(null,"","/projects");setUrl(new URL(location.href));setMobileNav(false);}
             }}
           >
             <BrandMark />
