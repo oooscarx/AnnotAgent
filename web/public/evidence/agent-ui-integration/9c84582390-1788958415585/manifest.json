@@ -1,0 +1,261 @@
+{
+  "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+  "backendSha": "3e9d8f51d89be21851c4920ddeda4ea06d2c7a43",
+  "approvedUI": "f0bbbc692904aef9f89392bd4cbb1ba3cd79172a",
+  "records": [
+    {
+      "file": "01-new-task.png",
+      "title": "新任务与项目树",
+      "note": "",
+      "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+      "sourceState": "committed",
+      "url": "http://127.0.0.1:8812/projects/TEST-agent-ui-4f830d03-98da-4297-8a5e-531204bb0f9c/work?task=new%3ATEST-agent-ui-4f830d03-98da-4297-8a5e-531204bb0f9c",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "dpr": 1,
+      "theme": "light",
+      "state": "TEST / real HTTP+SQLite; external model fixture; not Live accuracy",
+      "capturedAt": "2026-09-09T12:53:35.857Z"
+    },
+    {
+      "file": "02-plan-scope.png",
+      "title": "真实规划授权范围",
+      "note": "Only GET preview; no approval or new model call during capture.",
+      "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+      "sourceState": "committed",
+      "url": "http://127.0.0.1:8812/projects/TEST-agent-ui-4f830d03-98da-4297-8a5e-531204bb0f9c/work?task=5eed9ced-2dc2-44e8-9a61-d655902c9b8c",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "dpr": 1,
+      "theme": "light",
+      "state": "TEST / real HTTP+SQLite; external model fixture; not Live accuracy",
+      "capturedAt": "2026-09-09T12:53:36.042Z"
+    },
+    {
+      "file": "03-sample.png",
+      "title": "样例分类与真实图片",
+      "note": "Synthetic TEST pixels, not a model accuracy demonstration.",
+      "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+      "sourceState": "committed",
+      "url": "http://127.0.0.1:8812/projects/TEST-agent-ui-4f830d03-98da-4297-8a5e-531204bb0f9c/work?task=bb3e3eeb-b2c9-4186-a1d2-d0933e5cba80&pane=image",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "dpr": 1,
+      "theme": "light",
+      "state": "TEST / real HTTP+SQLite; external model fixture; not Live accuracy",
+      "capturedAt": "2026-09-09T12:53:36.196Z"
+    },
+    {
+      "file": "04-bbox.png",
+      "title": "已保存的框修正",
+      "note": "Sandbox feedback, not accepted dataset annotations.",
+      "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+      "sourceState": "committed",
+      "url": "http://127.0.0.1:8812/projects/TEST-agent-ui-bbox-233e44c6-07e0-4f0a-b675-a6c192225983/work?task=ddefdab8-a319-4a0b-9c0a-4ecb19af8f68&pane=image&image=f63eac18-c26c-573c-a6a4-72e9786fdb8a",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "dpr": 1,
+      "theme": "light",
+      "state": "TEST / real HTTP+SQLite; external model fixture; not Live accuracy",
+      "capturedAt": "2026-09-09T12:53:36.306Z"
+    },
+    {
+      "file": "05-bbox-dark.png",
+      "title": "深色画布",
+      "note": "",
+      "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+      "sourceState": "committed",
+      "url": "http://127.0.0.1:8812/projects/TEST-agent-ui-bbox-233e44c6-07e0-4f0a-b675-a6c192225983/work?task=ddefdab8-a319-4a0b-9c0a-4ecb19af8f68&pane=image&image=f63eac18-c26c-573c-a6a4-72e9786fdb8a",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "dpr": 1,
+      "theme": "dark",
+      "state": "TEST / real HTTP+SQLite; external model fixture; not Live accuracy",
+      "capturedAt": "2026-09-09T12:53:36.344Z"
+    },
+    {
+      "file": "06-interrupted.png",
+      "title": "已中断，不虚构继续能力",
+      "note": "",
+      "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+      "sourceState": "committed",
+      "url": "http://127.0.0.1:8812/projects/TEST-agent-ui-interrupted-2ce2b233-41aa-46ef-81cf-536a5960fa7f/work?task=92768a6c-ec91-4ac7-90f3-ecd9d834f3e3",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "dpr": 1,
+      "theme": "light",
+      "state": "TEST / real HTTP+SQLite; external model fixture; not Live accuracy",
+      "capturedAt": "2026-09-09T12:53:36.455Z"
+    },
+    {
+      "file": "07-unknown.png",
+      "title": "停止后的未知结果",
+      "note": "The initial stopping state is evidenced by the real HTTP response; it is not artificially held for a screenshot.",
+      "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+      "sourceState": "committed",
+      "url": "http://127.0.0.1:8812/projects/TEST-agent-ui-4f830d03-98da-4297-8a5e-531204bb0f9c/work?task=52fb4d8f-1e23-4910-867e-87b59f10e17d",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "dpr": 1,
+      "theme": "light",
+      "state": "TEST / real HTTP+SQLite; external model fixture; not Live accuracy",
+      "capturedAt": "2026-09-09T12:53:36.545Z"
+    },
+    {
+      "file": "08-model-picker.png",
+      "title": "真实 Registry 模型选择",
+      "note": "",
+      "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+      "sourceState": "committed",
+      "url": "http://127.0.0.1:8812/projects/TEST-agent-ui-4f830d03-98da-4297-8a5e-531204bb0f9c/work?task=new%3ATEST-agent-ui-4f830d03-98da-4297-8a5e-531204bb0f9c",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "dpr": 1,
+      "theme": "light",
+      "state": "TEST / real HTTP+SQLite; external model fixture; not Live accuracy",
+      "capturedAt": "2026-09-09T12:53:36.680Z"
+    },
+    {
+      "file": "settings-general.png",
+      "title": "通用",
+      "note": "",
+      "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+      "sourceState": "committed",
+      "url": "http://127.0.0.1:8812/projects/TEST-agent-ui-4f830d03-98da-4297-8a5e-531204bb0f9c/work?task=bb3e3eeb-b2c9-4186-a1d2-d0933e5cba80&settings=general",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "dpr": 1,
+      "theme": "light",
+      "state": "TEST / real HTTP+SQLite; external model fixture; not Live accuracy",
+      "capturedAt": "2026-09-09T12:53:36.757Z"
+    },
+    {
+      "file": "settings-providers.png",
+      "title": "Providers",
+      "note": "",
+      "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+      "sourceState": "committed",
+      "url": "http://127.0.0.1:8812/projects/TEST-agent-ui-4f830d03-98da-4297-8a5e-531204bb0f9c/work?task=bb3e3eeb-b2c9-4186-a1d2-d0933e5cba80&settings=providers",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "dpr": 1,
+      "theme": "light",
+      "state": "TEST / real HTTP+SQLite; external model fixture; not Live accuracy",
+      "capturedAt": "2026-09-09T12:53:36.825Z"
+    },
+    {
+      "file": "settings-agent.png",
+      "title": "Agent 模型",
+      "note": "",
+      "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+      "sourceState": "committed",
+      "url": "http://127.0.0.1:8812/projects/TEST-agent-ui-4f830d03-98da-4297-8a5e-531204bb0f9c/work?task=bb3e3eeb-b2c9-4186-a1d2-d0933e5cba80&settings=agent",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "dpr": 1,
+      "theme": "light",
+      "state": "TEST / real HTTP+SQLite; external model fixture; not Live accuracy",
+      "capturedAt": "2026-09-09T12:53:36.894Z"
+    },
+    {
+      "file": "settings-vision.png",
+      "title": "视觉模型与插件",
+      "note": "",
+      "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+      "sourceState": "committed",
+      "url": "http://127.0.0.1:8812/projects/TEST-agent-ui-4f830d03-98da-4297-8a5e-531204bb0f9c/work?task=bb3e3eeb-b2c9-4186-a1d2-d0933e5cba80&settings=vision",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "dpr": 1,
+      "theme": "light",
+      "state": "TEST / real HTTP+SQLite; external model fixture; not Live accuracy",
+      "capturedAt": "2026-09-09T12:53:36.972Z"
+    },
+    {
+      "file": "settings-privacy.png",
+      "title": "数据与隐私",
+      "note": "",
+      "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+      "sourceState": "committed",
+      "url": "http://127.0.0.1:8812/projects/TEST-agent-ui-4f830d03-98da-4297-8a5e-531204bb0f9c/work?task=bb3e3eeb-b2c9-4186-a1d2-d0933e5cba80&settings=privacy",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "dpr": 1,
+      "theme": "light",
+      "state": "TEST / real HTTP+SQLite; external model fixture; not Live accuracy",
+      "capturedAt": "2026-09-09T12:53:37.043Z"
+    },
+    {
+      "file": "settings-usage.png",
+      "title": "用量与预算",
+      "note": "",
+      "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+      "sourceState": "committed",
+      "url": "http://127.0.0.1:8812/projects/TEST-agent-ui-4f830d03-98da-4297-8a5e-531204bb0f9c/work?task=bb3e3eeb-b2c9-4186-a1d2-d0933e5cba80&settings=usage",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "dpr": 1,
+      "theme": "light",
+      "state": "TEST / real HTTP+SQLite; external model fixture; not Live accuracy",
+      "capturedAt": "2026-09-09T12:53:37.125Z"
+    },
+    {
+      "file": "09-mobile.png",
+      "title": "手机查看结果",
+      "note": "390×844 viewport, not native 200% browser zoom.",
+      "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+      "sourceState": "committed",
+      "url": "http://127.0.0.1:8812/projects/TEST-agent-ui-bbox-233e44c6-07e0-4f0a-b675-a6c192225983/work?task=ddefdab8-a319-4a0b-9c0a-4ecb19af8f68&pane=image&image=f63eac18-c26c-573c-a6a4-72e9786fdb8a",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "dpr": 1,
+      "theme": "light",
+      "state": "TEST / real HTTP+SQLite; external model fixture; not Live accuracy",
+      "capturedAt": "2026-09-09T12:53:37.227Z"
+    },
+    {
+      "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+      "url": "http://127.0.0.1:8812/projects/TEST-agent-ui-4f830d03-98da-4297-8a5e-531204bb0f9c/work?task=52fb4d8f-1e23-4910-867e-87b59f10e17d",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "dpr": 1,
+      "theme": "light",
+      "state": "TEST / real HTTP E2E",
+      "file": "running-queue.png",
+      "title": "真实执行与一条排队输入",
+      "note": "Captured by the HTTP browser test while the server call was reserved. See its real-test-scene and initial-stop-receipt attachments."
+    }
+  ]
+}

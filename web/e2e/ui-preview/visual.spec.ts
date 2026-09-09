@@ -122,6 +122,7 @@ test("capture actual React preview pages and evidence metadata", async ({
       await page.evaluate(()=>{document.body.style.zoom="2";});
       await page.screenshot({path:`${dir}/icons-css-200-${theme}-full.png`,fullPage:true});
       await shot(`icons-css-200-${theme}-not-native`);
+      records.push({...records.at(-1),file:`icons-css-200-${theme}-full.png`,fullPage:true});
       await page.evaluate(()=>{document.body.style.zoom="1";});
     }
     await page.evaluate(()=>{document.body.style.zoom="2";});

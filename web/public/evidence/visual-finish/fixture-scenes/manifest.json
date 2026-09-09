@@ -1,0 +1,340 @@
+[
+  {
+    "file": "01-new-task-light.png",
+    "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+    "url": "http://127.0.0.1:5178/ui-preview?task=new",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": 1,
+    "cssZoom": "1",
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T12:51:41.634Z"
+  },
+  {
+    "file": "02-plan-light.png",
+    "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+    "url": "http://127.0.0.1:5178/ui-preview?task=new",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": 1,
+    "cssZoom": "1",
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T12:51:42.572Z"
+  },
+  {
+    "file": "06-model-picker-light.png",
+    "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+    "url": "http://127.0.0.1:5178/ui-preview?task=new",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": 1,
+    "cssZoom": "1",
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T12:51:42.676Z"
+  },
+  {
+    "file": "03-running-queue-light.png",
+    "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+    "url": "http://127.0.0.1:5178/ui-preview?task=new&pane=image",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": 1,
+    "cssZoom": "1",
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T12:51:42.948Z"
+  },
+  {
+    "file": "05-stopping-light.png",
+    "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+    "url": "http://127.0.0.1:5178/ui-preview?task=new&pane=image",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": 1,
+    "cssZoom": "1",
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T12:51:43.029Z"
+  },
+  {
+    "file": "04-interrupted-dark.png",
+    "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+    "url": "http://127.0.0.1:5178/ui-preview?task=new&pane=image",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": 1,
+    "cssZoom": "1",
+    "theme": "dark",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T12:51:45.473Z"
+  },
+  {
+    "file": "07-human-assistance-light.png",
+    "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+    "url": "http://127.0.0.1:5178/ui-preview?task=new&pane=image",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": 1,
+    "cssZoom": "1",
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T12:51:46.700Z"
+  },
+  {
+    "file": "08-general.png",
+    "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+    "url": "http://127.0.0.1:5178/ui-preview?task=new&settings=general",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": 1,
+    "cssZoom": "1",
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T12:51:46.852Z"
+  },
+  {
+    "file": "09-providers.png",
+    "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+    "url": "http://127.0.0.1:5178/ui-preview?task=new&settings=providers",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": 1,
+    "cssZoom": "1",
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T12:51:47.021Z"
+  },
+  {
+    "file": "10-provider-validation.png",
+    "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+    "url": "http://127.0.0.1:5178/ui-preview?task=new&settings=providers",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": 1,
+    "cssZoom": "1",
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T12:51:47.128Z"
+  },
+  {
+    "file": "11-agent-models.png",
+    "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+    "url": "http://127.0.0.1:5178/ui-preview?task=new&settings=agent",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": 1,
+    "cssZoom": "1",
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T12:51:47.321Z"
+  },
+  {
+    "file": "12-vision-plugins.png",
+    "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+    "url": "http://127.0.0.1:5178/ui-preview?task=new&settings=vision",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": 1,
+    "cssZoom": "1",
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T12:51:47.559Z"
+  },
+  {
+    "file": "13-data-privacy.png",
+    "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+    "url": "http://127.0.0.1:5178/ui-preview?task=new&settings=privacy",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": 1,
+    "cssZoom": "1",
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T12:51:47.738Z"
+  },
+  {
+    "file": "14-usage-budget.png",
+    "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+    "url": "http://127.0.0.1:5178/ui-preview?task=new&settings=usage",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": 1,
+    "cssZoom": "1",
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T12:51:47.906Z"
+  },
+  {
+    "file": "15-mobile-conversation.png",
+    "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+    "url": "http://127.0.0.1:5178/ui-preview?task=new",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "dpr": 1,
+    "cssZoom": "1",
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T12:51:48.061Z"
+  },
+  {
+    "file": "16-mobile-canvas.png",
+    "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+    "url": "http://127.0.0.1:5178/ui-preview?task=new&pane=image",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "dpr": 1,
+    "cssZoom": "1",
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T12:51:48.157Z"
+  },
+  {
+    "file": "17-mobile-settings.png",
+    "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+    "url": "http://127.0.0.1:5178/ui-preview?task=new&settings=general",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "dpr": 1,
+    "cssZoom": "1",
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T12:51:48.305Z"
+  },
+  {
+    "file": "icons-light.png",
+    "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+    "url": "http://127.0.0.1:5178/ui-preview?icons=1",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": 1,
+    "cssZoom": "1",
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T12:51:48.585Z"
+  },
+  {
+    "file": "icons-css-200-light-not-native.png",
+    "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+    "url": "http://127.0.0.1:5178/ui-preview?icons=1",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": 1,
+    "cssZoom": "2",
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T12:51:48.715Z"
+  },
+  {
+    "file": "icons-css-200-light-full.png",
+    "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+    "url": "http://127.0.0.1:5178/ui-preview?icons=1",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": 1,
+    "cssZoom": "2",
+    "theme": "light",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T12:51:48.715Z",
+    "fullPage": true
+  },
+  {
+    "file": "icons-dark.png",
+    "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+    "url": "http://127.0.0.1:5178/ui-preview?icons=1",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": 1,
+    "cssZoom": "1",
+    "theme": "dark",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T12:51:48.859Z"
+  },
+  {
+    "file": "icons-css-200-dark-not-native.png",
+    "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+    "url": "http://127.0.0.1:5178/ui-preview?icons=1",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": 1,
+    "cssZoom": "2",
+    "theme": "dark",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T12:51:48.963Z"
+  },
+  {
+    "file": "icons-css-200-dark-full.png",
+    "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+    "url": "http://127.0.0.1:5178/ui-preview?icons=1",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": 1,
+    "cssZoom": "2",
+    "theme": "dark",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T12:51:48.963Z",
+    "fullPage": true
+  },
+  {
+    "file": "icons-css-200-not-native.png",
+    "sha": "9c84582390d1424e46f787d1a7748f39135d5851",
+    "url": "http://127.0.0.1:5178/ui-preview?icons=1",
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": 1,
+    "cssZoom": "2",
+    "theme": "dark",
+    "status": "UI Preview / Fixture; no Live Provider",
+    "capturedAt": "2026-09-09T12:51:49.011Z"
+  }
+]

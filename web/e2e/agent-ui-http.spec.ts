@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
 test.beforeEach(async ({request})=>{
@@ -325,6 +325,7 @@ test("d: actual stop POST is observed as stopping and settles to unknown without
   await page.getByRole("button",{name:"排队",exact:true}).click();
   await expect(page.getByText(/1 条排队输入/)).toBeVisible();
   await page.screenshot({path:testInfo.outputPath("running-queue.png")});
+  writeFileSync(testInfo.outputPath("running-queue.json"),JSON.stringify({sha:execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"}).trim(),url:page.url(),viewport:page.viewportSize(),dpr:await page.evaluate(()=>devicePixelRatio),theme:await page.locator("html").getAttribute("data-aa-theme"),state:"TEST / real HTTP E2E"}));
   await page.getByRole("button",{name:"打开数据",exact:true}).click();
   await page.setViewportSize({width:390,height:844});
   await expect(page.getByRole("button",{name:"停止当前执行",exact:true})).toBeVisible();

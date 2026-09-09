@@ -1,0 +1,72 @@
+{
+  "checkedAt": "2026-09-09T12:57:59.746Z",
+  "service": "http://127.0.0.1:8812",
+  "backend": "3e9d8f51d89be21851c4920ddeda4ea06d2c7a43",
+  "files": [
+    {
+      "url": "http://127.0.0.1:8812/index.html",
+      "status": 200,
+      "sha256": "bb6c205269c53472bd33e7dea87ad81efeb103aefe7e5c27b2f66e458e35fbb0"
+    },
+    {
+      "url": "http://127.0.0.1:8812/assets/App-C2J7ASvS.js",
+      "status": 200,
+      "sha256": "cd6318495064c6eab0fd10b7fb5c5d459a506967ec350cfb74492e1c6bf269f8"
+    },
+    {
+      "url": "http://127.0.0.1:8812/assets/App-D4b9VqKY.css",
+      "status": 200,
+      "sha256": "318946d5b207bae82c8e05aefb7c6a4fac3f3a20ffd04ecc16cc372d5cdba34e"
+    },
+    {
+      "url": "http://127.0.0.1:8812/assets/App-g2WGhYln.js",
+      "status": 200,
+      "sha256": "bd675069fa631d10c4be27670f02f4d878aa208198788654df5a7848137e45c1"
+    },
+    {
+      "url": "http://127.0.0.1:8812/assets/annotagent-tokens-DgI_TTRd.css",
+      "status": 200,
+      "sha256": "1faf42038e73081cf890fff40f1e541396056b8991e07c6c2c9b34707cdcaa35"
+    },
+    {
+      "url": "http://127.0.0.1:8812/assets/http-V3dGl-Dp.js",
+      "status": 200,
+      "sha256": "9941440d6c22db2f05d03db758eae127ed9cf3a6100f445d09fe50b25416913a"
+    },
+    {
+      "url": "http://127.0.0.1:8812/assets/index-CotbIzya.js",
+      "status": 200,
+      "sha256": "96685f4c80a7f66060f4cccb036df14ff76a90260f34d27b4eb44be376ace228"
+    },
+    {
+      "url": "http://127.0.0.1:8812/assets/navigation-5qQbx2a5.js",
+      "status": 200,
+      "sha256": "20bd7a62639a3fa9a7d8a3f0692bbbdb785cd5c4eee2a4973953b08484685663"
+    },
+    {
+      "url": "http://127.0.0.1:8812/assets/sampleFeedbackOverlay-CbuWvzKx.js",
+      "status": 200,
+      "sha256": "ef834994242f499a5863241cc493090b05e7afc6d23e490577d5a65653cff604"
+    },
+    {
+      "url": "http://127.0.0.1:8812/assets/styles-DyrMorJM.css",
+      "status": 200,
+      "sha256": "714fbdb67cc88bcbf7f6e8680f794d9eb672b9cf4165a19fdd2066a10f695c4e"
+    },
+    {
+      "url": "http://127.0.0.1:8812/assets/ui-BUw4Kl60.css",
+      "status": 200,
+      "sha256": "bf2d3cc18af14f36b0355089ac53055444ccfc02f371118a8ec8a12536d73640"
+    },
+    {
+      "url": "http://127.0.0.1:8812/brand/core/ui-icons.svg",
+      "status": 200,
+      "sha256": "91b4b0dfdc53faba734c3ab066dc5d58a00e29217f79d583bee0c0664bf1b36a"
+    },
+    {
+      "url": "http://127.0.0.1:8812/brand/core/annotagent-mark-paper.svg",
+      "status": 200,
+      "sha256": "c3e46cc7848fb0ae58024194462090d92a77a304e153e8b6c2cb40cee7ce83b0"
+    }
+  ]
+}

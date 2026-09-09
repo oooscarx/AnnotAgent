@@ -1,0 +1,62 @@
+[
+  {
+    "file": "01-new-task-light.png",
+    "sha256": "73b011e952e556890883b76cf3b8912cd2b287f00fa8df1db4d3c9b3df3fec0d",
+    "source": "User-supplied first-version design reference; not application or inference evidence",
+    "sourceSHA": null,
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": "not supplied",
+    "theme": "light"
+  },
+  {
+    "file": "02-plan-light.png",
+    "sha256": "7d679ca34667b42b2ec153d8db8e3183c3f5c9be3a51158973d2356b0acd9881",
+    "source": "User-supplied first-version design reference; not application or inference evidence",
+    "sourceSHA": null,
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": "not supplied",
+    "theme": "light"
+  },
+  {
+    "file": "03-human-review-light.png",
+    "sha256": "0055285836d272ddbfe7b3d8331f0fea1e3df6194835aec5884fa07fdc3ac35c",
+    "source": "User-supplied first-version design reference; not application or inference evidence",
+    "sourceSHA": null,
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": "not supplied",
+    "theme": "light"
+  },
+  {
+    "file": "05-interrupted-dark.png",
+    "sha256": "31d09527c77bdbfc42341b8a04d45bf0ce5a144137df1784ab973ae043fb36c0",
+    "source": "User-supplied first-version design reference; not application or inference evidence",
+    "sourceSHA": null,
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": "not supplied",
+    "theme": "dark"
+  },
+  {
+    "file": "06-model-picker-light.png",
+    "sha256": "45f682bbcd1dde68f69f440e860392211eed89ebb5bda61cbf44afd0f96d7c47",
+    "source": "User-supplied first-version design reference; not application or inference evidence",
+    "sourceSHA": null,
+    "viewport": {
+      "width": 1440,
+      "height": 960
+    },
+    "dpr": "not supplied",
+    "theme": "light"
+  }
+]

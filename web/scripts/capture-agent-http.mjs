@@ -76,7 +76,8 @@ try {
     const stat=statSync(runShot);
     if(stat.mtimeMs>=Date.now()-30*60*1000) {
       copyFileSync(runShot,join(directory,"running-queue.png"));
-      records.push({file:"running-queue.png",title:"真实执行与一条排队输入",sha,viewport:{width:1440,height:960},theme:"light",state:"TEST / real HTTP E2E",note:"Captured by the HTTP browser test while the server call was reserved. See its real-test-scene and initial-stop-receipt attachments."});
+      const provenance=JSON.parse(readFileSync(runShot.replace(/\.png$/,".json"),"utf8"));
+      records.push({...provenance,file:"running-queue.png",title:"真实执行与一条排队输入",note:"Captured by the HTTP browser test while the server call was reserved. See its real-test-scene and initial-stop-receipt attachments."});
     }
   } catch { /* Missing actual evidence is never substituted by a fabricated frame. */ }
   const escape=s=>String(s).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll('"',"&quot;");
