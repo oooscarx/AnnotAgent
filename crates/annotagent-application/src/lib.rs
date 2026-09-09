@@ -3964,6 +3964,15 @@ fn add_mandatory_geometry_review_boundaries(draft: &mut WorkflowDraft) -> Result
         } else {
             commit.inputs.clone()
         };
+        let mut review_parameters = BTreeMap::from([(
+            "reason".to_owned(),
+            serde_json::json!("geometry_verification_required"),
+        )]);
+        for key in ["task_id", "target_label"] {
+            if let Some(value) = commit.parameters.get(key) {
+                review_parameters.insert(key.to_owned(), value.clone());
+            }
+        }
         let review = annotagent_core::WorkflowDraftNode {
             id: review_id.clone(),
             node_type: "core.human_review".to_owned(),
@@ -3980,10 +3989,7 @@ fn add_mandatory_geometry_review_boundaries(draft: &mut WorkflowDraft) -> Result
             fallback: None,
             max_retries: 0,
             review_gate: true,
-            parameters: BTreeMap::from([(
-                "reason".to_owned(),
-                serde_json::json!("geometry_verification_required"),
-            )]),
+            parameters: review_parameters,
             retry_policy: RetryPolicy::default(),
             fallback_policy: annotagent_core::FallbackPolicy::default(),
             gate: ReviewGate {

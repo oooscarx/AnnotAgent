@@ -5497,3 +5497,27 @@ scope when evaluated relative to each details element. The actual model options 
 present. Corrected the helper to filter its details by the visible unique model-group
 text. The targeted sweep remains live and this selector correction still needs rerun;
 neither the initial test-helper patch nor this correction is reported as browser-green.
+
+### 2026-09-09 — Guided regression green and inserted review identity preserved
+
+14035 terminated with **41 passed, 3 failed**. All 36 Guided cases passed, including the
+explicit paginated-owner Run test, Review/source return, management deletion/recovery,
+export, reflow and keyboard checks. Its three failures used the pre-correction relative
+selector. Fresh 43586 now runs 14 joint-repair/sample cases with the corrected selector;
+all five joint-repair cases have passed, including both real pending-answer UI variants.
+Last observed case 10 passed; full result and the new export task assertion remain pending.
+
+Audited `add_mandatory_geometry_review_boundaries`, the separate safe-Draft insertion path.
+An initial assertion on an existing legacy fixture passed but did not prove propagation
+of a nonempty task binding. Replaced that weak assertion with a three-label composition
+fixture requiring explicit task/label metadata and at least one inserted boundary per
+Commit. **24723 failed**: inserted review had no `task_id` while its Commit had `objects`.
+The insertion now copies only the Commit's explicit `task_id` and `target_label` when
+present, in addition to its mandatory geometry-review reason. It does not infer ownership
+from names or copy unrelated execution parameters. Existing absent metadata is not invented.
+
+**93743 exited 0**: exact boundary regression, legacy immutable/blocked/clonable workflow
+regression, Application all-target/all-feature clippy. This modifies new Draft construction,
+not stored Published Versions or historical annotations. Current browser run uses the
+previous binary, so it does not validate this latest insertion change. Final full Rust
+and browser regression still remain, along with accurate limitations on legacy output.

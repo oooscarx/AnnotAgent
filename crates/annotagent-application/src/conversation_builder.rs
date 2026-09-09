@@ -674,6 +674,36 @@ mod tests {
             project.project.enabled_skill_versions(),
             chrono::Utc::now(),
         );
+        let mut reinforced = draft.clone();
+        crate::add_mandatory_geometry_review_boundaries(&mut reinforced).unwrap();
+        for commit in reinforced
+            .nodes
+            .iter()
+            .filter(|node| node.kind == annotagent_core::WorkflowNodeKind::Commit)
+        {
+            let boundaries = reinforced
+                .nodes
+                .iter()
+                .filter(|node| {
+                    node.kind == annotagent_core::WorkflowNodeKind::HumanReview
+                        && reinforced
+                            .edges
+                            .iter()
+                            .any(|edge| edge.from_node == node.id && edge.to_node == commit.id)
+                })
+                .collect::<Vec<_>>();
+            assert!(!boundaries.is_empty());
+            assert!(commit.parameters.contains_key("task_id"));
+            for review in boundaries {
+                for key in ["task_id", "target_label"] {
+                    assert_eq!(
+                        review.parameters.get(key),
+                        commit.parameters.get(key),
+                        "inserted boundary must preserve {key}"
+                    );
+                }
+            }
+        }
         assert_eq!(
             draft
                 .nodes
