@@ -199,3 +199,8 @@ Implemented owned `GET /api/projects/{project_id}/workflows/{workflow_id}/versio
 Sample pending-human admission is narrowed to the exact active, sealed repair Journey/source, in addition to the existing running-operation identity, grant, lease and scope checks. Ordinary Sample cannot inherit the exception from an Applied repair copy. No new HTTP fields/routes: use existing explicit repair `journey-preview`/consent/execution. Real TEST HTTP covers ordinary Sample denied with zero calls, then sealed Journey Sample through the actual vision adapter with three images/zero failures and two unchanged pending requests. See `docs/contracts/agent-ui-v1/UIAPI-014_REPAIR_ADMISSION.md` for contract, replay command and retained trace. This increment contains no migrations, publication or frontend changes.
 
 Follow-up verification: `cargo test --offline -p annotagent-storage -p annotagent-application -p annotagent-server`: **418 passed, 3 existing ignored, 0 failed**. Strict all-target clippy (`-D warnings`) and `cargo fmt --all -- --check` passed. The owned TEST fixture was stopped; its database and HTTP trace remain available.
+
+
+## UIAPI-015 publication handoff (renumbered)
+
+Executable delivery remains `7c7c8df0ff234477aff67ae48ab53b6ef91897bd`; reverified 8 isolated publication tests passed. Exact API and existing clone limitations: `docs/contracts/agent-ui-v1/UIAPI-015_PUBLICATION.md`. This handoff adds no runtime changes.
