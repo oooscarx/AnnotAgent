@@ -28,6 +28,7 @@ import { imageClassApi, type ImageClassReview } from "../conversation-image-clas
 import { mergeImageClassReview } from "../conversation-image-class";
 import { ConversationNavigation } from "./ConversationNavigation";
 import { AgentComposer } from "./AgentComposer";
+import { ConversationQueue } from "./ConversationQueue";
 import { AgentModelPicker } from "./AgentModelPicker";
 import { parsePendingSend, sameSendCommand, type SendModel, type SendMode } from "../conversation-send";
 
@@ -527,6 +528,7 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
         {conversation && taskId && !goalMessage && <p role="status">{requestsReady ? "The selected annotation task is not available in this conversation. Select a saved message; no other task was substituted." : "Loading the selected annotation task…"}</p>}
         {activeRequest && ((activeRequest.status==="applied" && activeRequest.resume_draft_id) || (activeRequest.status==="pending"&&!activeRequest.deferred)) && <ConversationRepairCard key={activeRequest.input.id} project={project.id} request={activeRequest} editing={repairEditing} onPendingConsent={id=>setRequests(items=>items.some(item=>item.input.id===activeRequest.input.id && item.authorized_journey_id!==id) ? items.map(item=>item.input.id===activeRequest.input.id ? {...item,authorized_journey_id:id} : item) : items)} onAssistance={assistanceChanged} onSample={(draft,test,image)=>void openSample(draft,test,image)} />}
         </div>
+        {conversation && referenceTask && <ConversationQueue key={`${project.id}:${conversation}:${referenceTask.id}`} project={project.id} conversation={conversation} task={referenceTask.id} journalRevision={messages.at(-1)?.sequence ?? 0} />}
         <AgentComposer inputRef={messageInput} value={text} disabled={!ready || busy} inputLocked={Boolean(frozen.current)} mode={sendMode} onModeChange={setSendMode} onAttachImage={file=>void upload([file],true)} attachmentDisabled={Boolean(pinnedSelection)||stopComposer}
           onChange={value=>{unsent.current=value;setText(value);}}
           onCompositionChange={value=>{composing.current=value;}}

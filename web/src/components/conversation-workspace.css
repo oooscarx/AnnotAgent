@@ -1,4 +1,10 @@
 .conversation-workspace { min-width: 0; width: 100%; }
+.agent-message-queue { min-width: 0; border-block: 1px solid var(--aa-border); padding-block: 12px; }
+.agent-message-queue > p { padding-block: 12px; font-size: .875rem; }
+.agent-queue-rows { margin: 0; padding-inline-start: 20px; display: grid; gap: 16px; }
+.agent-queue-rows li { min-width: 0; overflow-wrap: anywhere; }
+.agent-queue-rows small { display: block; margin-block: 6px; }
+.agent-queue-rows button { margin-block-start: 4px; }
 .agent-workspace-layout { display: flex; align-items: stretch; }
 .agent-workspace-main { flex: 1; min-width: 0; }
 .agent-conversation-navigation { flex: 0 0 var(--aa-sidebar-width); min-width: 0; padding: 16px 12px; background: var(--aa-sidebar); border-inline-end: 1px solid var(--aa-border); }

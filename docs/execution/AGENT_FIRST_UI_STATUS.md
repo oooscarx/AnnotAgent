@@ -841,3 +841,28 @@ Remaining: this is storage admission, not a connected queue consumer. Applicatio
 preview/consent, existing planning-service dispatch and Composer queue controls
 still need integration and HTTP/browser evidence. Do not report the full queued
 conversation experience or the overall Agent-first goal complete.
+
+## M3 Composer inbox controls — 2026-09-09
+
+The current task now has a compact, expandable inbox above Composer, backed by the
+existing message-queue API. It shows saved text, image reference, Send mode and model
+snapshot, real execution status and terminal cancellation history. Running calls
+refer to explicit task stop; the inbox cannot disguise cancelling an active call as
+removing a waiting entry. Historical completed calls do not offer cancellation.
+Reads are paginated, bounded and abort on scope changes; owner-keyed component state
+does not carry another task's rows. Mount/reload/poll performs GET only. Cancellation
+errors remain visible across successful background reads until explicit retry or
+refresh. No grant or model execution is triggered by opening the inbox.
+
+Validation: Web 244 unit tests in 50 files passed (29422), including two new rendering
+contracts. Production build/typecheck passed. Actual browser/HTTP TEST Registry +
+queue test passed (52779; isolated `/tmp/annotagent-guided-e2e-73624`): inject failed
+cancellation, verify the error survives the next GET, retry successfully, refresh
+and observe both cancelled entries; reserved model calls remain one. Earlier run
+70466 also passed. Chunk-size warning remains. Fixture is explicitly TEST, not Live
+accuracy evidence. No user workspace writes, remote changes or push.
+
+Next: connect exact queued-plan preview/consent and dispatch through existing
+planning service. The inbox is usable for viewing/cancellation, but does not yet
+consume supplements; it explicitly says they have not been applied. Full goal stays
+active; final six-state visuals and complete stop/continue validation are pending.
