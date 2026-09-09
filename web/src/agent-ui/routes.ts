@@ -3,7 +3,8 @@ export function isAgentEntry(url: URL): boolean {
   return url.pathname === "/" ||
     (url.pathname === "/projects" && url.searchParams.get("new") !== "1") ||
     /^\/projects\/[^/]+\/work\/?$/.test(url.pathname) ||
-    url.pathname === "/settings" || url.pathname.startsWith("/settings/");
+    url.pathname === "/settings" || url.pathname.startsWith("/settings/") ||
+    url.pathname === "/projects/new" || /^\/projects\/[^/]+\/manage\/(data|labels)$/.test(url.pathname);
 }
 
 export function routeProject(url: URL): string | null {

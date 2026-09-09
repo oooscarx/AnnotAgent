@@ -43,6 +43,16 @@ Committed visual evidence: `single-ui-clean-cut/m0/disclosure-expanded.png` (144
 
 ## Remaining
 
+### Native project-management slice
+
+New native project index, creation, data and label routes use `ProjectManagement` and the HttpAdapter service boundary. No old page is embedded. Created IDs are stable within one submitted form; buttons guard concurrent submits. File selection is explicitly unsaved until uploaded. File uploads, folder import, label-group creation and adding categories use existing APIs. Dirty navigation/unload guards and abortable owner-checked reads are retained. Project creation and data/labels entry links no longer use old build paths.
+
+Isolated actual HTTP E2E passed: create TEST project → upload synthetic image → create bbox label group → add category → reload persisted schema. The test first rejects servers without the `external-model-only` TEST header and asserts no planning, publication or processing request occurred. Unit/typecheck/build passed before this slice's final route assertion. Screenshots `single-ui-clean-cut/m2/project-data.png` and `project-labels.png`: 1440×900, DPR 1, light, actual new React UI and TEST HTTP backend 34436fd; source baseline 6d8c784 plus this slice. URL prefix `http://127.0.0.1:8794/projects/project-01f8696d-2d15-485f-95bb-00682772261c/manage/`. User 8788 build/workspace untouched in this slice.
+
+Backend collaboration UIAPI-009: queued once to confirmed Backend UUID 01a0855e-9c39-7c33-9f18-93e084d14816 using codex queue, accepted message 01a08689-a9ee-7530-86e9-61b75623059e. Requested persistent, explicit cutover scope for new Pipeline/Run list/history/trash behavior while preserving old records/direct references. No reply/commit verified yet; queue acceptance is not delivery completion. No backend Rust files edited by frontend.
+
+Important: old project history/Review/Trash/advanced Workflow and some model operations still need native management surfaces. `main.tsx` still has its old-App branch, and the isolated build still contains old App/styles chunks. This remains a failing final acceptance condition; do not describe the product as clean-cut yet.
+
 ### Settings legacy-link cutover
 
 Removed `managementLinks` and its legacy return-URL construction from Agent Settings. Every `/settings/*` now renders only the new UI: canonical sections are parsed by the clean-cut contract, and `/settings/models` is Not Found rather than an alias. New Settings navigation uses canonical section paths. Standalone Settings no longer selects an unrelated first project task implicitly.

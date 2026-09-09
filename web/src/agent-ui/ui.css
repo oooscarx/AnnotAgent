@@ -1031,3 +1031,12 @@ caption {
 .ui-app section[aria-label="服务器运行配置"] fieldset { display: grid; gap: 12px; min-width: 0; border: 1px solid var(--aa-border); border-radius: 8px; padding: 16px; }
 .ui-app section[aria-label="服务器运行配置"] label,
 .ui-app .confirm-dialog form label { display: grid; gap: 6px; overflow-wrap: anywhere; }
+.ui-app .native-project-manager { overflow: auto; min-height: 0; padding: 24px clamp(16px, 4vw, 64px); }
+.ui-app .native-project-manager form { max-width: 720px; display: grid; gap: 16px; margin-block: 24px; }
+.ui-app .native-project-manager label { display: grid; gap: 8px; }
+.ui-app .native-project-manager input, .ui-app .native-project-manager textarea, .ui-app .native-project-manager select { width: 100%; min-width: 0; }
+.ui-app .native-image-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(160px,1fr)); gap: 16px; }
+.ui-app .native-image-grid figure { margin: 0; min-width: 0; }
+.ui-app .native-image-grid img { width: 100%; height: 140px; object-fit: contain; }
+.ui-app .native-image-grid figcaption { overflow-wrap: anywhere; padding-block: 8px; }
+.ui-app .native-management-tabs { display: flex; flex-wrap: wrap; gap: 16px; }

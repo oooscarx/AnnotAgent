@@ -1,0 +1,26 @@
+import { test, expect } from "@playwright/test";
+import { resolve } from "node:path";
+test("new UI creates a TEST project, uploads and defines labels through real HTTP", async ({page,request})=>{
+  const health=await request.get("/api/health");
+  expect(health.headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const requests:string[]=[];
+  page.on("request",r=>{if(r.method()!=="GET")requests.push(r.url());});
+  await page.goto("/projects/new");
+  await page.getByLabel("项目名称",{exact:true}).fill(`TEST clean-cut ${Date.now()}`);
+  await page.getByRole("button",{name:"创建项目",exact:true}).click();
+  await expect(page).toHaveURL(/\/projects\/project-[^/]+\/manage\/data$/);
+  await page.getByLabel("选择图片",{exact:true}).setInputFiles(resolve("../examples/robocup/images/synthetic-robocup.png"));
+  await page.getByRole("button",{name:"上传 1 张图片",exact:true}).click();
+  await expect(page.getByRole("heading",{name:"已保存图片 · 1"})).toBeVisible();
+  await page.getByRole("link",{name:"标签定义",exact:true}).click();
+  await page.getByLabel("标签组名称",{exact:true}).fill("测试足球目标");
+  await page.getByLabel("类别（逗号或换行分隔）",{exact:true}).fill("ball");
+  await page.getByRole("button",{name:"保存标签组",exact:true}).click();
+  await expect(page.getByText("标签组已保存；没有自动生成或执行方案。",{exact:true})).toBeVisible();
+  await page.getByLabel("新增类别",{exact:true}).fill("test-ball");
+  await page.getByRole("button",{name:"添加类别",exact:true}).click();
+  await expect(page.getByText("ball · test-ball",{exact:true})).toBeVisible();
+  await page.reload();
+  await expect(page.getByText("ball · test-ball",{exact:true})).toBeVisible();
+  expect(requests.filter(p=>/schema-proposals|journey-consents|processing-operations|\/publish/.test(p))).toEqual([]);
+});

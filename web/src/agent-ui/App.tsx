@@ -9,6 +9,7 @@ import type {
 import { Dialog } from "./Dialog";
 import { Disclosure } from "./Disclosure";
 import { SidebarTitle } from "./SidebarTitle";
+import { ProjectManagement } from "./ProjectManagement";
 import { Icon, BrandMark } from "./Icon";
 import { ProjectMenu } from "./ProjectMenu";
 import { PlanBlock } from "./PlanBlock";
@@ -82,7 +83,7 @@ export function AgentPreviewApp({
   const approvalPending = useRef(false);
   const owner = fixture ? null : routeProject(url);
   const selectedId = url.searchParams.get("task");
-  const task = (url.pathname.startsWith("/settings") && !selectedId) ? undefined : state.tasks.find(t => (!owner || t.project === owner) &&
+  const task = (!fixture && !owner && !selectedId) ? undefined : state.tasks.find(t => (!owner || t.project === owner) &&
     (!url.searchParams.get("conversation") || t.conversationId === url.searchParams.get("conversation")) &&
     (selectedId ? t.id === selectedId : owner ? t.id === `new:${owner}` : true));
   useEffect(()=>{
@@ -305,7 +306,7 @@ export function AgentPreviewApp({
             onClick={() =>
               void act(async () => {
                 if (!canNavigate()) return;
-                if (!fixture && !state.projects.length) { location.assign("/projects?new=1"); return; }
+                if (!fixture && !state.projects.length) { location.assign("/projects/new"); return; }
                 const id = await adapter.createTask(
                   task?.project || state.projects[0]?.id,
                 );
@@ -315,7 +316,7 @@ export function AgentPreviewApp({
           >
             <Icon name="plus" />{text("新任务", "New task")}
           </button>
-          {!fixture && <a className="new-project" href="/projects?new=1"><Icon name="plus" />新建项目</a>}
+          {!fixture && <a className="new-project" href="/projects/new"><Icon name="plus" />新建项目</a>}
           <label className="task-search"><Icon name="search" />
           <input
             aria-label="搜索任务"
@@ -406,7 +407,7 @@ export function AgentPreviewApp({
                       <p>
                         原应用中的数据、方案、处理记录、审核、导出与回收站保持不变。
                       </p>
-                      {fixture ? <p>此隔离界面尚未连接这些真实管理操作。</p> : <a href={`/projects/${encodeURIComponent(task.project)}?${new URLSearchParams({return_task:task.id,...(pane?{return_pane:"image",return_image:url.searchParams.get("image") || String(task.image)}:{})})}`}>项目管理 →</a>}
+                      {fixture ? <p>此隔离界面尚未连接这些真实管理操作。</p> : <><a href={`/projects/${encodeURIComponent(task.project)}/manage/data`}>图片数据</a><a href={`/projects/${encodeURIComponent(task.project)}/manage/labels`}>标签定义</a><a href={`/projects/${encodeURIComponent(task.project)}`}>历史与其他管理（迁移中）</a></>}
                   </ProjectMenu>
                 </>
               )}
@@ -419,7 +420,7 @@ export function AgentPreviewApp({
               <button onClick={() => setError("")}>关闭</button>
             </div>
           )}
-          {unknownSettings ? <section className="empty"><h1>页面不存在</h1><p>旧设置地址已停用，不会加载旧页面或猜测返回项目。</p><button onClick={()=>navigate({settings:"general"})}>打开设置</button></section> : section ? (
+          {!fixture && adapter.projectManagement && (settingsRoute.kind === "create-project" || (settingsRoute.kind === "management" && ["data","labels"].includes(settingsRoute.page))) ? <ProjectManagement key={url.pathname} service={adapter.projectManagement} projectId={settingsRoute.kind==="management"?settingsRoute.projectId:undefined} page={settingsRoute.kind==="create-project"?"create":settingsRoute.page as "data"|"labels"} created={async id=>{await adapter.refresh?.();history.pushState(null,"",`/projects/${encodeURIComponent(id)}/manage/data`);setUrl(new URL(location.href));}}/> : !fixture && settingsRoute.kind === "projects" ? <section className="native-project-manager"><h1>我的项目</h1><p>选择项目继续标注，或创建新的标注项目。</p><a className="primary" href="/projects/new">新建标注项目</a>{state.projects.map(p=><div className="settings-row" key={p.id}><strong>{p.title}</strong><a href={`/projects/${encodeURIComponent(p.id)}/work`}>继续工作</a><a href={`/projects/${encodeURIComponent(p.id)}/manage/data`}>管理数据</a></div>)}</section> : unknownSettings ? <section className="empty"><h1>页面不存在</h1><p>旧设置地址已停用，不会加载旧页面或猜测返回项目。</p><button onClick={()=>navigate({settings:"general"})}>打开设置</button></section> : section ? (
             <SettingsView
               key={section}
               adapter={adapter}

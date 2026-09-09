@@ -11,6 +11,9 @@ describe("production Agent routes and retained management", () => {
   it("never sends Settings subpages or invalid Settings URLs to the old App",()=>{
     for(const path of ["/settings/plugins","/settings/storage","/settings/agent-models","/settings/models","/settings/unknown"]) expect(isAgentEntry(url(path))).toBe(true);
   });
+  it("uses native project creation, data and label management",()=>{
+    for(const path of ["/projects/new","/projects/p/manage/data","/projects/p/manage/labels"]) expect(isAgentEntry(url(path))).toBe(true);
+  });
   it("never derives project ownership from a display name or another task", () => {
     expect(routeProject(url("/projects/p/work?task=foreign"))).toBe("p");
     expect(routeProject(url("/projects/%broken/work"))).toBe("invalid-project-id");
