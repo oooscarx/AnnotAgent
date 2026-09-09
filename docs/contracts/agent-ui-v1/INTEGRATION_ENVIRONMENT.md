@@ -76,3 +76,11 @@ python3 crates/annotagent-e2e-fixture/support/http_fixture.py --enable-fixture -
 - `manifest.stop`：原有 schema 在途取消后的 outcome_unknown 场景。stopping 是真实短暂过程，`initial` 记录该时刻的实际 HTTP 响应，不能让生产 API 永久停在伪造 stopping；重跑 seed 可再次观察。
 
 所有状态均由真实 API/worker 产生，无 SQL 插入业务状态、route.fulfill 或第二套调度器。新增 PNG 只是在已有合成测试图中插入有效 TEST 元数据，形成 3 个可区分的测试输入；不会改写原图或用户数据。seed 需要等待真实延迟与必要的 mutation rate-limit 退避，通常约一分钟。重启验证也比较新增场景的 Batch checkpoint、预算及 resume_actions。
+
+## UIAPI-002：TIME_WAIT 与端口占用
+
+`free_port` 使用 loopback + SO_REUSEADDR + bind/listen，允许已关闭连接的 TIME_WAIT 地址复用，仍拒绝现有 listener；不使用 SO_REUSEPORT、不杀进程、不关闭安全中间件。探测结束即释放 socket，不能消除探测到子进程绑定之间的竞争；实际 Rust/Tokio listener 绑定失败仍应报错。不要通过延迟数十秒或清理进程绕过问题。
+
+回归命令：`python3 crates/annotagent-e2e-fixture/support/test_http_fixture_ports.py`。它在自动端口制造真实 TCP TIME_WAIT，先确认旧裸 bind 失败，再确认新探测与 listener 能立即重启；另检查活动 listener 拒绝及 8787 禁止。
+
+28d5ec3 已加入 SO_REUSEADDR；UIAPI-002 独立增量增加 listen 探测和回归测试。尚停在 dd98168 的集成可使用本目录 `UIAPI-002_PORT_FIX.patch`（仅 free_port，包含完整修复，不依赖 UIAPI-001 新场景），然后运行本次交付的回归脚本；无需复制未提交文件。已有 28d5ec3 时正常集成本增量即可，不重复应用完整 patch。

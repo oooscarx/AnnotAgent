@@ -104,3 +104,5 @@ Session/evidence/proposal 可能尚未生成，字段必须检查 null；对象 
 5. 重新 GET task-navigation/thread/workspace。只发送不会产生助手回复或已存方案；用户批准对应 planning preview 后，服务端才生成结构化方案。
 
 fixture manifest 中 `plan_task_id` 是仅 Send 的待批准任务；`saved_plan` 则指向主 Task 已保存的 Builder proposal。二者必须分别验收，不要求前端凭空渲染 Plan 文本。
+
+UIAPI-002 再确认：`workspace.builder_operations` 的 JSON 形状是 **`{"items":[...]}`**，初始空值为 `{"items":[]}`，不是数组；使用 `workspace.builder_operations.items`。每项仍是 `{operation,schema_id,schema_revision,session}`，具体 Plan 字段见上一节。

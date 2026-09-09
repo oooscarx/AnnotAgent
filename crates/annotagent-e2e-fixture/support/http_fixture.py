@@ -28,6 +28,9 @@ def free_port(value):
         # but never share an active listener (SO_REUSEPORT is not enabled).
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind(("127.0.0.1", value))
+        # Probe a listener, not just a bound socket. The child still performs
+        # the authoritative bind after this short-lived probe is closed.
+        sock.listen(1)
         port = sock.getsockname()[1]
     if port == 8787:
         return free_port(0)

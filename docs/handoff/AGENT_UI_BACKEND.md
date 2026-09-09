@@ -85,3 +85,9 @@ Batch Trace：暂停后关掉应用再重开，继续相同 Batch checkpoint，�
 启动命令不变。manifest 新增 `saved_plan`、`controls.interrupted`、`controls.resumable`。后者为真实 paused Batch，已验证一次 resume 不重复已完成图，保留 2 completed / 1 pending 和 available action 给前端 E2E。stop 字段仍为 outcome_unknown 场景；stopping 是实时短暂状态，initial Trace 是实际响应，不能静态伪造。
 
 244 条真实 HTTP 请求及同库重启检查通过；UIAPI-001_TRACE.json 提供完整 trace 路径、脚本 hash、Plan 身份、Stop 回执、resume URL 与预算。新增 `HTTP_ADAPTER` 末节明确 `builder_operations.items[].session.builder_proposal`、工具记录与空任务首次 Send 的创建语义。没有通用助手文本；页面 mount 不得写虚构 journal。
+
+## UIAPI-002 独立端口修复
+
+根因是旧 Python free_port 未设置 SO_REUSEADDR，与实际 listener 的地址复用行为不一致；无 LISTEN 不等于不存在 TIME_WAIT。现使用 SO_REUSEADDR + bind/listen，保持活动 listener/8787 拒绝及子进程最终绑定检查。3 个 socket 回归及真实带 web-dist Ctrl-C/同库同端口重启通过。
+
+如果集成仍是 dd98168，`docs/contracts/agent-ui-v1/UIAPI-002_PORT_FIX.patch` 只包含完整 free_port 修复，可独立应用而不引入 UIAPI-001 新场景。若已集成 28d5ec3，则按提交顺序取得本增量即可。HTTP_ADAPTER 已再次明确 workspace.builder_operations 是 {items:[...]}。

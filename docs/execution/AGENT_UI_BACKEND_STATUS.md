@@ -34,3 +34,7 @@ BASE：c41b281b49252d520117029d39611865133798af。
 已在独立后端提交补齐 support：真实 interrupted Stop、3 图 paused Batch（实际 resume 复用第 1 个 child Run，再暂停于 2 completed / 1 pending）、明确 available resume、saved_plan JSON 路径。原有种子的 Plan-only Send 与已存 Builder proposal 分开标记。HTTP_ADAPTER 补充 assistant/Plan 字段与首次真实 Send 创建任务流程。
 
 验证：244 条真实 HTTP 请求通过；同库重启预算/checkpoint/动作一致；占用端口拒绝检查通过。证据 UIAPI-001_TRACE.json。此轮未改 Rust 业务、web、包或设计；仅 Python 测试支持及文档。没有重跑无改动的全量 Rust 测试，也没有以旧结果声称本轮重跑。未 push/merge。
+
+## UIAPI-002 TIME_WAIT 重启阻塞
+
+确认 dd98168 裸 bind 会在无 LISTEN 的 TIME_WAIT 上报 Errno48。28d5ec3 的 SO_REUSEADDR 修复现补 listen 探测与 3 项真实 socket 回归；已有服务仍拒绝、无 SO_REUSEPORT/安全豁免。带静态 dist 的真实 fixture Ctrl-C 后同库同端口立即重启通过，checkpoint/预算/SSE 不变。仅用自有 53155/53156，未操作前端 8792/8793 或用户 8787。见 UIAPI-002_TRACE.json；独立完整 patch 可用于 dd98168，不依赖 UIAPI-001 场景。
