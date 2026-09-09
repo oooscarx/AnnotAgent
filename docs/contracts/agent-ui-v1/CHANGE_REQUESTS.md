@@ -17,3 +17,5 @@
 - CR-B10 已完成：HTTP_ADAPTER.md 按 UI 字段逐项映射，明确 Send GET wrapper、Queue 内层 sequence、Run history wrapper、Stop 顶层回执及实际 credential POST。批准不是通用 token，revision/command ID 分实体保存。
 - CR-B11 确认保留：Thread 只有真实用户消息；模型结构化决策与系统回执不是通用助手聊天消息。前端无需也不得编造完成话术。
 - 本轮没有产品功能扩展、队列 scheduler/统一账本/Agent 架构改动；完成交接后只响应前端的具体集成问题。唯一合并和接线由视觉通过后的前端 Agent 在独立集成分支执行。
+
+- UIAPI-001 已交付：精确 paused/resumable 与 interrupted 测试场景；saved_plan 身份映射；首次实际 Send 建 Task 的 Adapter 说明。没有新增业务引擎或修改真实 Runtime 语义。见 UIAPI-001_TRACE.json。

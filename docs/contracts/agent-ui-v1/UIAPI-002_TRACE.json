@@ -1,0 +1,26 @@
+{
+  "ticket": "UIAPI-002",
+  "base_sha": "28d5ec39c4fd582546efa4cf0424cda82e58aae8",
+  "checks": {
+    "old_bind_reproduces_EADDRINUSE_without_listener": true,
+    "time_wait_immediate_rebind": true,
+    "active_listener_rejected": true,
+    "port_8787_rejected": true,
+    "real_http_web_dist": true,
+    "owned_process_ctrl_c_exit": 0,
+    "same_workspace_same_ports_restart_exit": 0,
+    "restart_snapshot_unchanged": true,
+    "restart_sse": true
+  },
+  "test_command": "python3 crates/annotagent-e2e-fixture/support/test_http_fixture_ports.py",
+  "tests_passed": 3,
+  "workspace": "/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-uhctsx0k",
+  "api_url": "http://127.0.0.1:53155",
+  "provider_url": "http://127.0.0.1:53156/openai/v1",
+  "web_dist": "/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-uhctsx0k/TEST-web-dist",
+  "logs": [
+    "/tmp/annotagent-uiapi002-live.log",
+    "/tmp/annotagent-uiapi002-restart.log"
+  ],
+  "ports_note": "Used owned dynamic ports 53155/53156; did not take over frontend 8792/8793 or user 8787."
+}

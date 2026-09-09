@@ -65,3 +65,22 @@ python3 crates/annotagent-e2e-fixture/support/http_fixture.py --enable-fixture -
 原生导出需要正式数据 ready；仅 sample 成功时 readiness 仍会拒绝，不能通过假 accepted 数据绕过。fixture 的确定性分类样例经真实 Processing 提交后可导出；不是模型质量验证。HTTP_TRACE 中模型结构化输出为 TEST transport 生成，应用的授权、DB、停止、恢复、导出均为真实代码。
 
 前端继续操作仍遵守 HTTP_ADAPTER.md 的 exact consent、CSRF、revision 与对象归属规则；fixture 没有权限豁免。模型选择下一请求生效，不能更改已经冻结的视觉 binding。没有通用自然语言 assistant 消息来源，卡片须标记模型结构化决策或系统回执。
+
+## UIAPI-001 新增的精确控制场景
+
+启动命令不变，种子增加两个 TEST Project，仍在同一隔离 SQLite，使用原有 `e2e-slow-sample` 外部 HTTP fixture。无需安装或引入真实 Provider。
+
+- `manifest.saved_plan`：已存 Builder proposal 的 Task、workspace URL、operation/session/draft ID 与 JSON 路径；与只有 Send 的 `plan_task_id` 区分。
+- `manifest.controls.interrupted`：真实 Processing 在途时发送 Stop，保留 `request_url,initial,final`；最终 `normalized_state=interrupted`，底层 Batch cancelled，不提供通用 resume。
+- `manifest.controls.resumable`：真实 3 图、单并发 Batch；pause 后完成 1 图，再通过 HTTP resume/pause 完成第 2 图，留下 1 图未处理。`resume_action.available=true`，可直接按其 method/url 继续；已完成 child Run 和累计预算保留。
+- `manifest.stop`：原有 schema 在途取消后的 outcome_unknown 场景。stopping 是真实短暂过程，`initial` 记录该时刻的实际 HTTP 响应，不能让生产 API 永久停在伪造 stopping；重跑 seed 可再次观察。
+
+所有状态均由真实 API/worker 产生，无 SQL 插入业务状态、route.fulfill 或第二套调度器。新增 PNG 只是在已有合成测试图中插入有效 TEST 元数据，形成 3 个可区分的测试输入；不会改写原图或用户数据。seed 需要等待真实延迟与必要的 mutation rate-limit 退避，通常约一分钟。重启验证也比较新增场景的 Batch checkpoint、预算及 resume_actions。
+
+## UIAPI-002：TIME_WAIT 与端口占用
+
+`free_port` 使用 loopback + SO_REUSEADDR + bind/listen，允许已关闭连接的 TIME_WAIT 地址复用，仍拒绝现有 listener；不使用 SO_REUSEPORT、不杀进程、不关闭安全中间件。探测结束即释放 socket，不能消除探测到子进程绑定之间的竞争；实际 Rust/Tokio listener 绑定失败仍应报错。不要通过延迟数十秒或清理进程绕过问题。
+
+回归命令：`python3 crates/annotagent-e2e-fixture/support/test_http_fixture_ports.py`。它在自动端口制造真实 TCP TIME_WAIT，先确认旧裸 bind 失败，再确认新探测与 listener 能立即重启；另检查活动 listener 拒绝及 8787 禁止。
+
+28d5ec3 已加入 SO_REUSEADDR；UIAPI-002 独立增量增加 listen 探测和回归测试。尚停在 dd98168 的集成可使用本目录 `UIAPI-002_PORT_FIX.patch`（仅 free_port，包含完整修复，不依赖 UIAPI-001 新场景），然后运行本次交付的回归脚本；无需复制未提交文件。已有 28d5ec3 时正常集成本增量即可，不重复应用完整 patch。

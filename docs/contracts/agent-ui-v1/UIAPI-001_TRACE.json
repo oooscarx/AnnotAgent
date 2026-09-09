@@ -1,0 +1,242 @@
+{
+  "ticket": "UIAPI-001",
+  "base_sha": "dd98168c6cab6db586af1af022d55eef132e9db1",
+  "fixture": "external-model-only; real application HTTP/SQLite/authorization/control",
+  "source_sha256": {
+    "crates/annotagent-e2e-fixture/support/http_control_scenes.py": "4294e0fade966ce61178abbabbf619b58916d789b11160858d7cb34af43299dd",
+    "crates/annotagent-e2e-fixture/support/http_fixture.py": "af0f802cdfa34c868c2a2745c6fa5fb1a27b860d2a7f6a4691fbe1e652af290e",
+    "crates/annotagent-e2e-fixture/support/http_smoke.py": "05df5a049a935c6aa1198e97183835b848b3fc5ea072bfa23343f99ec7242fa7"
+  },
+  "workspace": "/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-uhctsx0k",
+  "full_http_trace": "/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-uhctsx0k/HTTP_TRACE.json",
+  "request_count": 244,
+  "restart_trace": "/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-uhctsx0k/RESTART_TRACE.json",
+  "restart_unchanged": true,
+  "active_listener_rejected": true,
+  "saved_plan": {
+    "task_id": "cf8164b3-8e43-44d8-b5ab-75677d0b6b74",
+    "workspace_url": "/api/projects/TEST-agent-ui-01df0bf0-9c8f-41ce-93a7-3b8d56271dcf/conversations/a3e3a121-52d8-4103-a479-d2f4ef77e858/tasks/cf8164b3-8e43-44d8-b5ab-75677d0b6b74/workspace",
+    "object_path": "builder_operations.items[0].session.builder_proposal",
+    "operation_id": "d505b19b-c6be-4e67-b077-c57e1159e2fe",
+    "draft_id": "d505b19b-c6be-4e67-b077-c57e1159e2fe",
+    "session_id": "d505b19b-c6be-4e67-b077-c57e1159e2fe"
+  },
+  "controls": {
+    "interrupted": {
+      "project": "TEST-agent-ui-interrupted-82f03ccb-f6b1-48ea-a8f7-75c34ad956b2",
+      "conversation_id": "2227ff80-4afe-4dde-96ed-46bcd846c523",
+      "task_id": "d6256baf-f95c-412e-b4e2-9e76f7b88308",
+      "task_root": "/api/projects/TEST-agent-ui-interrupted-82f03ccb-f6b1-48ea-a8f7-75c34ad956b2/conversations/2227ff80-4afe-4dde-96ed-46bcd846c523/tasks/d6256baf-f95c-412e-b4e2-9e76f7b88308",
+      "batch_url": "/api/batches/5bbd0caf-6e1f-4a2b-bab6-85d584d9fe8d",
+      "draft_id": "0da446a4-608c-4be3-ba7e-cc9b6ffea05a",
+      "sample_test_id": "6a05a1db-115c-4e32-815b-414e4c74544c",
+      "request_url": "/api/projects/TEST-agent-ui-interrupted-82f03ccb-f6b1-48ea-a8f7-75c34ad956b2/conversations/2227ff80-4afe-4dde-96ed-46bcd846c523/stop-requests/31e1840e-838e-4d46-9f99-b6c2248b116e",
+      "initial": {
+        "created_at": "2026-09-09T10:47:30.271936+00:00",
+        "dispatch_error": null,
+        "message": {
+          "conversation_id": "2227ff80-4afe-4dde-96ed-46bcd846c523",
+          "input": {
+            "id": "31e1840e-838e-4d46-9f99-b6c2248b116e",
+            "image": null,
+            "reference": {
+              "scope": "stop_request",
+              "task_id": "d6256baf-f95c-412e-b4e2-9e76f7b88308"
+            },
+            "text": "停止"
+          },
+          "sequence": 2
+        },
+        "normalized_state": "stopping",
+        "observation": {
+          "description": "Cancellation is saved; the selected worker is still settling. Previously sent requests may still incur charges.",
+          "state": "cancel_pending"
+        },
+        "resume": {
+          "available": false,
+          "reason": "A stop receipt is not a resumable checkpoint. Use the exact paused Run/Batch or saved HumanRequest; never automatically resend an unknown Provider call."
+        },
+        "selected_target": {
+          "id": "5bbd0caf-6e1f-4a2b-bab6-85d584d9fe8d",
+          "kind": "processing",
+          "task_id": "d6256baf-f95c-412e-b4e2-9e76f7b88308"
+        },
+        "status": "cancel_requested",
+        "targets": [
+          {
+            "id": "5bbd0caf-6e1f-4a2b-bab6-85d584d9fe8d",
+            "kind": "processing",
+            "parent_journey_ids": [],
+            "state": "running",
+            "task_id": "d6256baf-f95c-412e-b4e2-9e76f7b88308"
+          }
+        ]
+      },
+      "final": {
+        "created_at": "2026-09-09T10:47:30.271936+00:00",
+        "dispatch_error": null,
+        "message": {
+          "conversation_id": "2227ff80-4afe-4dde-96ed-46bcd846c523",
+          "input": {
+            "id": "31e1840e-838e-4d46-9f99-b6c2248b116e",
+            "image": null,
+            "reference": {
+              "scope": "stop_request",
+              "task_id": "d6256baf-f95c-412e-b4e2-9e76f7b88308"
+            },
+            "text": "停止"
+          },
+          "sequence": 2
+        },
+        "normalized_state": "interrupted",
+        "observation": {
+          "description": "The selected operation is no longer active. Saved results and prior usage remain; this does not imply a refund.",
+          "state": "cancelled"
+        },
+        "resume": {
+          "available": false,
+          "reason": "A stop receipt is not a resumable checkpoint. Use the exact paused Run/Batch or saved HumanRequest; never automatically resend an unknown Provider call."
+        },
+        "selected_target": {
+          "id": "5bbd0caf-6e1f-4a2b-bab6-85d584d9fe8d",
+          "kind": "processing",
+          "task_id": "d6256baf-f95c-412e-b4e2-9e76f7b88308"
+        },
+        "status": "cancel_requested",
+        "targets": [
+          {
+            "id": "5bbd0caf-6e1f-4a2b-bab6-85d584d9fe8d",
+            "kind": "processing",
+            "parent_journey_ids": [],
+            "state": "running",
+            "task_id": "d6256baf-f95c-412e-b4e2-9e76f7b88308"
+          }
+        ]
+      }
+    },
+    "resumable": {
+      "project": "TEST-agent-ui-resumable-a67a315c-6054-49b1-9f12-93f5cb137f28",
+      "conversation_id": "af78063f-ad6c-465e-97a4-46eb99519b67",
+      "task_id": "e654c9c5-01ad-4a40-916d-7cfa3773995f",
+      "task_root": "/api/projects/TEST-agent-ui-resumable-a67a315c-6054-49b1-9f12-93f5cb137f28/conversations/af78063f-ad6c-465e-97a4-46eb99519b67/tasks/e654c9c5-01ad-4a40-916d-7cfa3773995f",
+      "batch_url": "/api/batches/8589cb31-b8de-46a4-8fd6-75b2a74d91c9",
+      "draft_id": "45c130cb-e81b-4fe9-8230-6b750db98787",
+      "sample_test_id": "436f80c4-4d56-4007-aa6d-c0d27e37ff8e",
+      "resume_action": {
+        "available": true,
+        "id": "8589cb31-b8de-46a4-8fd6-75b2a74d91c9",
+        "kind": "batch",
+        "method": "POST",
+        "reason": "Resume the saved checkpoint with its frozen workflow and remaining budget",
+        "url": "/api/batches/8589cb31-b8de-46a4-8fd6-75b2a74d91c9/resume"
+      },
+      "completed_child_run_ids": [
+        "18c69af3-878a-4f6e-97a4-dca8ef917b60",
+        "0ad4bf02-d355-4973-827d-424bf11ac7de"
+      ],
+      "budget": {
+        "planning_authorized_calls": 20,
+        "planning_reserved_calls": 8,
+        "processing_authorized_calls": 11,
+        "processing_reserved_calls": 2,
+        "total_authorized_calls": 31,
+        "total_reserved_calls": 10,
+        "project_authorized_calls": 31,
+        "project_reserved_calls": 10
+      }
+    }
+  },
+  "unknown_stop": {
+    "task_id": "c2820ef4-65b0-46b1-abde-bc16f74e84d2",
+    "request_url": "/api/projects/TEST-agent-ui-01df0bf0-9c8f-41ce-93a7-3b8d56271dcf/conversations/a3e3a121-52d8-4103-a479-d2f4ef77e858/stop-requests/30fff035-911b-48b9-974b-98ba19b864f7",
+    "initial": {
+      "created_at": "2026-09-09T10:47:17.737914+00:00",
+      "dispatch_error": null,
+      "message": {
+        "conversation_id": "a3e3a121-52d8-4103-a479-d2f4ef77e858",
+        "input": {
+          "id": "30fff035-911b-48b9-974b-98ba19b864f7",
+          "image": null,
+          "reference": {
+            "scope": "stop_request",
+            "task_id": "c2820ef4-65b0-46b1-abde-bc16f74e84d2"
+          },
+          "text": "停止"
+        },
+        "sequence": 5
+      },
+      "normalized_state": "stopping",
+      "observation": {
+        "description": "Cancellation is saved; the selected worker is still settling. Previously sent requests may still incur charges.",
+        "state": "cancel_pending"
+      },
+      "resume": {
+        "available": false,
+        "reason": "A stop receipt is not a resumable checkpoint. Use the exact paused Run/Batch or saved HumanRequest; never automatically resend an unknown Provider call."
+      },
+      "selected_target": {
+        "id": "28e569b1-2e67-4450-9b68-2a0d94156ec6",
+        "kind": "journey",
+        "task_id": "c2820ef4-65b0-46b1-abde-bc16f74e84d2"
+      },
+      "status": "cancel_requested",
+      "targets": [
+        {
+          "id": "28e569b1-2e67-4450-9b68-2a0d94156ec6",
+          "kind": "journey",
+          "parent_journey_ids": [],
+          "state": "running",
+          "task_id": "c2820ef4-65b0-46b1-abde-bc16f74e84d2"
+        }
+      ]
+    },
+    "final": {
+      "created_at": "2026-09-09T10:47:17.737914+00:00",
+      "dispatch_error": null,
+      "message": {
+        "conversation_id": "a3e3a121-52d8-4103-a479-d2f4ef77e858",
+        "input": {
+          "id": "30fff035-911b-48b9-974b-98ba19b864f7",
+          "image": null,
+          "reference": {
+            "scope": "stop_request",
+            "task_id": "c2820ef4-65b0-46b1-abde-bc16f74e84d2"
+          },
+          "text": "停止"
+        },
+        "sequence": 5
+      },
+      "normalized_state": "outcome_unknown",
+      "observation": {
+        "description": "Local execution ended. The remote completion and cost are unknown; no automatic retry was started.",
+        "state": "unknown"
+      },
+      "resume": {
+        "available": false,
+        "reason": "A stop receipt is not a resumable checkpoint. Use the exact paused Run/Batch or saved HumanRequest; never automatically resend an unknown Provider call."
+      },
+      "selected_target": {
+        "id": "28e569b1-2e67-4450-9b68-2a0d94156ec6",
+        "kind": "journey",
+        "task_id": "c2820ef4-65b0-46b1-abde-bc16f74e84d2"
+      },
+      "status": "cancel_requested",
+      "targets": [
+        {
+          "id": "28e569b1-2e67-4450-9b68-2a0d94156ec6",
+          "kind": "journey",
+          "parent_journey_ids": [],
+          "state": "running",
+          "task_id": "c2820ef4-65b0-46b1-abde-bc16f74e84d2"
+        }
+      ]
+    }
+  },
+  "resume_completed_before_pause": 2,
+  "resume_remaining": 1,
+  "notes": [
+    "No business Rust changes.",
+    "No generic assistant chat reply; persisted Builder proposal is a separate object.",
+    "Seed phase actually resumes a paused Batch once and leaves it paused again with a remaining image."
+  ]
+}

@@ -76,3 +76,33 @@ Settings 六组路径均在 `sections` 下：general 是浏览器偏好；provid
 ## Thread 的证据来源
 
 用户消息来自 SQLite Conversation journal，经 source_message/send receipt/reference.task_id 验证真实归属。模型回复目前保存为结构化业务决策和证据（例如 Schema decision/rationale、Builder tool trace、Feedback decision、Sample report），不持久化成通用 assistant chat message。`T/thread` 当前确实只有 user。系统状态来自 calls/operations/stop/export 等持久回执，不来自模型自由文本。前端可以展示带来源标签的业务卡片；不能生成“任务已完成”等假助手回复，也不能把 fixture 的 TEST 模型内容称为真实商业模型回答。
+
+## UIAPI-001：已存 Plan、文本与空新任务
+
+`mode=plan` 的 Send 回执表示用户选择的模式，**不是生成好的 Plan**。当前没有通用 `/plans` chat 实体。已存可审核方案沿用 Builder Session/Workflow Draft：
+
+|UI 内容|确切对象字段|
+|---|---|
+|Builder 历史容器|`workspace.builder_operations.items[]`，不是 `builder_operations[]`|
+|操作 ID / 状态|`item.operation.id / item.operation.status`|
+|引用实际方案|`item.operation.evidence.draft_id / draft_revision / draft_content_hash / session_id`（evidence 可 null）|
+|方案内容|`item.session.builder_proposal.draft`；包含 `id,revision,nodes,edges,annotation_schema` 等现有 Draft 字段|
+|方案解释和限制|`item.session.builder_proposal.rationale[] / warnings[] / alternatives[]`，以及 `estimated_model_calls_per_image,estimated_cost_tier,estimated_latency_ms`；是保存方案的结构化字段，不能宣称完整聊天助手原文|
+|候选计划|`item.session.plan_candidates[]`；允许为空，不能用 `builder_proposal` 伪造一个 candidate ID；`selected_candidate_id` 可 null|
+|下一步提示|`item.session.next_action`；系统/Builder 的动作提示，不是模型回答|
+|执行记录文字|`item.session.steps[].result.display_summary`，以及 `tool_name,sequence,success`；是工具回执|
+|模型调用证据|`item.session.model_calls`、`workspace.calls` 与业务 endpoint 的 decision；按来源呈现结构化记录，不拼接成 assistant chat message|
+
+Session/evidence/proposal 可能尚未生成，字段必须检查 null；对象 ID/状态真实存在时再显示卡片。Sample、Publish、Processing 是独立事实：Builder 的 `outcome=draft_ready_for_human_review` 和 `published=false,samples_tested=false` 不能解释为执行完成。后续 Draft 被编辑时，区分该操作保存的 `evidence.draft_revision` 与当前工作副本 revision，批准前重新取 exact preview。
+
+空新任务的建立顺序：
+
+1. 页面 mount、导航、新任务按钮可以展示本地空白 Composer；只做 GET，不创建假用户消息、不调用 append/send 自动填充 journal，也不生成可持久化的伪 Task UUID。
+2. 用户首次实际发送时，先使用 navigation/GET Project Conversation 得到真实 conversation_id；尚无 Conversation 时显式 POST `/api/projects/{p}/conversations`，读取响应 `conversation_id`。
+3. GET `/api/projects/{p}/goal` 取得 `revision`；生成并保存此次实际用户命令的 message.id，POST `C/send`：`{message:{id,text,image:null},schema_revision:goal.revision,mode:"plan"}`。创建新 Task 时省略 task_id；需要绑定图像时使用已导入的真实 image 引用。
+4. POST 响应的 `task_id` 才是 Task 路由/导航 key；`message.input.id`、`message.sequence` 是已存用户 journal 的身份。需要重试时保留原 ID/完整 payload，GET `C/send/{message.id}` 返回 `{input,receipt}` 或 null。后续明确发给现有任务的 supplement 带真实 task_id。
+5. 重新 GET task-navigation/thread/workspace。只发送不会产生助手回复或已存方案；用户批准对应 planning preview 后，服务端才生成结构化方案。
+
+fixture manifest 中 `plan_task_id` 是仅 Send 的待批准任务；`saved_plan` 则指向主 Task 已保存的 Builder proposal。二者必须分别验收，不要求前端凭空渲染 Plan 文本。
+
+UIAPI-002 再确认：`workspace.builder_operations` 的 JSON 形状是 **`{"items":[...]}`**，初始空值为 `{"items":[]}`，不是数组；使用 `workspace.builder_operations.items`。每项仍是 `{operation,schema_id,schema_revision,session}`，具体 Plan 字段见上一节。

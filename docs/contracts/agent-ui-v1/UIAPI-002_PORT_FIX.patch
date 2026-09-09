@@ -1,0 +1,18 @@
+diff --git a/crates/annotagent-e2e-fixture/support/http_fixture.py b/crates/annotagent-e2e-fixture/support/http_fixture.py
+index 54f837c..45f9948 100644
+--- a/crates/annotagent-e2e-fixture/support/http_fixture.py
++++ b/crates/annotagent-e2e-fixture/support/http_fixture.py
+@@ -24,7 +24,13 @@ def free_port(value):
+     if value == 8787:
+         raise ValueError("8787 is forbidden")
+     with socket.socket() as sock:
++        # Match the server bind: allow an owned prior socket in TIME_WAIT,
++        # but never share an active listener (SO_REUSEPORT is not enabled).
++        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+         sock.bind(("127.0.0.1", value))
++        # Probe a listener, not just a bound socket. The child still performs
++        # the authoritative bind after this short-lived probe is closed.
++        sock.listen(1)
+         port = sock.getsockname()[1]
+     if port == 8787:
+         return free_port(0)
