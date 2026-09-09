@@ -919,6 +919,78 @@ fn builder_discovery_should_stop(
                 || no_tool_turns >= 2))
 }
 
+fn inspect_builder_models_batch(
+    input: &WorkflowAdvisorInput,
+    ids: &[String],
+) -> Result<Vec<serde_json::Value>> {
+    ids.iter()
+        .map(|id| {
+            let resolved = resolve_builder_model_id(input, id)?;
+            if let Some(model) = input
+                .model_profiles
+                .iter()
+                .find(|m| m.id.to_string() == resolved)
+            {
+                return serde_json::to_value(model).map_err(Into::into);
+            }
+            let model = input
+                .expert_models
+                .iter()
+                .find(|m| m.model_id == resolved)
+                .ok_or_else(|| {
+                    anyhow!("unknown Registry model {id:?}; use list_ready_models for exact IDs")
+                })?;
+            Ok(
+                json!({"kind":"expert_model","model_id":model.model_id,"manifest":model,
+            "binding_kind":"model_binding","next_inspection_tool":"inspect_model_contracts",
+            "model_profile_binding_supported":false}),
+            )
+        })
+        .collect()
+}
+
+// A fallback is a new Draft identity, never an overwrite of an in-progress authored graph.
+fn fork_builder_salvage_target(
+    application: &LocalApplication,
+    session: &mut AgentSession,
+    seed: &WorkflowSuggestion,
+) -> Result<()> {
+    let previous = session
+        .working_draft
+        .as_ref()
+        .ok_or_else(|| anyhow!("missing Builder working Draft"))?
+        .draft_id
+        .clone();
+    let mut draft = seed.draft.clone();
+    draft.id = uuid::Uuid::new_v4().to_string();
+    draft.name = format!("{} · Registry alternative", draft.name);
+    draft.revision = 1;
+    draft.content_hash.clear();
+    draft.status = WorkflowDraftStatus::Editing;
+    draft.created_at = chrono::Utc::now();
+    draft.updated_at = draft.created_at;
+    application.store.save_workflow_draft(&draft)?;
+    if let Some(working) = session.working_draft.as_mut() {
+        working.draft_id.clone_from(&draft.id);
+        working.created_at = draft.created_at;
+        working.updated_at = draft.updated_at;
+    }
+    if let Some(memory) = session.working_memory.as_mut() {
+        memory.working_draft_id.clone_from(&draft.id);
+    }
+    session.set_builder_draft(draft.id.clone());
+    session.record_builder_plan_event(
+        annotagent_core::BuilderPlanEventKind::WorkingDraftCreated,
+        None,
+        None,
+        format!(
+            "Preserved incomplete Draft {previous}; materialize Registry alternative in {}",
+            draft.id
+        ),
+    );
+    Ok(())
+}
+
 fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefinition> {
     let model_ids = builder_model_ids(input);
     let node_definition_ids = input
@@ -1004,8 +1076,8 @@ fn pipeline_builder_live_tools(input: &WorkflowAdvisorInput) -> Vec<ToolDefiniti
         ),
         read(
             PipelineBuilderTool::InspectModelsBatch,
-            "Inspect only the specific Model Profiles whose omitted details would change a binding. At most eight IDs.",
-            json!({"type":"object","additionalProperties":false,"required":["ids"],"properties":{"ids":{"type":"array","minItems":1,"maxItems":8,"uniqueItems":true,"items":{"type":"string","enum":input.model_profiles.iter().map(|model| model.id.to_string()).collect::<Vec<_>>()}}}}),
+            "Inspect up to eight exact Registry IDs (Model Profiles or expert/model-instance IDs). Copy IDs from list_ready_models; local models use inspect_model_contracts, not bind_model_profile.",
+            json!({"type":"object","additionalProperties":false,"required":["ids"],"properties":{"ids":{"type":"array","minItems":1,"maxItems":8,"uniqueItems":true,"items":{"type":"string","enum":model_ids}}}}),
         ),
         read(
             PipelineBuilderTool::InspectContractsBatch,
@@ -12980,6 +13052,32 @@ impl LocalApplication {
                 Some("Discover and save a Registry-backed Pipeline Plan Candidate".to_owned());
             self.store.save_agent_session(&session)?;
         }
+        // Conversation Schema plans get durable candidates before either discovery or manual
+        // node editing consumes the finite Provider budget. Keep existing repair drafts intact.
+        let scoped_fallback = safe_suggestion.draft.annotation_schema.is_some()
+            && matches!(
+                build_mode,
+                annotagent_core::PipelineBuildMode::FromScratch
+                    | annotagent_core::PipelineBuildMode::ImproveExisting { .. }
+            );
+        let mut preseeded_candidates = BTreeSet::new();
+        if scoped_fallback {
+            persist_registry_conversion_fragments(&mut session, &input, &nodes)?;
+            synthesize_registry_plan_candidates(
+                &mut session,
+                &safe_suggestion,
+                &input,
+                &feasibility,
+                builder_constraints.priority,
+            )?;
+            preseeded_candidates.extend(
+                session
+                    .plan_candidates
+                    .iter()
+                    .map(|candidate| candidate.id.clone()),
+            );
+            self.store.save_agent_session(&session)?;
+        }
         let mut validation: Option<WorkflowValidationReport> = None;
         let mut dry_run: Option<WorkflowDryRunReport> = None;
         let mut inspected_dry_run = false;
@@ -13013,6 +13111,7 @@ impl LocalApplication {
             let has_complete_runnable_candidate = session.plan_candidates.iter().any(|candidate| {
                 candidate.sufficiency == annotagent_core::CandidateSufficiency::Complete
                     && candidate.is_runnable()
+                    && !preseeded_candidates.contains(&candidate.id)
             });
             let runtime_materializes_discovery = matches!(
                 &build_mode,
@@ -13028,8 +13127,13 @@ impl LocalApplication {
                     provider_turns,
                     builder_constraints.maximum_agent_turns,
                 );
+            let budget_salvage_due = scoped_fallback
+                && (provider_turns >= builder_constraints.maximum_agent_turns
+                    || session.usage.steps >= session.budget.max_steps);
             if runtime_materializes_discovery
-                && (discovery_limit_reached || has_complete_runnable_candidate)
+                && (discovery_limit_reached
+                    || has_complete_runnable_candidate
+                    || budget_salvage_due)
             {
                 if let annotagent_core::BuildFeasibility::Unsupported { reasons, .. } = &feasibility
                 {
@@ -13052,7 +13156,12 @@ impl LocalApplication {
                     // composition: derive typed fragments from the live Registry, then rank the
                     // baseline and every compatible refinement without guessing model brands.
                     persist_registry_conversion_fragments(&mut session, &fresh_input, &nodes)?;
-                    let salvage_seed = current.as_ref().unwrap_or(&safe_suggestion).clone();
+                    let salvage_seed = if scoped_fallback {
+                        &safe_suggestion
+                    } else {
+                        current.as_ref().unwrap_or(&safe_suggestion)
+                    }
+                    .clone();
                     synthesize_registry_plan_candidates(
                         &mut session,
                         &salvage_seed,
@@ -13060,6 +13169,9 @@ impl LocalApplication {
                         &feasibility,
                         builder_constraints.priority,
                     )?;
+                    if scoped_fallback && current.is_some() {
+                        fork_builder_salvage_target(self, &mut session, &salvage_seed)?;
+                    }
                     let (created, salvage_validation) = salvage_best_discovered_plan(
                         self,
                         &mut session,
@@ -13068,7 +13180,13 @@ impl LocalApplication {
                         settings,
                         &models,
                         builder_constraints.priority,
-                        if has_complete_runnable_candidate {
+                        if budget_salvage_due
+                            && provider_turns >= builder_constraints.maximum_agent_turns
+                        {
+                            annotagent_core::BuilderStopReason::ModelTurnBudgetReached
+                        } else if budget_salvage_due {
+                            annotagent_core::BuilderStopReason::TotalToolBudgetReached
+                        } else if has_complete_runnable_candidate {
                             annotagent_core::BuilderStopReason::RunnableCandidateTriggeredSalvage
                         } else {
                             annotagent_core::BuilderStopReason::DiscoveryLimitTriggeredSalvage
@@ -13469,19 +13587,9 @@ impl LocalApplication {
                     }
                     Ok(PipelineBuilderTool::InspectModelsBatch) => {
                         let ids = required_string_array_argument(&call.arguments, "ids", 8)?;
-                        let models = ids
-                            .iter()
-                            .map(|id| {
-                                input
-                                    .model_profiles
-                                    .iter()
-                                    .find(|model| model.id.to_string() == *id)
-                                    .cloned()
-                                    .ok_or_else(|| anyhow!("unknown Model Profile {id:?}"))
-                            })
-                            .collect::<Result<Vec<_>>>()?;
+                        let models=inspect_builder_models_batch(&input,&ids)?;
                         Ok(annotagent_core::AgentToolResult::summary(
-                            format!("Inspected {} Model Profiles", models.len()),
+                            format!("Inspected {} Registry models", models.len()),
                             json!({"context_revision": context_revision, "models": models}),
                         ))
                     }
@@ -26100,6 +26208,13 @@ export:
 
     #[tokio::test]
     async fn conversation_salvage_preserves_schema_target_and_admitted_registry() {
+        Box::pin(conversation_salvage_case(false)).await;
+    }
+    #[tokio::test]
+    async fn conversation_manual_draft_budget_salvages_separate_registry_alternative() {
+        Box::pin(conversation_salvage_case(true)).await;
+    }
+    async fn conversation_salvage_case(manual: bool) {
         let temporary = tempfile::tempdir().expect("temporary workspace");
         let application = LocalApplication::new(temporary.path()).expect("application");
         application
@@ -26256,7 +26371,48 @@ export:
                 .iter()
                 .any(|model| model.id == outsider.id)
         );
-        let provider = MockVisionProvider::new(MockScript {
+        input.resource_ids.clear();
+        let step = |name: &str, arguments: serde_json::Value| MockStep {
+            expect_task: Some("pipeline_builder".into()),
+            expect_message_contains: None,
+            response: MockResponseSpec::ToolCall {
+                name: name.into(),
+                arguments,
+            },
+            usage: MockUsage {
+                input_tokens: 10,
+                output_tokens: 10,
+            },
+        };
+        let manual_steps = vec![
+            step("get_pipeline_builder_context", json!({})),
+            step(
+                "inspect_models_batch",
+                json!({"ids":[detector.id.to_string(),segmenter.id.to_string()]}),
+            ),
+            step("resolve_pipeline_feasibility", json!({})),
+            step(
+                "create_pipeline_draft",
+                json!({"name":"TEST preserved manual draft"}),
+            ),
+            step(
+                "add_pipeline_node",
+                json!({"node_type":"core.image_input","node_id":"manual-image","configuration":{}}),
+            ),
+            step(
+                "add_pipeline_node",
+                json!({"node_type":"vlm_detection.detect","node_id":"manual-vlm","configuration":{}}),
+            ),
+            step(
+                "bind_model_profile",
+                json!({"node_id":"manual-vlm","model_profile_id":detector.id,"locked":true}),
+            ),
+            step(
+                "set_runtime_policy",
+                json!({"policy_id":"retry","configuration":{"maximum_attempts":2}}),
+            ),
+        ];
+        let mut script = MockScript {
             steps: (0..4)
                 .map(|_| MockStep {
                     expect_task: Some("pipeline_builder".into()),
@@ -26271,7 +26427,11 @@ export:
                     },
                 })
                 .collect(),
-        });
+        };
+        if manual {
+            script.steps = manual_steps;
+        }
+        let provider = MockVisionProvider::new(script);
         let report = application
             .run_workflow_advisor_loop(
                 "conversation-salvage-scope",
@@ -26285,7 +26445,7 @@ export:
                 None,
                 PipelineBuilderConstraints {
                     planning_only: true,
-                    maximum_agent_turns: 4,
+                    maximum_agent_turns: if manual { 8 } else { 4 },
                     maximum_dry_runs: 0,
                     ..PipelineBuilderConstraints::default()
                 },
@@ -26303,6 +26463,33 @@ export:
                 .any(|step| step.tool_name == "find_geometry_refinement_path")
         );
         let draft = report.suggestion.unwrap().draft;
+        if manual {
+            assert_eq!(provider.remaining_steps(), 0);
+            assert_eq!(
+                report.session.builder_stop_reason,
+                Some(annotagent_core::BuilderStopReason::ModelTurnBudgetReached)
+            );
+            let drafts = application
+                .store
+                .list_workflow_drafts(Some(project))
+                .unwrap();
+            let preserved = drafts
+                .iter()
+                .find(|d| d.name == "TEST preserved manual draft")
+                .expect("manual draft preserved");
+            assert_ne!(preserved.id, draft.id);
+            assert!(preserved.nodes.iter().any(|n| n.id == "manual-image"));
+            assert!(preserved.nodes.iter().any(|n| n.id == "manual-vlm"));
+            assert!(preserved.label_pipeline.is_none());
+            assert!(
+                report
+                    .session
+                    .planning_events
+                    .iter()
+                    .any(|e| format!("{e:?}").contains(&preserved.id))
+            );
+        }
+
         assert_eq!(draft.annotation_schema, Some(binding.clone()));
         let segment = draft
             .nodes
@@ -26850,6 +27037,30 @@ export:
             detail: Some("TEST metadata only, no inference".into()),
         };
         native_input.expert_models.push(native);
+        let inspected =
+            inspect_builder_models_batch(&native_input, std::slice::from_ref(&native_id)).unwrap();
+        assert_eq!(inspected[0]["model_id"], native_id);
+        assert_eq!(inspected[0]["kind"], "expert_model");
+        assert_eq!(
+            inspected[0]["next_inspection_tool"],
+            "inspect_model_contracts"
+        );
+        assert_eq!(inspected[0]["model_profile_binding_supported"], false);
+        assert!(
+            inspect_builder_models_batch(&native_input, &["model-instance:unknown".into()])
+                .is_err()
+        );
+        let batch_tool = pipeline_builder_live_tools(&native_input)
+            .into_iter()
+            .find(|t| t.name == "inspect_models_batch")
+            .unwrap();
+        assert!(
+            serde_json::to_value(batch_tool)
+                .unwrap()
+                .to_string()
+                .contains(&native_id)
+        );
+
         let mut native_session = session.clone();
         native_session.plan_candidates.clear();
         synthesize_registry_plan_candidates(
