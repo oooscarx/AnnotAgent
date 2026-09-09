@@ -5547,3 +5547,26 @@ no real Provider/data mutation, and no push or remote changes.
 with a non-unbound task. Started a new full Web typecheck/unit/build/178-case browser sweep
 against 2502ab3; durable log `/tmp/annotagent-web-combined-20260909.log`, evidence destination
 `/tmp/annotagent-conversation-combined-verified`. This sweep and Rust 6393 remain pending.
+
+### 2026-09-09 — Post-fix full Rust pass and classification delivery evidence
+
+**6393 exited 0** for workspace fmt check, all-target/all-feature clippy, all-feature tests
+and build. The durable log totals **713 passed, 6 explicitly ignored**. Conditional live
+and real-weight tests remain excluded; this is not a claim of real inference coverage.
+Full Web process **37872** is confirmed live, through case 12 without observed failure.
+Its isolated workspace is `/tmp/annotagent-guided-e2e-30211`; final results remain pending.
+
+Inspected the fresh classification export JSON and actual export screenshot from 99466.
+Conversation `f379c955-bf4b-46c6-9e19-a034f1ff9001`, task
+`5a91d8b7-5a96-4583-995a-5a99ed6283c4`, Draft/workflow
+`544686d9-cc74-4172-a59c-c36db472e3f0` version 1, sample
+`abeeea6c-00cd-4c87-bcb0-ac460f29aba4`, processing/batch
+`1e9c1b39-0861-422b-b962-12708c7c35b7`, delivery
+`7f314511-879c-41b3-977a-c03ad8d44fb0`. The one human-accepted classification now records
+`task_id: annotation_5a91d8b75a964583995a5a99ed6283c4`, not `unbound`. ZIP SHA-256
+`5b20f2fa7619a2655ad48497d1469fba8c536489f2e1563b9ae86375db831261` matches its delivery.
+Screenshot `/tmp/annotagent-classification-binding-final/formal-export-classification.png`
+shows the real download/report and correctly distinguishes a server folder from a local
+desktop folder. Model provenance still uses a binding alias in this exporter; this evidence
+does not claim the archive contains a complete standalone model registry or all Artifacts.
+No Live quality or real-human novice test was performed. No push or remote change.
