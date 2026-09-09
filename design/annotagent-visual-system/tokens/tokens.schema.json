@@ -5,8 +5,9 @@
   "required": [
     "name",
     "version",
-    "color",
-    "typography"
+    "schema_version",
+    "themes",
+    "common"
   ],
   "properties": {
     "name": {
@@ -15,7 +16,12 @@
     "version": {
       "type": "string"
     },
-    "color": {
+    "schema_version": { "const": 2 },
+    "themes": {
+      "type": "object",
+      "required": ["light", "dark"]
+    },
+    "common": {
       "type": "object"
     },
     "typography": {

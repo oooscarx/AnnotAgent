@@ -166,3 +166,32 @@ no document horizontal overflow. These are viewport tests, NOT native 200% zoom 
 usability evidence. Existing chunk-size warning remains. The whole-entry Send contract test
 is still intentionally red; no claim of M1/M2 completion or full regression. No push and no
 remote changes; unrelated screenshot/design-package changes remain unstaged.
+
+## M1 third slice — canonical Paper & Graphite token generation
+
+Previous turn was progress (22dafd9, task navigation plus three focused browser cases).
+Migrated the existing production `design/annotagent-visual-system/tokens/tokens.json` to
+schema version 2, using the supplied Paper & Graphite values, system sans/mono fonts and
+layout dimensions. The reference kit is not imported at runtime. New
+`scripts/generate-tokens.mjs` generates runtime CSS and both existing bundled CSS copies;
+Web typecheck/build now reject drift. Historical package examples/checksums remain explicitly
+documented as original-delivery references, not current verification. TUI migration remains.
+
+Kept all eight established annotation slots and halo independently of UI colors. Added
+paired foreground tokens for primary/danger/success/warning surfaces and updated existing
+filled controls, including theme-aware checkbox marks. Legacy teal/violet compatibility
+aliases preserve older management consumers but no longer supply decorative brand colors.
+Removed the blanket rounded background on every conversation message and used the canonical
+720px thread maximum/216px sidebar values. Brand asset migration and old Journey/composer
+replacement remain outstanding; this is not a claim of finished Agent UI.
+
+Web typecheck, generation check and 236 unit tests passed (7678), including both themes'
+text/filled-control contrast >=4.5 and unchanged annotation palette. Production build and
+three isolated browser cases passed (70151). Repeated theme/pane browser case 41061 passed
+after adding computed button-background assertions and disabling screenshot transitions.
+Actual isolated application screenshots are `/tmp/annotagent-agent-first-light-navigation.png`
+and `/tmp/annotagent-agent-first-dark-navigation.png`; inspected the dark page. They contain
+TEST Project data and real UI, not prototype assets or Live model results, and are partial
+M1 evidence, NOT the required final six-state deliverable. Full Rust/management/theme suite,
+native 200%, paid model accuracy and real-human usability are not claimed. Build's existing
+large-chunk warning remains. No push, remote change, secret use or real workspace cleanup.

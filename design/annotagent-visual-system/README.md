@@ -1,14 +1,22 @@
-# AnnotAgent Visual System 1.0
+# AnnotAgent Visual System — Paper & Graphite migration
+
+Production tokens now use schema version 2. Edit only `tokens/tokens.json`, then run
+`node scripts/generate-tokens.mjs` from the repository root. The runtime CSS and both
+bundled CSS copies are generated together; Web typecheck/build reject stale output.
+The Agent UI kit is design reference only and is not a runtime dependency. Historical
+TypeScript/Tailwind/TUI examples, palette previews and package SHA256SUMS describe the
+original 1.0 delivery, not current production theme verification; their migration is not
+yet complete. Annotation slots keep their established colors independently of UI status.
 
 这是 **AnnotAgent Core** 的完整视觉系统包，并包含 RoboCup Perception Skill 的领域扩展与示例项目资产。AnnotAgent 是产品；RoboCup 不是产品壳，也不拥有全局导航或通用空状态。
 
 ## 最重要的规则
 
 1. **Core 品牌叫 AnnotAgent。** Skill 是可注册扩展；RoboCup 只是其中一个示例。
-2. **代码中的唯一视觉真相**是 `tokens/tokens.json`、`tokens/tokens.css` 和 `brand/logo/svg/`。
+2. **颜色和尺寸的唯一视觉真相**是 `tokens/tokens.json`；CSS 为生成文件。品牌轮廓保留于 `brand/logo/svg/`。
 3. `reference/` 中两张 AI 生成品牌板只用于气质参考。不要从图片吸色，不要把图片裁下来当正式 Logo，也不要照着其中可能失真的小字实现界面。
 4. 功能状态不能只靠颜色表达。必须同时使用文字、形状、图标或线型。
-5. 不包含任何字体文件。推荐 Inter 和 JetBrains Mono；未安装时使用系统 fallback。
+5. 不包含或下载字体文件。使用系统无衬线中文/西文字体；仅技术值使用系统等宽字体。
 
 ## 目录
 

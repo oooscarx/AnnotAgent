@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "typecheck": "tsc --noEmit",
+    "tokens:check": "node ../scripts/generate-tokens.mjs --check",
+    "typecheck": "npm run tokens:check && tsc --noEmit",
     "test": "vitest run --exclude 'e2e/**'",
-    "build": "tsc --noEmit && vite build",
+    "build": "npm run tokens:check && tsc --noEmit && vite build",
     "test:e2e": "playwright test"
   },
   "dependencies": {

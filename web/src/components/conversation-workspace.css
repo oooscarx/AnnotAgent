@@ -1,7 +1,7 @@
 .conversation-workspace { min-width: 0; width: 100%; }
 .agent-workspace-layout { display: flex; align-items: stretch; }
 .agent-workspace-main { flex: 1; min-width: 0; }
-.agent-conversation-navigation { flex: 0 0 216px; min-width: 0; padding: 16px 12px; background: var(--aa-surface-muted); border-inline-end: 1px solid var(--aa-border); }
+.agent-conversation-navigation { flex: 0 0 var(--aa-sidebar-width); min-width: 0; padding: 16px 12px; background: var(--aa-sidebar); border-inline-end: 1px solid var(--aa-border); }
 .agent-conversation-navigation[data-collapsed=true] { flex-basis: 100px; }
 .agent-conversation-navigation > button { width: 100%; }
 .agent-conversation-navigation > div:not([hidden]) { display: flex; flex-direction: column; gap: 20px; padding-block-start: 20px; }
@@ -19,7 +19,7 @@
 .conversation-split[data-artifacts-open=false] { grid-template-columns: minmax(0,1fr); }
 .conversation-split[data-artifacts-open=false] > .conversation-divider,
 .conversation-split[data-artifacts-open=false] > .conversation-image-panel { display: none; }
-.conversation-split[data-artifacts-open=false] > .conversation-panel { width: min(100%, 768px); margin-inline: auto; }
+.conversation-split[data-artifacts-open=false] > .conversation-panel { width: min(100%, var(--aa-thread-max)); margin-inline: auto; }
 .conversation-panel, .conversation-image-panel { min-width: 0; padding: clamp(12px,2vw,24px); }
 .conversation-panel { display: flex; flex-direction: column; gap: 12px; }
 .conversation-panel > * { flex-shrink: 0; }
@@ -28,7 +28,7 @@
 .conversation-panel h2, .conversation-panel p, .conversation-image-tools h2 { margin: 0; }
 .conversation-development-note { font-size: .85rem; border-inline-start: 3px solid var(--aa-primary); padding: 8px 12px; }
 .conversation-messages { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 16px; }
-.conversation-messages li { display: grid; gap: 8px; padding: 12px; background: var(--aa-surface-muted); border-radius: 12px; overflow-wrap: anywhere; }
+.conversation-messages > li { display: grid; gap: 8px; padding-block: 12px; overflow-wrap: anywhere; }
 .conversation-messages p { white-space: pre-wrap; }
 .conversation-messages button { text-align: start; white-space: normal; overflow-wrap: anywhere; }
 .conversation-composer { display: grid; gap: 10px; margin-top: auto; }

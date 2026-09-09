@@ -14,6 +14,13 @@ test("artifact pane opens on demand and restores without losing unsent text", as
   await expect(navigation.getByRole("searchbox")).not.toBeVisible();
   await navigation.getByRole("button", { name: "Show tasks", exact: true }).click();
   await expect(navigation.getByRole("searchbox")).toBeVisible();
+  for (const theme of ["light", "dark"] as const) {
+    await page.evaluate(value => document.documentElement.setAttribute("data-aa-theme", value), theme);
+    await expect(page.locator("body")).toHaveCSS("background-color", theme === "light" ? "rgb(247, 247, 244)" : "rgb(24, 26, 24)");
+    await expect(navigation.getByRole("button", { name: "Projects", exact: true })).toHaveCSS("background-color", theme === "light" ? "rgb(255, 255, 255)" : "rgb(32, 35, 32)");
+    await page.screenshot({ path: `/tmp/annotagent-agent-first-${theme}-navigation.png`, fullPage: true, animations: "disabled" });
+  }
+  await page.evaluate(() => document.documentElement.setAttribute("data-aa-theme", "light"));
   await expect(page.getByRole("region", { name: "Project images", exact: true })).not.toBeVisible();
   await input.fill("TEST unsent target stays here");
   await page.getByRole("button", { name: "Open data and results", exact: true }).click();
