@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Registry node catalog migration
+
+Native advanced editor now reads the actual project Workflow Catalog, shows shared stages and per-Label pipelines with real model binding IDs, and inserts registered nodes into the selected authoritative composition (or plain DAG). New nodes use catalog ports/defaults, remain explicitly unconnected, and do not invent model bindings or auto-wire a plausible-looking route. Duplicate IDs/foreign catalogs/unknown nodes are rejected. Invalid unsaved JSON is preserved and blocks catalog mutations rather than being discarded. Rich port linking and per-field model/parameter forms still remain; this is not complete editor parity.
+
+Typecheck, 307 unit tests plus one pending cutover TODO and isolated production build passed. Thirteen browser tests passed; the real HTTP Draft test now selects `core.image_input` from the live Registry catalog, inserts it, saves exactly once and refreshes. Initial test selectors using getByLabel on dynamically populated select/textarea failed despite their correct accessible role/name in the browser snapshot; changed to exact combobox/textbox role locators and reran the entire suite successfully. Twelve tests use real TEST HTTP; one remains an explicit Worker-response fixture. Source `1d688d1` plus this slice, isolated dist `/tmp/annotagent-workflow-catalog-dist`; owned server stopped, user service unchanged. Static validation/history scope interfaces remain pending, as do publication/management parity and root deletion. Goal active; no push.
+
 ## Native advanced Draft editing
 
 Added new WorkflowEditor on `/projects/:project/manage/pipelines/:draft`; sample conversation references now offer an owned direct link. Uses existing project-filtered draft read plus exact ID/project match (no single-Draft GET exists yet), PATCH If-Match and unchanged revision. Advanced execution JSON is explicitly whitelisted to configuration fields; identity/revision/status/timestamps cannot be edited. Published/archived drafts are read-only, save errors preserve input, dirty navigation/unload guard retained. Saved node/binding summary is separate from unsaved editing. No old page component imported.
