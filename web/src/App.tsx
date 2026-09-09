@@ -28,7 +28,7 @@ import {
   isEnvironmentVariableName,
 } from "./providerCatalog";
 import { visualProfilesForSkills } from "./skills/visualProfiles";
-import { projectOriginalRectToSubmitted, workflowNodeTitle, guidedWorkflowNodes, guidedPipelineStepGroups, pipelineNodeOutput, pipelineNodeKind, pipelineNodeParameters, workflowNodeModelCapability, artifactMasks, artifactRects, artifactCrops, evidenceGateReport, geometrySemanticsLabel, scoreSemanticsLabel, artifactDetectionMarks, artifactCropMarks, annotationDetectionMarks, clampUnit, guidedWorkflowConcept, parseArtifactRect, artifactPolygonBounds, geometryStateFromDetection, artifactVisualContext, markColor, detectionScoreValue, parseDetectionEvidence, type ArtifactRect, type ArtifactMark, type ModelInputTraceView } from "./pipelinePresentation";
+import { projectOriginalRectToSubmitted, workflowNodeTitle, guidedWorkflowNodes, guidedPipelineStepGroups, pipelineNodeOutput, pipelineNodeKind, pipelineNodeParameters, workflowNodeModelCapability, artifactMasks, evidenceGateReport, geometrySemanticsLabel, scoreSemanticsLabel, artifactDetectionMarks, artifactCropMarks, annotationDetectionMarks, clampUnit, guidedWorkflowConcept, parseArtifactRect, artifactPolygonBounds, geometryStateFromDetection, artifactVisualContext, markColor, detectionScoreValue, parseDetectionEvidence, type ArtifactRect, type ArtifactMark, type ModelInputTraceView } from "./pipelinePresentation";
 import {ArtifactMaskLayer} from "./components/ArtifactMaskLayer";
 import { annotationColor, annotationVisual, type LabelVisualMapping } from "./annotationVisuals";
 import { deriveProjectRunView } from "./runState";
@@ -78,7 +78,6 @@ import type {
   PipelineArtifactType,
   PipelineSource,
   PipelineStep,
-  ProviderPresetProfile,
   ProviderProfile,
   RegistryModelProfile,
   ModelCapability,
@@ -88,7 +87,6 @@ import type {
   ModelBindingRole,
   ModelCapabilityQualityContract,
   GlobalModelDefaults,
-  LegacyRegistryImportPreview,
   ExportReadiness,
   ProjectExportResult,
   GuidedAction,
@@ -5459,118 +5457,6 @@ function pipelineModelBinding(nodeType: string, catalog?: WorkflowCatalog) {
   };
 }
 
-function PipelineArtifactInspector({
-  inspection,
-  nodeId,
-  replay,
-}: {
-  inspection: RunNodeArtifactInspection;
-  nodeId: string;
-  replay?: NodeReplayReport;
-}) {
-  const node = inspection.nodes.find((item) => item.node_id === nodeId);
-  if (!node) return null;
-  const imageUrl =
-    inspection.image_index === undefined
-      ? undefined
-      : `/api/projects/${inspection.project_id}/images/${inspection.image_index}/content`;
-  const rects = artifactRects(node.outputs);
-  const crops = artifactCrops(node.outputs);
-  return (
-    <div className="artifact-inspector-grid">
-      <div className="artifact-preview-panel">
-        <span className="eyebrow">{t("Visual preview")}</span>
-        {imageUrl ? (
-          <div className="artifact-image-stage">
-            <img src={imageUrl} alt={t("Original Pipeline input")} />
-            <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label={t("Artifact bounding boxes")}>
-              {rects.map((rect, index) => (
-                <rect
-                  key={`${rect.x}-${rect.y}-${index}`}
-                  x={rect.x * 100}
-                  y={rect.y * 100}
-                  width={rect.width * 100}
-                  height={rect.height * 100}
-                />
-              ))}
-            </svg>
-          </div>
-        ) : (
-          <small>This Run predates replayable image identity.</small>
-        )}
-        {imageUrl && crops.length > 0 && (
-          <div className="crop-preview-list">
-            {crops.map((crop, index) => (
-              <svg
-                key={`${crop.x}-${crop.y}-${index}`}
-                viewBox={`${crop.x * 100} ${crop.y * 100} ${crop.width * 100} ${crop.height * 100}`}
-                aria-label={`Crop ${index + 1}`}
-              >
-                <image href={imageUrl} x="0" y="0" width="100" height="100" />
-              </svg>
-            ))}
-          </div>
-        )}
-      </div>
-      <div className="artifact-node-detail">
-        <span className="eyebrow">{node.operation}</span>
-        <h3>{node.node_id}</h3>
-        <div className="workflow-facts">
-          <Fact label={t("Status")} value={node.status} />
-          <Fact label={t("Latency")} value={`${node.latency_ms} ms`} />
-          <Fact label={t("Attempts")} value={node.attempts} />
-          <Fact label={t("Cache")} value={node.cache_hit ? "hit" : "miss"} />
-        </div>
-        {node.error && (
-          <p className="run-reason">
-            <code>{node.error.code}</code> {node.error.summary}
-          </p>
-        )}
-        <details open>
-          <summary>{t("Configuration")}</summary>
-          <pre>{JSON.stringify(node.configuration, null, 2)}</pre>
-        </details>
-        <details>
-          <summary>{t("Inputs ·")}{" "}{node.inputs.length}</summary>
-          <pre>{JSON.stringify(node.inputs, null, 2)}</pre>
-        </details>
-        <details open>
-          <summary>{t("Outputs ·")}{" "}{node.outputs.length}</summary>
-          <pre>{JSON.stringify(node.outputs, null, 2)}</pre>
-        </details>
-        {replay && replay.replayed_from === node.node_id && (
-          <div className="validation-report valid">
-            <strong>{t("Sandbox Replay completed")}</strong>
-            <small>{t("Re-executed:")}{" "}{replay.reexecuted_nodes.join(", ")}</small>
-            <small>{t("Preserved upstream:")}{" "}{replay.preserved_upstream_nodes.join(", ")}
-            </small>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-
-
-
-
-
-
-
-
-const REGISTRY_MODEL_CAPABILITIES: { id: ModelCapability; label: string }[] = [
-  { id: "text_generation", label: "Text generation" },
-  { id: "vision_language", label: "Vision language" },
-  { id: "image_classification", label: "Image classification" },
-  { id: "object_detection", label: "Object detection" },
-  { id: "open_vocabulary_detection", label: "Open-vocabulary detection" },
-  { id: "phrase_grounding", label: "Phrase grounding" },
-  { id: "semantic_segmentation", label: "Semantic segmentation" },
-  { id: "prompted_segmentation", label: "Prompted segmentation" },
-  { id: "instance_segmentation", label: "Instance segmentation" },
-  { id: "keypoint_detection", label: "Keypoint detection" },
-];
 
 const PLUGIN_STATUS_GROUPS: { title: string; description: string; statuses: string[] }[] = [
   { title: "Ready to use", description: "Enabled models that passed their isolated process test.", statuses: ["ready"] },
@@ -6297,138 +6183,6 @@ function WorkflowDetail({
   );
 }
 
-function ModelsPage({
-  models,
-  onConfigure,
-  onError,
-}: {
-  models: ModelBinding[];
-  onConfigure: () => void;
-  onError: (value: string) => void;
-}) {
-  const [catalogModels, setCatalogModels] = useState(models);
-  const [testingModel, setTestingModel] = useState<string>();
-  const [testResults, setTestResults] = useState<Record<string, DetectionWorkerTestResult>>({});
-  useEffect(() => {
-    void api.models().then((value) => setCatalogModels(value.models)).catch((error: Error) => onError(error.message));
-  }, []);
-  const testWorker = (modelId: string) => {
-    setTestingModel(modelId);
-    void api.testModel(modelId)
-      .then((result) => setTestResults((current) => ({ ...current, [modelId]: result })))
-      .catch((error: Error) => onError(error.message))
-      .finally(() => setTestingModel(undefined));
-  };
-  const modelGroups = [
-    { id: "ready", title: "Ready", detail: "Runnable now" },
-    { id: "configured_unavailable", title: "Configured but unavailable", detail: "Verify credentials or connection" },
-    { id: "labs", title: "Experimental / Labs", detail: "Requires an explicitly installed local Worker and weights" },
-    { id: "disabled", title: "Disabled", detail: "Excluded from recommendations" },
-  ] as const;
-  return (
-    <section className="page-stack">
-      <div className="toolbar-panel">
-        <div>
-          <span className="eyebrow">Provider catalog and bindings</span>
-          <h2>{t("Models")}</h2>
-          <p>
-            Credentials stay in the native system credential store; Workflows refer to
-            stable binding IDs.
-          </p>
-        </div>
-        <button className="primary" onClick={onConfigure}>
-          Configure provider
-        </button>
-      </div>
-      <div className="split-grid">
-        <Panel title="Configured bindings" eyebrow="Workspace default">
-          {catalogModels.length ? (
-            <div className="binding-list">
-              {modelGroups.map((group) => {
-                const bindings = catalogModels.filter((binding) => binding.availability_group === group.id);
-                if (!bindings.length) return null;
-                return <section className="model-availability-group" key={group.id} aria-labelledby={`model-group-${group.id}`}>
-                  <header><div><strong id={`model-group-${group.id}`}>{t(group.title)}</strong><small>{group.detail}</small></div><b>{bindings.length}</b></header>
-                  {bindings.map((binding) => (
-                <article key={binding.id}>
-                  <span className="catalog-monogram">AI</span>
-                  <div>
-                    <strong>{binding.id}</strong>
-                    <small>
-                      {binding.role} · {binding.scope.replaceAll("_", " ")}
-                    </small>
-                    <code>
-                      {binding.provider} / {binding.model}
-                    </code>
-                    <small
-                      title={binding.health_detail}
-                    >{`Health · ${binding.health_status}`}</small>
-                    {binding.capabilities?.length ? <small>Configured contract · {binding.capabilities.join(" · ")}</small> : null}
-                    {binding.score_semantics && <small>Score · {binding.score_semantics.replaceAll("_", " ")}</small>}
-                    {binding.architecture && <small>Architecture · {binding.architecture}</small>}
-                    {binding.model_version && <small>Version · {binding.model_version}</small>}
-                    {binding.checkpoint_sha256 && <small title={binding.checkpoint_sha256}>Checkpoint · {binding.checkpoint_sha256.slice(0, 12)}…</small>}
-                    {binding.label_space?.length ? <small>Label space · {binding.label_space.join(" · ")}</small> : null}
-                    {binding.endpoint && <small>Endpoint · {binding.endpoint}</small>}
-                    {binding.cost_per_request !== undefined && <small>Estimated cost · ${binding.cost_per_request} / request</small>}
-                    {binding.license_summary && <small>License · {binding.license_summary}</small>}
-                    {binding.scope === "workspace_worker" && <div className="worker-actions">
-                      <button
-                        onClick={() => testWorker(binding.id)}
-                        disabled={testingModel === binding.id}
-                        title="Read health, capabilities, models, and contracts from the Worker"
-                      >
-                        {testingModel === binding.id ? t("Discovering…") : t("Refresh discovery")}
-                      </button>
-                    </div>}
-                    {testResults[binding.id] && <div className="worker-discovery" role="status">
-                      <strong>{testResults[binding.id].passed ? t("Discovery passed") : `Stopped at ${testResults[binding.id].failed_stage ?? "discovery"}`}</strong>
-                      <small>{testResults[binding.id].capabilities?.capabilities.join(" · ") || testResults[binding.id].error}</small>
-                      <small>{testResults[binding.id].evidence?.detail}</small>
-                    </div>}
-                    {binding.scope === "workspace_worker" && <details className="worker-setup-instructions">
-                      <summary>View setup instructions</summary>
-                      <p>Start a protocol v1 HTTP Vision Worker at this endpoint, then enable and test it. AnnotAgent never downloads model weights during Server startup.</p>
-                      <code>{binding.endpoint ?? "Configure a Worker URL in Settings"}</code>
-                    </details>}
-                  </div>
-                </article>
-                  ))}
-                </section>;
-              })}
-            </div>
-          ) : (
-            <Empty
-              title="No model bindings"
-              detail="Choose a provider in Settings."
-            />
-          )}
-        </Panel>
-        <Panel title="Provider catalog" eyebrow="Curated compatible options">
-          <div className="catalog-list">
-            {PROVIDER_PRESETS.map(
-              (preset) => (
-                <article key={preset.id}>
-                  <span className="catalog-monogram">
-                    {preset.shortLabel.slice(0, 2).toUpperCase()}
-                  </span>
-                  <span>
-                    <strong>{preset.label}</strong>
-                    <small>
-                      {preset.models.length
-                        ? `${preset.models.length} curated models`
-                        : t("Custom model IDs")}
-                    </small>
-                  </span>
-                </article>
-              ),
-            )}
-          </div>
-        </Panel>
-      </div>
-    </section>
-  );
-}
 
 type ManagementDialogState = {
   request: ManagementRequest;

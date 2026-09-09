@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Delete unreferenced old Models and Pipeline Inspector implementations
+
+Current-source reference audit found PipelineArtifactInspector and ModelsPage defined but never called or imported. Read their complete implementations before removing them, along with the unreferenced REGISTRY_MODEL_CAPABILITIES list and stale imports. Native ModelProfiles/VisionWorkers and RunInspector/ArtifactPreview remain unchanged. This removes244 lines of dormant old UI code, not current user functionality; it does not claim a visible new feature or completion of Replay migration.
+
+Typecheck,324 unit tests (one cutover TODO) and isolated production build passed. No new browser scenario required or claimed for unreachable-code removal. Build still emits old root and217KB legacy styles: concrete evidence the full goal is unfinished. New untracked docs/product/demo-architecture/ belongs to unrelated work and was not read, changed or committed. No services started, user workspace/dist changes, paid calls or push. Remaining active old management/plugin/Review/root migration and pending exact clone contract continue next.
+
 ## Native immutable version comparison
 
 Audited clone route: each legacy POST creates another random-ID Draft, with no caller Project/hash/command or lost-response recovery. Sent UIAPI-016 to fixed backend UUID, receipt01a0874b-170b-7de2-bc31-494814d30abb, requesting exact owner/hash/idempotent clone and independent tests. No unsafe auto-retry adapter was substituted and no backend-owned Rust edited.
