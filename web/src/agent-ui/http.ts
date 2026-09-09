@@ -23,10 +23,10 @@ type Workspace = {
   queue: QueuedMessage[];
   human_requests?: HumanRequest[];
   builder_operations?: {items:ConversationBuilderItem[]};
-  sample_operations?: {id:string;draft_id:string;status:string;error?:string}[];
+  sample_operations?: {id:string;draft_id:string;status:string;error?:string;created_at?:string}[];
   resume_actions?: {id:string;kind:string;available:boolean;reason:string;url:string;method:string}[];
   processing_operations?: ProcessingReceipt[];
-  journey_consents?: {record:{consent:{id:string}},dispatch?:{status:string;error?:string|null;updated_at?:string}|null,sample?:{status:string}|null,builder?:{evidence?:{outcome?:string}}|null}[];
+  journey_consents?: {record:{consent:{id:string;sample_operation_id?:string;repair?:{request_id:string}|null}},dispatch?:{status:string;error?:string|null;updated_at?:string}|null,sample?:{status:string}|null,builder?:{evidence?:{outcome?:string}}|null}[];
 };
 type Thread = { id: string; role: "user"; task_id: string; project_owner_id: string; conversation_id: string; message: { input: { text: string; reference?:{scope:string} } } };
 type SafeSettings = { revision: string; sections: { data_privacy: { workspace_id: string }; usage_budget: { future_run_budget: Record<string, unknown> & { max_cost?: string } } } };
@@ -171,12 +171,13 @@ export class HttpAdapter implements WorkspaceAdapter {
         if(!safeUrl(pendingApproval.url) || (pendingApproval.execution&&!safeUrl(pendingApproval.execution))) throw new Error("已保存操作的地址不属于当前任务");
         this.approvals.set(id,pendingApproval);
       }
-      const human = ws?.human_requests?.find(h=>h.status==="pending"&&!h.deferred);
-      const sampleOp = human ? ws?.sample_operations?.find(s=>s.id===human.input.sample_test_id) : ws?.sample_operations?.find(s=>s.status==="succeeded");
+      const latestSample = [...(ws?.sample_operations || [])].filter(s=>s.status==="succeeded").sort((a,b)=>(b.created_at || "").localeCompare(a.created_at || ""))[0];
+      const human = ws?.human_requests?.find(h=>h.status==="pending"&&!h.deferred&&(!latestSample||h.input.sample_test_id===latestSample.id));
+      const sampleOp = latestSample || (human ? ws?.sample_operations?.find(s=>s.id===human.input.sample_test_id) : undefined);
       const sampleId = human?.input.sample_test_id || sampleOp?.id;
       const draftId = sampleOp?.draft_id;
       if(human&&!draftId)throw new Error("人工问题的 Sample 未提供所属 Draft 映射；不会把 checkpoint 当作 Draft ID");
-      const result: Partial<Task> = {human:undefined};
+      const result: Partial<Task> = {human:undefined,repairRequests:(ws?.human_requests || []).filter(h=>!h.deferred&&["pending","applied"].includes(h.status)).map(h=>({id:h.input.id,image:h.input.image_id,sample:h.input.sample_test_id,status:h.status as "pending"|"applied"}))};
       const proposal=ws?.builder_operations?.items.find(item=>item.session?.builder_proposal)?.session?.builder_proposal;
       if(proposal) {
         const steps=proposal.draft.label_pipeline ? [...proposal.draft.label_pipeline.shared_stages.flatMap(s=>s.steps),...proposal.draft.label_pipeline.label_pipelines.flatMap(p=>p.steps)] : [];
@@ -195,6 +196,16 @@ export class HttpAdapter implements WorkspaceAdapter {
         const value=await this.transport<{sample_test:WorkflowSampleTestRecord;annotation_schema?:{task:{kind:string;labels:string[]}}}>(`/api/workflow-drafts/${esc(draftId)}/sample-test?test_id=${esc(sampleId)}`,{signal:ctrl.signal});
         const record=value.sample_test;
         if(!record || record.id!==sampleId || record.draft_id!==draftId || record.project_id!==project) throw new Error("样例不属于当前项目和任务");
+        result.beforeRepair=undefined;
+        const repairId=ws?.journey_consents?.find(j=>j.record.consent.sample_operation_id===sampleId)?.record.consent.repair?.request_id;
+        const priorId=ws?.human_requests?.find(h=>h.input.id===repairId)?.input.sample_test_id;
+        const priorOp=ws?.sample_operations?.find(s=>s.id===priorId);
+        let prior:WorkflowSampleTestRecord|undefined;
+        if(priorOp&&priorId!==sampleId) {
+          prior=(await this.transport<{sample_test:WorkflowSampleTestRecord}>(`/api/workflow-drafts/${esc(priorOp.draft_id)}/sample-test?test_id=${esc(priorOp.id)}`,{signal:ctrl.signal})).sample_test;
+          if(prior.id!==priorId||prior.project_id!==project||prior.draft_id!==priorOp.draft_id)throw new Error("修复前证据归属不匹配");
+          result.beforeRepair={sample:prior.id,boxes:{}};
+        }
         const boxesByImage:Record<ImageId,Box[]>={}, imageResults:NonNullable<Task["imageResults"]>={};
         let requestedLabel="", requestedKind="", feedbackVersion="";
         for(const [index,input] of record.inputs.entries()) {
@@ -206,6 +217,10 @@ export class HttpAdapter implements WorkspaceAdapter {
           const original=terminalSampleAnnotations(sample,input.image_id,sampleId);
           const annotations=sampleFeedbackOverlay(original,feedback.revisions).annotations;
           const dims=await this.measure(asset.src);asset.width=dims.width;asset.height=dims.height;
+          if(prior&&result.beforeRepair) {
+            const pi=prior.inputs.findIndex(i=>i.image_id===input.image_id&&i.content_hash===input.content_hash);
+            if(pi>=0&&prior.report.samples[pi])result.beforeRepair.boxes[input.image_id]=terminalSampleAnnotations(prior.report.samples[pi],input.image_id,prior.id).flatMap(a=>a.value.kind==="bounding_box"?[{id:a.id,label:a.label||"",x:a.value.rect[0]*dims.width,y:a.value.rect[1]*dims.height,w:a.value.rect[2]*dims.width,h:a.value.rect[3]*dims.height}]:[]);
+          }
           boxesByImage[input.image_id]=annotations.flatMap(a=>a.value.kind==="bounding_box"?[{id:a.id,label:a.label || "",x:a.value.rect[0]*dims.width,y:a.value.rect[1]*dims.height,w:a.value.rect[2]*dims.width,h:a.value.rect[3]*dims.height}]:[]);
           imageResults[input.image_id]={labels:annotations.flatMap(a=>a.value.kind==="classification"?a.value.labels:[]),risks:sample.projection?.review_candidates.map(r=>r.explanation.summary) || (sample.projection?[]:["旧样例没有终端投影，未显示中间框"])};
           if(human?.input.image_id===input.image_id) {
@@ -287,10 +302,10 @@ export class HttpAdapter implements WorkspaceAdapter {
     this.save(`send.${task.id}`,null); this.saveDraft(task.id, "");
     await this.refresh(); if(this.viewedTask===task.id)await this.loadTask(task.project,receipt.task_id); return receipt.task_id;
   }
-  async prepareAction(c: Command, kind: "plan" | "sample" | "process" | "export") {
+  async prepareAction(c: Command, kind: "plan" | "sample" | "repair" | "process" | "export") {
     const task = this.checked(c); if(task.id.startsWith("new:")) throw new Error("请先保存目标");
     if (kind === "plan" && task.schemaProposed) throw new Error("此任务已有已保存的目标草稿，请继续构建方案并测试样例，不要重新申请初始规划授权。");
-    if (["plan","sample"].includes(kind) && task.phase === "outcome_unknown") throw new Error("此任务已有结果未知的请求，不能重建初始授权。请保留原回执；如需重新尝试，明确创建独立请求并重新批准费用范围。");
+    if (["plan","sample","repair"].includes(kind) && task.phase === "outcome_unknown") throw new Error("此任务已有结果未知的请求，不能重建初始授权。请保留原回执；如需重新尝试，明确创建独立请求并重新批准费用范围。");
     if(this.stored(`approval.${task.id}`,null)) throw new Error("上次批准的结果待核对；请读取原回执，不能自动发起新的付费操作");
     const root = this.taskRoot(task);
     if(kind === "process") {
@@ -326,6 +341,12 @@ export class HttpAdapter implements WorkspaceAdapter {
       ])];
       if(!models.length) throw new Error("项目尚未绑定视觉模型，请先设置；不自动扩大到全部 Registry 模型");
       const query = new URLSearchParams({consent_id:c.id,builder_operation_id:crypto.randomUUID(),sample_operation_id:crypto.randomUUID(),allowed_models:JSON.stringify(models)});
+      if(kind==="repair") {
+        if(c.selection?.revision!==(task.resultRevision || task.revision))throw new Error("样例版本已变化，请重新查看结果后再修复");
+        const repair=task.repairRequests?.find(r=>r.image===c.selection?.image&&r.sample===task.sample?.id&&r.status==="applied");
+        if(!repair)throw new Error("先保存当前样例的问题反馈；不能猜测修复来源");
+        query.set("repair_request_id",repair.id);
+      }
       const source=[...(this.workspaces.get(task.id)?.calls || [])].reverse().find(call=>call.status==="completed" && call.evidence?.decision?.Ok?.decision==="draft");
       if(source) {
         const schema=await this.transport<{id:string;task_id:string;revision:number}|null>(`${root}/calls/${esc(source.id)}/schema-draft`);
@@ -342,7 +363,7 @@ export class HttpAdapter implements WorkspaceAdapter {
       const p = await this.transport<JourneyPreview>(`${root}/journey-preview?${query}`);
       const consent: JourneyConsent = {...p.consent,allow_unknown_cost:true,...(p.consent.schema_proposal?{schema_proposal:{...p.consent.schema_proposal,allow_unknown_cost:true}}:{})};
       this.approvals.set(task.id,{id:c.id,url:`${root}/journey-consents`,body:consent,execution:`${root}/journey-consents/${esc(consent.id)}/execution`});
-      this.emit({tasks:this.state.tasks.map(t=>t.id===task.id?{...t,approval:{id:c.id,title:"批准构建方案并测试样例",revision:consent.builder_scope_hash,budget:null,scope:[`${consent.images.length} 张图片；最多 ${consent.maximum_builder_calls} 次规划调用 + ${consent.maximum_sample_calls} 次样例调用`,p.builder.model_name,p.builder.destination,...p.data.models.map(m=>`${m.display_name} → ${m.destination}`),`有效期：${consent.expires_at}`,"仅保存草稿与样例测试，不发布、不批量处理、不写正式标注"]}}:t)});
+      this.emit({tasks:this.state.tasks.map(t=>t.id===task.id?{...t,approval:{id:c.id,title:kind==="repair"?"批准根据反馈修复并重测":"批准构建方案并测试样例",revision:consent.builder_scope_hash,budget:null,scope:[`${consent.images.length} 张图片；最多 ${consent.maximum_builder_calls} 次规划调用 + ${consent.maximum_sample_calls} 次样例调用`,p.builder.model_name,p.builder.destination,...p.data.models.map(m=>`${m.display_name} → ${m.destination}`),`有效期：${consent.expires_at}`,"仅保存草稿与样例测试，不发布、不批量处理、不写正式标注"]}}:t)});
     }
   }
   async prepareQueue(c:Command,message:string) {
@@ -432,6 +453,20 @@ export class HttpAdapter implements WorkspaceAdapter {
     if(saved.answer?.revision_id!==answer.revision_id) throw new Error("服务器没有确认相同答案版本");
     this.save(`answer.${request.input.id}`,null); this.save(`edits.${task.id}`,{});
     await this.reloadCurrent(task);
+  }
+  async reportSampleIssue(c:Command,image:string,reason:"poor_boundary"|"wrong_target") {
+    const task=this.checked(c);
+    if(c.selection?.image!==image||c.selection.revision!==(task.resultRevision || task.revision))throw new Error("样例选择或版本已变化，请重新查看结果后再反馈");
+    const request=this.workspaces.get(task.id)?.human_requests?.find(h=>h.status==="pending"&&!h.deferred&&h.input.image_id===image&&h.input.sample_test_id===task.sample?.id);
+    if(!request)throw new Error("这张图没有当前样例的待回答问题；没有创建或修改其他结果");
+    const key=`answer.${request.input.id}`;
+    const previous=this.stored<SampleFeedbackRevision|null>(key,null);
+    if(previous&&(previous.reason!==reason||previous.corrected_value))throw new Error("上次答案待核实，不能改变重试内容");
+    const answer:SampleFeedbackRevision=previous || {revision_id:c.id,sample_test_id:request.input.sample_test_id,image_id:image,sequence:request.input.expected_feedback_sequence+1,reason,outcome_id:request.input.outcome_id,corrected_value:null,corrected_label:null,note:reason==="wrong_target"?"用户反馈：目标找错。请依据原始图片与终端证据重新定位，不能把粗框直接交给分割。":"用户反馈：边界不准确。检查局部目标覆盖并重新定位后再精修，不放宽几何安全阈值。",created_at:new Date().toISOString()};
+    this.save(key,answer);
+    const saved=await this.transport<HumanRequest>(`${this.taskRoot(task)}/human-requests/${esc(request.input.id)}/answer`,{method:"POST",body:JSON.stringify({answer})});
+    if(saved.answer?.revision_id!==answer.revision_id)throw new Error("服务器未确认同一反馈版本");
+    this.save(key,null);await this.reloadCurrent(task);
   }
   async updateSettings(revision: string, settings: Settings) {
     const old = this.state.settings;

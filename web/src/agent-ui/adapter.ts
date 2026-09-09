@@ -66,12 +66,14 @@ export type Task = {
   image: ImageId;
   editBoxes?: Record<ImageId, Box[]>;
   boxesByImage?: Record<ImageId, Box[]>;
+  beforeRepair?: {sample:string;boxes:Record<ImageId,Box[]>};
   actions?: Partial<Record<"send" | "stop" | "resume" | "approve" | "answer", Action>>;
   humanQuestion?: string;
   human?: { id:string; image:ImageId; kind:string; labels:string[]; label:string; candidate:string };
   resultRevision?: string;
   loaded?: boolean;
   sample?: {id:string;draft:string;revision:number};
+  repairRequests?: {id:string;image:string;sample:string;status:"pending"|"applied"}[];
   imageResults?: Record<ImageId, {labels:string[]; risks:string[]}>;
   approval?: Approval;
   receipts?: {id:string; title:string; status:string; detail?:string; startedAt?:string; finishedAt?:string; durationMs?:number; stage?:string}[];
@@ -157,7 +159,8 @@ export interface WorkspaceAdapter {
     mode: "plan" | "execute",
     model: string,
   ): Promise<void | string>;
-  prepareAction?(command: Command, kind: "plan" | "sample" | "process" | "export"): Promise<void>;
+  prepareAction?(command: Command, kind: "plan" | "sample" | "repair" | "process" | "export"): Promise<void>;
+  reportSampleIssue?(command: Command, image:string, reason:"poor_boundary"|"wrong_target"): Promise<void>;
   cancelQueue?(command: Command, message: string): Promise<void>;
   prepareQueue?(command: Command, message: string): Promise<void>;
   approveAction(command: Command): Promise<void>;

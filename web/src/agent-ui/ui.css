@@ -1045,3 +1045,6 @@ caption {
 .ui-app .lifecycle-impact dd { margin: 4px 0 0; font-weight: 600; }
 .ui-app .native-project-manager > .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-block: 20px; }
 .ui-app .native-project-manager input[type="checkbox"] { width: auto; }
+.sample-repair-controls { display:grid; gap:8px; padding:12px 20px; border-block-start:1px solid var(--aa-border); }
+.sample-repair-controls > div { display:flex; flex-wrap:wrap; gap:8px; }
+.sample-repair-controls small { line-height:1.5; }

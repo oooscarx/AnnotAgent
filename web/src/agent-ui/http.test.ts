@@ -5,6 +5,26 @@ const project = { project_id: "TEST-alpha", project_owner_id: "owner-a", title: 
 const settings = { revision: "revision-1", sections: { data_privacy: { workspace_id: "TEST-workspace" }, usage_budget: { future_run_budget: { max_requests: 10, max_cost: "2.50" } } } };
 const navTask = (id: string) => ({ task_id: id, title: `TEST ${id}`, schema_revision: "schema-1", project_owner_id: "owner-a", conversation_id: "conversation-a", state: "idle" });
 const root = "/api/projects/TEST-alpha/conversations/conversation-a/tasks";
+it("saves an issue-only answer without asserting corrected geometry or invoking a model",async()=>{
+  const human={input:{id:"review",sample_test_id:"sample",image_id:"image-uuid",expected_feedback_sequence:0,outcome_id:"candidate"},status:"pending",deferred:false};
+  const ws={project_id:project.project_id,project_owner_id:project.project_owner_id,conversation_id:project.conversation_id,task:{input:{id:"t1",schema_revision:"schema-1"}},agent_model:{revision:0,model_profile_id:null},actions:{},queue:[],calls:[],human_requests:[human],sample_operations:[{id:"sample",draft_id:"draft",status:"succeeded"}]};
+  const {transport:read}=mockTransport({[`${root}/t1/workspace`]:ws,"/api/workflow-drafts/draft/sample-test?test_id=sample":{sample_test:{id:"sample",project_id:project.project_id,draft_id:"draft",draft_revision:1,inputs:[],report:{samples:[]}}}});
+  const writes:{path:string;body:Record<string,unknown>}[]=[];
+  const transport:Transport=async<T>(path:string,init?:RequestInit)=>{
+    if(init?.method!=="POST")return read<T>(path,init);
+    const body=JSON.parse(String(init.body));writes.push({path,body});human.status="applied";
+    return {...human,answer:body.answer} as T;
+  };
+  const adapter=new HttpAdapter(transport);await adapter.refresh();await adapter.loadTask(project.project_id,"t1");
+  const command={id:"answer",project:project.project_id,task:"t1",revision:"schema-1",selection:{image:"image-uuid",candidate:"",revision:"sample:"}};
+  await expect(adapter.reportSampleIssue(command,"foreign-image","poor_boundary")).rejects.toThrow("选择或版本");
+  await expect(adapter.reportSampleIssue({...command,selection:{...command.selection,revision:"stale"}},"image-uuid","poor_boundary")).rejects.toThrow("选择或版本");
+  expect(writes).toHaveLength(0);
+  await adapter.reportSampleIssue(command,"image-uuid","poor_boundary");
+  expect(writes).toHaveLength(1);expect(writes[0].path).toBe(`${root}/t1/human-requests/review/answer`);
+  expect(writes[0].body.answer).toMatchObject({reason:"poor_boundary",corrected_value:null,corrected_label:null,sequence:1});
+  expect(adapter.snapshot().tasks.find(t=>t.id==="t1")?.repairRequests?.[0].status).toBe("applied");
+});
 it.each(["running","settled","budget"])("shows the real journey dispatch %s instead of declaring builder completion as sample success",async(status)=>{
   const {transport}=mockTransport({[`${root}/t1/workspace`]:{
     project_id:project.project_id,project_owner_id:project.project_owner_id,conversation_id:project.conversation_id,

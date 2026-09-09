@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { Icon, IconButton } from "./Icon";
 import { Disclosure } from "./Disclosure";
+import { SampleRepairControls } from "./SampleRepairControls";
 import { labelColor } from "../annotationVisuals";
 import type { WorkspaceAdapter, Task, Box, Snapshot, ImageId } from "./adapter";
 import { command } from "./App";
@@ -31,6 +32,7 @@ export function ArtifactPane({
   const width = asset?.width || natural.width,
     height = asset?.height || natural.height;
   const savedBoxes = task.boxesByImage?.[image] || (image === 1 ? task.boxes : []);
+  const beforeBoxes=task.beforeRepair?.boxes[image];
   const initialImage = image;
   const [boxes, setBoxes] = useState(
     task.editBoxes?.[initialImage] || savedBoxes,
@@ -97,7 +99,7 @@ export function ArtifactPane({
           原图
         </button>
         <button aria-pressed={compare} onClick={() => setCompare(!compare)}>
-          对比
+          {beforeBoxes ? "修复前后" : "对比"}
         </button>
         <IconButton icon="close" label="关闭图片" onClick={close} />
       </div>
@@ -163,7 +165,7 @@ export function ArtifactPane({
           <image href={asset?.src} width={width} height={height} />
           {!original &&
             compare &&
-            savedBoxes.map((b) => (
+            (beforeBoxes || savedBoxes).map((b) => (
               <rect
                 key={b.id}
                 x={b.x}
@@ -243,6 +245,8 @@ export function ArtifactPane({
           </button>
         ))}
       </div>
+      <SampleRepairControls task={task} image={String(image)} adapter={adapter} onError={onError} />
+      {compare&&beforeBoxes&&<small>虚线：修复前样例 · 实线：当前结果。保留原始证据，不表示结果已通过审核。</small>}
       <Disclosure className="annotation-list" title={`标注列表与精确编辑 · ${boxes.length} 个`}>
         {boxes.map((b) => (
           <div key={b.id}>
