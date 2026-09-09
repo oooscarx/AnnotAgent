@@ -5570,3 +5570,13 @@ shows the real download/report and correctly distinguishes a server folder from 
 desktop folder. Model provenance still uses a binding alias in this exporter; this evidence
 does not claim the archive contains a complete standalone model registry or all Artifacts.
 No Live quality or real-human novice test was performed. No push or remote change.
+
+### 2026-09-09 — Actual browser zoom attempt remains unverified
+
+Opened an agent-owned Chrome tab only on the isolated 8791 Project inventory. The supported
+page key API sent Meta-plus, but read-only viewport measurements stayed `innerWidth=1470`,
+`devicePixelRatio=2` before and after. This did not establish actual browser zoom, and no
+200% success is claimed. Closed the temporary QA tab without changing Project data, starting
+inference or modifying user tabs. Existing reflow/keyboard automation remains distinct from
+native browser zoom, native IME and assistive-technology validation. Full browser 37872
+continues against unchanged assets; its final result is still pending.
