@@ -11800,6 +11800,54 @@ impl LocalApplication {
             });
         }
         self.store.save_workflow_draft(&revised.draft)?;
+        if builder_constraints.planning_only {
+            revised.draft = self.store.get_workflow_draft(&revised.draft.id)?;
+            if !record(
+                &mut session,
+                "submit_draft_for_human_approval",
+                json!({"draft_id":revised.draft.id}),
+                json!({"published":false,"requires_human":true,"image_tests_performed":false,"planning_only":true}),
+            ) {
+                return Ok(abort(session));
+            }
+            session.set_builder_draft(revised.draft.id.clone());
+            for (phase, action) in [
+                (
+                    annotagent_core::PipelineBuilderPhase::FeasibilityAnalysis,
+                    "Resolved deterministic feasibility",
+                ),
+                (
+                    annotagent_core::PipelineBuilderPhase::Drafting,
+                    "Persisted the editable Plan",
+                ),
+                (
+                    annotagent_core::PipelineBuilderPhase::Validating,
+                    "Validated the editable Plan without inference",
+                ),
+                (
+                    annotagent_core::PipelineBuilderPhase::Finalizing,
+                    "Plan requires separate image-test authorization",
+                ),
+            ] {
+                session
+                    .transition_builder_phase(phase, action)
+                    .map_err(anyhow::Error::msg)?;
+            }
+            session.complete_builder(
+                annotagent_core::PipelineBuilderOutcome::DraftReadyForHumanReview,
+                annotagent_core::BuilderStopReason::DraftReady,
+                "Review the static Plan; no image test was performed",
+            );
+            session.builder_proposal = Some(revised.clone());
+            self.store.save_agent_session(&session)?;
+            return Ok(WorkflowAdvisorAgentReport {
+                session,
+                suggestion: Some(revised),
+                validation: Some(validation),
+                dry_run: None,
+                approval_required: true,
+            });
+        }
         let dry_run_image_indices =
             (0..self.list_project_images(project_id)?.len().min(3)).collect::<Vec<_>>();
         let mut dry_run = self
@@ -25023,6 +25071,70 @@ export:
                 .is_empty()
         );
         assert!(application.list_runs().expect("formal Runs").is_empty());
+    }
+
+    #[tokio::test]
+    async fn deterministic_advisor_plan_stops_before_sample_execution() {
+        let temporary = tempfile::tempdir().unwrap();
+        let app = LocalApplication::new(temporary.path()).unwrap();
+        app.create_project("TEST-deterministic-plan", GENERIC_CLASSIFICATION_PROJECT)
+            .unwrap();
+        annotagent_image_tools::generate_synthetic_inspection(
+            &temporary
+                .path()
+                .join("TEST-deterministic-plan/images/sample.png"),
+        )
+        .unwrap();
+        let selected = register_pipeline_builder_model(&app, "TEST-plan-binding");
+        register_available_vision_model(
+            &app,
+            &selected,
+            "TEST-classifier",
+            [ModelCapability::ImageClassification],
+        );
+        let report = app
+            .run_workflow_advisor_agent(
+                "TEST-deterministic-plan",
+                &load_settings(None).unwrap(),
+                &WorkflowConstraints::default(),
+                Some(("scene", "day")),
+                PipelineBuilderConstraints {
+                    planning_only: true,
+                    maximum_dry_runs: 3,
+                    ..Default::default()
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert!(report.validation.as_ref().unwrap().valid);
+        assert!(report.approval_required);
+        assert!(report.dry_run.is_none());
+        assert_eq!(report.session.status, AgentSessionStatus::WaitingForHuman);
+        assert!(
+            !report
+                .session
+                .steps
+                .iter()
+                .any(|step| step.tool_name == "dry_run_pipeline")
+        );
+        let draft = &report.suggestion.as_ref().unwrap().draft;
+        assert!(
+            app.store
+                .get_workflow_sample_test(&draft.id)
+                .unwrap()
+                .is_none()
+        );
+        assert!(app.list_runs().unwrap().is_empty());
+        assert!(
+            app.store
+                .list_published_workflow_versions(Some("TEST-deterministic-plan"))
+                .unwrap()
+                .is_empty()
+        );
+        let restored = app.store.get_agent_session(report.session.id).unwrap();
+        assert_eq!(restored.builder_proposal, report.suggestion);
+        assert!(restored.builder_constraints.unwrap().planning_only);
     }
 
     #[tokio::test]

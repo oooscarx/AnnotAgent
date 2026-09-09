@@ -123,7 +123,7 @@ export function JourneyGoal({ project, sessionId, onNavigate, onRefresh, onNavig
         allow_human_review: true, maximum_agent_turns: 16, maximum_tool_calls: 48,
         maximum_dry_runs: 0, maximum_agent_cost: "1",
       }, model.id, undefined, { kind: "from_scratch" }, {
-        model_revision: model.revision, provider_id: model.provider_id, base_url: destination, goal_revision: saved!.revision,
+        model_profile_id: model.id, model_revision: model.revision, provider_id: model.provider_id, base_url: destination, goal_revision: saved!.revision,
       });
       if (!mounted.current) return;
       leaving.current = true; onNavigationGuardChange(undefined);

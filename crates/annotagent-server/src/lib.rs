@@ -3611,6 +3611,7 @@ struct SuggestWorkflowRequest {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PlanningAuthorization {
+    model_profile_id: ModelProfileId,
     model_revision: u64,
     provider_id: ProviderId,
     base_url: String,
@@ -3627,8 +3628,13 @@ fn default_workflow_advisor() -> String {
 
 async fn suggest_workflow(
     State(state): State<ServerState>,
-    Json(request): Json<SuggestWorkflowRequest>,
+    Json(mut request): Json<SuggestWorkflowRequest>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
+    // An explicit text-planning authorization cannot be weakened by a client
+    // supplying legacy/general Builder constraints.
+    if request.planning_authorization.is_some() {
+        request.builder_constraints.planning_only = true;
+    }
     let settings = state.settings.read().await.clone();
     let mut workflow_constraints = request.constraints.clone();
     if workflow_constraints.preferred_model_id.is_none()
@@ -3708,7 +3714,8 @@ async fn suggest_workflow(
                     .application
                     .project_goal(&request.project_id)
                     .map_err(ApiError::bad_request)?;
-                if selected_model.model.revision != approval.model_revision
+                if selected_model.model.id != approval.model_profile_id
+                    || selected_model.model.revision != approval.model_revision
                     || selected_model.provider.id != approval.provider_id
                     || selected_model.provider.base_url.as_str() != approval.base_url
                     || goal["revision"].as_str() != Some(approval.goal_revision.as_str())
@@ -15209,6 +15216,53 @@ export:
         )
         .await;
         assert_eq!(cancelled["batch"]["status"], json!("cancelled"));
+    }
+
+    #[tokio::test]
+    async fn planning_only_http_advisor_does_not_create_a_sample_test() {
+        let temp = tempfile::tempdir().unwrap();
+        let application = Arc::new(LocalApplication::new(temp.path()).unwrap());
+        application.create_project("TEST-http-plan", "version: 1\nproject:\n  name: TEST Plan\ndataset:\n  root: images\nruntime: {}\ntasks:\n  - id: scene\n    kind: classification\n    labels: [day, night]\n    required: true\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n").unwrap();
+        annotagent_image_tools::generate_synthetic_inspection(
+            &temp.path().join("TEST-http-plan/images/sample.png"),
+        )
+        .unwrap();
+        let service = router(
+            test_state(
+                application.clone(),
+                Arc::new(InMemorySecretStore::default()),
+            )
+            .await,
+            None,
+        );
+        let response = request(&service, axum::http::Method::POST, "/api/workflow-drafts/suggest", Some(json!({
+            "project_id":"TEST-http-plan","advisor":"mock","target_task_id":"scene","target_label":"day",
+            "builder_constraints":{"planning_only":true,"maximum_dry_runs":3}
+        }))).await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = response_json(response).await;
+        assert_eq!(body["approval_required"], true);
+        assert!(body["agent_dry_run"].is_null());
+        assert_eq!(
+            body["agent_session"]["builder_constraints"]["planning_only"],
+            true
+        );
+        let draft = body["draft"]["id"].as_str().unwrap();
+        assert!(
+            application
+                .store()
+                .get_workflow_sample_test(draft)
+                .unwrap()
+                .is_none()
+        );
+        assert!(application.list_runs().unwrap().is_empty());
+        assert!(
+            body["agent_session"]["steps"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|step| step["tool_name"] != "dry_run_pipeline")
+        );
     }
 
     #[tokio::test]

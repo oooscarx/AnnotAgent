@@ -830,7 +830,7 @@ export const api = {
     agentModelProfileId?: string,
     retry?: { session_id?: string; base_draft_id?: string },
     buildMode: PipelineBuildMode = { kind: "from_scratch" },
-    planningAuthorization?: { model_revision: number; provider_id: string; base_url: string; goal_revision: string },
+    planningAuthorization?: { model_profile_id: string; model_revision: number; provider_id: string; base_url: string; goal_revision: string },
   ) =>
     request<WorkflowSuggestion>("/api/workflow-drafts/suggest", {
       method: "POST",

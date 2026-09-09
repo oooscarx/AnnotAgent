@@ -53,7 +53,7 @@ export function JourneyRevision({ projectId, draftId, testId, imageId, onNavigat
         allow_human_review: true, maximum_agent_turns: 16, maximum_tool_calls: 48,
         maximum_dry_runs: 0, maximum_agent_cost: "1",
       }, model.id, undefined, { kind: "repair_draft", draft_id: draftId }, {
-        model_revision: model.revision, provider_id: model.provider_id, base_url: destination, goal_revision: goalRevision,
+        model_profile_id: model.id, model_revision: model.revision, provider_id: model.provider_id, base_url: destination, goal_revision: goalRevision,
       });
       if (!active.current) return;
       setSession(result.agent_session);

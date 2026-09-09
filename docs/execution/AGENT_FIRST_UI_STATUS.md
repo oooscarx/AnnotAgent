@@ -374,3 +374,47 @@ an isolated compatible plan or explicit implementation of bounded legacy executi
 unrestricted calls masquerading as this acceptance test.
 
 Remaining: bounded Live evaluation, native visual QA/remaining flows, actual human sessions.
+
+## M2 continuation — Plan policy at both Advisor and authorization boundaries
+
+The previous verification turn yielded real native-zoom evidence and a recorded novice
+protocol, but did not complete the goal. Continued from authoritative dirty application/server
+changes; retained unrelated screenshots and kit files. No active test process was restarted.
+
+The deterministic application Advisor now stops after static validation under planning_only,
+persists the editable proposal and human-review state, and skips image execution. Its HTTP
+adapter is TEST-build-only; this is not a newly discovered production HTTP escape. The real
+LLM suggest endpoint now forces planning_only when an explicit planning authorization is
+present, rather than trusting a client's false/default constraint. Existing exact goal,
+destination, Provider and zero-image-budget validation remains before credential resolution.
+
+Added the missing Model Profile ID to that authorization, independently of revision and
+Provider ID. Two profiles on the same Provider can share revision numbers; accepting only
+those fields did not bind the selected model. Both retained Journey planning entry points
+now send the exact ID. Old clients omitting it fail closed and must reload/reconfirm; no
+historical persisted version or authorization record is rewritten.
+
+Evidence:
+
+- Application deterministic Plan test passed (36004): valid editable Draft, persisted
+  planning_only, no sample record, no Run or published version, human approval required.
+- Server Plan HTTP test passed (49066): explicit positive numeric dry-run allowance still
+  yields no sample execution under Plan, persisted policy true. Initial test expectation
+  incorrectly used 200; corrected to the existing 201 Created contract, not changed API.
+- Existing general Advisor dry-run/inspector/replay HTTP regression passed (35384), proving
+  the separate execution-capable path remains functional.
+- Browser `journey-ready.spec.ts --grep 'ready fixture journey'` passed (4022, 37.4s test),
+  against fresh isolated `/tmp/annotagent-guided-e2e-56920` and loopback TEST model. Rejects
+  altered model ID/revision, Provider, destination, goal and image-call allowance before
+  sessions are created. Explicit client planning_only:false is overridden to true in the
+  persisted real HTTP session. Planning makes no sample calls; separate sample approval,
+  idempotency, stale scope and refresh assertions then pass.
+- Web typecheck passed (97881); all 238 unit tests / 49 files passed (67222). Production web
+  build succeeded in the browser harness with the existing >500kB chunk warning.
+- Application/Server all-target/all-feature Clippy with -D warnings passed (51376).
+
+These are bounded TEST model protocol checks, not Live vision quality or novice evidence.
+Still pending: Composer mode/Registry picker and frozen turn configuration, queued messages,
+full stop/checkpoint continuation trace, new real object UI and final six states. This does
+not claim full Plan protection across all Project APIs or completion of M2/M3. No push,
+remote change, real workspace write or deployment restart.

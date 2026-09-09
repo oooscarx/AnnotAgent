@@ -34,8 +34,10 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   await page.route("**/api/workflow-drafts/suggest", async (route) => {
     const input = route.request().postDataJSON();
     expect(input.planning_authorization.model_revision).toBeGreaterThan(0);
+    expect(input.planning_authorization.model_profile_id).toBe(model.id);
     const before = await (await request.get(`/api/projects/${projectId}/agent-sessions`)).json();
     for (const patch of [
+      { model_profile_id: crypto.randomUUID() },
       { model_revision: input.planning_authorization.model_revision + 1 },
       { provider_id: crypto.randomUUID() },
       { base_url: "http://127.0.0.1:1/not-approved" },
@@ -49,7 +51,9 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
     expect(withImageCalls.status()).toBe(400);
     const after = await (await request.get(`/api/projects/${projectId}/agent-sessions`)).json();
     expect(after.sessions).toEqual(before.sessions);
-    await route.continue();
+    // The persisted Plan policy comes from the authorization boundary, even
+    // when a caller explicitly supplies legacy execution-capable constraints.
+    await route.continue({ postData: JSON.stringify({ ...input, builder_constraints: { ...input.builder_constraints, planning_only: false } }) });
   }, { times: 1 });
   await page.getByRole("button", { name: "Authorize planning", exact: true }).click();
   await expect(page).toHaveURL(/\/task\/samples\?draft=/, { timeout: 60_000 });
@@ -57,6 +61,7 @@ test("ready fixture journey plans without image calls then authorizes a bounded 
   const draftId = new URL(page.url()).searchParams.get("draft")!;
   const sessions = await (await request.get(`/api/projects/${projectId}/agent-sessions`)).json();
   expect(sessions.sessions[0].builder_constraints.maximum_dry_runs).toBe(0);
+  expect(sessions.sessions[0].builder_constraints.planning_only).toBe(true);
   expect(sessions.sessions[0].outcome).toBe("draft_ready_for_human_review");
   expect(sessions.sessions[0].steps.every((step: { success: boolean }) => step.success)).toBe(true);
   expect(sessions.sessions[0].steps.filter((step: { tool_name: string; success: boolean }) => step.tool_name === "dry_run_pipeline" && step.success)).toHaveLength(0);
