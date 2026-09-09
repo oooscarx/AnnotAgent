@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Actual proposal execution and inventory evidence correction
+
+Actual loopback TEST schema-proposal execution showed that the current application normally materializes the Draft automatically (execute_conversation_schema invokes save_conversation_schema_draft after a valid draft decision). The previous inventory omission is a recovery-state gap, not proof that ordinary current model calls leave unsaved proposals. Keep that distinction: the new fallback is not a mandatory extra user step.
+
+Added real HTTP browser regression: explicitly choose a verified loopback TEST model before Send (then restore the prior TEST preference), authorize its actual bounded schema preview, execute once, confirm the server-created Draft references that call/task, open native semantic inventory and refresh. Exact Draft, call evidence and export-readiness stay unchanged; browser emits zero POST. One test passed. Initial setup failed because Send had frozen a different model; server refusal preserved. Next assertion incorrectly expected no server-created Draft; corrected the test to reflect actual execution, not fake a missing record. Missing-Draft creation plus lost-response browser testing remains unverified; existing transport unit test remains its limited evidence. Current source9239caa, isolated /tmp/annotagent-native-schema-proposal-dist on8794/8795. No true Provider/workspace/Published/user service changes, no push. Overall migration remains incomplete.
+
 ## Native saved model-proposal recovery
 
 Schema inventory previously omitted completed model proposals without a materialized Draft. Native TaskSchemaDrafts now retains them as on-demand suggestion summaries with the actual rationale, labels and boundary rules. Explicit save first reads the exact source call's Draft, then invokes the existing save endpoint only when absent. Task/source-call mismatch fails closed. After an uncertain save, refresh remains read-only and explicit recovery checks the same source rather than making a new model request. Successful Draft joins the existing native editor; no automatic publication, Builder launch or sample execution.
