@@ -18,30 +18,9 @@ export function routeProject(url: URL): string | null {
 
 export function taskLocation(url: URL, project: string): URL {
   const next = new URL(url);
-  if (isAgentEntry(url)) next.pathname = `/projects/${encodeURIComponent(project)}/work`;
-  return next;
-}
-
-export function managementReturn(target:URL, source:URL):URL {
-  const next=new URL(target);
-  const owner=routeProject(next);
-  if(!owner || source.pathname.split("/")[2]!==encodeURIComponent(owner))return next;
-  for(const key of ["task","image","pane"]) {
-    const value=source.searchParams.get(`return_${key}`);
-    const valid=key==="pane" ? value==="image" : !!value && /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i.test(value);
-    if(valid && !next.searchParams.has(key))next.searchParams.set(key,value!);
-  }
-  return next;
-}
-
-export function retainManagementContext(target:URL, source:URL):URL {
-  const next=new URL(target);
-  const owner=/^\/projects\/([^/]+)(?:\/|$)/.exec(source.pathname)?.[1];
-  if(!owner || /^\/projects\/([^/]+)(?:\/|$)/.exec(next.pathname)?.[1]!==owner)return next;
-  for(const key of ["task","image","pane"]) {
-    const value=source.searchParams.get(`return_${key}`);
-    const valid=key==="pane" ? value==="image" : !!value && /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i.test(value);
-    if(valid)next.searchParams.set(`return_${key}`,value!);
+  if (isAgentEntry(url)) {
+    if(routeProject(url)!==project)next.search="";
+    next.pathname = `/projects/${encodeURIComponent(project)}/work`;
   }
   return next;
 }

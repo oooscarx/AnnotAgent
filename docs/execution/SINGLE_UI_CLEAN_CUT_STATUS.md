@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Remove transitional return-parameter helpers
+
+Removed managementReturn/retainManagementContext and their old-root callers. New UI no longer hosts or exports these old `return_task`, `return_image`, `return_pane` compatibility translators. Existing new Review source/queue URL contract remains separate and unchanged. Fixed native taskLocation so switching Project drops the prior Project's query context instead of carrying a foreign Task/Image ID; same-Project work retains its task/image/pane query.
+
+Typecheck,321 unit tests (one cutover TODO) and isolated production build passed. No browser round-trip claim for this slice; whole navigation.ts compatibility/parser and legacy root/styles remain pending deletion. No user data/services/dist mutation, paid call or push. Backend7c7c8df full-version/publication delivery detected; its actual contract file is UIAPI-014_PUBLICATION.md (not the initially guessed015 filename). Requires full code review and independent tests before cherry-pick/integration. Goal active.
+
 ## Native probe usage; old Registry usage page deleted
 
 Moved cross-model active-probe records to a lazy native Usage disclosure using existing real model/profile-usage APIs, bounded four-at-a-time reads, identity validation, partial-read error reporting, search and25-row client display pages. Clearly scoped to current Registry models, excluding normal Run/Task and deleted-model records; no invented full-system totals. Unknown/zero/invalid price records are not presented as free. Closed disclosure dispatches no subsequent read groups, stale responses cannot overwrite the current view. Removed old RegistryUsagePage and changed its old embedded caller to canonical `/settings/usage`.
