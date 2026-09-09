@@ -7,6 +7,7 @@ import type {
   Section,
 } from "./adapter";
 import { Dialog } from "./Dialog";
+import { PlanBlock } from "./PlanBlock";
 import { SettingsView } from "./Settings";
 import { ArtifactPane } from "./ArtifactPane";
 export const phaseNames: Record<Phase, string> = {
@@ -52,6 +53,12 @@ export function AgentPreviewApp({
     { name: string; url: string; task: string }[]
   >([]);
   const [split, setSplit] = useState(54);
+  const [reference, setReference] = useState<{
+    task: string;
+    image: string;
+    candidate: string;
+    revision: string;
+  } | null>(null);
   const [approval, setApproval] = useState<Command | null>(null);
   const [previewTheme, setPreviewTheme] = useState<string>();
   const compose = useRef<HTMLTextAreaElement>(null);
@@ -59,7 +66,9 @@ export function AgentPreviewApp({
   const pickerButton = useRef<HTMLButtonElement>(null);
   const composing = useRef(false);
   const sendPending = useRef(false);
-  const retryCommand=useRef<{signature:string;command:Command}|null>(null);
+  const retryCommand = useRef<{ signature: string; command: Command } | null>(
+    null,
+  );
   const [busy, setBusy] = useState(false);
   const task = state.tasks.find(
     (t) => t.id === (url.searchParams.get("task") || "new"),
@@ -131,8 +140,11 @@ export function AgentPreviewApp({
       document.removeEventListener("keydown", key);
     };
   }, [picker]);
-  const navigate = (values: Record<string, string | null>, alreadyConfirmed=false) => {
-    if (!alreadyConfirmed&&!canNavigate()) return;
+  const navigate = (
+    values: Record<string, string | null>,
+    alreadyConfirmed = false,
+  ) => {
+    if (!alreadyConfirmed && !canNavigate()) return;
     const next = new URL(location.href);
     for (const [k, v] of Object.entries(values))
       v === null ? next.searchParams.delete(k) : next.searchParams.set(k, v);
@@ -153,11 +165,30 @@ export function AgentPreviewApp({
     if (!task || sendPending.current || !task.draft.trim()) return;
     sendPending.current = true;
     setBusy(true);
-    const signature=JSON.stringify([task.project,task.id,task.draft,mode,task.model]);
-    if(retryCommand.current?.signature!==signature)retryCommand.current={signature,command:command(task)};
-    await act(async()=>{
-      await adapter.sendMessage(retryCommand.current!.command, task.draft, mode, task.model);
-      retryCommand.current=null;
+    const signature = JSON.stringify([
+      task.project,
+      task.id,
+      task.draft,
+      mode,
+      task.model,
+      reference?.task === task.id ? reference : null,
+    ]);
+    if (retryCommand.current?.signature !== signature)
+      retryCommand.current = {
+        signature,
+        command: {
+          ...command(task),
+          selection: reference?.task === task.id ? reference : undefined,
+        },
+      };
+    await act(async () => {
+      await adapter.sendMessage(
+        retryCommand.current!.command,
+        task.draft,
+        mode,
+        task.model,
+      );
+      retryCommand.current = null;
     });
     sendPending.current = false;
     setBusy(false);
@@ -209,11 +240,11 @@ export function AgentPreviewApp({
             className="new-task"
             onClick={() =>
               void act(async () => {
-                if(!canNavigate())return;
+                if (!canNavigate()) return;
                 const id = await adapter.createTask(
                   task?.project || "products",
                 );
-                navigate({ settings: null, task: id, pane: null },true);
+                navigate({ settings: null, task: id, pane: null }, true);
               })
             }
           >
@@ -407,22 +438,10 @@ export function AgentPreviewApp({
                           )}
                         </div>
                         {task.plan && (
-                          <section className="plan-block">
-                            <strong>☷ 标注计划</strong>
-                            <ol>
-                              {task.plan.steps.map((s) => (
-                                <li key={s}>{s}</li>
-                              ))}
-                            </ol>
-                            <small>
-                              {task.plan.destination} · 费用未知（演示不收费）
-                            </small>
-                            <details>
-                              <summary>计划详情</summary>
-                              <p>精确版本：{task.plan.revision}</p>
-                              <p>模型：{task.plan.models.join(" → ")}</p>
-                            </details>
-                          </section>
+                          <PlanBlock
+                            plan={task.plan}
+                            expanded={task.phase === "awaiting_approval"}
+                          />
                         )}
                         {task.phase === "awaiting_approval" && (
                           <button
@@ -454,7 +473,11 @@ export function AgentPreviewApp({
                             <p>
                               打开图片，拖动边界或在标注列表里精确修改。只保存当前演示候选。
                             </p>
-                            <button onClick={() => navigate({ pane: "image",image:'1' })}>
+                            <button
+                              onClick={() =>
+                                navigate({ pane: "image", image: "1" })
+                              }
+                            >
                               定位需要修正的目标 →
                             </button>
                           </div>
@@ -509,6 +532,18 @@ export function AgentPreviewApp({
                       void send();
                     }}
                   >
+                    {reference?.task === task.id && (
+                      <div className="reference-chip">
+                        引用：示意图片 {reference.image} · {reference.candidate}
+                        <button
+                          type="button"
+                          aria-label="移除对象引用"
+                          onClick={() => setReference(null)}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    )}
                     {attachments.some((a) => a.task === task.id) && (
                       <div className="attachments">
                         {attachments
@@ -781,11 +816,22 @@ export function AgentPreviewApp({
                     }}
                   />
                   <ArtifactPane
-                    key={`${task.id}:${url.searchParams.get('image')||'1'}`}
+                    key={`${task.id}:${url.searchParams.get("image") || "1"}`}
                     task={task}
                     adapter={adapter}
-                    image={Math.max(1,Math.min(3,Number(url.searchParams.get('image'))||1))}
-                    onImage={n=>navigate({image:String(n)})}
+                    image={Math.max(
+                      1,
+                      Math.min(3, Number(url.searchParams.get("image")) || 1),
+                    )}
+                    onImage={(n) => navigate({ image: String(n) })}
+                    onReference={(candidate, image) =>
+                      setReference({
+                        task: task.id,
+                        image: String(image),
+                        candidate,
+                        revision: task.revision,
+                      })
+                    }
                     close={() => navigate({ pane: null })}
                     onError={setError}
                   />

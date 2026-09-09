@@ -8,13 +8,15 @@ export function ArtifactPane({
   onError,
   image,
   onImage,
+  onReference,
 }: {
   task: Task;
   adapter: WorkspaceAdapter;
   close: () => void;
   onError: (s: string) => void;
-  image:number;
-  onImage:(image:number)=>void;
+  image: number;
+  onImage: (image: number) => void;
+  onReference: (candidate: string, image: number) => void;
 }) {
   const initialImage = image;
   const [boxes, setBoxes] = useState(
@@ -107,8 +109,8 @@ export function ArtifactPane({
           style={{ width: `${zoom}%`, minWidth: `${zoom}%` }}
           onPointerMove={(e) => {
             if (!drag) return;
-            const transform=e.currentTarget.getScreenCTM();
-            if(!transform)return;
+            const transform = e.currentTarget.getScreenCTM();
+            if (!transform) return;
             const dx = (e.clientX - drag.x) / transform.a,
               dy = (e.clientY - drag.y) / transform.d;
             setBoxes((bs) =>
@@ -161,6 +163,7 @@ export function ArtifactPane({
                     e.pointerId,
                   );
                   setSelected(b.id);
+                  onReference(b.id, image);
                   setHistory((h) => [...h, boxes]);
                   setDrag({
                     id: b.id,
@@ -227,7 +230,10 @@ export function ArtifactPane({
         {boxes.map((b) => (
           <div key={b.id}>
             <button
-              onClick={() => setSelected(b.id)}
+              onClick={() => {
+                setSelected(b.id);
+                onReference(b.id, image);
+              }}
               aria-pressed={selected === b.id}
             >
               {b.label}

@@ -44,4 +44,13 @@
 
 F3 follows with responsive/artifact coverage, actual screenshots and handoff. No HTTP integration starts before visual approval.
 
+## F3 — visual and interaction verification
+
+- Actual React screenshot audit found expanded historic Plan displaced the current human question and resume control. Plan now collapses after approval; current controls stay prominent. Provider editing has one set of save/cancel controls.
+- Seventeen application captures cover all requested scenes and Settings, plus mobile canvas and stopping. Every capture is UI Preview/Fixture, never a prototype passed off as an application screenshot. Final source-SHA captures will be regenerated after the UI source commit.
+- 21 preview E2E tests passed (including screenshot capture, 1440×900 / 1280×720 / 1024×768 / 390×844, long queue, geometry draft recovery and failed human save). Full Web typecheck, **252 unit tests**, production build and separate preview build passed. Production has the pre-existing >500kB bundle warning. Source-polish final rerun pending below.
+- Production bundle scan found no preview storage namespace or simulated-install UI. Built preview includes its own images/brand assets; no real Provider requests in browser network audit.
+- Geometry pointer conversion uses SVG screen transform, not viewport dimensions, so aspect-ratio letterboxing does not skew drag coordinates. Numeric edits are clamped to original image dimensions. Candidate reference can be attached to the next Composer command.
+- Not executed: real Provider/HTTP integration, real model inference/accuracy, Rust regression (no Rust edits), native OS IME input, native browser 200% zoom, screen-reader session, human usability study. Synthetic composition/keyboard and viewport layout checks are not substitutes for those.
+
 F1: interaction correctness, dialogs/focus, scoped drafts, refresh/navigation guards, image edit controls and fixture semantics. F2: six-page error/save flows, model/provider consistency. F3: browser matrix, screenshots and handoff. No Live tests, no human usability tests, no native browser 200% zoom verification yet.

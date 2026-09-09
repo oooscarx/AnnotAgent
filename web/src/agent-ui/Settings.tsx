@@ -636,23 +636,25 @@ export function SettingsView({
                   </p>
                 </>
               )}
-              <div className="settings-actions">
-                <span role="status">
-                  {saving
-                    ? "保存中…"
-                    : saved || (dirty ? "有未保存的更改" : "预览设置已载入")}
-                </span>
-                <button onClick={cancel} disabled={saving}>
-                  取消
-                </button>
-                <button
-                  className="primary"
-                  disabled={!dirty || saving || !!editor}
-                  onClick={() => void save()}
-                >
-                  保存设置
-                </button>
-              </div>
+              {!editor && (
+                <div className="settings-actions">
+                  <span role="status">
+                    {saving
+                      ? "保存中…"
+                      : saved || (dirty ? "有未保存的更改" : "预览设置已载入")}
+                  </span>
+                  <button onClick={cancel} disabled={saving}>
+                    取消
+                  </button>
+                  <button
+                    className="primary"
+                    disabled={!dirty || saving || !!editor}
+                    onClick={() => void save()}
+                  >
+                    保存设置
+                  </button>
+                </div>
+              )}
             </>
           )}
           {error && (

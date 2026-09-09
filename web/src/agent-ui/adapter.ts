@@ -95,6 +95,7 @@ export type Command = {
   project: string;
   task: string;
   revision: string;
+  selection?: { image: string; candidate: string; revision: string };
 };
 export interface WorkspaceAdapter {
   readonly kind: "fixture" | "http";
