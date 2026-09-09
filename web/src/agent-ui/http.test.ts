@@ -11,11 +11,13 @@ function mockTransport(overrides: Record<string, unknown | (() => Promise<unknow
     "/api/navigation?limit=100": { items: [project], next_cursor: null },
     "/api/settings?view=agent-ui": settings,
     "/api/providers": { providers: [] }, "/api/model-profiles": { models: [] },
+    "/api/agent-model-bindings": {}, "/api/plugins": { installations: [] }, "/api/model-instances": { instances: [] },
     "/api/projects/TEST-alpha/conversations/conversation-a/task-navigation?limit=100": { items: [navTask("t1"), navTask("t2")], next_cursor: null },
     "/api/projects/TEST-alpha/images": { images: [{ image_id: "image-uuid", name: "TEST.png", url: "/api/projects/TEST-alpha/images/image-uuid/file" }] },
     ...Object.fromEntries(["t1", "t2"].flatMap(id => [
       [`${root}/${id}/workspace`, { project_id: "TEST-alpha", project_owner_id: "owner-a", conversation_id: "conversation-a", task: { input: { id, schema_revision: "schema-1" } }, agent_model: { revision: 2, model_profile_id: null }, actions: { resume: { available: false, reason: "No checkpoint" } }, queue: [], calls: [] }],
       [`${root}/${id}/thread?limit=100`, { items: [{ id: `message-${id}`, task_id: id, project_owner_id: "owner-a", conversation_id: "conversation-a", role: "user", message: { input: { text: `真实已存 ${id}` } } }], next_cursor: null }],
+      [`${root}/${id}/exports`, []],
     ])), ...overrides,
   };
   const transport: Transport = async <T>(path: string, init?: RequestInit) => {

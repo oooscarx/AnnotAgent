@@ -45,6 +45,7 @@ export function SettingsView({
   back: () => void;
   fail: () => void;
 }) {
+  const fixture = adapter.kind === "fixture";
   const [draft, setDraft] = useState<Settings>(() =>
     structuredClone(state.settings),
   );
@@ -109,7 +110,7 @@ export function SettingsView({
       setBase(current);
       setDraft(structuredClone(current));
       setEditor(null);
-      setSaved("已保存到 UI Preview · 非生产配置");
+      setSaved(fixture ? "已保存到 UI Preview · 非生产配置" : "已保存；展示偏好保存在此浏览器，业务配置保存在服务器");
       onTheme(undefined);
     } catch (e) {
       setError((e as Error).message);
@@ -154,9 +155,9 @@ export function SettingsView({
         <div className="settings-content">
           <header>
             <h1>{en ? config.en : config.zh}</h1>
-            <p>{config.description}</p>
+            <p>{!fixture && section === "providers" ? "账户连接与凭证状态；不会在读取时自动探测模型。" : config.description}</p>
           </header>
-          <details className="fixture-controls">
+          {fixture && <details className="fixture-controls">
             <summary>预览状态控制</summary>
             <div className="actions">
               <label>
@@ -174,7 +175,7 @@ export function SettingsView({
               </label>
               <button onClick={fail}>模拟下一次保存失败</button>
             </div>
-          </details>
+          </details>}
           {view === "loading" ? (
             <p role="status">
               正在加载演示设置…{" "}
@@ -294,7 +295,7 @@ export function SettingsView({
                           }
                         />
                       </label>
-                      <label>
+                      {fixture && <label>
                         演示凭证槽位
                         <select
                           value={editor.credential ? "configured" : "empty"}
@@ -310,10 +311,9 @@ export function SettingsView({
                           </option>
                           <option value="empty">未配置</option>
                         </select>
-                      </label>
+                      </label>}
                       <p>
-                        不提供 API Key 输入框。不要在名称或 Endpoint
-                        中填写密钥。
+                        {fixture ? "不提供 API Key 输入框。" : "凭证只显示是否配置；凭证编辑接线尚未完成。"}不要在名称或 Endpoint 中填写密钥。
                       </p>
                       <div className="actions">
                         <button onClick={() => setEditor(null)}>
@@ -358,15 +358,15 @@ export function SettingsView({
                   ) : (
                     <>
                       <div className="section-toolbar">
-                        <small>仅示例账户 · 不发起真实连接</small>
+                        <small>{fixture ? "仅示例账户 · 不发起真实连接" : "真实 Registry 账户 · 测试连接为显式操作"}</small>
                         <button
                           onClick={() =>
                             setEditor({
                               id: `new-${crypto.randomUUID()}`,
                               name: "",
-                              endpoint: "https://example.invalid/v1",
+                              endpoint: fixture ? "https://example.invalid/v1" : "",
                               credential: false,
-                              status: "演示 · 未测试",
+                              status: fixture ? "演示 · 未测试" : "未测试",
                             })
                           }
                         >
@@ -397,8 +397,8 @@ export function SettingsView({
                             <button
                               onClick={() =>
                                 setConfirm({
-                                  title: "删除演示账户？",
-                                  body: "可能影响引用此账户的规划与视觉模型。只删除预览账户，不触碰真实凭证。",
+                                  title: fixture ? "删除演示账户？" : "删除这个 Provider？",
+                                  body: fixture ? "可能影响引用此账户的规划与视觉模型。只删除预览账户，不触碰真实凭证。" : "此操作删除服务器上的账户配置；引用保护以服务器校验为准。不会删除项目图片。",
                                   action: async () => {
                                     await save({
                                       ...draft,
@@ -415,7 +415,7 @@ export function SettingsView({
                           </Row>
                         ))
                       )}
-                      <label>
+                      {fixture && <label>
                         模拟连接结果{" "}
                         <select
                           aria-label="模拟连接结果"
@@ -428,7 +428,7 @@ export function SettingsView({
                           <option value="failed">失败</option>
                           <option value="unknown">未知</option>
                         </select>
-                      </label>
+                      </label>}
                     </>
                   )}
                 </>
@@ -463,7 +463,7 @@ export function SettingsView({
                               key={m.id}
                               title={m.name}
                               help={
-                                m.reason || "文本生成 · 工具调用 · 示例能力声明"
+                                m.reason || `文本生成 · 工具调用${fixture ? " · 示例能力声明" : " · Registry 能力声明"}`
                               }
                             >
                               <button
@@ -494,14 +494,13 @@ export function SettingsView({
                       <details>
                         <summary>兼容信息</summary>
                         <p>
-                          演示协议：HTTP Vision /
-                          ONNX；该信息不证明真实文件已安装。
+                          {fixture ? "演示协议：HTTP Vision / ONNX；该信息不证明真实文件已安装。" : "状态来自已安装 Plugin/Model Instance；模型 Ready 与插件启用是不同状态。"}
                         </p>
                       </details>
                       {p.status !== "Ready" && (
                         <button
                           disabled={
-                            p.status === "禁用" || p.status === "模拟安装中"
+                            !fixture || p.status === "禁用" || p.status === "模拟安装中"
                           }
                           onClick={() =>
                             setConfirm({
@@ -517,31 +516,32 @@ export function SettingsView({
                       )}
                     </Row>
                   ))}
-                  <label>
+                  {fixture && <label>
                     <input
                       type="checkbox"
                       checked={installFail}
                       onChange={(e) => setInstallFail(e.target.checked)}
                     />{" "}
                     模拟安装后校验失败
-                  </label>
+                  </label>}
                 </>
               )}
               {section === "privacy" && (
                 <>
                   <Row
                     title="工作区"
-                    help="隔离的浏览器演示命名空间。没有读取本机真实 workspace。"
+                    help={fixture ? "隔离的浏览器演示命名空间。没有读取本机真实 workspace。" : "本地服务器工作区；没有将服务器目录误称为浏览器本机目录。"}
                   >
-                    <span>UI Preview · 浏览器本地存储</span>
+                    <span>{fixture ? "UI Preview · 浏览器本地存储" : "Local workspace"}</span>
                   </Row>
                   <Row
                     title="外传授权偏好"
-                    help="这里只保存演示偏好，真实发送仍须批准具体数据和接收方。"
+                    help={fixture ? "这里只保存演示偏好，真实发送仍须批准具体数据和接收方。" : "每个操作需批准具体数据和接收方；不提供无限期全局授权开关。"}
                   >
                     <input
                       type="checkbox"
                       aria-label="外传授权偏好"
+                      disabled={!fixture}
                       checked={draft.allowExternal}
                       onChange={(e) =>
                         change("allowExternal", e.target.checked)
@@ -549,11 +549,12 @@ export function SettingsView({
                     />
                   </Row>
                   <Row
-                    title="演示缓存"
-                    help="这个数字来自 Fixture，不是实际磁盘占用。"
+                    title={fixture ? "演示缓存" : "缓存占用"}
+                    help={fixture ? "这个数字来自 Fixture，不是实际磁盘占用。" : "服务端暂无全工作区汇总，不能显示为零；按项目管理引用保护与清理。"}
                   >
-                    <span>{draft.cache} MB · 模拟</span>
+                    <span>{fixture ? `${draft.cache} MB · 模拟` : "未汇总"}</span>
                     <button
+                      disabled={!fixture}
                       onClick={() =>
                         setConfirm({
                           title: "预览缓存清理范围",
@@ -580,20 +581,19 @@ export function SettingsView({
               )}
               {section === "usage" && (
                 <>
-                  <Row title="统计范围" help="示例数据不是你的真实 API 用量。">
+                  <Row title="统计范围" help={fixture ? "示例数据不是你的真实 API 用量。" : "仅未来 Run 默认预算；Task 账本、Provider probe 与正式执行不是同一个统计范围。"}>
                     <select
+                      disabled={!fixture}
                       aria-label="统计范围"
                       value={draft.range}
                       onChange={(e) => change("range", e.target.value)}
                     >
-                      <option>当前任务</option>
-                      <option>本月</option>
-                      <option>全部预览</option>
+                      {fixture ? <><option>当前任务</option><option>本月</option><option>全部预览</option></> : <option>未来 Run 默认预算</option>}
                     </select>
                   </Row>
                   <Row
                     title="预算上限（USD）"
-                    help="演示预算，不会更新真实 Provider 或项目授权。"
+                    help={fixture ? "演示预算，不会更新真实 Provider 或项目授权。" : "保存未来 Run 的默认预算，不修改已冻结运行或授予任务调用权限。"}
                   >
                     <input
                       aria-label="预算上限"
@@ -604,7 +604,7 @@ export function SettingsView({
                   </Row>
                   <div className="usage-table">
                     <table>
-                      <caption>Fixture 用量示例 · {draft.range}</caption>
+                      <caption>{fixture ? "Fixture 用量示例" : "暂无统一费用汇总"} · {draft.range}</caption>
                       <thead>
                         <tr>
                           <th>模型</th>
@@ -629,12 +629,12 @@ export function SettingsView({
                   </div>
                   <p
                     className={
-                      Number(draft.budget) <= Number(state.knownCost)
+                      fixture && Number(draft.budget) <= Number(state.knownCost)
                         ? "error"
                         : "notice"
                     }
                   >
-                    {Number(draft.budget) < Number(state.knownCost)
+                    {!fixture ? "未知费用不计为零；此处不展示全系统费用。" : Number(draft.budget) < Number(state.knownCost)
                       ? "演示用量超过预算"
                       : Number(draft.budget) * 0.8 <= Number(state.knownCost)
                         ? "演示用量接近预算"
@@ -647,7 +647,7 @@ export function SettingsView({
                   <span role="status">
                     {saving
                       ? "保存中…"
-                      : saved || (dirty ? "有未保存的更改" : "预览设置已载入")}
+                      : saved || (dirty ? "有未保存的更改" : fixture ? "预览设置已载入" : "服务器设置已载入")}
                   </span>
                   <button onClick={cancel} disabled={saving}>
                     取消

@@ -27,3 +27,28 @@ Communication test and pinned-delivery request queued successfully, message `01a
 6. Processing and export; production entry only after HTTP verification.
 
 Each step is incomplete until independently tested. Fixture behavior is not HTTP evidence. No automatic fallback, unapproved external call, global fee aggregation or speculative resume.
+
+## Verified integration progress
+
+- Initial adapter/read-only slice: `1cc2063`. Five synthetic transport regressions (not HTTP E2E), original Fixture adapter tests, typecheck and preview build passed.
+- Backend HTTP fixture delivery `b8955cabcca72d87b1ed27a5cb132789ca535b60` plus documentation `dd98168` merged at `587eee426c65bd84e2685def984aab978509298a` after reading the committed launcher/seed. No Rust authored by frontend.
+- Real browser HTTP tests passed independently: (a) owned messages/images and Back/refresh without writes; (b) six Settings reads and preference/return recovery; (c) IME, double Send, persisted task, no calls on refresh; (c) explicit text-Plan consent reaches loopback TEST provider once and survives refresh; (e) exact HumanRequest classification correction persists in Sandbox and restores on refresh. Latest run: 5/5. These do NOT establish bbox correction, Sample invocation, stop transitions, Batch or Export integration yet.
+- Provider Registry read/write, default-model settings, next-request model CAS and future-budget PATCH code are wired; their write-path HTTP verification is still pending. Never count browser preference saving as proof of remote budget writes.
+- Raw HTTP viewport seen at 1440×960; approved Project tree, Header, Composer and optional canvas are retained. Broken integration logo URL fixed using existing production brand asset. No Fixture imported by HTTP entry.
+- Integration entry remains temporary `/agent-integration.html`; production entry is NOT replaced yet. Remaining work must include production routing and management return before declaring completion.
+
+## UIAPI-001 — HTTP fixture / object fields
+
+Requested existing real Router+SQLite seed and exact Plan source; backend delivered `28d5ec3`, including control scenes and docs. Verified actual `workspace.builder_operations` is `{items:[...]}` and adapted that shape (initial browser test caught `.map` on wrapper). `thread` remains only persisted user messages; structured decisions are labelled separately. No fabricated assistant success.
+
+## UIAPI-002 — listener restart probe (P1; workaround available)
+
+At integration `587eee4`: stop owned fixture launcher; `lsof` shows no LISTEN on 8792/8793; immediate launcher restart with the same marked TEST workspace fails at Python `socket.bind` with `Errno 48 Address already in use`. Request sent to fixed backend UUID, message `01a085d1-221b-72d1-be4e-1bb9d255907a`. Expected: recognize reusable TIME_WAIT without stealing active listeners; keep 8787 protection.
+
+Backend delivered `4676652` with SO_REUSEADDR + actual listen probe and tests; integration verification pending. Workaround: fresh isolated fixture on 8794/8795. Original 8787 and UI Preview 5174 untouched. No existing listener killed.
+
+## Local test hosting
+
+Cross-port Vite proxy writes correctly failed Origin validation. Chose actual same-origin Rust hosting of `web/dist-integration` instead of relaxing security/rewriting Origin. Integration build emits both `agent-integration.html` and SPA `index.html`; missing latter was caught as real 404 and fixed in frontend build configuration. Production `main.tsx` still untouched.
+
+Current test instance: `http://127.0.0.1:8794`, TEST workspace `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-0idu026x`. Actual requests all use original cookie/CSRF/privileged-confirmation flow. E2E refuses any server without `x-annotagent-fixture: external-model-only`. Test inference is deterministic, not commercial-model evidence.

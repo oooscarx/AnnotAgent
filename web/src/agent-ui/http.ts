@@ -1,5 +1,11 @@
-import { request } from "../api";
-import type { ImageItem, ProviderProfile, RegistryModelProfile } from "../types";
+import { request, type JourneyPreview, type JourneyConsent, type ProcessingAuthorization, type ProcessingReceipt } from "../api";
+import type { ImageItem, ProviderProfile, RegistryModelProfile, GlobalModelDefaults, ExpertPluginRegistry, InstalledModelInstance, ConversationSchemaPreview, ConversationCallReceipt, ConversationBuilderItem, WorkflowSampleTestRecord, SampleFeedbackRevision, ExportReadiness, ProjectExportResult } from "../types";
+import { terminalSampleAnnotations } from "../sampleAnnotations";
+import { sampleFeedbackOverlay } from "../sampleFeedbackOverlay";
+import type { HumanRequest } from "../conversation-human-api";
+import type { QueuedMessage } from "../components/ConversationQueue";
+import type { SendCommand, SendReceipt } from "../conversation-send";
+import type { StopRequestRecord } from "../conversation-stop-api";
 import type { WorkspaceAdapter, Snapshot, Task, Command, Settings, ImageId, Box, Phase, Action } from "./adapter";
 
 type Page<T> = { items: T[]; next_cursor: string | number | null };
@@ -11,8 +17,13 @@ type Workspace = {
   task: { input: { id: string; schema_revision: string } };
   agent_model: Preference;
   actions: Partial<Record<"send" | "stop" | "resume" | "approve", Action>>;
-  calls: { id: string; status: string; result: unknown }[];
-  queue: { input?: { text?: string }; message?: { input?: { text?: string } }; cancelled_at?: string | null }[];
+  calls: ConversationCallReceipt[];
+  queue: QueuedMessage[];
+  human_requests?: HumanRequest[];
+  builder_operations?: {items:ConversationBuilderItem[]};
+  sample_operations?: {id:string;draft_id:string;status:string;error?:string}[];
+  resume_actions?: {id:string;kind:string;available:boolean;reason:string;url:string;method:string}[];
+  processing_operations?: ProcessingReceipt[];
 };
 type Thread = { id: string; role: "user"; task_id: string; project_owner_id: string; conversation_id: string; message: { input: { text: string } } };
 type SafeSettings = { revision: string; sections: { data_privacy: { workspace_id: string }; usage_budget: { future_run_budget: Record<string, unknown> & { max_cost?: string } } } };
@@ -32,6 +43,16 @@ export class HttpAdapter implements WorkspaceAdapter {
   private navigationSequence = 0;
   private controller?: AbortController;
   private safeSettings?: SafeSettings;
+  private defaults: GlobalModelDefaults = {};
+  private modelCommands = new Map<string, {request_id: string; expected_revision: number; model_profile_id: string}>();
+  private approvals = new Map<string, {id:string; url:string; body: unknown; execution?:string}>();
+  private dimensions = new Map<string, Promise<{width:number;height:number}>>();
+  private measure(src:string) {
+    if(!this.dimensions.has(src)) this.dimensions.set(src,new Promise((resolve,reject)=>{
+      const image = new Image();image.onload=()=>resolve({width:image.naturalWidth,height:image.naturalHeight});image.onerror=()=>{this.dimensions.delete(src);reject(new Error("无法读取原始图片尺寸，不渲染猜测的标注框"));};image.src=src;
+    }));
+    return this.dimensions.get(src)!;
+  }
   constructor(private transport: Transport = request, private storage?: Storage) {}
   snapshot = () => this.state;
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
@@ -64,13 +85,14 @@ export class HttpAdapter implements WorkspaceAdapter {
     const seq = ++this.navigationSequence;
     this.emit({ loading: true, error: undefined });
     try {
-      const [nav, safe, providers, profiles] = await Promise.all([
+      const [nav, safe, providers, profiles, defaults, plugins, instances] = await Promise.all([
         this.pages<Project>("/api/navigation"), this.transport<SafeSettings>("/api/settings?view=agent-ui"),
         this.transport<{ providers: ProviderProfile[] }>("/api/providers"), this.transport<{ models: RegistryModelProfile[] }>("/api/model-profiles"),
+        this.transport<GlobalModelDefaults>("/api/agent-model-bindings"), this.transport<ExpertPluginRegistry>("/api/plugins"), this.transport<{instances: InstalledModelInstance[]}>("/api/model-instances"),
       ]);
       const rows = await Promise.all(nav.map(async p => ({ p, tasks: p.conversation_id ? await this.pages<NavigationTask>(`/api/projects/${esc(p.project_id)}/conversations/${esc(p.conversation_id)}/task-navigation`) : [] })));
       if (seq !== this.navigationSequence) return;
-      this.projects = new Map(nav.map(p => [p.project_id, p])); this.safeSettings = safe;
+      this.projects = new Map(nav.map(p => [p.project_id, p])); this.safeSettings = safe; this.defaults = defaults;
       this.state = { ...this.state, workspaceId: safe.sections.data_privacy.workspace_id };
       const prefs = this.stored<Partial<Settings>>("preferences", {});
       const models = profiles.models.map(m => {
@@ -86,7 +108,7 @@ export class HttpAdapter implements WorkspaceAdapter {
       // Unsaved composers are local input only, never fabricated persisted tasks/messages.
       for (const p of nav) tasks.push({ id: `new:${p.project_id}`, project: p.project_id, title: "新任务", revision: "", phase: "idle", items: [], queue: [], draft: this.stored(`draft.new:${p.project_id}`, ""), model: "", boxes: [], image: "", actions: { send: { available: true, reason: "只保存目标，执行需另行批准" } } });
       this.emit({ loading: false, projects: nav.map(p => ({ id: p.project_id, title: p.title })), tasks, models,
-        settings: { ...initialSettings, ...prefs, revision: safe.revision, budget: safe.sections.usage_budget.future_run_budget.max_cost || "", providers: providers.providers.map(p => ({ id: p.id, name: p.display_name, endpoint: p.base_url, credential: p.credential_configured, status: p.health.status })) },
+        settings: { ...initialSettings, ...prefs, revision: safe.revision, defaultModel: defaults.pipeline_builder || "", budget: safe.sections.usage_budget.future_run_budget.max_cost || "", providers: providers.providers.map(p => ({ id: p.id, name: p.display_name, endpoint: p.base_url, credential: p.credential_configured, status: p.health.status })), plugins: [...plugins.installations.map(p => ({id: p.manifest.id, name: p.manifest.display_name, version: p.manifest.version, status: p.enabled ? "已启用插件（不代表模型 Ready）" : "已禁用"})), ...instances.instances.map(i => ({id: i.id, name: i.model_id, version: i.model_bundle_version, status: i.status}))] },
       });
     } catch (e) { if (seq === this.navigationSequence) this.emit({ loading: false, error: (e as Error).message }); throw e; }
   };
@@ -110,24 +132,218 @@ export class HttpAdapter implements WorkspaceAdapter {
         return { id: image.image_id, project, name: image.name, src: image.url, width: 0, height: 0 };
       });
       const current = this.task(id);
+      const human = ws?.human_requests?.find(h=>h.status==="pending"&&!h.deferred);
+      const sampleOp = ws?.sample_operations?.find(s=>s.status==="succeeded");
+      const sampleId = human?.input.sample_test_id || sampleOp?.id;
+      const draftId = human?.input.resume_checkpoint_ref || sampleOp?.draft_id;
+      const result: Partial<Task> = {human:undefined};
+      const proposal=ws?.builder_operations?.items.find(item=>item.session?.builder_proposal)?.session?.builder_proposal;
+      if(proposal) {
+        const steps=proposal.draft.label_pipeline ? [...proposal.draft.label_pipeline.shared_stages.flatMap(s=>s.steps),...proposal.draft.label_pipeline.label_pipelines.flatMap(p=>p.steps)] : [];
+        result.plan={revision:String(proposal.draft.revision),steps:steps.length ? steps.map(s=>`${s.node_type}${s.model_binding?` · ${s.model_binding.model_id}`:""}`) : proposal.draft.nodes.map(n=>n.id),images:0,models:steps.flatMap(s=>s.model_binding?[s.model_binding.model_id]:[]),destination:"已保存的 Builder proposal（不是新推理）",budget:null};
+      }
+      if(ws) {
+        const jobs=await this.transport<{id:string;result?:ProjectExportResult;error?:string}[]>(`${this.taskRoot(task)}/exports`,{signal:ctrl.signal});
+        result.exports=jobs.map(j=>({id:j.id,status:j.error?"failed":j.result?.delivery?"ready":"unknown",url:j.result?.delivery?`${this.root(project)}/exports/${esc(j.result.delivery.id)}/download`:undefined,detail:j.error || (j.result?`${j.result.report.exported_count} 条已导出；${j.result.report.skipped_count} 条跳过`:"未取得完成回执，不显示成功下载")}));
+        result.processing=await Promise.all((ws.processing_operations||[]).filter(p=>p.batch_id).map(async p=>{
+          const batch=await this.transport<{batch:{project_id:string;status:string}}>(`/api/batches/${esc(p.batch_id!)}`,{signal:ctrl.signal});
+          if(batch.batch.project_id!==project)throw new Error("处理批次不属于当前项目");
+          return {id:p.id,batch:p.batch_id!,status:batch.batch.status,url:`/projects/${esc(project)}/batches/${esc(p.batch_id!)}`};
+        }));
+      }
+      if(sampleId && draftId) {
+        const value=await this.transport<{sample_test:WorkflowSampleTestRecord;annotation_schema?:{task:{kind:string;labels:string[]}}}>(`/api/workflow-drafts/${esc(draftId)}/sample-test?test_id=${esc(sampleId)}`,{signal:ctrl.signal});
+        const record=value.sample_test;
+        if(!record || record.id!==sampleId || record.draft_id!==draftId || record.project_id!==project) throw new Error("样例不属于当前项目和任务");
+        const boxesByImage:Record<ImageId,Box[]>={}, imageResults:NonNullable<Task["imageResults"]>={};
+        let requestedLabel="", feedbackVersion="";
+        for(const [index,input] of record.inputs.entries()) {
+          const image=images.images.find(i=>i.image_id===input.image_id), asset=artifacts.find(a=>a.id===input.image_id);
+          if(!image || !asset || image.content_hash!==input.content_hash) throw new Error("样例图片内容哈希已变化；不会替换原始证据");
+          const sample=record.report.samples[index]; if(!sample) continue;
+          const feedback=await this.transport<{revisions:SampleFeedbackRevision[]}>(`/api/workflow-sample-tests/${esc(sampleId)}/images/${esc(input.image_id)}/feedback`,{signal:ctrl.signal});
+          feedbackVersion+=`${input.image_id}:${feedback.revisions.at(-1)?.sequence || 0};`;
+          const original=terminalSampleAnnotations(sample,input.image_id,sampleId);
+          const annotations=sampleFeedbackOverlay(original,feedback.revisions).annotations;
+          const dims=await this.measure(asset.src);asset.width=dims.width;asset.height=dims.height;
+          boxesByImage[input.image_id]=annotations.flatMap(a=>a.value.kind==="bounding_box"?[{id:a.id,label:a.label || "",x:a.value.rect[0]*dims.width,y:a.value.rect[1]*dims.height,w:a.value.rect[2]*dims.width,h:a.value.rect[3]*dims.height}]:[]);
+          imageResults[input.image_id]={labels:annotations.flatMap(a=>a.value.kind==="classification"?a.value.labels:[]),risks:sample.projection?.review_candidates.map(r=>r.explanation.summary) || (sample.projection?[]:["旧样例没有终端投影，未显示中间框"])};
+          if(human?.input.image_id===input.image_id) {
+            const annotation=annotations.find(a=>a.id===human.input.outcome_id);
+            if(!annotation) throw new Error("人工请求的候选不是当前样例终端结果；没有替换成其他候选");
+            requestedLabel=annotation.label || "";
+          }
+        }
+        result.boxesByImage=boxesByImage;result.imageResults=imageResults;result.resultRevision=`${sampleId}:${feedbackVersion}`;
+        result.sample={id:sampleId,draft:draftId,revision:record.draft_revision};
+        if(human) result.human={id:human.input.id,image:human.input.image_id,kind:value.annotation_schema?.task.kind || "unsupported",labels:value.annotation_schema?.task.labels || [],label:requestedLabel,candidate:human.input.outcome_id || ""};
+      }
+      const persistedStop = this.stored<{id:string}|null>(`stop.${id}`, null);
+      const stop = persistedStop && ws ? await this.transport<StopRequestRecord & {normalized_state: Phase|null}>(`${this.conversation(project)}/stop-requests/${esc(persistedStop.id)}`, {signal:ctrl.signal}) : null;
+      if (seq !== this.sequence) return;
+      const receipts = [
+        ...(ws?.calls || []).map(c=>({id:c.id,title:"模型结构化决策",status:c.status,detail:c.evidence?.decision?.Ok?.rationale || c.evidence?.error})),
+        ...(ws?.builder_operations?.items || []).map(b=>({id:b.operation.id,title:"方案构建回执",status:b.operation.status,detail:b.operation.evidence?.error || b.operation.evidence?.outcome})),
+        ...(ws?.sample_operations || []).map(s=>({id:s.id,title:"样例测试回执",status:s.status,detail:s.error})),
+      ];
+      const active = ws?.calls.some(c=>c.status==="reserved") || ws?.sample_operations?.some(s=>["running","queued","cancelling"].includes(s.status));
+      const phase: Phase = stop?.normalized_state || (ws?.calls.some(c=>c.status==="in_doubt") ? "outcome_unknown" : active ? "running" : human ? "waiting_for_human" : "idle");
       this.emit({ error: undefined, artifacts, tasks: this.state.tasks.map(t => t.id !== id ? t : { ...current,
         items: thread.map(t => ({ id: t.id, role: "user", text: t.message.input.text })),
-        actions: ws?.actions || current.actions, model: ws?.agent_model.model_profile_id || current.model,
-        image: artifacts[0]?.id || "", editBoxes: this.stored(`edits.${id}`, {}),
-        queue: ws?.queue.filter(q => !q.cancelled_at).map(q => q.message?.input?.text || q.input?.text || "待处理输入") || [],
+        ...result, actions: {...ws?.actions || current.actions,answer:{available:!!result.human && ["classification","bounding_box"].includes(result.human.kind),reason:"仅保存当前人工作答的样例修正"}}, model: ws?.agent_model.model_profile_id || this.defaults.pipeline_builder || current.model,
+        image: human?.input.image_id || artifacts[0]?.id || "", editBoxes: this.stored(`edits.${id}`, {}),
+        phase, receipts, humanQuestion:human?.input.question,
+        queue: ws?.queue.filter(q => ["waiting_for_dispatch","authorized","running","in_doubt"].includes(q.status)).map(q => q.input.message.text) || [],
+        queueEntries: ws?.queue.map(q=>({id:q.input.message.id,text:q.input.message.text,status:q.status,canCancel:["waiting_for_dispatch","authorized","in_doubt"].includes(q.status)})),
       }) });
     } catch (e) { if (seq !== this.sequence || ctrl.signal.aborted) return; this.emit({ error: (e as Error).message, artifacts: [] }); throw e; }
   };
   async createTask(project: string) { this.root(project); return `new:${project}`; }
   saveDraft(id: string, text: string) { this.task(id); this.save(`draft.${id}`, text); this.emit({ tasks: this.state.tasks.map(t => t.id === id ? { ...t, draft: text } : t) }); }
   saveArtifactDraft(id: string, image: ImageId, boxes: Box[]) { const t = this.task(id); const editBoxes = { ...t.editBoxes, [image]: boxes }; this.save(`edits.${id}`, editBoxes); this.emit({ tasks: this.state.tasks.map(t => t.id === id ? { ...t, editBoxes } : t) }); }
-  async sendMessage(c: Command, _text: string, _mode: "plan" | "execute", _model: string) { this.checked(c); unsupported("发送与精确批准尚在联调"); }
-  async approveAction(c: Command) { this.checked(c); unsupported("精确授权尚在联调"); }
-  async interruptOperation(c: Command) { this.checked(c); unsupported("停止回执尚在联调"); }
-  async resumeOperation(c: Command) { this.checked(c); unsupported("继续能力尚在联调"); }
-  async selectAgentModel(c: Command, _model: string) { this.checked(c); unsupported("模型 CAS 尚在联调"); }
-  async answerHumanRequest(c: Command, _boxes: Box[]) { this.checked(c); unsupported("人工答案尚在联调"); }
-  async updateSettings(_revision: string, _settings: Settings) { unsupported("设置写入尚在联调"); }
-  async testProvider(_id: string, _result: "success" | "failed" | "unknown") { unsupported("连接检查尚在联调"); }
+  async sendMessage(c: Command, text: string, mode: "plan" | "execute", _model: string) {
+    const task = this.checked(c);
+    if (c.selection) unsupported("候选引用需要完整样例与 Geometry lineage；不能仅凭 bbox ID 发送");
+    let p = this.projects.get(task.project)!;
+    if (!p.conversation_id) { const value = await this.transport<{conversation_id:string}>(`${this.root(task.project)}/conversations`, {method:"POST"}); p = {...p,conversation_id:value.conversation_id};this.projects.set(task.project,p); }
+    const root = this.conversation(task.project);
+    const pending = this.stored<SendCommand|null>(`send.${task.id}`,null);
+    if (pending && (pending.message.text !== text || pending.mode !== mode)) throw new Error("上一条发送结果尚未确认。请保留原内容重试，不能换新命令掩盖未知结果。");
+    const input = pending || {message:{id:c.id,text,image:null},task_id:task.id.startsWith("new:")?null:task.id,schema_revision:(await this.transport<{revision:string}>(`${this.root(task.project)}/goal`)).revision,agent_model:await this.transport<Preference>(`${root}/agent-model`),mode};
+    this.save(`send.${task.id}`,input);
+    const receipt = await this.transport<SendReceipt>(`${root}/send`, {method:"POST",body:JSON.stringify(input)});
+    if (receipt.message.input.id !== input.message.id) throw new Error("发送回执 ID 不匹配");
+    this.save(`send.${task.id}`,null); this.saveDraft(task.id, "");
+    await this.refresh(); await this.loadTask(task.project,receipt.task_id); return receipt.task_id;
+  }
+  async prepareAction(c: Command, kind: "plan" | "sample" | "process" | "export") {
+    const task = this.checked(c); if(task.id.startsWith("new:")) throw new Error("请先保存目标");
+    if(this.stored(`approval.${task.id}`,null)) throw new Error("上次批准的结果待核对；请读取原回执，不能自动发起新的付费操作");
+    const root = this.taskRoot(task);
+    if(kind === "process") {
+      if(!task.sample) throw new Error("需要当前任务已保存的样例测试");
+      const selection={draft_id:task.sample.draft,sample_test_id:task.sample.id};
+      const p=await this.transport<ProcessingAuthorization>(`${this.root(task.project)}/processing-preview?${new URLSearchParams(selection)}`);
+      if(p.revision!==task.sample.revision)throw new Error("样例对应的草稿版本已变化，需要重新测试后确认");
+      const body={request_id:c.id,selection,expected_revision:p.revision,authorization_fingerprint:p.authorization_fingerprint};
+      this.approvals.set(task.id,{id:c.id,url:`${this.root(task.project)}/processing-operations`,body});
+      this.emit({tasks:this.state.tasks.map(t=>t.id===task.id?{...t,approval:{id:c.id,title:"确认方案并开始处理",revision:String(p.revision),budget:null,scope:[p.plan_name,`${p.image_count} 张图片；最多 ${p.maximum_model_calls} 次模型调用`,...p.models.map(m=>`${m.remote_model_id} → ${m.provider_base_url}`),...(p.native_models||[]).map(m=>`${m.name} → ${m.destination}`),"发布不可变版本并启动一次 Dataset Run；需审核结果不自动接受"]}}:t)});
+    } else if(kind === "export") {
+      const p=await this.transport<ExportReadiness>(`${this.root(task.project)}/export-readiness`);
+      if(p.project_id!==task.project || !p.ready || !p.formats.some(f=>f.format==="native"&&f.supported)) throw new Error("当前正式标注尚未满足 Native 导出要求；请先处理或审核。样例通过不等于正式标注。 "+JSON.stringify(p.blocking_issues));
+      const body={format:"native",background:true,conversation:{id:c.id,conversation_id:this.projects.get(task.project)!.conversation_id,task_id:task.id}};
+      this.approvals.set(task.id,{id:c.id,url:`${this.root(task.project)}/export`,body});
+      this.emit({tasks:this.state.tasks.map(t=>t.id===task.id?{...t,approval:{id:c.id,title:"导出为 Native",revision:task.revision,budget:"不调用模型",scope:[`${p.image_count} 张图片；${p.accepted_annotations} 条已确认标注；${p.unresolved_reviews} 条待审核`,"实际范围以服务器导出时的可用数据及报告为准",...p.formats.filter(f=>f.format==="native").flatMap(f=>f.warnings)]}}:t)});
+    } else if (kind === "plan") {
+      const p = await this.transport<ConversationSchemaPreview>(`${root}/schema-preview${task.model?`?model_id=${esc(task.model)}`:""}`);
+      const body = {call_id:c.id,model_id:p.model_id,scope_hash:p.scope_hash,expires_at:p.expires_at,allow_unknown_cost:true};
+      this.approvals.set(task.id,{id:c.id,url:`${root}/schema-proposals`,body});
+      this.emit({tasks:this.state.tasks.map(t=>t.id===task.id?{...t,approval:{id:c.id,title:"批准目标规划（仅文本规划）",revision:p.scope_hash,budget:null,scope:[p.model_name,p.destination,p.data_scope,`${p.image_count} 张图片；最多 ${p.maximum_calls} 次调用`,`有效期：${p.expires_at}`,"不会发布、批处理或自动接受标注"]}}:t)});
+    } else {
+      const bindings = await this.transport<{bindings:{model_profile_id:string}[]}>(`${this.root(task.project)}/model-bindings`);
+      const models = [...new Set(bindings.bindings.map(b=>`model-profile:${b.model_profile_id}`))];
+      if(!models.length) throw new Error("项目尚未绑定视觉模型，请先设置；不自动扩大到全部 Registry 模型");
+      const query = new URLSearchParams({consent_id:c.id,schema_call_id:crypto.randomUUID(),builder_operation_id:crypto.randomUUID(),sample_operation_id:crypto.randomUUID(),planner_model_id:task.model,allowed_models:JSON.stringify(models)});
+      const p = await this.transport<JourneyPreview>(`${root}/journey-preview?${query}`);
+      const consent: JourneyConsent = {...p.consent,allow_unknown_cost:true,...(p.consent.schema_proposal?{schema_proposal:{...p.consent.schema_proposal,allow_unknown_cost:true}}:{})};
+      this.approvals.set(task.id,{id:c.id,url:`${root}/journey-consents`,body:consent,execution:`${root}/journey-consents/${esc(consent.id)}/execution`});
+      this.emit({tasks:this.state.tasks.map(t=>t.id===task.id?{...t,approval:{id:c.id,title:"批准构建方案并测试样例",revision:consent.builder_scope_hash,budget:null,scope:[`${consent.images.length} 张图片；最多 ${consent.maximum_builder_calls} 次规划调用 + ${consent.maximum_sample_calls} 次样例调用`,p.builder.model_name,p.builder.destination,...p.data.models.map(m=>`${m.display_name} → ${m.destination}`),`有效期：${consent.expires_at}`,"仅保存草稿与样例测试，不发布、不批量处理、不写正式标注"]}}:t)});
+    }
+  }
+  async approveAction(c: Command) {
+    const task = this.checked(c), p = this.approvals.get(task.id);
+    if(!p || p.id!==task.approval?.id) throw new Error("精确授权已失效，请重新读取范围");
+    // Persist the exact intent before POST. Neither mount nor refresh executes it.
+    this.save(`approval.${task.id}`,p);
+    await this.transport(p.url,{method:"POST",body:JSON.stringify(p.body)});
+    if(p.execution) await this.transport(p.execution,{method:"POST",body:"{}"});
+    this.approvals.delete(task.id); this.save(`approval.${task.id}`,null);
+    this.emit({tasks:this.state.tasks.map(t=>t.id===task.id?{...t,approval:undefined}:t)});
+    await this.loadTask(task.project,task.id);
+  }
+  async interruptOperation(c: Command) {
+    const task = this.checked(c); if(!this.workspaces.get(task.id)?.actions.stop?.available) throw new Error("服务端未提供可停止操作");
+    const input = this.stored<{id:string;text:string;image:null;reference:{scope:"stop_request";task_id:string}}|null>(`stop.${task.id}`,null) || {id:c.id,text:"停止",image:null,reference:{scope:"stop_request" as const,task_id:task.id}};
+    this.save(`stop.${task.id}`,input);
+    const result = await this.transport<StopRequestRecord>(`${this.conversation(task.project)}/stop-requests`,{method:"POST",body:JSON.stringify(input)});
+    await this.loadTask(task.project,task.id);
+    if(result.status==="needs_selection") throw new Error("有多个活动操作，需选择精确停止目标；尚未宣称停止完成");
+    if(result.dispatch_error) throw new Error(result.dispatch_error);
+  }
+  async resumeOperation(c: Command) {
+    const task = this.checked(c), actions = this.workspaces.get(task.id)?.resume_actions?.filter(a=>a.available)||[];
+    if(actions.length!==1) throw new Error("需要唯一、明确可用的恢复点；不会恢复未知或已取消操作");
+    const a=actions[0];
+    if(a.method!=="POST" || !(a.url.startsWith(`${this.taskRoot(task)}/human-requests/`) || /^\/api\/batches\/[a-f0-9-]+\/resume$/.test(a.url))) throw new Error("继续地址不是受控站内任务动作");
+    await this.transport(a.url,{method:"POST",body:"{}"}); await this.loadTask(task.project,task.id);
+  }
+  async cancelQueue(c:Command,id:string) { const task=this.checked(c); if(!task.queueEntries?.some(q=>q.id===id&&q.canCancel)) throw new Error("队列项不可取消");await this.transport(`${this.taskRoot(task)}/message-queue/${esc(id)}/cancel`,{method:"POST",body:"{}"});await this.loadTask(task.project,task.id); }
+  async selectAgentModel(c: Command, model: string) {
+    const task = this.checked(c), selected = this.state.models.find(m => m.id === model);
+    if (!selected || selected.reason) throw new Error(selected?.reason || "模型不存在");
+    let p = this.projects.get(task.project)!;
+    if (!p.conversation_id) { const result = await this.transport<{conversation_id:string}>(`${this.root(task.project)}/conversations`, {method:"POST"}); p = {...p, conversation_id:result.conversation_id}; this.projects.set(task.project,p); }
+    const root = `${this.conversation(task.project)}/agent-model`;
+    let input = this.modelCommands.get(c.id);
+    if (input && input.model_profile_id !== model) throw new Error("模型选择重试的内容发生变化");
+    if (!input) { const current = await this.transport<Preference>(root); input = {request_id:c.id,expected_revision:current.revision,model_profile_id:model}; this.modelCommands.set(c.id,input); }
+    await this.transport(root, {method:"POST", body:JSON.stringify(input)});
+    await this.loadTask(task.project, task.id);
+    // New composers have no workspace yet; display only the confirmed preference.
+    if (task.id.startsWith("new:")) this.emit({tasks:this.state.tasks.map(t=>t.project===task.project?{...t,model}:t)});
+  }
+  async answerHumanRequest(c: Command, boxes: Box[], classification?:string) {
+    const task=this.checked(c), request=this.workspaces.get(task.id)?.human_requests?.find(h=>h.input.id===task.human?.id&&h.status==="pending"&&!h.deferred);
+    if(!request || !task.human) throw new Error("没有当前可提交的人工问题");
+    const candidate=boxes.find(b=>b.id===request.input.outcome_id), asset=this.state.artifacts.find(a=>a.id===request.input.image_id);
+    let corrected:SampleFeedbackRevision["corrected_value"];
+    let label=classification;
+    if(task.human.kind==="classification") { if(!classification || !task.human.labels.includes(classification)) throw new Error("请选择 Schema 中的类别"); corrected={kind:"classification",labels:[classification]}; }
+    else if(candidate && asset?.width && asset.height) {
+      if(![candidate.x,candidate.y,candidate.w,candidate.h].every(Number.isFinite) || candidate.w<=0 || candidate.h<=0 || candidate.x<0 || candidate.y<0 || candidate.x+candidate.w>asset.width || candidate.y+candidate.h>asset.height) throw new Error("边界框超出原图或尺寸无效");
+      corrected={kind:"bounding_box",rect:[candidate.x/asset.width,candidate.y/asset.height,candidate.w/asset.width,candidate.h/asset.height]};label=candidate.label;
+    } else throw new Error("当前候选/原始尺寸不可用");
+    const previous=this.stored<SampleFeedbackRevision|null>(`answer.${request.input.id}`,null);
+    if(previous && JSON.stringify(previous.corrected_value)!==JSON.stringify(corrected)) throw new Error("上次答案回执未知，请使用原答案重试或读取保存结果");
+    const answer=previous || {revision_id:c.id,sample_test_id:request.input.sample_test_id,image_id:request.input.image_id,sequence:request.input.expected_feedback_sequence+1,reason:task.human.kind==="classification"?"wrong_target":"poor_boundary",outcome_id:request.input.outcome_id,corrected_value:corrected,corrected_label:label,note:"用户在 Agent 工作区提交样例修正",created_at:new Date().toISOString()} satisfies SampleFeedbackRevision;
+    this.save(`answer.${request.input.id}`,answer);
+    const saved=await this.transport<HumanRequest>(`${this.taskRoot(task)}/human-requests/${esc(request.input.id)}/answer`,{method:"POST",body:JSON.stringify({answer})});
+    if(saved.answer?.revision_id!==answer.revision_id) throw new Error("服务器没有确认相同答案版本");
+    this.save(`answer.${request.input.id}`,null); this.save(`edits.${task.id}`,{});
+    await this.loadTask(task.project,task.id);
+  }
+  async updateSettings(revision: string, settings: Settings) {
+    const old = this.state.settings;
+    const budgetChanged = settings.budget !== old.budget;
+    const providersChanged = JSON.stringify(settings.providers) !== JSON.stringify(old.providers);
+    const modelChanged = settings.defaultModel !== old.defaultModel;
+    if ([budgetChanged, providersChanged, modelChanged].filter(Boolean).length > 1) throw new Error("请分别保存不同设置分类；服务端不支持跨分类原子提交");
+    if (settings.allowExternal !== old.allowExternal || settings.cache !== old.cache) throw new Error("外传需要逐次授权；清理需要真实范围预览，不能用设置偏好代替");
+    if (budgetChanged) {
+      if (!/^(0|[1-9]\d*)(\.\d{1,8})?$/.test(settings.budget)) throw new Error("预算必须是有效的非负美元金额");
+      if (!this.safeSettings) throw new Error("请先读取预算");
+      await this.transport("/api/settings", {method:"PATCH",body:JSON.stringify({expected_revision:revision,budget:{...this.safeSettings.sections.usage_budget.future_run_budget,max_cost:settings.budget}})});
+    }
+    if (modelChanged) await this.transport("/api/agent-model-bindings", {method:"PUT", body:JSON.stringify({...this.defaults,pipeline_builder:settings.defaultModel || null})});
+    if (providersChanged) {
+      const changed = settings.providers.filter(p => JSON.stringify(p) !== JSON.stringify(old.providers.find(o=>o.id===p.id)));
+      const removed = old.providers.filter(p=>!settings.providers.some(n=>n.id===p.id));
+      if (changed.length + removed.length !== 1) throw new Error("一次只能修改一个 Provider");
+      for (const p of changed) {
+        const existing = old.providers.find(o=>o.id===p.id);
+        if (p.credential !== (existing?.credential || false)) throw new Error("凭证必须使用独立的只写接口");
+        const value = {display_name:p.name,base_url:p.endpoint,...(!existing?{adapter:"open_ai_compatible"}:{})};
+        await this.transport(existing ? `/api/providers/${esc(p.id)}` : "/api/providers", {method:existing?"PATCH":"POST",body:JSON.stringify(value)});
+      }
+      for (const p of removed) await this.transport(`/api/providers/${esc(p.id)}`, {method:"DELETE"});
+    }
+    const {theme,language,font,density,collapsed} = settings;
+    this.save("preferences", {theme,language,font,density,collapsed});
+    await this.refresh();
+  }
+  async testProvider(id: string, _result: "success" | "failed" | "unknown") {
+    if (!this.state.settings.providers.some(p=>p.id===id)) throw new Error("Provider 不存在");
+    await this.transport(`/api/providers/${esc(id)}/check`, {method:"POST"}); await this.refresh();
+  }
   async installPlugin(_id: string, _fail: boolean) { unsupported("模型安装必须使用真实权限和许可证流程"); }
 }

@@ -1,6 +1,7 @@
 /** Shared presentation contract. Fixture is preview-only; HTTP fails closed. */
 export type ImageId = number | string;
 export type Action = { available: boolean; reason: string };
+export type Approval = { id: string; title: string; scope: string[]; revision: string; budget: string | null };
 export type Phase =
   | "idle"
   | "planning"
@@ -66,6 +67,15 @@ export type Task = {
   boxesByImage?: Record<ImageId, Box[]>;
   actions?: Partial<Record<"send" | "stop" | "resume" | "approve" | "answer", Action>>;
   humanQuestion?: string;
+  human?: { id:string; image:ImageId; kind:string; labels:string[]; label:string; candidate:string };
+  resultRevision?: string;
+  sample?: {id:string;draft:string;revision:number};
+  imageResults?: Record<ImageId, {labels:string[]; risks:string[]}>;
+  approval?: Approval;
+  receipts?: {id:string; title:string; status:string; detail?:string}[];
+  queueEntries?: {id:string;text:string;status:string;canCancel:boolean}[];
+  processing?: {id:string;batch:string;status:string;url:string}[];
+  exports?: {id:string;status:string;url?:string;detail:string}[];
   error?: string;
   plan?: {
     revision: string;
@@ -132,12 +142,14 @@ export interface WorkspaceAdapter {
     text: string,
     mode: "plan" | "execute",
     model: string,
-  ): Promise<void>;
+  ): Promise<void | string>;
+  prepareAction?(command: Command, kind: "plan" | "sample" | "process" | "export"): Promise<void>;
+  cancelQueue?(command: Command, message: string): Promise<void>;
   approveAction(command: Command): Promise<void>;
   interruptOperation(command: Command): Promise<void>;
   resumeOperation(command: Command): Promise<void>;
   selectAgentModel(command: Command, model: string): Promise<void>;
-  answerHumanRequest(command: Command, boxes: Box[]): Promise<void>;
+  answerHumanRequest(command: Command, boxes: Box[], classification?:string): Promise<void>;
   updateSettings(revision: string, settings: Settings): Promise<void>;
   testProvider(
     id: string,

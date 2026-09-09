@@ -31,7 +31,8 @@ export function ArtifactPane({
   const [boxes, setBoxes] = useState(
     task.editBoxes?.[initialImage] || savedBoxes,
   );
-  const [selected, setSelected] = useState(task.boxes[0]?.id);
+  const [selected, setSelected] = useState(savedBoxes[0]?.id);
+  const [classification,setClassification]=useState(task.human?.label || "");
   const [compare, setCompare] = useState(false);
   const [original, setOriginal] = useState(false);
   const [zoom, setZoom] = useState(100);
@@ -44,7 +45,7 @@ export function ArtifactPane({
     box: Box;
     resize: boolean;
   } | null>(null);
-  const dirty = JSON.stringify(boxes) !== JSON.stringify(task.boxes);
+  const dirty = JSON.stringify(boxes) !== JSON.stringify(savedBoxes) || classification !== (task.human?.label || "");
   useEffect(() => {
     adapter.saveArtifactDraft(task.id, image, boxes);
   }, [boxes, image, task.id, adapter]);
@@ -218,8 +219,10 @@ export function ArtifactPane({
         </svg>
       </div>
       <p className="canvas-warning">
-        示意图与手工框 · 非模型推理。杯柄边界待确认，语义得分不代表几何质量。
+        {fixture ? "示意图与手工框 · 非模型推理。杯柄边界待确认，语义得分不代表几何质量。" : task.imageResults?.[image]?.risks.join("；") || "样例评估结果 · 不是已接受的正式标注。语义分数不等于几何质量。"}
       </p>
+      {!fixture && task.imageResults?.[image]?.labels.map((label,i)=><p key={i}>分类结果：{label}</p>)}
+      {!fixture && task.human?.kind==="classification" && task.human.image===image && <label className="artifact-toolbar">确认类别<select aria-label="确认类别" value={classification} onChange={e=>setClassification(e.target.value)}>{task.human.labels.map(label=><option key={label}>{label}</option>)}</select></label>}
       <div className="thumbnails">
         {assets.map((a) => (
           <button
@@ -268,6 +271,7 @@ export function ArtifactPane({
           </div>
         ))}
         <button
+          disabled={!fixture}
           onClick={() => {
             setHistory((h) => [...h, boxes]);
             setBoxes((bs) => [
@@ -288,15 +292,15 @@ export function ArtifactPane({
       </details>
       <div className="artifact-footer">
         <small>
-          {dirty ? "浏览器编辑草稿已保存 · 尚未提交" : "演示候选 · 非正式标注"}
+          {dirty ? "浏览器编辑草稿 · 尚未提交" : fixture ? "演示候选 · 非正式标注" : "样例终端候选 · 非正式标注"}
         </small>
         <button
           className="primary"
-          disabled={saving || image !== 1 || task.phase !== "waiting_for_human"}
+          disabled={saving || (fixture ? image !== 1 || task.phase !== "waiting_for_human" : !task.actions?.answer?.available || task.human?.image!==image)}
           onClick={async () => {
             setSaving(true);
             try {
-              await adapter.answerHumanRequest(command(task), boxes);
+              await adapter.answerHumanRequest(command(task), boxes, classification);
               setHistory([]);
             } catch (e) {
               onError((e as Error).message);
@@ -305,7 +309,7 @@ export function ArtifactPane({
             }
           }}
         >
-          {saving ? "保存中…" : "提交修正并继续"}
+          {saving ? "保存中…" : fixture ? "提交修正并继续" : "保存当前样例修正"}
         </button>
       </div>
     </aside>

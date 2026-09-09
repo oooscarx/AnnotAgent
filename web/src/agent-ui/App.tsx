@@ -71,6 +71,7 @@ export function AgentPreviewApp({
     null,
   );
   const [busy, setBusy] = useState(false);
+  const [approvalBusy, setApprovalBusy] = useState(false);
   const task = state.tasks.find(
     (t) => t.id === (url.searchParams.get("task") || state.tasks[0]?.id),
   );
@@ -78,6 +79,11 @@ export function AgentPreviewApp({
   useEffect(() => {
     if (task && adapter.loadTask) void adapter.loadTask(task.project, task.id).catch(e => setError(e.message));
   }, [adapter, task?.id, task?.project]);
+  useEffect(() => {
+    if (!task || !adapter.loadTask || !["planning","running","stopping"].includes(task.phase)) return;
+    const timer = setInterval(() => { void adapter.loadTask!(task.project,task.id).catch(e=>setError(e.message)); }, 2000);
+    return () => clearInterval(timer);
+  }, [adapter,task?.id,task?.phase]);
   useEffect(() => {
     if (!state.settings.collapsed && state.projects.length) setExpanded(x => x.length ? x : [state.projects[0].id]);
   }, [state.projects.length]);
@@ -190,13 +196,14 @@ export function AgentPreviewApp({
         },
       };
     await act(async () => {
-      await adapter.sendMessage(
+      const resultTask = await adapter.sendMessage(
         retryCommand.current!.command,
         task.draft,
         mode,
         task.model,
       );
       retryCommand.current = null;
+      if (typeof resultTask === "string") navigate({task:resultTask});
     });
     sendPending.current = false;
     setBusy(false);
@@ -242,7 +249,7 @@ export function AgentPreviewApp({
               navigate({ settings: null, task: state.tasks[0]?.id || null });
             }}
           >
-            <img src="/assets/mark-ink.svg" alt="" />
+            <img src={fixture ? "/assets/mark-ink.svg" : "/brand/core/annotagent-mark.svg"} alt="" />
             AnnotAgent
           </a>
           <button
@@ -452,6 +459,17 @@ export function AgentPreviewApp({
                             </small>
                           )}
                         </div>
+                        {!fixture && task.receipts?.map(r=><details className="plan-history" key={r.id}><summary>{r.title} · {r.status}</summary><p>{r.detail || "系统已保存此操作回执；未记录自然语言回复。"}</p></details>)}
+                        {!fixture && !active && adapter.prepareAction && task.items.length > 0 && <div className="actions">
+                          <button disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),"plan"))}>查看规划授权</button>
+                          <button disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),"sample"))}>构建方案并测试样例…</button>
+                          {task.sample && <button disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),"process"))}>确认方案并开始处理…</button>}
+                          <button disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),"export"))}>导出…</button>
+                        </div>}
+                        {!fixture && task.phase!=="interrupted" && allowed("resume") && <button onClick={()=>void act(()=>adapter.resumeOperation(command(task)))}>继续已保存的任务</button>}
+                        {!fixture && task.processing?.map(p=><p key={p.id}>处理批次 · {p.status} <a href={p.url}>查看本次结果 →</a></p>)}
+                        {!fixture && task.exports?.map(e=><p key={e.id}>导出 · {e.status} · {e.detail} {e.url && <a href={e.url} download>下载真实导出文件</a>}</p>)}
+                        {!fixture && task.approval && <section className="plan-block"><strong>{task.approval.title}</strong><ul>{task.approval.scope.map((s,i)=><li key={i}>{s}</li>)}</ul><p>费用：{task.approval.budget ?? "未知；可能产生费用"}</p><button className="primary" onClick={()=>setApproval(command(task))}>查看并确认授权</button></section>}
                         {task.plan && (
                           <PlanBlock
                             plan={task.plan}
@@ -533,12 +551,12 @@ export function AgentPreviewApp({
                   </div>
                 </div>
                 <div className="composer-region">
-                  {task.queue.length > 0 && (
+                  {(task.queue.length > 0 || !!task.queueEntries?.length) && (
                     <details className="queue">
                       <summary>
                         {task.queue.length} 条排队输入 · {fixture ? "模拟，" : ""}未自动执行
                       </summary>
-                      {task.queue.map((q, i) => (
+                      {task.queueEntries ? task.queueEntries.map(q=><div key={q.id}><p>{q.text} · {q.status}</p>{q.canCancel && <button type="button" onClick={()=>void act(()=>adapter.cancelQueue!(command(task),q.id))}>取消此输入</button>}</div>) : task.queue.map((q, i) => (
                         <p key={i}>{q}</p>
                       ))}
                     </details>
@@ -836,7 +854,7 @@ export function AgentPreviewApp({
                     }}
                   />
                   <ArtifactPane
-                    key={`${task.id}:${url.searchParams.get("image") || task.image}`}
+                    key={`${task.id}:${url.searchParams.get("image") || task.image}:${task.resultRevision || ""}`}
                     task={task}
                     adapter={adapter}
                     assets={state.artifacts.filter(a => !a.project || a.project === task.project)}
@@ -860,25 +878,25 @@ export function AgentPreviewApp({
         </main>
       </div>
       {approval && task && (
-        <Dialog title="批准当前计划？" onClose={() => setApproval(null)}>
-          <p>范围：3 张示意图 · 演示 VLM 与 SAM</p>
-          <p>目的地：当前浏览器 Fixture，不外传。</p>
-          <p>预算：未知。演示不收费，不写正式标注。</p>
+        <Dialog title={fixture ? "批准当前计划？" : task.approval?.title || "授权已变化"} onClose={() => {if(!approvalBusy)setApproval(null);}}>
+          {fixture ? <><p>范围：3 张示意图 · 演示 VLM 与 SAM</p><p>目的地：当前浏览器 Fixture，不外传。</p><p>预算：未知。演示不收费，不写正式标注。</p></> : <><ul>{task.approval?.scope.map((s,i)=><li key={i}>{s}</li>)}</ul><p>{task.approval?.budget || "费用未知。点击确认表示接受上述明确范围的潜在费用，不授予额外操作权限。"}</p></>}
           <small>绑定任务 revision {approval.revision}</small>
           <div className="actions">
-            <button autoFocus onClick={() => setApproval(null)}>
+            <button autoFocus disabled={approvalBusy} onClick={() => setApproval(null)}>
               取消
             </button>
             <button
               className="primary"
+              disabled={approvalBusy || (!fixture && !task.approval)}
               onClick={() =>
                 void act(async () => {
-                  await adapter.approveAction(approval);
-                  setApproval(null);
+                  if(approvalBusy)return;
+                  setApprovalBusy(true);
+                  try { await adapter.approveAction(approval);setApproval(null); } finally { setApprovalBusy(false); }
                 })
               }
             >
-              确认模拟试跑
+              {fixture ? "确认模拟试跑" : approvalBusy ? "提交授权中…" : "接受未知费用并执行此范围"}
             </button>
           </div>
         </Dialog>
