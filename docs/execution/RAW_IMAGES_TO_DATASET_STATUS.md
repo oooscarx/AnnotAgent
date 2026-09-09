@@ -42,6 +42,16 @@ Test evidence: added failing collision regression and observed failure before fi
 - M2: image-level evidence/readiness, deterministic source-image package, frozen manifests/splits, streaming atomic ZIP, independent validator, owned receipt/download and recovery.
 - M3: same-chat full delivery with isolated TEST HTTP E2E, real ZIP extraction and two-path portability evidence. Synthetic data does not establish model accuracy.
 
+## M1 — intent/storage foundation (partial; no UI completion claim)
+
+Implemented `annotagent-core/src/dataset_delivery.rs`: the three optional typed slots, owner identities, source-image content evidence and grouping, ordered stable labels, an explicit task/framework/profile revision, and default 80/20 seeded grouping-preserving split policy with whole-image human review. A label name never infers an annotation kind. A segmentation intent remains segmentation and fails the detection-preset eligibility check. Structural completeness is explicitly not a capability check or spending authorization.
+
+Implemented `annotagent-storage/src/task_delivery.rs` and migration 0061: intent revisions attach to existing conversation Tasks, preserve exact structured content and its SHA-256, enforce Project/conversation/Task ownership and revision CAS, and return the original receipt for an identical command retry. Changed retries fail. Replaying an old successful command does not roll the latest saved intent back. Missing slots survive reopening SQLite without reconstructing conversational history. No existing task/Schema/Run is replaced.
+
+Verification: `cargo test --offline -p annotagent-core -p annotagent-storage -p annotagent-export --target-dir /tmp/annotagent-dataset-delivery-target` passed, including existing storage integration suites. `cargo clippy --offline -p annotagent-core -p annotagent-storage -p annotagent-export --all-targets --target-dir /tmp/annotagent-dataset-delivery-target -- -D warnings` passed. `cargo fmt --all --check` passed. Tests use temporary TEST SQLite databases only. New persistence regression separately rerun after adding old-command/current-revision assertions.
+
+M0 local commit: `3d495dc`. M1 foundation follows as a separate local commit. This is not completion of M1: server-resolved scope admission, HTTP endpoints, same-thread intake card, Schema/Builder wiring and capability/authorization gates are next. Storage APIs alone are not exposed as a usable product feature.
+
 ## Not complete / not executed
 
-No new three-slot UI or persisted delivery request is connected yet. No complete training ZIP has been generated. Whole-image confirmation, explicit negatives/exclusions, exact-scope authorization and automatic authorized packaging remain to implement. Browser screenshots, end-to-end HTTP delivery, official loader smoke, two-path extraction, full workspace checks and live model quality evaluation have not run. No completed delivery or cost is claimed.
+No new three-slot UI is connected yet; typed intent persistence exists but is not wired to HTTP/Builder. No complete training ZIP has been generated. Whole-image confirmation, explicit negatives/exclusions, exact-scope authorization and automatic authorized packaging remain to implement. Browser screenshots, end-to-end HTTP delivery, official loader smoke, two-path extraction, full workspace checks and live model quality evaluation have not run. No completed delivery or cost is claimed.

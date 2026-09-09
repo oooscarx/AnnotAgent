@@ -5,6 +5,7 @@ pub mod annotation;
 pub mod artifact;
 pub mod artifact_conversion;
 pub mod batch;
+pub mod dataset_delivery;
 pub mod error;
 pub mod evaluation;
 pub mod event;
