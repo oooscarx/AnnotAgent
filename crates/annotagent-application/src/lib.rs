@@ -9458,6 +9458,21 @@ impl LocalApplication {
         Ok(self.store.conversation_agent_model(&owner, conversation)?)
     }
 
+    /// An explicit model belongs to an existing/frozen scope and always wins.
+    /// Only preparation of a NEW scope consults the conversation preference.
+    pub fn resolve_conversation_agent_model(
+        &self,
+        project_id: &str,
+        conversation: uuid::Uuid,
+        explicit_model: Option<ModelProfileId>,
+    ) -> Result<PipelineBuilderModelRuntime> {
+        let preference = self.project_conversation_agent_model(project_id, conversation)?;
+        self.resolve_pipeline_builder_model(
+            project_id,
+            explicit_model.or(preference.model_profile_id),
+        )
+    }
+
     /// Save a next-request preference, not a call grant. Resolution is passive;
     /// invocation must still freeze and authorize its actual Model/Provider scope.
     pub fn select_project_conversation_agent_model(

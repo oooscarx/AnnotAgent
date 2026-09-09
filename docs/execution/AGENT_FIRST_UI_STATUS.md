@@ -463,3 +463,55 @@ remain. Goal/M3 incomplete; no push, remote changes, real workspace writes or pa
 Final current-source Storage regression passed (70787); Storage/Application/Server strict
 all-target/all-feature Clippy and cargo fmt --all --check passed (77699). git diff --check
 also passed. This is targeted backend verification, not a full workspace or Web regression.
+
+## M3 connection — Registry picker and next-authorization model resolution
+
+Previous turn was verified progress (33b5a99). Connected its durable preference to preparation
+of new Schema, Builder, candidate-feedback and future-rule scopes through one application
+resolver. Explicit model IDs from an existing consent always win; the existing runtime call
+still uses its frozen model/provider configuration. New scopes consult the conversation
+preference, then the original Project/global resolver when the preference is null. The
+combined Journey already calls these same Schema/Builder scope functions, so it reuses this
+boundary without replacing visual-model selection. Actual health/credential validation and
+exact scope confirmation remain mandatory. Selecting a model is never consent to transmit
+history/images or a silent edit of an existing approved request.
+
+Added Composer AgentModelPicker: real Registry reads, searchable Provider/account optgroups,
+model capabilities/status, durable selection, same-command retry, stale-selection reload,
+existing model-management return path, Escape/focus return. Search Enter cannot implicitly
+submit the surrounding Composer. First explicit selection can create the Project's existing
+canonical conversation; mount only reads. Unknown health is displayed truthfully. No key
+form, model probe, background inference or duplicated Model Registry. Existing consent can
+still run with its original model; picker copy therefore says **next authorization**, not
+that changing a preference replaces an already approved operation.
+
+Evidence:
+
+- `agent-model-picker.spec.ts` verifies changing from TEST Alpha account to TEST Beta:
+  fresh scope uses Beta, explicitly frozen Alpha scope keeps identical scope_hash. Search
+  Enter preserves unsent message without `/send`; selection survives reload; Escape returns
+  focus; 390px has no document horizontal overflow. Before explicit inference only selection
+  POSTs occur and reserved calls remain zero.
+- The same test explicitly starts a slow, authorized loopback TEST Schema request, observes
+  backend `reserved`, changes preference to Beta, then observes one `completed` call. The
+  TEST provider echoes the actual received Alpha model in its saved response rationale;
+  preference remains Beta. This is real HTTP/ledger timing with scripted output, not Live
+  model quality. First attempt waited for completion before observing reserved and failed;
+  corrected to concurrent observation. Second attempted a nonexistent evidence.remote_model
+  field; added truthful TEST request echo rather than claiming that missing field exists.
+- Current-source picker + all four atomic Send/recovery browser tests passed (41057,
+  5/5, 30.4s overall), isolated `/tmp/annotagent-guided-e2e-61110`. No 8787 restart.
+- Typecheck passed (91892); Web 238 unit tests / 49 files passed (44665). Web production
+  build passed in the browser harness with the existing large-chunk warning. Strict
+  Application/Server/TEST-fixture Clippy passed (73337); earlier resolver Clippy passed13346.
+- Real application screenshots (TEST data, not kit images):
+  `agent-first-model-picker-desktop.png`, `agent-first-model-picker-mobile.png`.
+  Inspected both: popup controls fit, but legacy inline Journey forms and the expanded task
+  sidebar in the mobile resized state remain; these are not final six-state acceptance.
+
+Still pending: freeze mode/model configuration at Send/queued-message admission (current
+boundary is new authorization preparation), per-turn Plan/Execute controls, queuing,
+cross-provider historical replay/summary tests, full stop→checkpoint→continue trace and
+the remaining visual/feedback integration. Existing narrow consent proves no automatic
+new transmission, not a general multi-provider conversation replay implementation.
+No push, remote changes, real-workspace mutation, paid call or prototype output introduced.

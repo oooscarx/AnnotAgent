@@ -28,6 +28,7 @@ import { imageClassApi, type ImageClassReview } from "../conversation-image-clas
 import { mergeImageClassReview } from "../conversation-image-class";
 import { ConversationNavigation } from "./ConversationNavigation";
 import { AgentComposer } from "./AgentComposer";
+import { AgentModelPicker } from "./AgentModelPicker";
 import { parsePendingSend, sameSendCommand } from "../conversation-send";
 
 /** The journal and image importer share the existing Project; neither starts inference. */
@@ -474,7 +475,7 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
           onCompositionChange={value=>{composing.current=value;}}
           onSubmit={()=>{void send();}}
           reference={stopComposer ? <small>{t("Standalone stop control · No LLM or image submission. Multiple active operations require an explicit choice.")}</small> : pinnedSelection?.input.reference?.scope === "sample_candidate" ? <div className="conversation-candidate-reference" aria-label="Message candidate reference"><strong>Only this saved candidate</strong><span>{pinnedSelection.name} · {pinnedSelection.input.reference.candidate_id} · Draft revision {pinnedSelection.input.reference.draft_revision}</span><small>Changing the displayed image does not change this reference. Saving the message does not edit the annotation.</small><button type="button" disabled={busy||Boolean(frozen.current)} onClick={()=>setPinnedSelection(undefined)}>Remove candidate reference</button></div> : <small>{referenceImage ? `Image reference: ${referenceImage.name}` : "No image reference · Project-level message"}</small>}
-          actions={stopComposer ? <button className="danger-button" disabled={!ready || busy} type="submit">{t(busy ? "Saving stop request…" : frozen.current ? "Retry same stop request" : taskId ? "Stop selected task" : "Stop active work")}</button> : <button className="primary" disabled={!ready || busy || !text.trim()} type="submit">{busy ? "Sending…" : frozen.current ? "Retry same send" : "Send"}</button>} />
+          actions={<><AgentModelPicker key={project.id} project={project.id} conversation={conversation} onConversation={setConversation} onSettings={()=>onNavigate(conversationSettingsPath(project.id,"models",navigationContext))}/>{stopComposer ? <button className="danger-button" disabled={!ready || busy} type="submit">{t(busy ? "Saving stop request…" : frozen.current ? "Retry same stop request" : taskId ? "Stop selected task" : "Stop active work")}</button> : <button className="primary" disabled={!ready || busy || !text.trim()} type="submit">{busy ? "Sending…" : frozen.current ? "Retry same send" : "Send"}</button>}</>} />
       </section>
       <div className="conversation-divider" role="separator" aria-label="Resize conversation panel" aria-orientation="vertical" tabIndex={0} aria-valuemin={25} aria-valuemax={75} aria-valuenow={width} aria-valuetext={`${width}% conversation panel`}
         onKeyDown={(event) => {

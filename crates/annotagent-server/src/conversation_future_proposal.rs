@@ -75,7 +75,7 @@ fn scope(
     }
     let selected = state
         .application
-        .resolve_pipeline_builder_model(project, selection.model_id)
+        .resolve_conversation_agent_model(project, conversation, selection.model_id)
         .map_err(ApiError::bad_request)?;
     let mut config = selected
         .openai_compatible_config()

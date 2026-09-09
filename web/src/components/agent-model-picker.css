@@ -1,0 +1,9 @@
+.agent-model-picker { position: relative; min-width: 0; max-width: 100%; margin-inline-end: auto; }
+.agent-model-picker > summary { cursor: pointer; padding: .5rem .65rem; border: 1px solid var(--aa-border); border-radius: 6px; overflow-wrap: anywhere; font-size: .875rem; }
+.agent-model-panel { position: absolute; bottom: calc(100% + .5rem); inset-inline-start: 0; z-index: 40; width: min(26rem, calc(100vw - 3rem)); max-height: min(65vh, 32rem); overflow: auto; display: grid; gap: .75rem; padding: 1rem; border: 1px solid var(--aa-border); border-radius: 8px; background: var(--aa-surface); color: var(--aa-text); box-shadow: 0 8px 24px rgb(0 0 0 / .12); }
+.agent-model-panel p { margin: 0; font-size: .875rem; line-height: 1.6; }
+.agent-model-panel label { display: grid; gap: .375rem; min-width: 0; }
+.agent-model-panel input, .agent-model-panel select { width: 100%; min-width: 0; }
+.agent-model-panel small { overflow-wrap: anywhere; }
+.agent-model-panel button { min-height: 44px; white-space: normal; }
+@media (max-width: 640px) { .agent-model-panel { position: fixed; inset-inline: 1rem; bottom: 6rem; width: auto; max-height: 60svh; } }

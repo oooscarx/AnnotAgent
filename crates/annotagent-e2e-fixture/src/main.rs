@@ -552,7 +552,7 @@ async fn openai_completion(
             return Json(json!({"error":"TEST schema proposal must be text only"}));
         }
         let classification = serialized.contains("室内");
-        let arguments = if request["model"] == "e2e-conversation-invalid-schema" {
+        let mut arguments = if request["model"] == "e2e-conversation-invalid-schema" {
             json!({"decision":"draft","kind":"classification","labels":[],"multi_label":false,"attributes":{},"boundary_rules":[],"rationale":"TEST invalid empty label set"})
         } else if request["model"] == "e2e-conversation-clarify" {
             json!({"decision":"clarify","question":"TEST: Which output type and labels should this task use?","rationale":"TEST ambiguous goal; human semantics required"})
@@ -565,6 +565,14 @@ async fn openai_completion(
         } else {
             json!({"decision":"draft","kind":if classification {"classification"} else {"bounding_box"},"labels":if classification {json!(["室内","室外"])} else {json!(["cup"])},"multi_label":false,"attributes":{},"boundary_rules":["TEST fixture rule"],"rationale":"TEST scripted Schema proposal, not Live model quality evidence"})
         };
+        if request["model"] == "e2e-conversation-classification-schema-background" {
+            // TEST transport evidence: echo the actual incoming model, not the
+            // browser's currently selected preference after this slow request.
+            arguments["rationale"] = json!(format!(
+                "TEST received model: {}. Scripted response; not Live quality evidence.",
+                request["model"].as_str().unwrap_or_default()
+            ));
+        }
         return Json(
             json!({"id":format!("TEST-schema-{}",uuid::Uuid::new_v4()),"object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"test-schema-call","type":"function","function":{"name":"propose_annotation_schema","arguments":arguments.to_string()}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":40,"completion_tokens":8,"total_tokens":48}}),
         );

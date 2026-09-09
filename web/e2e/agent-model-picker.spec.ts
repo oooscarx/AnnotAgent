@@ -1,0 +1,73 @@
+import { randomUUID } from "node:crypto";
+import { expect, test } from "./fixtures";
+
+test("Registry picker persists next-scope model without probes, sends or changing frozen scopes", async ({page,request}) => {
+  test.setTimeout(120_000);
+  const project = `TEST-model-picker-${Date.now()}`;
+  expect((await request.post("/api/projects", {data:{id:project,yaml:"version: 1\nproject:\n  name: TEST model picker\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n"}})).ok()).toBe(true);
+  const models: {id:string;display_name:string}[]=[];
+  for (const name of ["Alpha", "Beta"]) {
+    const provider = await (await request.post("/api/providers",{data:{display_name:`TEST ${name} account`,adapter:"open_ai_compatible",base_url:"http://127.0.0.1:8796/openai/v1"}})).json();
+    expect((await request.post(`/api/providers/${provider.id}/credential`,{data:{source:"workspace_file",secret:"guided-e2e-protocol-fixture"}})).ok()).toBe(true);
+    const model = await (await request.post("/api/model-profiles",{data:{provider_id:provider.id,display_name:`TEST ${name} planner`,remote_model_id:name === "Alpha" ? "e2e-conversation-classification-schema-background" : "e2e-planner",input_modalities:["text"],task_capabilities:["text_generation"],protocol_features:{tool_calls:true,structured_output:true}}})).json();
+    expect((await request.post(`/api/providers/${provider.id}/active-probe`,{data:{model_profile_id:model.id,confirmed_billable:true}})).ok()).toBe(true);
+    models.push(model);
+  }
+  const conversation = (await (await request.post(`/api/projects/${project}/conversations`,{data:{}})).json()).conversation_id;
+  const root = `/api/projects/${project}/conversations/${conversation}`;
+  const revision = (await (await request.get(`/api/projects/${project}/goal`)).json()).revision;
+  const send = await (await request.post(`${root}/send`,{data:{message:{id:randomUUID(),text:"TEST classify day and night",image:null},task_id:null,schema_revision:revision}})).json();
+  const mutations:string[]=[];
+  page.on("request", req=> {if(req.method()!=="GET")mutations.push(new URL(req.url()).pathname);});
+  await page.goto(`/projects/${project}/work?conversation=${conversation}&task=${send.task_id}`);
+  const composer = page.getByRole("textbox",{name:"Your message",exact:true});
+  await composer.fill("TEST unsent text survives choosing a model");
+  await page.getByLabel("Choose Agent model",{exact:true}).click();
+  const picker = page.getByRole("combobox",{name:"Agent model",exact:true});
+  await expect(picker).toBeEnabled();
+  await picker.selectOption(models[0].id);
+  await expect(picker).toBeEnabled();
+  const original = await (await request.get(`${root}/tasks/${send.task_id}/schema-preview`)).json();
+  expect(original.model_id).toBe(models[0].id);
+  const search = page.getByRole("searchbox",{name:"Search models"});
+  await search.fill("Beta"); await search.press("Enter");
+  await expect(composer).toHaveValue("TEST unsent text survives choosing a model");
+  await picker.selectOption(models[1].id);
+  await expect(picker).toBeEnabled();
+  const next = await (await request.get(`${root}/tasks/${send.task_id}/schema-preview`)).json();
+  expect(next.model_id).toBe(models[1].id);
+  expect(next.destination).toBeTruthy();
+  const frozen = await (await request.get(`${root}/tasks/${send.task_id}/schema-preview?model_id=${models[0].id}`)).json();
+  expect(frozen.model_id).toBe(original.model_id);
+  expect(frozen.scope_hash).toBe(original.scope_hash);
+  await page.screenshot({path:"/tmp/annotagent-agent-model-picker-desktop.png",fullPage:true});
+  expect(mutations.every(path=>path.endsWith("/agent-model")),JSON.stringify(mutations)).toBe(true);
+  await search.press("Escape");
+  await expect(page.getByLabel("Choose Agent model",{exact:true})).toBeFocused();
+  await composer.fill("");
+  await page.reload();
+  await page.getByLabel("Choose Agent model",{exact:true}).click();
+  await expect(picker).toHaveValue(models[1].id);
+  await page.setViewportSize({width:390,height:844});
+  await expect(picker).toBeVisible();
+  await page.screenshot({path:"/tmp/annotagent-agent-model-picker-mobile.png",fullPage:true});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  expect((await (await request.get(`${root}/tasks/${send.task_id}/budget`)).json()).total_reserved_calls).toBe(0);
+  // Explicit TEST-only authorization. Change preference while Alpha is actually
+  // reserved in the backend; the late response must still be attributed to Alpha.
+  const taskRoot = `${root}/tasks/${send.task_id}`;
+  const before = await (await request.get(`${root}/agent-model`)).json();
+  expect((await request.post(`${root}/agent-model`,{data:{request_id:randomUUID(),expected_revision:before.revision,model_profile_id:models[0].id}})).ok()).toBe(true);
+  const consent = {call_id:randomUUID(),model_id:models[0].id,scope_hash:original.scope_hash,expires_at:original.expires_at,allow_unknown_cost:true};
+  const running = request.post(`${taskRoot}/schema-proposals`,{data:consent});
+  await expect.poll(async()=> (await (await request.get(`${taskRoot}/calls`)).json())[0]?.status).toBe("reserved");
+  expect((await request.post(`${root}/agent-model`,{data:{request_id:randomUUID(),expected_revision:before.revision+1,model_profile_id:models[1].id}})).ok()).toBe(true);
+  const launched = await running;
+  expect(launched.ok(),await launched.text()).toBe(true);
+  await expect.poll(async()=> (await (await request.get(`${taskRoot}/calls`)).json())[0]?.status).toBe("completed");
+  const calls = await (await request.get(`${taskRoot}/calls`)).json();
+  expect(calls).toHaveLength(1);
+  expect(calls[0].id).toBe(consent.call_id);
+  expect(calls[0].evidence.response.tool_calls[0].arguments.rationale).toContain("TEST received model: e2e-conversation-classification-schema-background");
+  expect((await (await request.get(`${root}/agent-model`)).json()).model_profile_id).toBe(models[1].id);
+});
