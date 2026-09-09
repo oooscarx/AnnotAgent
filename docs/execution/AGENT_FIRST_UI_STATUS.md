@@ -76,3 +76,36 @@ bindings or actual model performance. They will not be imported into the Registr
    and honest fixture/live/native limitations; update README only with actual app shots.
 
 No milestone is marked complete merely by this baseline or design inspection.
+
+## M0 control-contract audit — unknown completion race
+
+The previous turn was progress (new failing entry acceptance test and baseline commit
+7a5ce44). This turn found and fixed an actual Application-layer stop observation bug.
+
+When the stop menu offered multiple active requests, a chosen Provider could become
+`in_doubt` before selection. Storage correctly saved `Finished` (nothing left to cancel),
+but Application returned `finished` before inspecting the actual remote outcome. This
+could hide remote completion/cost uncertainty in the new stopped-state UI.
+
+Added `stop_selection_after_unknown_completion_does_not_hide_remote_uncertainty` with
+two real reserved calls in an isolated temporary database. It failed before the fix:
+expected `unknown`, got `finished` (process 58348, exit 101). The fix keeps the receipt's
+historical selection status but always inspects the selected operation: pending and
+unknown observations take priority. It does not cancel the second request, reset its
+budget, retry a Provider, or invent a resumable checkpoint.
+
+Verification:
+
+- `cargo fmt --all`: only the two intended Application files changed (excluding existing PNGs).
+- `cargo test -p annotagent-application conversation_stop::tests -- --nocapture`:
+  3 passed, process 58925 exit 0; includes pending → unknown and exact-owner tests.
+- `cargo test -p annotagent-storage conversation_stop -- --nocapture`:
+  20 passed, process 17448 exit 0; includes transactional selection, shared siblings,
+  cumulative grants, publication fences and late admission.
+- `cargo clippy -p annotagent-application --all-targets --all-features -- -D warnings`:
+  process 31615 exited 0.
+
+Still open: Plan does not yet have the per-turn policy required here; do not present
+existing grant checks as Plan-mode verification. Continuation and queued input remain
+work for M2/M3. The M0 entry test remains intentionally red until the actual new layout
+and unified server-resolved send contract are connected. No real workspace restarted.

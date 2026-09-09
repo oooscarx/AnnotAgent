@@ -171,12 +171,9 @@ impl LocalApplication {
         let record = self
             .conversation_stop_request(project, conversation, message)?
             .context("Stop command was not found")?;
-        if record.status == ConversationStopStatus::Finished {
-            return Ok(Some(ConversationStopObservation {
-                state: "finished",
-                description: "The selected operation had already ended. No other operation was stopped.",
-            }));
-        }
+        // Selection may race with a Provider becoming in_doubt. A terminal control
+        // receipt only means there was nothing left to cancel, not remote success.
+        let already_finished = record.status == ConversationStopStatus::Finished;
         let Some(target) = record.selected_target else {
             return Ok(None);
         };
@@ -311,6 +308,11 @@ impl LocalApplication {
             ConversationStopObservation {
                 state: "unknown",
                 description: "Local execution ended. The remote completion and cost are unknown; no automatic retry was started.",
+            }
+        } else if already_finished {
+            ConversationStopObservation {
+                state: "finished",
+                description: "The selected operation had already ended. No other operation was stopped.",
             }
         } else {
             ConversationStopObservation {

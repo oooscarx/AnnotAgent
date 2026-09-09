@@ -168,3 +168,97 @@ fn reading_stop_does_not_signal_and_receipt_does_not_claim_remote_success() {
         saved
     );
 }
+
+#[test]
+fn stop_selection_after_unknown_completion_does_not_hide_remote_uncertainty() {
+    let (_temp, app, conversation) = app();
+    let goal = ConversationMessageInput {
+        id: Uuid::new_v4(),
+        text: "TEST queued planning".into(),
+        image: None,
+        reference: None,
+    };
+    app.append_project_conversation_message("TEST-stop", conversation, &goal)
+        .unwrap();
+    let task = Uuid::new_v4();
+    app.begin_conversation_task(
+        "TEST-stop",
+        conversation,
+        &BeginConversationTask {
+            id: task,
+            source_message_id: goal.id,
+            schema_revision: app.project_goal("TEST-stop").unwrap()["revision"]
+                .as_str()
+                .unwrap()
+                .into(),
+        },
+    )
+    .unwrap();
+    let owner = app.conversation_project_identity("TEST-stop").unwrap();
+    let first = Uuid::new_v4();
+    let second = Uuid::new_v4();
+    app.store
+        .authorize_conversation_calls(
+            &owner,
+            &ConversationCallGrant {
+                id: first,
+                task_id: task,
+                scope_hash: "b".repeat(64),
+                maximum_calls: 2,
+                expires_at: Utc::now() + Duration::minutes(1),
+            },
+        )
+        .unwrap();
+    for call in [first, second] {
+        app.store
+            .reserve_conversation_call(&owner, task, call, &"b".repeat(64), &"c".repeat(64))
+            .unwrap();
+    }
+    let input = stop(Some(task));
+    let offered = app
+        .begin_conversation_stop("TEST-stop", conversation, &input)
+        .unwrap();
+    assert_eq!(offered.status, ConversationStopStatus::NeedsSelection);
+    let budget = app.store.conversation_task_budget(&owner, task).unwrap();
+    app.store
+        .finish_conversation_call(
+            &owner,
+            task,
+            first,
+            ConversationCallStatus::InDoubt,
+            serde_json::json!({"error":"TEST disconnected after remote admission"}),
+        )
+        .unwrap();
+    let selected = app
+        .select_conversation_stop(
+            "TEST-stop",
+            conversation,
+            input.id,
+            &ConversationStopTargetRef {
+                kind: ConversationStopTargetKind::Call,
+                id: first.to_string(),
+                task_id: task,
+            },
+        )
+        .unwrap();
+    assert_eq!(selected.status, ConversationStopStatus::Finished);
+    assert_eq!(
+        app.conversation_stop_observation("TEST-stop", conversation, input.id)
+            .unwrap()
+            .unwrap()
+            .state,
+        "unknown"
+    );
+    assert_eq!(
+        app.store
+            .conversation_call(&owner, task, second)
+            .unwrap()
+            .unwrap()
+            .status,
+        ConversationCallStatus::Reserved
+    );
+    assert_eq!(
+        app.store.conversation_task_budget(&owner, task).unwrap(),
+        budget
+    );
+}
