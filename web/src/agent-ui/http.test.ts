@@ -5,6 +5,19 @@ const project = { project_id: "TEST-alpha", project_owner_id: "owner-a", title: 
 const settings = { revision: "revision-1", sections: { data_privacy: { workspace_id: "TEST-workspace" }, usage_budget: { future_run_budget: { max_requests: 10, max_cost: "2.50" } } } };
 const navTask = (id: string) => ({ task_id: id, title: `TEST ${id}`, schema_revision: "schema-1", project_owner_id: "owner-a", conversation_id: "conversation-a", state: "idle" });
 const root = "/api/projects/TEST-alpha/conversations/conversation-a/tasks";
+it("planning an existing task never overrides its frozen Send model with the next-request preference", async () => {
+  const { transport, paths } = mockTransport({
+    "/api/agent-model-bindings": {pipeline_builder:"new-preference"},
+    [`${root}/t1/schema-preview`]: {model_id:"frozen-send-model",model_name:"Frozen",destination:"TEST",data_scope:"text",image_count:0,maximum_calls:1,scope_hash:"scope",expires_at:"future"},
+  });
+  const adapter = new HttpAdapter(transport);
+  await adapter.refresh(); await adapter.loadTask("TEST-alpha","t1");
+  expect(adapter.snapshot().tasks.find(t=>t.id==="t1")?.model).toBe("new-preference");
+  await adapter.prepareAction({id:"plan",project:"TEST-alpha",task:"t1",revision:"schema-1"},"plan");
+  expect(paths).toContain(`${root}/t1/schema-preview`);
+  expect(paths.some(path=>path.includes("model_id=new-preference"))).toBe(false);
+  expect(adapter.snapshot().tasks.find(t=>t.id==="t1")?.approval?.scope).toContain("Frozen");
+});
 function mockTransport(overrides: Record<string, unknown | (() => Promise<unknown>)> = {}) {
   const paths: string[] = [];
   const data: Record<string, unknown | (() => Promise<unknown>)> = {

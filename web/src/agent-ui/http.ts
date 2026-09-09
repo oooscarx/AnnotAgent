@@ -290,7 +290,9 @@ export class HttpAdapter implements WorkspaceAdapter {
       this.approvals.set(task.id,{id:c.id,url:`${this.root(task.project)}/export`,body});
       this.emit({tasks:this.state.tasks.map(t=>t.id===task.id?{...t,approval:{id:c.id,title:"导出为 Native",revision:task.revision,budget:"不调用模型",scope:[`${p.image_count} 张图片；${p.accepted_annotations} 条已确认标注；${p.unresolved_reviews} 条待审核`,"实际范围以服务器导出时的可用数据及报告为准",...p.formats.filter(f=>f.format==="native").flatMap(f=>f.warnings)]}}:t)});
     } else if (kind === "plan") {
-      const p = await this.transport<ConversationSchemaPreview>(`${root}/schema-preview${task.model?`?model_id=${esc(task.model)}`:""}`);
+      // Composer preference applies to the next Send, not this admitted task.
+      // Let the server resolve its persisted Send model before freezing consent.
+      const p = await this.transport<ConversationSchemaPreview>(`${root}/schema-preview`);
       const body = {call_id:c.id,model_id:p.model_id,scope_hash:p.scope_hash,expires_at:p.expires_at,allow_unknown_cost:true};
       this.approvals.set(task.id,{id:c.id,url:`${root}/schema-proposals`,body});
       this.emit({tasks:this.state.tasks.map(t=>t.id===task.id?{...t,approval:{id:c.id,title:"批准目标规划（仅文本规划）",revision:p.scope_hash,budget:null,scope:[p.model_name,p.destination,p.data_scope,`${p.image_count} 张图片；最多 ${p.maximum_calls} 次调用`,`有效期：${p.expires_at}`,"不会发布、批处理或自动接受标注"]}}:t)});
@@ -298,7 +300,7 @@ export class HttpAdapter implements WorkspaceAdapter {
       const bindings = await this.transport<{bindings:{model_profile_id:string}[]}>(`${this.root(task.project)}/model-bindings`);
       const models = [...new Set(bindings.bindings.map(b=>`model-profile:${b.model_profile_id}`))];
       if(!models.length) throw new Error("项目尚未绑定视觉模型，请先设置；不自动扩大到全部 Registry 模型");
-      const query = new URLSearchParams({consent_id:c.id,schema_call_id:crypto.randomUUID(),builder_operation_id:crypto.randomUUID(),sample_operation_id:crypto.randomUUID(),planner_model_id:task.model,allowed_models:JSON.stringify(models)});
+      const query = new URLSearchParams({consent_id:c.id,schema_call_id:crypto.randomUUID(),builder_operation_id:crypto.randomUUID(),sample_operation_id:crypto.randomUUID(),allowed_models:JSON.stringify(models)});
       const p = await this.transport<JourneyPreview>(`${root}/journey-preview?${query}`);
       const consent: JourneyConsent = {...p.consent,allow_unknown_cost:true,...(p.consent.schema_proposal?{schema_proposal:{...p.consent.schema_proposal,allow_unknown_cost:true}}:{})};
       this.approvals.set(task.id,{id:c.id,url:`${root}/journey-consents`,body:consent,execution:`${root}/journey-consents/${esc(consent.id)}/execution`});
