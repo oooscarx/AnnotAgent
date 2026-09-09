@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Actual HTTP parity for manual classification and mask additions
+
+Added three browser scenarios for classification, semantic_mask and instance_mask. Each defines only TEST labels, adds through native HumanAnnotation, changes label, undoes and changes again, saves exactly once, checks actual server-owned Review/value/source/status, follows the native Review link and refreshes without a second write. All three passed (2.9 s). Initial mask assertions exposed expected f32 serialization, verified directly in Core NormalizedPoint; assertions now require the exact Math.fround representation of each coordinate, not a broad geometry tolerance. The classification label/value synchronization passed unchanged. An additional preexisting manual Schema scenario passed in the first broader test selection.
+
+Production build remains e7a716c, /tmp/annotagent-human-parity-dist; only E2E source changed. Isolated TEST8794/8795, no paid model calls, real workspace or Published changes. Existing goal remains active. Audit additionally confirms GeometrySafetyPanel's improvement/calibration operations are still unmounted and absent from the native adapter: preserve them pending actual migration rather than deleting supported operations. Final full-product evidence remains outstanding.
+
 ## Retire old manual Run editor after restoring missing native types
 
 Dependency audit found RunAnnotationEditor unmounted, but its classification and polygon-encoded semantic/instance-mask additions were absent from native HumanAnnotation. Added all three to the existing native factory/canvas (no fabricated prediction), synchronized classification value.labels when changing the visible label, and added bounded in-session Undo. Submitted/unknown requests remain frozen; Undo is disabled after dispatch. Fresh manual objects reset Undo so a cancelled object's history cannot leak into another annotation. Removed old RunAnnotationEditor.tsx and its component-specific tests; migrated type/label invariants to native tests. No remaining source/E2E imports of the old editor.
