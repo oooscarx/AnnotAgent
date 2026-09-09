@@ -24,9 +24,10 @@ pub(crate) fn validate_contents(
     manifest: &PackageManifest,
     entries: &BTreeSet<String>,
 ) -> Result<()> {
+    validate_lineage(manifest)?;
     manifest.intent.validate().map_err(anyhow::Error::msg)?;
     ensure!(
-        manifest.format_version == 1
+        matches!(manifest.format_version, 1 | 2)
             && manifest.delivery_revision > 0
             && manifest.intent.missing_slots().is_empty(),
         "Invalid manifest identity or incomplete intent"
@@ -320,5 +321,134 @@ pub(crate) fn validate_contents(
             )?,
         "Exclusions report differs from image evidence"
     );
+    Ok(())
+}
+
+fn valid_digest(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+fn validate_lineage(manifest: &PackageManifest) -> Result<()> {
+    ensure!(
+        manifest.format_version != 2 || manifest.lineage.is_some(),
+        "Version 2 package must retain its provenance lineage"
+    );
+    let Some(lineage) = &manifest.lineage else {
+        return Ok(());
+    };
+    ensure!(
+        lineage
+            .package_id
+            .parse::<annotagent_core::ImageId>()
+            .is_ok()
+            && lineage.package_version == 1
+            && valid_digest(&lineage.frozen_snapshot_sha256)
+            && !lineage.exporter_version.is_empty()
+            && lineage.validator_version == 1,
+        "Invalid package lineage identity"
+    );
+    let expected = manifest
+        .intent
+        .label_spec
+        .as_ref()
+        .context("Lineage needs labels")?
+        .iter()
+        .enumerate()
+        .map(|(n, label)| (label.stable_id.clone(), n))
+        .collect::<BTreeMap<_, _>>();
+    ensure!(
+        lineage.label_id_to_class_id == expected,
+        "Lineage class mapping differs from frozen labels"
+    );
+    ensure!(
+        lineage.images.len() == manifest.images.len(),
+        "Lineage image scope mismatch"
+    );
+    let mut revisions = BTreeSet::new();
+    for image in &manifest.images {
+        let entry = lineage
+            .images
+            .get(&image.image_id)
+            .context("Image lineage missing")?;
+        ensure!(
+            entry.source_run_id.is_some() == entry.schema_sha256.is_some()
+                && entry.source_run_id.is_some() == entry.model_binding_sha256.is_some(),
+            "Schema/model source evidence missing"
+        );
+        ensure!(
+            [
+                &entry.schema_sha256,
+                &entry.workflow_sha256,
+                &entry.model_binding_sha256
+            ]
+            .into_iter()
+            .flatten()
+            .all(|v| valid_digest(v)),
+            "Invalid Schema/Workflow/model source digest"
+        );
+        ensure!(
+            entry.source_run_id.is_some() || entry.workflow_sha256.is_none(),
+            "Workflow evidence without source Run"
+        );
+        ensure!(
+            !entry.original_name.is_empty()
+                && !entry.original_name.contains(['/', '\\', '\0'])
+                && !matches!(entry.original_name.as_str(), "." | ".."),
+            "Original name must not expose a host path"
+        );
+        let (ImageConfirmation::PositiveComplete {
+            confirmation_id: confirmation,
+        }
+        | ImageConfirmation::NegativeConfirmed {
+            confirmation_id: confirmation,
+        }
+        | ImageConfirmation::Excluded {
+            confirmation_id: confirmation,
+            ..
+        }) = &image.confirmation
+        else {
+            anyhow::bail!("Lineage has unresolved image");
+        };
+        ensure!(
+            entry.confirmation_id == *confirmation
+                && entry
+                    .confirmation_id
+                    .parse::<annotagent_core::ImageId>()
+                    .is_ok()
+                && entry.confirmation_revision > 0
+                && valid_digest(&entry.annotation_snapshot_sha256),
+            "Image confirmation lineage mismatch"
+        );
+        ensure!(
+            entry.source_run_id.is_some() == entry.source_evidence_sha256.is_some()
+                && entry
+                    .source_evidence_sha256
+                    .as_ref()
+                    .is_none_or(|v| valid_digest(v)),
+            "Invalid source Run evidence"
+        );
+        if matches!(
+            image.confirmation,
+            ImageConfirmation::PositiveComplete { .. }
+        ) {
+            ensure!(
+                entry.source_run_id.is_some(),
+                "Positive image source Run missing"
+            );
+            ensure!(
+                !entry.annotation_revision_ids.is_empty(),
+                "Positive image has no formal annotation revision evidence"
+            );
+        }
+        for revision in &entry.annotation_revision_ids {
+            ensure!(
+                revision
+                    .parse::<annotagent_core::AnnotationRevisionId>()
+                    .is_ok()
+                    && revisions.insert(revision),
+                "Invalid or repeated annotation revision reference"
+            );
+        }
+    }
     Ok(())
 }

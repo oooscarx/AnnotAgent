@@ -200,6 +200,20 @@ impl SqliteStore {
                 DeliveryImageDecision::Excluded if input.reason.as_ref().is_none_or(|s| s.trim().is_empty()) => return Err(invalid("excluding an image requires a reason")),
                 _ => {}
             }
+            // Some historical rows predate revision tracking. Record a truthful present-day
+            // import baseline, not a fabricated earlier human acceptance or geometry edit.
+            for annotation in snapshot.annotations.iter().filter(|a|a.review_status==ReviewStatus::HumanAccepted) {
+                let has_revision:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM annotation_revisions WHERE annotation_id=?1)",[annotation.id.to_string()],|r|r.get(0))?;
+                if !has_revision {
+                    let baseline=annotagent_core::AnnotationRevision {
+                        revision_id:annotagent_core::AnnotationRevisionId::new(),annotation_id:annotation.id,parent_revision_id:None,
+                        before:None,after:Some(annotation.snapshot()),actor:annotagent_core::RevisionActor::Import,
+                        reason:Some("Existing annotation snapshot registered at explicit whole-image delivery confirmation; earlier revision history unavailable.".into()),created_at:chrono::Utc::now(),
+                    };
+                    baseline.validate().map_err(|_|invalid("Cannot record annotation revision baseline"))?;
+                    tx.execute("INSERT INTO annotation_revisions(revision_id,annotation_id,parent_revision_id,revision_json,created_at) VALUES(?1,?2,NULL,?3,?4)",params![baseline.revision_id.to_string(),annotation.id.to_string(),serde_json::to_string(&baseline)?,baseline.created_at.to_rfc3339()])?;
+                }
+            }
             let result = DeliveryImageReview { revision:current.checked_add(1).ok_or_else(|| invalid("review revision overflow"))?, input:input.clone(), snapshot, created_at:chrono::Utc::now().to_rfc3339() };
             tx.execute("INSERT INTO delivery_image_reviews(task_id,intent_revision,image_id,revision,command_id,input_json,snapshot_json,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)", params![task.to_string(),saved.revision,input.image_id.to_string(),result.revision,input.command_id.to_string(),serde_json::to_string(input)?,serde_json::to_string(&result.snapshot)?,result.created_at])?;
             tx.commit()?;
@@ -515,6 +529,27 @@ mod tests {
             f.annotation
         );
         assert!(frozen.snapshot.images[0].source_evidence_sha256.is_some());
+        assert_eq!(frozen.snapshot.images[0].annotation_revision_ids.len(), 1);
+        let baseline: annotagent_core::AnnotationRevision = f
+            .store
+            .with_connection(|db| {
+                let json: String = db.query_row(
+                    "SELECT revision_json FROM annotation_revisions WHERE annotation_id=?1",
+                    [f.annotation.id.to_string()],
+                    |r| r.get(0),
+                )?;
+                Ok(serde_json::from_str(&json)?)
+            })
+            .unwrap();
+        assert_eq!(baseline.actor, annotagent_core::RevisionActor::Import);
+        assert!(baseline.before.is_none());
+        assert_eq!(baseline.after, Some(f.annotation.snapshot()));
+        assert!(
+            baseline
+                .reason
+                .unwrap()
+                .contains("earlier revision history unavailable")
+        );
         assert_eq!(
             f.store
                 .conversation_exports(&i.project_id, i.conversation_id, i.task_id)

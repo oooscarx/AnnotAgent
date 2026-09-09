@@ -328,6 +328,106 @@ fn rewrite_with_matching_hashes(
 }
 
 #[test]
+fn package_lineage_is_explicit_and_independently_checked() {
+    let temp = tempfile::tempdir().unwrap();
+    let (intent, mut sources) = fixture(temp.path());
+    let mut images = BTreeMap::new();
+    for source in &mut sources {
+        let id = ImageId::new().to_string();
+        match &mut source.confirmation {
+            ImageConfirmation::PositiveComplete { confirmation_id }
+            | ImageConfirmation::NegativeConfirmed { confirmation_id }
+            | ImageConfirmation::Excluded {
+                confirmation_id, ..
+            } => *confirmation_id = id.clone(),
+            _ => unreachable!(),
+        }
+        images.insert(
+            source.image_id,
+            PackageImageLineage {
+                schema_sha256: Some("d".repeat(64)),
+                workflow_sha256: None,
+                model_binding_sha256: Some("e".repeat(64)),
+                original_name: "same-name.png".into(),
+                source_run_id: Some(annotagent_core::RunId::new()),
+                confirmation_id: id,
+                confirmation_revision: 1,
+                annotation_revision_ids: source
+                    .annotations
+                    .iter()
+                    .map(|_| annotagent_core::AnnotationRevisionId::new().to_string())
+                    .collect(),
+                annotation_snapshot_sha256: "a".repeat(64),
+                source_evidence_sha256: Some("b".repeat(64)),
+            },
+        );
+    }
+    let lineage = PackageLineage {
+        package_id: ImageId::new().to_string(),
+        package_version: 1,
+        frozen_snapshot_sha256: "c".repeat(64),
+        label_id_to_class_id: BTreeMap::from([("stable-cup".into(), 0), ("stable-ball".into(), 1)]),
+        exporter_version: "TEST".into(),
+        validator_version: 1,
+        images,
+    };
+    let original = temp.path().join("lineage.zip");
+    write_training_package_with_lineage(intent, 1, &sources, &original, Some(lineage), |_| Ok(()))
+        .unwrap();
+    validate_training_package(&original).unwrap();
+    for case in [
+        "missing",
+        "classes",
+        "private-path",
+        "confirmation",
+        "source",
+        "revision",
+    ] {
+        let target = temp.path().join(format!("bad-lineage-{case}.zip"));
+        rewrite_with_matching_hashes(&original, &target, |_, manifest| {
+            if case == "missing" {
+                manifest.lineage = None;
+                return;
+            }
+            let lineage = manifest.lineage.as_mut().unwrap();
+            match case {
+                "classes" => {
+                    lineage.label_id_to_class_id.insert("stable-cup".into(), 41);
+                }
+                "private-path" => {
+                    lineage.images.values_mut().next().unwrap().original_name =
+                        "/private/user/image.png".into();
+                }
+                "confirmation" => {
+                    lineage.images.values_mut().next().unwrap().confirmation_id =
+                        ImageId::new().to_string();
+                }
+                "source" => {
+                    lineage
+                        .images
+                        .values_mut()
+                        .next()
+                        .unwrap()
+                        .source_evidence_sha256 = None;
+                }
+                "revision" => lineage
+                    .images
+                    .values_mut()
+                    .find(|i| !i.annotation_revision_ids.is_empty())
+                    .unwrap()
+                    .annotation_revision_ids
+                    .clear(),
+                _ => unreachable!(),
+            }
+        });
+        assert!(
+            validate_training_package(&target).is_err(),
+            "must reject {case}"
+        );
+    }
+}
+
+#[test]
 fn independent_validator_rejects_semantic_tampering_even_with_matching_hashes() {
     let temp = tempfile::tempdir().unwrap();
     let (intent, sources) = fixture(temp.path());

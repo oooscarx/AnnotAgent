@@ -311,6 +311,31 @@ mod tests {
         std::fs::write(&downloaded, &bytes).unwrap();
         annotagent_export::training_package::validate_training_package(&downloaded).unwrap();
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let manifest: annotagent_export::training_package::PackageManifest =
+            serde_json::from_reader(zip.by_name("annotagent/manifest.json").unwrap()).unwrap();
+        assert_eq!(manifest.format_version, 2);
+        let lineage = manifest.lineage.unwrap();
+        assert_eq!(lineage.package_id, command.to_string());
+        assert_eq!(
+            lineage.frozen_snapshot_sha256,
+            finished["job"]["snapshot_sha256"]
+        );
+        assert_eq!(
+            lineage.label_id_to_class_id,
+            BTreeMap::from([("target-a".into(), 0), ("target-b".into(), 1)])
+        );
+        assert_eq!(lineage.images.len(), 12);
+        assert_eq!(
+            lineage
+                .images
+                .values()
+                .map(|i| i.annotation_revision_ids.len())
+                .sum::<usize>(),
+            20
+        );
+        assert!(lineage.images.values().all(|i| i.source_run_id == Some(run)
+            && !i.original_name.contains('/')
+            && i.source_evidence_sha256.is_some()));
         let mut image_count = 0;
         for n in 0..zip.len() {
             let mut file = zip.by_index(n).unwrap();

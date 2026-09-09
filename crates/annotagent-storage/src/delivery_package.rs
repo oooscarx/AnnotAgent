@@ -22,10 +22,18 @@ pub struct DeliveryPackageInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FrozenDeliveryImage {
+    #[serde(default)]
+    pub original_name: String,
     pub review: DeliveryImageReview,
     pub annotation_revision_ids: Vec<String>,
     /// Internal source evidence fingerprint; raw provider configuration is never packaged.
     pub source_evidence_sha256: Option<String>,
+    #[serde(default)]
+    pub schema_sha256: Option<String>,
+    #[serde(default)]
+    pub workflow_sha256: Option<String>,
+    #[serde(default)]
+    pub model_binding_sha256: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeliveryPackageSnapshot {
@@ -161,11 +169,16 @@ impl SqliteStore {
                     let mut stmt=tx.prepare("SELECT revision_id FROM annotation_revisions WHERE annotation_id=?1 ORDER BY created_at,revision_id")?;
                     annotation_revision_ids.extend(stmt.query_map([annotation.id.to_string()],|r|r.get::<_,String>(0))?.collect::<Result<Vec<_>,_>>()?);
                 }
-                let source_evidence_sha256=review.input.source_run_id.map(|run| {
-                    let evidence:String=tx.query_row("SELECT json_array(project_schema_json,workflow_snapshot_json,provider,model) FROM runs WHERE id=?1 AND project_id=?2",params![run.to_string(),project],|r|r.get(0))?;
-                    Ok::<_,StorageError>(format!("{:x}",Sha256::digest(evidence.as_bytes())))
+                let evidence=review.input.source_run_id.map(|run| {
+                    tx.query_row("SELECT project_schema_json,workflow_snapshot_json,provider,model FROM runs WHERE id=?1 AND project_id=?2",params![run.to_string(),project],|r|Ok((r.get::<_,String>(0)?,r.get::<_,Option<String>>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?)))
                 }).transpose()?;
-                images.push(FrozenDeliveryImage {review,annotation_revision_ids,source_evidence_sha256});
+                let source_evidence_sha256=evidence.as_ref().map(|v|serde_json::to_vec(v).map(|bytes|format!("{:x}",Sha256::digest(bytes)))).transpose()?;
+                let schema_sha256=evidence.as_ref().map(|v|format!("{:x}",Sha256::digest(v.0.as_bytes())));
+                let workflow_sha256=evidence.as_ref().and_then(|v|v.1.as_ref()).map(|v|format!("{:x}",Sha256::digest(v.as_bytes())));
+                let model_binding_sha256=evidence.as_ref().map(|v|serde_json::to_vec(&(&v.2,&v.3)).map(|bytes|format!("{:x}",Sha256::digest(bytes)))).transpose()?;
+                let relative_path:String=tx.query_row("SELECT relative_path FROM images WHERE id=?1 AND project_id=?2",params![image.image_id.to_string(),project],|r|r.get(0))?;
+                let original_name=std::path::Path::new(&relative_path).file_name().and_then(|n|n.to_str()).ok_or_else(||invalid("Image source filename unavailable"))?.to_owned();
+                images.push(FrozenDeliveryImage {original_name,review,annotation_revision_ids,source_evidence_sha256,schema_sha256,workflow_sha256,model_binding_sha256});
             }
             images.sort_by_key(|i|i.review.input.image_id);
             let frozen=DeliveryPackageSnapshot {delivery:saved,images};

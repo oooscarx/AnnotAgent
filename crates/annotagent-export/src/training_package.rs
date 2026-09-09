@@ -69,6 +69,34 @@ pub struct ImageEvidence {
     pub annotation_ids: Vec<String>,
 }
 
+/// Whitelisted provenance only: no raw model configuration, paths or conversation text.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PackageImageLineage {
+    pub schema_sha256: Option<String>,
+    pub workflow_sha256: Option<String>,
+    pub model_binding_sha256: Option<String>,
+    pub original_name: String,
+    pub source_run_id: Option<annotagent_core::RunId>,
+    pub confirmation_id: String,
+    pub confirmation_revision: u32,
+    pub annotation_revision_ids: Vec<String>,
+    pub annotation_snapshot_sha256: String,
+    pub source_evidence_sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PackageLineage {
+    pub package_id: String,
+    pub package_version: u32,
+    pub frozen_snapshot_sha256: String,
+    pub label_id_to_class_id: BTreeMap<String, usize>,
+    pub exporter_version: String,
+    pub validator_version: u32,
+    pub images: BTreeMap<ImageId, PackageImageLineage>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PackageManifest {
     pub format_version: u32,
@@ -80,6 +108,8 @@ pub struct PackageManifest {
     pub files: BTreeMap<String, FileEvidence>,
     pub images: Vec<ImageEvidence>,
     pub warnings: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lineage: Option<PackageLineage>,
 }
 
 fn digest(bytes: &[u8]) -> String {
@@ -285,6 +315,17 @@ pub fn write_training_package_controlled(
     revision: u32,
     sources: &[PackageImage],
     destination: &Path,
+    checkpoint: impl FnMut(PackageProgress) -> Result<()>,
+) -> Result<PackageReceipt> {
+    write_training_package_with_lineage(intent, revision, sources, destination, None, checkpoint)
+}
+
+pub fn write_training_package_with_lineage(
+    intent: TaskDeliveryIntent,
+    revision: u32,
+    sources: &[PackageImage],
+    destination: &Path,
+    lineage: Option<PackageLineage>,
     mut checkpoint: impl FnMut(PackageProgress) -> Result<()>,
 ) -> Result<PackageReceipt> {
     checkpoint(PackageProgress::Exporting)?;
@@ -540,7 +581,7 @@ pub fn write_training_package_controlled(
         }
     }
     let manifest = PackageManifest {
-        format_version: 1,
+        format_version: if lineage.is_some() { 2 } else { 1 },
         delivery_revision: revision,
         intent_sha256: digest(&serde_json::to_vec(&intent)?),
         intent,
@@ -549,6 +590,7 @@ pub fn write_training_package_controlled(
         files,
         images: evidence,
         warnings,
+        lineage,
     };
     zip.start_file(
         "annotagent/manifest.json",

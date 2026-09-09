@@ -2,8 +2,8 @@
 use crate::LocalApplication;
 use annotagent_core::ReviewStatus;
 use annotagent_export::training_package::{
-    ImageConfirmation, PackageImage, PackageProgress, PackageReceipt,
-    write_training_package_controlled,
+    ImageConfirmation, PackageImage, PackageImageLineage, PackageLineage, PackageProgress,
+    PackageReceipt, write_training_package_with_lineage,
 };
 use annotagent_storage::{
     DeliveryImageDecision, DeliveryPackageInput, DeliveryPackageJob, DeliveryPackagePhase,
@@ -165,11 +165,52 @@ impl LocalApplication {
                 });
             }
             let directory = self.export_delivery_directory(project, id, true)?;
-            write_training_package_controlled(
+            let lineage = PackageLineage {
+                package_id: id.to_string(),
+                package_version: 1,
+                frozen_snapshot_sha256: job.snapshot_sha256,
+                label_id_to_class_id: job
+                    .snapshot
+                    .delivery
+                    .intent
+                    .label_spec
+                    .as_ref()
+                    .context("Frozen labels missing")?
+                    .iter()
+                    .enumerate()
+                    .map(|(n, label)| (label.stable_id.clone(), n))
+                    .collect(),
+                exporter_version: env!("CARGO_PKG_VERSION").into(),
+                validator_version: 1,
+                images: job
+                    .snapshot
+                    .images
+                    .iter()
+                    .map(|image| {
+                        (
+                            image.review.input.image_id,
+                            PackageImageLineage {
+                                original_name: image.original_name.clone(),
+                                schema_sha256: image.schema_sha256.clone(),
+                                workflow_sha256: image.workflow_sha256.clone(),
+                                model_binding_sha256: image.model_binding_sha256.clone(),
+                                source_run_id: image.review.input.source_run_id,
+                                confirmation_id: image.review.input.command_id.to_string(),
+                                confirmation_revision: image.review.revision,
+                                annotation_revision_ids: image.annotation_revision_ids.clone(),
+                                annotation_snapshot_sha256: image.review.snapshot.sha256.clone(),
+                                source_evidence_sha256: image.source_evidence_sha256.clone(),
+                            },
+                        )
+                    })
+                    .collect(),
+            };
+            write_training_package_with_lineage(
                 job.snapshot.delivery.intent,
                 job.snapshot.delivery.revision,
                 &sources,
                 &directory.join("dataset.zip"),
+                Some(lineage),
                 |progress| {
                     if progress == PackageProgress::Validating {
                         self.store.advance_delivery_package(
