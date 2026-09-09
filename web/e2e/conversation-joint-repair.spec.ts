@@ -6,7 +6,7 @@ import type { Locator } from "@playwright/test";
 
 async function reviewExactModel(card: Locator, modelName: string) {
   await card.getByRole("button", {name:"Review build and sample authorization",exact:true}).click();
-  const choices = card.locator("details").filter({has:card.locator("summary").filter({hasText:"Allowed image models"})});
+  const choices = card.locator("details").filter({hasText:"Allowed image models"});
   await expect(choices).toBeVisible();
   if (!(await choices.evaluate(element => (element as HTMLDetailsElement).open))) await choices.locator("summary").click();
   // A full suite can have more than the 32-model authorization ceiling. Select

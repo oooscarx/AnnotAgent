@@ -5490,3 +5490,10 @@ workspace. Results are pending; these include the new goal query and the previou
 unrun management/review cases. New bbox export/task-binding verification and final Rust
 full regression still need to run. Generic geometry-review insertion audit remains open;
 old Published Versions and exports are unchanged. No push or remote changes.
+
+14035 has passed entry/history/new goal-query cases, but joint UI cases 5/6 exposed a
+locator error in the new test helper: its nested `has` selector repeated the outer card
+scope when evaluated relative to each details element. The actual model options were
+present. Corrected the helper to filter its details by the visible unique model-group
+text. The targeted sweep remains live and this selector correction still needs rerun;
+neither the initial test-helper patch nor this correction is reported as browser-green.
