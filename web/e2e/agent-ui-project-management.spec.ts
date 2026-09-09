@@ -1,6 +1,20 @@
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
+test("native exact clone recovers lost receipt without overwriting edited copy or frozen source",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const nav=await(await request.get("/api/navigation")).json();const project=nav.items.find((p:{title:string})=>p.title==="TEST Agent UI HTTP fixture").project_id;const summary=await(await request.get(`/api/projects/${project}/summary`)).json();const version=summary.project.available_workflow_versions[0];const frozenUrl=`/api/projects/${project}/workflows/${version.workflow_id}/versions/${version.version}`;const frozen=await(await request.get(frozenUrl)).json();
+  const csrf=(await(await request.get("/api/session")).json()).csrf_token;const bodies:unknown[]=[];let copyId="";
+  await page.route(`**/api/workflows/${version.workflow_id}/versions/${version.version}/clone`,async route=>{
+    bodies.push(route.request().postDataJSON());const response=await route.fetch();expect(response.status()).toBe(201);const receipt=await response.json();copyId=receipt.id;
+    if(bodies.length===1){const edited=await request.patch(`/api/workflow-drafts/${copyId}`,{headers:{"x-annotagent-csrf":csrf,"if-match":String(receipt.revision)},data:{...receipt,name:"TEST copy edited after uncertain response"}});expect(edited.ok(),await edited.text()).toBeTruthy();await route.abort();}else await route.fulfill({response});
+  });
+  await page.goto(`/projects/${project}/manage/pipelines/${version.workflow_id}?version=${version.version}`);const clone=page.getByRole("region",{name:"复制 Workflow 版本",exact:true});await clone.getByRole("button",{name:"复制此版本…",exact:true}).click();await page.getByRole("dialog").getByRole("button",{name:"取消",exact:true}).click();expect(bodies).toHaveLength(0);
+  await clone.getByRole("button",{name:"复制此版本…",exact:true}).click();await page.getByRole("dialog").getByRole("button",{name:"确认复制",exact:true}).click();await expect(clone.getByRole("alert")).toBeVisible();expect(bodies).toHaveLength(1);
+  await page.reload();await expect(clone.getByRole("button",{name:"核实原复制请求",exact:true})).toBeVisible();expect(bodies).toHaveLength(1);await clone.getByRole("button",{name:"核实原复制请求",exact:true}).click();await expect(clone.getByRole("status")).toContainText("TEST copy edited after uncertain response");expect(bodies).toHaveLength(2);expect(bodies[1]).toEqual(bodies[0]);expect(bodies[0]).toMatchObject({project_id:project,source_snapshot_hash:frozen.content_hash});
+  const current=await(await request.get(`/api/workflow-drafts/${copyId}?project_id=${project}`)).json();expect(current.name).toBe("TEST copy edited after uncertain response");expect(current.revision).toBeGreaterThan(1);expect(await(await request.get(frozenUrl)).json()).toEqual(frozen);
+  await clone.getByRole("link",{name:"打开当前副本",exact:true}).click();await expect(page).toHaveURL(new RegExp(`/manage/pipelines/${copyId}$`));
+});
 test("native human geometry creation freezes requests and recovers without duplicate annotations",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
   const runs=await(await request.get("/api/runs?limit=50")).json();const run=runs.runs.find((r:{project_name:string})=>r.project_name==="TEST Agent UI HTTP fixture");expect(run).toBeTruthy();

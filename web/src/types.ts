@@ -793,6 +793,12 @@ export interface ExactPublicationRequest {
   expected_content_hash:string;
 }
 
+export interface ExactCloneRequest {
+  command_id: string;
+  project_id: string;
+  source_snapshot_hash: string;
+}
+
 export interface WorkflowVersion {
   workflow_id: string;
   name: string;

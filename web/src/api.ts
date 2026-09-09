@@ -985,6 +985,8 @@ export const api = {
       `/api/workflows/${workflowId}/versions/${version}/clone`,
       { method: "POST" },
     ),
+  cloneExactWorkflowVersion: (workflowId:string,version:number,body:import("./types").ExactCloneRequest) =>
+    request<WorkflowDraft>(`/api/workflows/${encodeURIComponent(workflowId)}/versions/${version}/clone`,{method:"POST",body:JSON.stringify(body)}),
   compareWorkflowVersions: (
     left: { workflow_id: string; version: number },
     right: { workflow_id: string; version: number },

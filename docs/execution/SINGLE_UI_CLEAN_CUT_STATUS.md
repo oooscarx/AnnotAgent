@@ -1,5 +1,15 @@
 # Single UI Clean Cut
 
+## Exact Workflow clone integrated (UIAPI-016)
+
+Read the complete clone contract and implementation/tests for backend b5b2b670f4419c04aa68e36c9862b9e3bb18e65d. Integrated as f485926. Documentation conflicts were resolved by retaining only the new clone delivery alongside existing integration notes; unrelated repair-admission/handoff changes were not imported. Additive migration0062 and atomic clone command storage do not rewrite historical Published/default records. Own verification: 10 filtered storage/server publication+clone tests, workspace fmt and storage/server all-target strict clippy passed. Full workspace/all-features final regression still remains.
+
+Native frozen-version details now offer explicit clone confirmation using the top-level frozen snapshot hash, Project and workspace-scoped persistent command ID. No legacy empty-body clone call is used. The exact body is saved before POST. Mount/refresh only restores pending state; an explicit recovery replays the same request. After receipt, an owned Draft GET obtains current edits, never writing the old creation receipt back. Invalid local recovery metadata blocks new copies rather than silently discarding uncertainty. Copying does not publish, change defaults, run models or accept annotations. Fixture transport has no real service exposure.
+
+Typecheck/isolated production build and 328 unit tests passed (one final-cutover TODO). Two actual TEST HTTP E2E scenarios passed: cancel causes no write; successful clone response deliberately dropped after a separate human edit; refresh sends no POST; explicit same-command recovery returns one copy and reads the later edit; frozen source remains byte-equivalent; native editor link opens current copy. Existing passive frozen read/compare/invalid-version scenario remains zero-write. Tests used owned8794/8795 and /tmp/annotagent-exact-clone-dist, not real workspace or user dist. Service stopped afterward. No paid calls, push or remote changes.
+
+This closes the native exact-clone API blocker, not the complete migration. Old root/styles still emitted; remaining Review taxonomy/keyboard/evidence-browser coverage and plugin/advanced management parity continue before deletion. Goal remains active.
+
 ## Native Review attributes and source evidence selection
 
 Migrated the old Review's arbitrary annotation-attribute editor and source-model bbox selection into native disclosures. Attribute text must parse as a non-null JSON object; applying it only changes the existing local annotation draft. Unapplied/invalid text blocks parent Save/Accept/Reject and has navigation/unload protection. Cancel restores the current annotation attributes. If other edits change the attribute base while text is pending, apply is blocked rather than overwriting the newer attributes. Existing draft persistence, undo, server PATCH and decision boundaries are reused.
