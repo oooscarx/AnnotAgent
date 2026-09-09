@@ -49,7 +49,7 @@ it("saves an issue-only answer without asserting corrected geometry or invoking 
     return {...human,answer:body.answer} as T;
   };
   const memory=new Map<string,string>();
-  const storage={getItem:(key:string)=>memory.get(key) || null,setItem:(key:string,value:string)=>memory.set(key,value)} as Storage;
+  const storage:Storage={getItem:(key:string)=>memory.get(key) ?? null,setItem:(key:string,value:string)=>{memory.set(key,value);},removeItem:(key:string)=>{memory.delete(key);},clear:()=>memory.clear(),key:(index:number)=>[...memory.keys()][index] ?? null,get length(){return memory.size;}};
   const adapter=new HttpAdapter(transport,storage);await adapter.refresh();await adapter.loadTask(project.project_id,"t1");
   const command={id:"answer",project:project.project_id,task:"t1",revision:"schema-1",selection:{image:"image-uuid",candidate:"",revision:"sample:"}};
   await expect(adapter.reportSampleIssue(command,"foreign-image","poor_boundary")).rejects.toThrow("选择或版本");
