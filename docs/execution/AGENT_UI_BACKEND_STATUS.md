@@ -62,3 +62,7 @@ Queue preview/POST 现在对 pending human 返回 409 `human_input_pending`（Sc
 迁移0058仅新建metadata表；旧call保留created_at但缺失end/failure为null，不能追回此前被丢弃的原因。未访问用户报告的robocup-ball数据库或调用。Provider没有现成文本/tool delta协议，本轮未新增streaming；stream:true在发送前拒绝，新增读取body阶段取消。详见 UIAPI-008_PROGRESS.md、UIAPI-008_EXAMPLES.json、UIAPI-008_TRACE.json。
 
 验证：563 passed、0 failed、3原有ignored（Core/Provider/Storage/Application/Server）；全workspace all-targets严格Clippy、fmt通过。隔离HTTP seed278请求，42个call回执观察/23个call身份，真实provider_request→settled/in_doubt、typed cancellation与计时验证通过。测试启动器已退出自有进程，数据保留。未接触8787/8788、真实密钥/服务/数据库、前端worktree；无push/merge。最终提交SHA在交付回复固定，继续接口支持状态。
+
+## UIAPI-009 审计/具体缺口交付
+
+现有 API 无持久 workspace history cutover；Run 有分页但按 updated_at 排序，Pipeline/Trash 无分页，management 无 scope 绑定。已交付 UIAPI-009_GAP.md：明确标记未实现的 GET/preview/一次性确认契约、冻结ID排除成员、SQL分页、Trash与级联保护、原引用继续可读及隔离验收清单。此为用户允许的 concrete gap specification，不能宣称切换已完成。没有运行/伪报新功能测试，也未读写真实数据库；仅源码审计与文档检查。UIAPI-009 仍阻塞，后续须实现文档所列事务与API，前端不能用浏览器时间替代。

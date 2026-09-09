@@ -25,3 +25,5 @@
 - UIAPI-004 已修复：Queue preview 与实际 admission 共用人工输入门禁，409 提前表达拒绝；新授权事务拒绝不留下 grant。旧冻结授权回答后可按原 ID/Consent 恢复（有效期/原 scope/FIFO 仍约束），已有未知回执不重发。真实 HTTP 与重开 SQLite 回归见 UIAPI-004_TRACE.json；不新增派发引擎。
 
 - UIAPI-008：补持久 Schema 调用阶段、本地计时和安全类型化失败原因；保留未知结果与同ID不重发。调查确认 Provider 无模型文本增量协议，本轮只保留整包结果，不增加伪 streaming。详见 UIAPI-008_PROGRESS.md。
+
+- UIAPI-009 审计：无现成安全cutover API，已交具体缺口/拟议契约 UIAPI-009_GAP.md（未实现）。新增UI历史切换仍阻塞；不可用localStorage或删除旧记录代替。
