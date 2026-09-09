@@ -207,7 +207,7 @@ export function ConversationWorkspace({ project, conversationId, imageId, draftI
         const source = ownedTasks.find(task => task.input.id === taskId)?.input.source_message_id;
         const history = await loadConversationHistory({
           latest: () => api.conversationHistory(project.id, id, undefined, controller.signal),
-          forward: after => api.conversationMessages(project.id, id, after, controller.signal),
+          firstGoal: () => api.conversationFirstGoal(project.id, id, controller.signal),
           exact: message => api.conversationMessage(project.id, id, message, controller.signal),
         }, source, referenceMessageId, controller.signal);
         saved = history.messages; context = history.context; initialGoal = history.defaultGoal;

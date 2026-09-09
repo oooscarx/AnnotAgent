@@ -10774,6 +10774,37 @@ mod tests {
             None,
         );
         let root = format!("/api/projects/TEST-history/conversations/{conversation}/messages");
+        let goal = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("{root}?first_goal=true"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(goal.as_array().unwrap().len(), 1);
+        assert_eq!(goal[0]["input"]["id"], ids[0].to_string());
+        for query in [
+            "first_goal=true&latest=true",
+            "first_goal=true&after=1",
+            "first_goal=true&before=4",
+            "first_goal=true&limit=1",
+        ] {
+            assert_eq!(
+                request(
+                    &service,
+                    axum::http::Method::GET,
+                    &format!("{root}?{query}"),
+                    None
+                )
+                .await
+                .status(),
+                StatusCode::BAD_REQUEST
+            );
+        }
+        assert_eq!(request(&service, axum::http::Method::GET, &format!("/api/projects/TEST-foreign-history/conversations/{conversation}/messages?first_goal=true"), None).await.status(), StatusCode::BAD_REQUEST);
         let latest = request(
             &service,
             axum::http::Method::GET,

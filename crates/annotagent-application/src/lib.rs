@@ -9463,6 +9463,17 @@ impl LocalApplication {
             .append_conversation_message(&owner, conversation_id, input)?)
     }
 
+    pub fn project_conversation_first_goal(
+        &self,
+        project_id: &str,
+        conversation_id: uuid::Uuid,
+    ) -> Result<Option<annotagent_storage::ConversationMessage>> {
+        let owner = self.conversation_project_identity(project_id)?;
+        Ok(self
+            .store
+            .conversation_first_goal(&owner, conversation_id)?)
+    }
+
     pub fn project_conversation_messages(
         &self,
         project_id: &str,

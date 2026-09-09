@@ -1,9 +1,8 @@
 import type { ConversationMessage } from "./types";
-import { isAnnotationGoalMessage } from "./conversation-control";
 
 export interface HistoryReader {
   latest(): Promise<ConversationMessage[]>;
-  forward(after: number): Promise<ConversationMessage[]>;
+  firstGoal(): Promise<ConversationMessage | undefined>;
   exact(id: string): Promise<ConversationMessage>;
 }
 
@@ -31,19 +30,9 @@ export async function loadConversationHistory(reader: HistoryReader, sourceId: s
   }
   let defaultGoal: ConversationMessage | undefined;
   if (!sourceId) {
-    // Preserve the existing oldest-unscoped-message fallback, including journals
-    // starting with stop/candidate notes. Do not silently choose a newer goal.
-    let after = 0;
-    while (true) {
-      check();
-      const page = await reader.forward(after);
-      check();
-      defaultGoal = page.find(isAnnotationGoalMessage);
-      if (defaultGoal || page.length < 100) break;
-      const next = page.at(-1)!.sequence;
-      if (next <= after) throw new Error("Conversation history cursor did not advance.");
-      after = next;
-    }
+    // Preserve the oldest unscoped goal without downloading every preceding note.
+    defaultGoal = await reader.firstGoal();
+    check();
   }
   return { messages, context, defaultGoal, referenceError };
 }

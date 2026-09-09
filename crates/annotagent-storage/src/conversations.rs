@@ -69,6 +69,28 @@ pub(crate) fn require_owner(
 }
 
 impl SqliteStore {
+    /// Oldest unscoped message, without transferring a reference-only journal.
+    /// This is context discovery, not task selection or execution authorization.
+    pub fn conversation_first_goal(
+        &self,
+        project: &str,
+        conversation: Uuid,
+    ) -> Result<Option<ConversationMessage>, StorageError> {
+        self.with_connection(|db| {
+            require_owner(db, project, conversation)?;
+            let row: Option<(i64, String)> = db.query_row(
+                "SELECT sequence,input_json FROM conversation_messages WHERE conversation_id=?1 AND json_extract(input_json,'$.reference') IS NULL ORDER BY sequence LIMIT 1",
+                [conversation.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            ).optional()?;
+            row.map(|(sequence, input)| Ok(ConversationMessage {
+                conversation_id: conversation,
+                sequence,
+                input: serde_json::from_str(&input)?,
+            })).transpose()
+        })
+    }
+
     pub fn conversation_message_history(
         &self,
         project: &str,
@@ -204,6 +226,70 @@ impl SqliteStore {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn first_goal_skips_reference_only_history_and_preserves_owner_and_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("TEST-goal.sqlite");
+        let store = crate::SqliteStore::open(&path).unwrap();
+        let owner = uuid::Uuid::new_v4().to_string();
+        let conversation = store.create_conversation(&owner).unwrap();
+        assert!(
+            store
+                .conversation_first_goal(&owner, conversation)
+                .unwrap()
+                .is_none()
+        );
+        // Journal-only fixture: no task execution or model authority is created.
+        store.with_connection(|db| {
+            for sequence in 1..=250 {
+                let id = uuid::Uuid::new_v4();
+                let input = serde_json::json!({"id":id,"text":"stop","image":null,"reference":{"scope":"stop_request","task_id":null}});
+                db.execute("INSERT INTO conversation_messages(conversation_id,sequence,message_id,input_json,created_at) VALUES (?1,?2,?3,?4,'TEST')", rusqlite::params![conversation.to_string(), sequence, id.to_string(), input.to_string()])?;
+            }
+            Ok(())
+        }).unwrap();
+        assert!(
+            store
+                .conversation_first_goal(&owner, conversation)
+                .unwrap()
+                .is_none()
+        );
+        let input = super::ConversationMessageInput {
+            id: uuid::Uuid::new_v4(),
+            text: "TEST original goal".into(),
+            image: None,
+            reference: None,
+        };
+        let oldest = store
+            .append_conversation_message(&owner, conversation, &input)
+            .unwrap();
+        let newer = super::ConversationMessageInput {
+            id: uuid::Uuid::new_v4(),
+            text: "TEST newer goal".into(),
+            ..input
+        };
+        store
+            .append_conversation_message(&owner, conversation, &newer)
+            .unwrap();
+        assert_eq!(
+            store.conversation_first_goal(&owner, conversation).unwrap(),
+            Some(oldest.clone())
+        );
+        assert!(
+            store
+                .conversation_first_goal("foreign-owner", conversation)
+                .is_err()
+        );
+        drop(store);
+        let reopened = crate::SqliteStore::open(&path).unwrap();
+        assert_eq!(
+            reopened
+                .conversation_first_goal(&owner, conversation)
+                .unwrap(),
+            Some(oldest)
+        );
+    }
+
     use super::*;
     #[test]
     fn reverse_history_is_bounded_stable_and_owned_after_reopen() {

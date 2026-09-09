@@ -5374,7 +5374,7 @@ Current requirement-to-evidence index (test sources were re-read; the full sweep
 | --- | --- | --- |
 | Project entry, persistent split canvas, frozen image selection | `conversation-entry`, `conversation-workspace`, `conversation-goals` browser specs | Narrow-screen/reduced-motion automation is not a novice study. |
 | Goal to Schema and sample, bbox and classification | `conversation-initial-journey`, `conversation-human-schema`, `conversation-clarification` | Explicit TEST transport, not Live semantic accuracy. |
-| Missing model and return from setup | Existing `journey-model` checks the retained legacy setup route | Exact conversation/task/request return needs its own browser evidence; legacy coverage cannot prove it. |
+| Missing model and return from setup | `conversation-goals` creates a TEST Provider/credential/model, explicitly probes it and returns to the exact saved task URL; also checks cancelling setup through settings sections | This test has now passed as case 50 in the current sweep. It does not exercise every possible image/request deep link. |
 | Frozen candidate, ambiguous scope, future rules | `conversation-feedback`, `conversation-image-class`, `conversation-future-schema(-proposal)` | One local repair does not establish dataset-wide calibration. |
 | Canvas answer and same-grant continuation | `conversation-joint-repair` five targeted cases passed; `conversation-answer-restart` passed | Actual process death is at the Application commit/pre-dispatch boundary. |
 | Duplicate answer, failed admission, restart budgets | Same targeted specs and storage receipt/outbox tests | A forced local Draft-preparation failure is still a distinct integration gap. |
@@ -5389,3 +5389,30 @@ They must not be reported as implemented generic request kinds. The priority acc
 generic bbox and whole-image classification. No Live Provider test or real-human novice
 usability test was executed in this round. Historical screenshot changes and `test-results/`
 remain untouched and unstaged. Branch remains main; no push or remote modification.
+
+### 2026-09-09 — Bounded default-goal discovery and verified setup return
+
+Read the complete `conversation-goals` test, not only its title: it already exercises
+real TEST Provider/credential/model creation, explicit active-probe consent, model default
+binding, settings refresh and return to the exact original conversation/task URL without
+reserving inference calls. Case 50 of 34639 has now passed. Inspected its actual 390px
+screenshot in `/tmp/annotagent-conversation-full-final/conversational-workspace/task-model-setup-390.png`;
+the return control and setup scope are visible and the layout reflows. The earlier audit's
+claim of only legacy setup coverage was incomplete and the matrix above is corrected.
+
+Fixed the confirmed reference-only-history transfer gap: default goal discovery now uses
+one owned read on the existing messages endpoint (`first_goal=true`), returning zero or
+one oldest unscoped message. SQLite filters the existing journal; it does not select the
+newest visible note, create a task, change saved task selection or authorize execution.
+The ordinary 100-message tail and explicit older-page navigation remain unchanged.
+Exact task sources still bypass default-goal discovery. This bounds network transfer and
+frontend parsing, not the database's worst-case scan; no false constant-time claim is made.
+
+Added Storage reference-only/empty/oldest/foreign-owner/reopen coverage and HTTP owner/query
+conflict coverage. Both targeted tests pass in 72162. Typecheck and seven history unit
+tests pass, including late-result cancellation. Server all-target/all-feature clippy also
+passed (72162 exited 0). The browser history fixture's expected query was updated only after its
+baseline case 51 finished. **The new frontend has not been built or served yet**: the live
+178-case run must finish against its original assets. Its last observed passing case is
+74. A fresh targeted browser history/setup test and build are required after that run;
+the ongoing baseline sweep cannot prove this new read path. No real data or remote changes.

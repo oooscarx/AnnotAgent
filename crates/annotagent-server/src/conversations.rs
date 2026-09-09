@@ -32,6 +32,8 @@ pub(super) struct MessagePage {
     before: Option<i64>,
     #[serde(default)]
     latest: bool,
+    #[serde(default)]
+    first_goal: bool,
     limit: Option<u32>,
 }
 
@@ -62,6 +64,18 @@ pub(super) async fn messages(
     AxumPath((project, conversation)): AxumPath<(String, uuid::Uuid)>,
     Query(page): Query<MessagePage>,
 ) -> ApiResult<Json<Vec<ConversationMessage>>> {
+    if page.first_goal {
+        if page.after != 0 || page.before.is_some() || page.latest || page.limit.is_some() {
+            return Err(ApiError::bad_request(
+                "First goal cannot be combined with message paging",
+            ));
+        }
+        return state
+            .application
+            .project_conversation_first_goal(&project, conversation)
+            .map(|goal| Json(goal.into_iter().collect()))
+            .map_err(ApiError::bad_request);
+    }
     if page.latest || page.before.is_some() {
         if page.after != 0 || (page.latest && page.before.is_some()) {
             return Err(ApiError::bad_request("Select one message paging direction"));

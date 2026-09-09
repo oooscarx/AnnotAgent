@@ -13,7 +13,7 @@ test("TEST long journal opens a bounded tail and loads older notes without infer
     const url = new URL(route.request().url()); reads.push(url.search);
     const before = Number(url.searchParams.get("before"));
     const after = Number(url.searchParams.get("after"));
-    const selected = url.searchParams.has("latest") ? messages.slice(-100) : before ? messages.filter(item => item.sequence < before).slice(-100) : messages.filter(item => item.sequence > after).slice(0, 100);
+    const selected = url.searchParams.has("first_goal") ? messages.slice(0, 1) : url.searchParams.has("latest") ? messages.slice(-100) : before ? messages.filter(item => item.sequence < before).slice(-100) : messages.filter(item => item.sequence > after).slice(0, 100);
     return route.fulfill({ json: selected });
   });
   const writes: string[] = [];
@@ -22,7 +22,7 @@ test("TEST long journal opens a bounded tail and loads older notes without infer
   const list = page.getByRole("list", { name: "Saved messages", exact: true });
   await expect(list.getByRole("listitem")).toHaveCount(100);
   await expect(list).toContainText("TEST historical note 250");
-  expect(reads).toEqual(["?latest=true&limit=100", "?after=0"]);
+  expect(reads).toEqual(["?latest=true&limit=100", "?first_goal=true"]);
   const url = page.url();
   await page.getByRole("button", { name: "Load earlier messages", exact: true }).click();
   await expect(list.getByRole("listitem")).toHaveCount(200);
