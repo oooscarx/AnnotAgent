@@ -135,6 +135,7 @@ export type Command = {
   selection?: { image: string; candidate: string; revision: string };
 };
 export interface WorkspaceAdapter {
+  readonly taskFeedback?: import("./TaskFeedback").TaskFeedbackService;
   readonly providerControls?: import("./ProviderControls").ProviderControlService;
   readonly historyManagement?: import("./HistoryManagement").HistoryService;
   readonly reviewManagement?: import("./ReviewManagement").ReviewService;

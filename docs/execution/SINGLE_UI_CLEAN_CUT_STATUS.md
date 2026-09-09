@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Native feedback history and intent scope entry
+
+Audited future-rule dependency: saved feedback scope must distinguish one candidate, the current image class and future project rules before downstream changes. Added native TaskFeedback disclosure through HttpAdapter-only service. Reads bounded100-message history pages, filters owned sample_candidate references, fetches actual saved feedback and checks message/conversation/grant task identity; older history remains reachable. It does not create feedback authorization or call a model. Native scope form uses existing domain choice validation and exact command/context semantics, persists choices/frozen command, rechecks cancellation and context before POST, and verifies the owned response. Different saved scope is reported as a conflict, not overwritten. Intent is explicitly not an applied annotation/rule change.
+
+313 unit tests across93 files, typecheck and production build passed before the final conflict-display effect (which adds no mutation). Build /tmp/annotagent-native-feedback-scope-dist; baseline6e72430 plus this slice. Actual HTTP feedback selection/lost-response/pagination validation is pending. Future-rule editing/adoption and image-class correction remain required; retained old unmounted scope/diff widgets until parity and browser evidence exist. No real workspace, paid calls, user services/dist or remotes changed. Goal active.
+
 ## Native clarification real HTTP recovery evidence
 
 Registered and actively probed an explicit loopback TEST e2e-conversation-clarify Profile, selected it before each TEST Send with CAS and restored the prior TEST preference afterward. Two actual schema calls produced owned pending questions. Native UI answered one and cancelled the other; browser forwarded each real POST and dropped only its response. Refresh recovered applied/cancelled respectively. Answer payload references the exact call and Schema revision, contains no Journey authorization; browser wrote exactly those two requests, original call evidence and export-readiness remained unchanged. Editing disables question cancellation. One real HTTP browser test passed on /tmp/annotagent-native-clarification-dist, source99b6578, isolated8794/8795.

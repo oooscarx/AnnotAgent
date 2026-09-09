@@ -10,6 +10,7 @@ import { Dialog } from "./Dialog";
 import { Disclosure } from "./Disclosure";
 import { TaskExportHistory } from "./TaskExportHistory";
 import { TaskSchemaDrafts } from "./TaskSchemaDrafts";
+import { TaskFeedback } from "./TaskFeedback";
 import { SidebarTitle } from "./SidebarTitle";
 import { ProjectManagement } from "./ProjectManagement";
 import { TrashManagement } from "./TrashManagement";
@@ -540,6 +541,7 @@ export function AgentPreviewApp({
                         {!fixture && task.exports?.map(e=><p key={e.id}>导出 · {e.status} · {e.detail} {e.url && <a href={e.url} download>下载真实导出文件</a>}</p>)}
                         {!fixture && task.conversationId && adapter.taskExportHistory && <TaskExportHistory key={`${task.project}:${task.id}`} project={task.project} conversation={task.conversationId} task={task.id} service={adapter.taskExportHistory}/>}
                         {!fixture && task.conversationId && state.workspaceId && adapter.taskSchemaDrafts && <TaskSchemaDrafts key={`${task.project}:${task.id}`} project={task.project} conversation={task.conversationId} task={task.id} workspace={state.workspaceId} service={adapter.taskSchemaDrafts}/>}
+                        {!fixture && task.conversationId && state.workspaceId && adapter.taskFeedback && <TaskFeedback key={`${task.project}:${task.id}`} project={task.project} conversation={task.conversationId} task={task.id} workspace={state.workspaceId} service={adapter.taskFeedback}/>}
                         {!fixture && task.approval && <section className="plan-block"><strong>{task.approval.title}</strong><ul>{task.approval.scope.map((s,i)=><li key={i}>{s}</li>)}</ul><p>费用：{task.approval.budget ?? "未知；可能产生费用"}</p><button className="primary" disabled={approvalBusy} onClick={()=>setApproval(command(task))}>查看并确认授权</button>{approvalBusy && <p role="status">请求已提交，正在读取服务器执行状态；离开不会取消。</p>}</section>}
                         {task.plan && (
                           <PlanBlock

@@ -11,6 +11,7 @@ import type { QueueConsent, QueuePreview } from "../conversation-queue-api";
 import type { SendCommand, SendReceipt } from "../conversation-send";
 import type { StopRequestRecord } from "../conversation-stop-api";
 import {ownedStopSelection} from "./stopSelection";
+import {taskFeedbackService} from "./TaskFeedback";
 import {stopTargetMatches} from "../conversation-control";
 import type { WorkspaceAdapter, Snapshot, Task, Command, Settings, ImageId, Box, Phase, Action } from "./adapter";
 
@@ -79,6 +80,7 @@ export class HttpAdapter implements WorkspaceAdapter {
   get exportManagement() { return this.transport === request ? api : undefined; }
   get taskExportHistory() { return this.transport === request ? api : undefined; }
   get taskSchemaDrafts() { return this.transport === request ? api : undefined; }
+  get taskFeedback() { return this.transport === request ? taskFeedbackService : undefined; }
   private async testEnvironment() {
     if(this.transport!==request)return false;
     const response=await fetch("/api/health",{credentials:"same-origin"});
