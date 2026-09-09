@@ -24,4 +24,14 @@ describe("single UI route contract (cutover target)", () => {
     expect(entry).not.toMatch(/import\(["']\.\/(App|styles\.css)["']\)/);
     expect(entry).not.toMatch(/isAgentEntry|FixtureAdapter|fixture\.ts/);
   });
+  it("rejects retired Journey, registry, global history and query-owned legacy routes",()=>{
+    for(const path of ["/settings/registry","/settings/capabilities","/models","/plugins","/runs/r","/review","/projects/p/export","/projects/p/review/r","/projects/p/batches/b","/projects/p/trash","/projects/p/build/data","/projects/p/build/labels","/projects/p/build/pipeline?draft=d","/projects/p/build/test?draft=d&test=t","/projects/p/task/goal","/projects/p/task/images","/projects/p/task/model","/projects/p/task/samples","/projects/p/task/confirm","/projects/p/task/revise","/runs/r?project=p"]){
+      expect(parse(path),path).toEqual({kind:"not-found"});
+    }
+  });
+  it("native ownership is unchanged by retired nested return and legacy object keys",()=>{
+    const query="?return_project=foreign&workspace_return=%2Fprojects%2Fforeign%2Fwork&draft=old&test=old&result_image=old";
+    expect(parse("/projects/p/manage/review/r"+query)).toEqual({kind:"detail",projectId:"p",page:"review",objectId:"r"});
+    expect(parse("/projects/p/work"+query)).toEqual({kind:"work",projectId:"p"});
+  });
 });
