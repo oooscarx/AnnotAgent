@@ -4074,6 +4074,20 @@ fn guided_other_bindings(draft: &WorkflowDraft) -> BTreeSet<&str> {
         .collect()
 }
 
+fn guided_sample_supported(draft: &WorkflowDraft) -> bool {
+    // Match Application's metered Pipeline sandbox admission. Materialized
+    // Registry plans have a flat graph; native model bindings already select
+    // the same executable sandbox without the optional authoring projection.
+    // Their immutable Plugin/Bundle identity is checked and sealed separately.
+    (draft.label_pipeline.is_some()
+        || draft.nodes.iter().any(|node| {
+            node.model_binding
+                .as_deref()
+                .is_some_and(plugin_model_selection)
+        }))
+        && guided_other_bindings(draft).is_empty()
+}
+
 fn add_native_scope(scope: &mut Value, models: &[annotagent_core::PluginModelSnapshot]) {
     // Preserve pre-native authorization material for existing remote-only receipts.
     if !models.is_empty() {
@@ -4188,7 +4202,7 @@ async fn preview_workflow_samples(
         json!({ "project_id": draft.project_id, "revision": draft.revision,
         "image_count": image_count, "models": models, "other_bindings": other_bindings, "authorization_fingerprint": authorization_fingerprint,
         "estimated_cost": null, "request_limit": 12, "sandbox": true,
-        "supported": draft.label_pipeline.is_some() && other_bindings.is_empty() }),
+        "supported": guided_sample_supported(&draft) }),
     ))
 }
 
@@ -4220,7 +4234,7 @@ async fn dry_run_workflow(
                     "The image, goal or model scope changed after authorization. Review the updated sample scope.",
                 ));
             }
-            if draft.label_pipeline.is_none() || !guided_other_bindings(&draft).is_empty() {
+            if !guided_sample_supported(&draft) {
                 return Err(ApiError::bad_request(
                     "This plan contains bindings not yet supported by bounded guided sampling. No inference was started.",
                 ));

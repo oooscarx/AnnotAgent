@@ -158,7 +158,7 @@ pub(super) fn validate_scope(
         ));
     }
     reject_unresolved_registry_model_nodes(draft)?;
-    if draft.label_pipeline.is_none() || !guided_other_bindings(draft).is_empty() {
+    if !guided_sample_supported(draft) {
         return Err(ApiError::bad_request(
             "This plan contains bindings not yet supported by bounded guided sampling. No inference was started.",
         ));
@@ -558,6 +558,20 @@ mod tests {
         let draft = app
             .bind_conversation_schema_to_workflow(project, &draft.id, draft.revision, schema.id, 1)
             .unwrap();
+        // Authoring projection absence is not a legacy runtime when a native
+        // binding selects Application's metered graph sandbox. Unresolved
+        // arbitrary runtime bindings must remain blocked.
+        let mut flat = draft.clone();
+        flat.label_pipeline = None;
+        for node in &mut flat.nodes {
+            node.model_binding = None;
+            node.model_profile_binding = None;
+        }
+        assert!(!guided_sample_supported(&flat));
+        flat.nodes[0].model_binding = Some(format!("model-instance:{}", uuid::Uuid::new_v4()));
+        assert!(guided_sample_supported(&flat));
+        flat.nodes[1].model_binding = Some("unresolved-legacy-runtime".into());
+        assert!(!guided_sample_supported(&flat));
         let reference = CredentialReference {
             provider_id: ProviderId(uuid::Uuid::new_v4()),
             source: CredentialSource::WorkspaceFile,

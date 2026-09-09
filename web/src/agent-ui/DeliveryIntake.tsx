@@ -95,7 +95,7 @@ export function DeliveryIntake({ service, delivery, project, task, images, locke
     <div className="delivery-intake-heading"><strong>训练数据包</strong><button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "收起信息" : view?.saved ? "查看交付信息" : "定义交付目标"}</button></div>
     {error && <p role="alert" className="error">{error}</p>}
     {!view && !error && <p role="status">读取已保存信息…</p>}
-    {view?.saved && !expanded && <p>{view.saved.intent.dataset_scope?.length || 0} 张图片 · {view.saved.intent.label_spec?.map(l => l.display_name).join("、") || "类别待确定"} · {view.missing_slots.length ? "仍有信息待补齐" : "信息已保存，尚未批准执行"}</p>}
+    {view?.saved && !expanded && <p>{view.saved.intent.dataset_scope?.length || 0} 张图片 · {view.saved.intent.label_spec?.map(l => l.display_name).join("、") || "类别待确定"} · {view.missing_slots.length ? "仍有信息待补齐" : "交付目标已保存；执行状态见任务记录"}</p>}
     {view?.saved && !view.missing_slots.length && !view.blockers.length && service.prepare && <div className="delivery-intake-actions"><button type="button" disabled={busy||locked||dirty} onClick={()=>void prepare()}>{busy?"保存中…":"确认目标并准备方案"}</button><small>复用已填写的类别和任务类型，不再要求填写内部 ID。模型执行仍需授权。</small></div>}
     {prepared && <p role="status">{prepared}</p>}
     {view&&<Disclosure title="从已保存的 Agent 提议填写交付目标">

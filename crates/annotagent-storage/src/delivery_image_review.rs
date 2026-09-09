@@ -69,6 +69,19 @@ pub struct DeliveryObjectEdit {
     pub reason: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeliveryObjectCreate {
+    pub command_id: Uuid,
+    pub intent_revision: u32,
+    pub intent_sha256: String,
+    pub source_run_id: RunId,
+    pub expected_snapshot_sha256: String,
+    pub label: String,
+    pub value: annotagent_core::AnnotationValue,
+    pub reason: String,
+}
+
 fn invalid(message: &str) -> StorageError {
     StorageError::InvalidConversation(message.into())
 }
@@ -162,6 +175,69 @@ pub(super) fn decode(
 }
 
 impl SqliteStore {
+    /// A manual missing-object correction, not a model result or image approval.
+    /// Reuses formal annotations/revision history with the same snapshot CAS.
+    pub fn create_delivery_object(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        image: ImageId,
+        input: &DeliveryObjectCreate,
+    ) -> Result<annotagent_core::AnnotationRevision, StorageError> {
+        use annotagent_core::{
+            AnnotationId, AnnotationRevision, AnnotationRevisionId, AnnotationSource,
+            RevisionActor, TaskKind,
+        };
+        if input.command_id.is_nil()
+            || input.reason.trim().is_empty()
+            || input.reason.len() > 2000
+            || !matches!(
+                input.value,
+                annotagent_core::AnnotationValue::BoundingBox { .. }
+            )
+        {
+            return Err(invalid(
+                "Missing-object correction requires a bbox, command ID and bounded reason",
+            ));
+        }
+        input
+            .value
+            .validate()
+            .map_err(|_| invalid("Invalid missing-object geometry"))?;
+        let fingerprint = format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&(
+                project,
+                conversation,
+                task,
+                image,
+                input
+            ))?)
+        );
+        let reason = format!("{} [delivery create {fingerprint}]", input.reason);
+        self.with_connection(|db|{
+            let tx=db.unchecked_transaction()?;
+            let saved=intent(&tx,project,conversation,task)?;
+            let previous:Option<String>=tx.query_row("SELECT revision_json FROM annotation_revisions WHERE revision_id=?1",[input.command_id.to_string()],|r|r.get(0)).optional()?;
+            if let Some(json)=previous {let old:AnnotationRevision=serde_json::from_str(&json)?;if old.reason.as_deref()!=Some(&reason){return Err(invalid("Missing-object command changed its immutable scope"));}return Ok(old);}
+            if saved.revision!=input.intent_revision || saved.content_sha256!=input.intent_sha256 || !saved.intent.label_spec.as_ref().is_some_and(|labels|labels.iter().any(|l|l.stable_id==input.label)){return Err(invalid("Delivery version or label changed before adding an object"));}
+            let current=snapshot(&tx,&saved,image,Some(input.source_run_id))?;
+            if current.sha256!=input.expected_snapshot_sha256{return Err(invalid("Image annotations changed before adding an object"));}
+            let schema:String=tx.query_row("SELECT project_schema_json FROM runs WHERE id=?1",[input.source_run_id.to_string()],|r|r.get(0))?;
+            let schema:annotagent_core::ProjectSchema=serde_json::from_str(&schema)?;
+            let tasks=schema.tasks.iter().filter(|t|t.kind==TaskKind::BoundingBox&&t.labels.iter().any(|l|l.as_str()==input.label)).collect::<Vec<_>>();
+            if tasks.len()!=1{return Err(invalid("The source Run must have one unambiguous bbox task for this label"));}
+            let annotation=Annotation{id:AnnotationId(Uuid::new_v5(&input.command_id,b"delivery-missing-object")),image_id:image,task_id:tasks[0].id.clone(),label:Some(input.label.as_str().into()),value:input.value.clone(),attributes:std::collections::BTreeMap::default(),confidence:None,source:AnnotationSource::Human,review_status:ReviewStatus::NeedsReview,provenance:annotagent_core::AnnotationProvenance::default(),created_at:chrono::Utc::now()};
+            annotation.validate().map_err(|_|invalid("Invalid manual annotation"))?;
+            let revision=AnnotationRevision{revision_id:AnnotationRevisionId(input.command_id),annotation_id:annotation.id,parent_revision_id:None,before:None,after:Some(annotation.snapshot()),actor:RevisionActor::Human,reason:Some(reason),created_at:annotation.created_at};
+            revision.validate().map_err(|_|invalid("Invalid creation revision"))?;
+            tx.execute("INSERT INTO annotations(id,run_id,image_id,task_id,label,review_status,annotation_json,created_at) VALUES(?1,?2,?3,?4,?5,'needs_review',?6,?7)",params![annotation.id.to_string(),input.source_run_id.to_string(),image.to_string(),annotation.task_id.as_str(),input.label,serde_json::to_string(&annotation)?,annotation.created_at.to_rfc3339()])?;
+            tx.execute("INSERT INTO annotation_revisions(revision_id,annotation_id,parent_revision_id,revision_json,created_at) VALUES(?1,?2,NULL,?3,?4)",params![revision.revision_id.to_string(),annotation.id.to_string(),serde_json::to_string(&revision)?,revision.created_at.to_rfc3339()])?;
+            tx.execute("INSERT INTO review_queue(run_id,annotation_id,status,reasons_json,created_at) VALUES(?1,?2,'pending','[\"manual_missing_object\"]',?3)",params![input.source_run_id.to_string(),annotation.id.to_string(),annotation.created_at.to_rfc3339()])?;
+            tx.commit()?;Ok(revision)
+        })
+    }
     /// Existing revision writer plus same-transaction delivery snapshot checks.
     pub fn edit_delivery_object(
         &self,
@@ -379,6 +455,80 @@ mod tests {
         annotation: Annotation,
     }
     #[test]
+    fn missing_object_is_a_scoped_idempotent_human_revision_not_whole_image_acceptance() {
+        let root = tempfile::tempdir().unwrap();
+        let f = TestData::new(root.path());
+        f.put(&f.annotation);
+        let before = f.input(DeliveryImageDecision::PositiveComplete);
+        f.confirm(&before).unwrap();
+        let input = DeliveryObjectCreate {
+            command_id: Uuid::new_v4(),
+            intent_revision: f.saved.revision,
+            intent_sha256: f.saved.content_sha256.clone(),
+            source_run_id: f.run,
+            expected_snapshot_sha256: before.expected_snapshot_sha256,
+            label: "target".into(),
+            value: f.annotation.value.clone(),
+            reason: "TEST manually checked missing object".into(),
+        };
+        let i = &f.saved.intent;
+        let create = |input: &DeliveryObjectCreate| {
+            f.store.create_delivery_object(
+                &i.project_id,
+                i.conversation_id,
+                i.task_id,
+                f.image,
+                input,
+            )
+        };
+        let revision = create(&input).unwrap();
+        assert!(revision.before.is_none());
+        assert_eq!(revision, create(&input).unwrap());
+        let snapshot = f
+            .store
+            .delivery_image_snapshot(
+                &i.project_id,
+                i.conversation_id,
+                i.task_id,
+                f.image,
+                Some(f.run),
+            )
+            .unwrap();
+        assert_eq!(snapshot.annotations.len(), 2);
+        assert_ne!(snapshot.sha256, input.expected_snapshot_sha256);
+        let added = snapshot
+            .annotations
+            .iter()
+            .find(|a| a.id == revision.annotation_id)
+            .unwrap();
+        assert_eq!(added.source, AnnotationSource::Human);
+        assert_eq!(added.confidence, None);
+        assert_eq!(added.review_status, ReviewStatus::NeedsReview);
+        assert!(
+            f.confirm(&f.input(DeliveryImageDecision::PositiveComplete))
+                .is_err()
+        );
+        let mut changed = input.clone();
+        changed.reason = "changed".into();
+        assert!(create(&changed).is_err());
+        changed.command_id = Uuid::new_v4();
+        assert!(create(&changed).is_err());
+        changed.expected_snapshot_sha256 = snapshot.sha256;
+        changed.label = "not-a-label".into();
+        assert!(create(&changed).is_err());
+        assert!(
+            f.store
+                .create_delivery_object(
+                    "foreign-project",
+                    i.conversation_id,
+                    i.task_id,
+                    f.image,
+                    &input
+                )
+                .is_err()
+        );
+    }
+    #[test]
     fn formal_sources_are_explicit_owned_terminal_and_image_scoped() {
         let root = tempfile::tempdir().unwrap();
         let f = TestData::new(root.path());
@@ -560,9 +710,10 @@ mod tests {
             let saved = store
                 .save_task_delivery_intent(Uuid::new_v4(), 0, &intent)
                 .unwrap();
+            let schema=annotagent_core::ProjectSchema::from_yaml("version: 1\nproject:\n  name: TEST\ndataset:\n  root: images\nruntime: {}\ntasks:\n  - id: objects\n    kind: bounding_box\n    labels: [target]\nreview:\n  auto_accept_confidence: 0.99\n  force_review_below: 0.95\nexport:\n  formats: [native]\n").unwrap();
             store.with_connection(|db| {
                 db.execute("INSERT INTO images(id,project_id,relative_path,sha256,metadata_json,imported_at) VALUES(?1,?2,'TEST.png',?3,'{}','TEST')",params![image.to_string(),project,"a".repeat(64)])?;
-                db.execute("INSERT INTO runs(id,project_id,project_name,skill_id,provider,model,status,project_schema_json,created_at,updated_at) VALUES(?1,?2,'TEST','TEST','TEST','TEST','completed','{}','TEST','TEST')",params![run.to_string(),project])?;
+                db.execute("INSERT INTO runs(id,project_id,project_name,skill_id,provider,model,status,project_schema_json,created_at,updated_at) VALUES(?1,?2,'TEST','TEST','TEST','TEST','completed',?3,'TEST','TEST')",params![run.to_string(),project,serde_json::to_string(&schema)?])?;
                 db.execute("INSERT INTO run_images(run_id,image_id,status) VALUES(?1,?2,'completed')",params![run.to_string(),image.to_string()])?;
                 Ok(())
             }).unwrap();

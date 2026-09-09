@@ -51,15 +51,36 @@ if(stage==='prepare'){
   state.builder_preview=preview;save();
   console.log('Submitting one explicitly authorized LIVE planning operation; no automatic retry.');
   state.builder=await post(state.task_root+'/builder-operations',{...Object.fromEntries(['selection','repair','previous_grant_id','scope_hash','expires_at'].map(k=>[k,preview[k]])),allow_unknown_cost:true});save();console.log(JSON.stringify(state.builder));
-}else if(stage==='sample'){
-  assert.equal(state.builder?.status,'completed');assert.ok(!state.sample_request,'Do not duplicate an uncertain sample POST.');
+}else if(stage==='sample'||stage==='retry-rejected-sample'){
+  assert.equal(state.builder?.status,'completed');
+  if(stage==='retry-rejected-sample'){
+    const last=state.trace.filter(t=>t.method==='POST'&&t.path.endsWith('/sample-operations')).at(-1);
+    assert.equal(last?.status,400);assert.match(last.response.error,/No inference was started/);
+    assert.ok(state.sample_request&&!state.sample,'Only retry the confirmed pre-inference rejection using its original command.');
+  }else assert.ok(!state.sample_request,'Do not duplicate an uncertain sample POST.');
   const draft=state.builder.evidence.draft_id;
-  state.sample_request=uuid();save();
+  state.sample_request??=uuid();save();
   const preview=await get(state.task_root+'/sample-preview?'+new URLSearchParams({draft_id:draft,request_id:state.sample_request}));
   state.sample_preview=preview;save();
   const budget=preview.conversation_budget;
   state.sample=await post('/api/projects/'+state.project+'/sample-operations',{request_id:preview.request_id,draft_id:draft,expected_revision:preview.revision,image_indices:[0,1,2],authorization_fingerprint:preview.authorization_fingerprint,conversation:{conversation_id:state.conversation_id,task_id:state.task_id,...Object.fromEntries(['previous_grant_id','scope_hash','expires_at'].map(k=>[k,budget[k]])),allow_unknown_cost:true,human_review:true}});save();console.log(JSON.stringify(state.sample));
+}else if(stage==='process'){
+  assert.equal(state.sample_status?.status,'succeeded');assert.ok(!state.processing_request,'Inspect original processing command before any retry.');
+  const selection={draft_id:state.builder.evidence.draft_id,sample_test_id:state.sample.id,limit:state.images.length};
+  const preview=await get('/api/projects/'+state.project+'/processing-preview?'+new URLSearchParams(selection));
+  state.processing_request=uuid();state.processing_preview=preview;save();
+  state.processing=await post('/api/projects/'+state.project+'/processing-operations',{request_id:state.processing_request,selection,expected_revision:preview.revision,authorization_fingerprint:preview.authorization_fingerprint});save();console.log(JSON.stringify(state.processing));
+}else if(stage==='inspect-formal'){
+  assert.ok(state.processing);
+  state.batch=await get('/api/batches/'+state.processing.batch_id);save();
+  for(const image of state.images){
+    const run=state.batch.batch.images.find(i=>i.image_id===image.image_id)?.child_run_id;
+    if(!run)continue;
+    const view=await get(state.task_root+'/delivery-images/'+image.image_id+'?source_run_id='+run);
+    console.log(JSON.stringify({image:image.name||image.file_name||image.image_id,run,annotations:view.snapshot.annotations.map(a=>({id:a.id,label:a.label,status:a.review_status,value:a.value}))}));
+  }
 }else if(stage==='status'){
-  const task=await get(state.task_root);console.log(JSON.stringify(task).slice(0,1200));
+  const task=await get(state.task_root+'/workspace');console.log(JSON.stringify({status:task.task?.status,sample_operations:task.sample_operations}));
   if(state.sample){state.sample_status=await get('/api/projects/'+state.project+'/sample-operations/'+state.sample.id);save();console.log(JSON.stringify(state.sample_status));}
+  if(state.processing){state.batch=await get('/api/batches/'+state.processing.batch_id);save();console.log(JSON.stringify(state.batch));}
 }else throw new Error('Use prepare, builder, replan, sample or status. No paid operation is automatically retried.');

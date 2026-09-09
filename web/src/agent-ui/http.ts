@@ -44,6 +44,7 @@ export class HttpAdapter implements WorkspaceAdapter {
   }
   readonly delivery: import("./deliveryService").DeliveryService = {
     editObject:(project,task,image,input)=>this.transport(`${this.deliveryRoot(project,task)}/delivery-images/${esc(image)}/objects`,{method:"POST",body:JSON.stringify(input)}),
+    createObject:(project,task,image,input)=>this.transport(`${this.deliveryRoot(project,task)}/delivery-images/${esc(image)}/missing-objects`,{method:"POST",body:JSON.stringify(input)}),
     pendingPackage: (project,task)=>{this.deliveryRoot(project,task);return this.storage?readPendingDelivery(this.storage,this.deliveryPendingKey(project,task)):undefined;},
     history: async(project,task,before,signal)=>{
       const rows=await this.transport<{id:string;created_at:string;format:string}[]>(`${this.deliveryRoot(project,task)}/exports?limit=100${before?`&before=${esc(before)}`:""}`,{signal});
@@ -358,6 +359,10 @@ export class HttpAdapter implements WorkspaceAdapter {
       const bindings = await this.transport<{bindings:{model_profile_id:string}[]}>(`${this.root(task.project)}/model-bindings`);
       const models = [...new Set(bindings.bindings.map(b=>`model-profile:${b.model_profile_id}`))];
       if(!models.length) throw new Error("项目尚未绑定视觉模型，请先设置；不自动扩大到全部 Registry 模型");
+      // Ready local refinement is part of the explicitly displayed approval set,
+      // never a hidden post-approval expansion or an installation request.
+      const local=await this.transport<{model_profiles?:import("../types").ModelInstanceProfile[]}>("/api/model-instances");
+      models.push(...(local.model_profiles||[]).filter(m=>m.selectable&&m.capabilities.includes("prompted_segmentation")&&m.selection_id.startsWith("model-instance:")).map(m=>m.selection_id));
       const delivery=await this.transport<{required:boolean;schema:null|{id:string;revision:number}}>(`${root}/delivery-schema`);
       if(delivery.required && !delivery.schema)throw new Error("请先确认已保存的交付目标；旧目标规范不适用于当前版本，不会额外调用模型猜测类别。");
       const query = new URLSearchParams({consent_id:c.id,builder_operation_id:crypto.randomUUID(),sample_operation_id:crypto.randomUUID(),allowed_models:JSON.stringify(models)});

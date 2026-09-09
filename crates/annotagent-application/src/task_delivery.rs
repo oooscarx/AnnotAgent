@@ -279,6 +279,27 @@ impl LocalApplication {
         })
     }
 
+    /// Adds a human missing-object revision with snapshot CAS; does not accept the image.
+    pub fn create_task_delivery_object(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        image: ImageId,
+        input: &annotagent_storage::DeliveryObjectCreate,
+    ) -> Result<annotagent_core::AnnotationRevision> {
+        let saved = self
+            .require_delivery_intake(project, conversation, task)?
+            .context("Save delivery information before adding objects")?;
+        Ok(self.store.create_delivery_object(
+            &saved.intent.project_id,
+            conversation,
+            task,
+            image,
+            input,
+        )?)
+    }
+
     /// Revises an existing formal object with snapshot CAS; does not confirm the whole image.
     pub fn edit_task_delivery_object(
         &self,

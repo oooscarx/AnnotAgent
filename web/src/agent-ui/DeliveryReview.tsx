@@ -22,10 +22,12 @@ export function DeliveryReview({service,project,task,images,labels=[],locked=fal
   const [draft,setDraft]=useState<Annotation>();
   const original=view?.snapshot.annotations.find(a=>a.id===selected);
   const object=draft||original;
+  const creating=!!draft&&!original;
   const dirty=!!draft&&JSON.stringify(draft)!==JSON.stringify(original);
   useEffect(()=>{onEditingState?.(dirty||busy);return()=>onEditingState?.(false);},[dirty,busy,onEditingState]);
   const editRetry=useRef<{signature:string;input:import("./deliveryService").DeliveryObjectEdit}|undefined>(undefined);
   const pending=useRef(false);
+  const createRetry=useRef<{signature:string;input:import("./deliveryService").DeliveryObjectCreate}|undefined>(undefined);
   const retry=useRef<{signature:string;input:DeliveryReviewInput} | undefined>(undefined);
   const image=images.find(i=>i.id===selection.image);
   useEffect(()=>{setReadable(false);if(!image?.src)return;let current=true;const probe=new Image();probe.onload=()=>{if(current)setReadable(probe.naturalWidth>0&&probe.naturalHeight>0);};probe.src=image.src;return()=>{current=false;};},[image?.src]);
@@ -65,11 +67,23 @@ export function DeliveryReview({service,project,task,images,labels=[],locked=fal
     finally{pending.current=false;setBusy(false);}
   };
   const saveObject=async(status:"needs_review"|"human_accepted"|"rejected")=>{
-    if(!object||!view||!image||!selection.run||pending.current||locked||!readable)return;
+    if(creating||!object||!view||!image||!selection.run||pending.current||locked||!readable)return;
     const body={intent_revision:view.intent_revision,intent_sha256:view.intent_sha256,source_run_id:selection.run,annotation_id:object.id,expected_snapshot_sha256:view.snapshot.sha256,label:object.label||"",value:object.value,review_status:status,reason:reason.trim()||`Human object ${status} in delivery review`};
     const signature=JSON.stringify(body);if(editRetry.current?.signature!==signature)editRetry.current={signature,input:{...body,command_id:crypto.randomUUID()}};
     pending.current=true;setBusy(true);setError("");
     try{await service.editObject(project,task,image.id,editRetry.current.input);setDraft(undefined);editRetry.current=undefined;setMessage("对象决定已保存；这不表示整张图已标注完整。请继续检查其余对象和漏标。");setReload(v=>v+1);}
+    catch(e){setError((e as Error).message);}finally{pending.current=false;setBusy(false);}
+  };
+  const addObject=()=>{
+    if(dirty||busy||locked||!view||!image||!selection.run||!labels.length)return;
+    const id=crypto.randomUUID();setSelected(id);setDraft({id,image_id:image.id,task_id:"",label:labels[0].stable_id,value:{kind:"bounding_box",rect:[.4,.4,.15,.15]},attributes:{},source:"human",review_status:"needs_review",provenance:{},created_at:new Date().toISOString()});setReason("人工检查原图后补充漏标目标");
+  };
+  const saveNewObject=async()=>{
+    if(!creating||!object||!view||!image||!selection.run||pending.current||locked||!readable||!service.createObject||!reason.trim())return;
+    const body={intent_revision:view.intent_revision,intent_sha256:view.intent_sha256,source_run_id:selection.run,expected_snapshot_sha256:view.snapshot.sha256,label:object.label||"",value:object.value,reason:reason.trim()};
+    const signature=JSON.stringify(body);if(createRetry.current?.signature!==signature)createRetry.current={signature,input:{...body,command_id:crypto.randomUUID()}};
+    pending.current=true;setBusy(true);setError("");
+    try{await service.createObject(project,task,image.id,createRetry.current.input);createRetry.current=undefined;setDraft(undefined);setSelected(undefined);setMessage("新增目标框已保存为待审核；请接受对象后再确认整图完整。");setReload(v=>v+1);}
     catch(e){setError((e as Error).message);}finally{pending.current=false;setBusy(false);}
   };
   const positive=!!selection.run&&!!view&&view.accepted_objects>0&&view.unresolved_objects===0;
@@ -85,12 +99,14 @@ export function DeliveryReview({service,project,task,images,labels=[],locked=fal
     <p>来源列表仅包含本项目此图片的正式终态 Run，可能来自其他任务。请明确选择要复用的结果；不会自动使用最新 Run。</p>
     {error&&<p role="alert" className="error">{error}{selection.run&&!view&&<button disabled={busy} onClick={()=>choose({...selection,run:""})}>返回原图，重新选择来源</button>}</p>}{message&&<p role="status">{message}</p>}
     {!view&&!error&&<p role="status">读取正式标注与审核状态…</p>}
-    {image&&<AnnotationCanvas imageUrl={image.src} annotations={selection.run?view?.snapshot.annotations.filter(a=>a.review_status!=="rejected").map(a=>draft?.id===a.id?draft:a)||[]:[]} selectedId={selected} onSelect={selectObject} onChange={next=>{if(!busy&&!locked){setSelected(next.id);setDraft(next);}}} readOnly={busy||locked||!selection.run||!service.editObject} compactList/>}
-    {object&&selection.run&&<div className="delivery-object-editor"><p>选中对象 · {object.review_status} {dirty?"· 尚未保存":""}</p><label>对象类别<select aria-label="对象类别" value={object.label||""} disabled={busy||locked} onChange={e=>setDraft({...object,label:e.target.value})}>{labels.length?labels.map(l=><option key={l.stable_id} value={l.stable_id}>{l.display_name}</option>):<option value={object.label||""}>{object.label}</option>}</select></label><div className="actions"><button disabled={busy||!dirty} onClick={()=>setDraft(undefined)}>撤销对象修改</button><button disabled={busy||locked||!dirty} onClick={()=>void saveObject("needs_review")}>保存对象修改</button><button disabled={busy||locked||!readable||object.review_status==="human_accepted"&&!dirty} onClick={()=>void saveObject("human_accepted")}>接受这个对象</button><button disabled={busy||locked||!readable} onClick={()=>void saveObject("rejected")}>拒绝这个对象</button></div></div>}
+    {image&&<AnnotationCanvas imageUrl={image.src} annotations={selection.run?[...(view?.snapshot.annotations.filter(a=>a.review_status!=="rejected").map(a=>draft?.id===a.id?draft:a)||[]),...(creating&&draft?[draft]:[])]:[]} selectedId={selected} onSelect={selectObject} onChange={next=>{if(!busy&&!locked){setSelected(next.id);setDraft(next);}}} readOnly={busy||locked||!selection.run||!service.editObject} compactList/>}
+    {service.createObject&&<button disabled={busy||locked||dirty||!selection.run||!view||!readable||!labels.length} onClick={addObject}>新增漏标目标框</button>}
+    {creating&&<div className="actions"><button disabled={busy} onClick={()=>{setDraft(undefined);setSelected(undefined);}}>取消新增框</button><button disabled={busy||locked||!readable||!reason.trim()} onClick={()=>void saveNewObject()}>保存新增目标框</button></div>}
+    {object&&selection.run&&<div className="delivery-object-editor"><p>选中对象 · {object.review_status} {dirty?"· 尚未保存":""}</p><label>对象类别<select aria-label="对象类别" value={object.label||""} disabled={busy||locked} onChange={e=>setDraft({...object,label:e.target.value})}>{labels.length?labels.map(l=><option key={l.stable_id} value={l.stable_id}>{l.display_name}</option>):<option value={object.label||""}>{object.label}</option>}</select></label>{!creating&&<div className="actions"><button disabled={busy||!dirty} onClick={()=>setDraft(undefined)}>撤销对象修改</button><button disabled={busy||locked||!dirty} onClick={()=>void saveObject("needs_review")}>保存对象修改</button><button disabled={busy||locked||!readable||object.review_status==="human_accepted"&&!dirty} onClick={()=>void saveObject("human_accepted")}>接受这个对象</button><button disabled={busy||locked||!readable} onClick={()=>void saveObject("rejected")}>拒绝这个对象</button></div>}</div>}
     {!readable&&<p role="status">原图尚未成功加载，不能确认整图完整或无目标。仍可填写原因明确排除。</p>}
     {view&&<>
       <p>{view.confirmation_current?`此快照已有整图决定：${view.review?.input.decision}`:"当前图片／来源尚未整图确认"} · 已接受对象 {view.accepted_objects} · 未解决对象 {view.unresolved_objects}</p>
-      <p>可直接选框修正边界或类别，并逐个接受／拒绝。发现遗漏但尚未补齐时保持未完成；此面板尚不支持新增漏框。</p>
+      <p>可直接选框修正边界或类别，并逐个接受／拒绝。新增漏标框保存后仍需审核；发现遗漏但尚未补齐时保持未完成。</p>
       <label>检查备注／排除原因<textarea value={reason} disabled={busy} onChange={e=>setReason(e.target.value)} placeholder="排除图片必须说明原因"/></label>
       <div className="actions">
         <button disabled={busy||locked||dirty||!positive||!readable} onClick={()=>void confirm("positive_complete")}>确认整张图标注完整</button>

@@ -13,6 +13,7 @@ export type DeliveryObjectEdit = {
   annotation_id:string;expected_snapshot_sha256:string;label:string;value:Annotation["value"];
   review_status:"needs_review"|"human_accepted"|"rejected";reason:string;
 };
+export type DeliveryObjectCreate = Omit<DeliveryObjectEdit,"annotation_id"|"review_status">;
 export type DeliveryImageSnapshot = {
   image_id: string; content_sha256: string; source_run_id: string | null;
   annotations: Annotation[]; sha256: string;
@@ -42,6 +43,7 @@ export type DeliveryPackageStart = { job: DeliveryPackageStatus; active: boolean
 
 /** Explicit commands retain caller-owned idempotency keys; reads never start jobs. */
 export interface DeliveryService {
+  createObject?(project:string,task:string,image:string,input:DeliveryObjectCreate):Promise<unknown>;
   editObject(project:string,task:string,image:string,input:DeliveryObjectEdit):Promise<unknown>;
   pendingPackage(project:string,task:string):DeliveryPackageInput|undefined;
   history(project: string, task: string, before?:string, signal?:AbortSignal): Promise<{items:{id:string;created_at:string}[];next_cursor:string|null}>;

@@ -1,0 +1,2 @@
+import {defineConfig} from "@playwright/test";
+export default defineConfig({testDir:"./e2e",testMatch:"live-delivery-recording.spec.ts",workers:1,fullyParallel:false,timeout:600_000,outputDir:process.env.LIVE_VIDEO_OUTPUT||"test-results/live-recording",use:{baseURL:"http://127.0.0.1:62883",viewport:{width:1440,height:960},video:{mode:"on",size:{width:1440,height:960}},trace:"retain-on-failure",screenshot:"only-on-failure"},reporter:"list"});

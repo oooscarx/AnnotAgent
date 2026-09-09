@@ -41,7 +41,7 @@ fn scope(
         ));
     }
     reject_unresolved_registry_model_nodes(&draft)?;
-    if draft.label_pipeline.is_none() || !guided_other_bindings(&draft).is_empty() {
+    if !guided_sample_supported(&draft) {
         return Err(ApiError::bad_request(
             "This plan needs a verified Registry or installed plugin model before guided processing",
         ));

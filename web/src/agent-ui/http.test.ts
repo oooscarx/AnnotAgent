@@ -138,6 +138,7 @@ it("delivery preparation posts the exact owned revision and never falls back to 
 it("sample consent uses the saved delivery Schema instead of another Schema model call",async()=>{
   const reads=mockTransport({
     "/api/projects/TEST-alpha/model-bindings":{bindings:[{model_profile_id:"vision"}]},
+    "/api/model-instances":{instances:[],model_profiles:[{selectable:true,capabilities:["prompted_segmentation"],selection_id:"model-instance:ready-local"},{selectable:false,capabilities:["prompted_segmentation"],selection_id:"model-instance:not-ready"},{selectable:true,capabilities:["object_detection"],selection_id:"model-instance:unrelated"}]},
     [`${root}/t1/delivery-schema`]:{required:true,schema:{id:"delivery-schema",revision:4}},
   });
   let preview="";
@@ -150,6 +151,7 @@ it("sample consent uses the saved delivery Schema instead of another Schema mode
   const query=new URL(preview,"http://TEST.local").searchParams;
   expect(query.get("schema_id")).toBe("delivery-schema");expect(query.get("schema_revision")).toBe("4");
   expect(query.has("schema_call_id")).toBe(false);
+  expect(JSON.parse(query.get("allowed_models")!)).toEqual(["model-profile:vision","model-instance:ready-local"]);
   expect(reads.paths.some(p=>p.includes("schema-preview"))).toBe(false);
 });
 describe("HTTP UI read boundary (synthetic transport tests, not HTTP E2E)", () => {
