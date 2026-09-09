@@ -170,3 +170,8 @@ Implemented owned `GET /api/projects/{project_id}/workflows/{workflow_id}/versio
 ## UIAPI-014 sealed repair Journey Sample follow-up
 
 Sample pending-human admission is narrowed to the exact active, sealed repair Journey/source, in addition to the existing running-operation identity, grant, lease and scope checks. Ordinary Sample cannot inherit the exception from an Applied repair copy. No new HTTP fields/routes: use existing explicit repair `journey-preview`/consent/execution. Real TEST HTTP covers ordinary Sample denied with zero calls, then sealed Journey Sample through the actual vision adapter with three images/zero failures and two unchanged pending requests. See `docs/contracts/agent-ui-v1/UIAPI-014_REPAIR_ADMISSION.md` for contract, replay command and retained trace. This increment contains no migrations, publication or frontend changes.
+
+
+## UIAPI-016 exact clone
+
+Existing version clone POST now accepts complete `{project_id,source_snapshot_hash,command_id}`. First/replay201 return the same original creation Draft receipt; GET its ID for current edits. Owner/hash/scope checks and atomic durable receipt prevent duplicate copies. No Published/default changes or inference. Additive0062. Full contract and tests: `docs/contracts/agent-ui-v1/UIAPI-016_CLONE.md`. This supersedes the legacy-clone recovery gap recorded in UIAPI-015; empty-body legacy calls still lack recovery.

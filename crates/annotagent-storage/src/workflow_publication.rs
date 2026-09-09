@@ -222,4 +222,106 @@ mod tests {
             1
         );
     }
+    #[test]
+    fn clone_command_owner_hash_replay_restart_and_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TEST.sqlite");
+        let store = SqliteStore::open(&path).unwrap();
+        let d = draft(&store);
+        let frozen = publish(&store, &d, &command(&d)).unwrap();
+        let default_before: (String,i64,String) = store.with_connection(|db| Ok(db.query_row("SELECT workflow_id,version,updated_at FROM project_workflow_defaults WHERE project_id=?1", [&d.project_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?)).unwrap();
+        let c = crate::WorkflowCloneCommand {
+            command_id: Uuid::new_v4(),
+            project_id: d.project_id.clone(),
+            workflow_id: frozen.workflow_id.clone(),
+            version: frozen.version,
+            source_snapshot_hash: frozen.content_hash.clone(),
+        };
+        let mut wrong = c.clone();
+        wrong.project_id = "TEST-other".into();
+        assert!(store.clone_workflow_version_command(&wrong).is_err());
+        wrong = c.clone();
+        wrong.source_snapshot_hash = "wrong".into();
+        assert!(store.clone_workflow_version_command(&wrong).is_err());
+        let copy = store.clone_workflow_version_command(&c).unwrap();
+        assert_eq!(copy.revision, 1);
+        let mut edited = copy.clone();
+        edited.name = "TEST human edit".into();
+        store.save_workflow_draft(&edited).unwrap();
+        drop(store);
+        let store = SqliteStore::open(&path).unwrap();
+        assert_eq!(
+            serde_json::to_value(store.clone_workflow_version_command(&c).unwrap()).unwrap(),
+            serde_json::to_value(&copy).unwrap()
+        );
+        assert_eq!(
+            store.get_workflow_draft(&copy.id).unwrap().name,
+            "TEST human edit"
+        );
+        let default_after: (String,i64,String) = store.with_connection(|db| Ok(db.query_row("SELECT workflow_id,version,updated_at FROM project_workflow_defaults WHERE project_id=?1", [&d.project_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?)).unwrap();
+        assert_eq!(default_before, default_after);
+        wrong = c.clone();
+        wrong.version += 1;
+        assert!(store.clone_workflow_version_command(&wrong).is_err());
+        assert_eq!(
+            serde_json::to_value(
+                store
+                    .get_published_workflow_version(&frozen.workflow_id, frozen.version)
+                    .unwrap()
+            )
+            .unwrap(),
+            serde_json::to_value(frozen).unwrap()
+        );
+    }
+
+    #[test]
+    fn clone_command_concurrent_writers_and_receipt_rollback() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TEST.sqlite");
+        let store = SqliteStore::open(&path).unwrap();
+        let d = draft(&store);
+        let frozen = publish(&store, &d, &command(&d)).unwrap();
+        let c = crate::WorkflowCloneCommand {
+            command_id: Uuid::new_v4(),
+            project_id: d.project_id.clone(),
+            workflow_id: frozen.workflow_id,
+            version: frozen.version,
+            source_snapshot_hash: frozen.content_hash,
+        };
+        store.with_connection(|db|{db.execute_batch("CREATE TRIGGER TEST_clone_receipt_failure BEFORE INSERT ON workflow_clone_commands BEGIN SELECT RAISE(ABORT, 'TEST rollback'); END;")?;Ok(())}).unwrap();
+        assert!(store.clone_workflow_version_command(&c).is_err());
+        store
+            .with_connection(|db| {
+                assert_eq!(
+                    db.query_row("SELECT COUNT(*) FROM workflow_drafts", [], |r| r
+                        .get::<_, i64>(0))?,
+                    1
+                );
+                db.execute_batch("DROP TRIGGER TEST_clone_receipt_failure")?;
+                Ok(())
+            })
+            .unwrap();
+        let other = SqliteStore::open(&path).unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let b = barrier.clone();
+        let second = c.clone();
+        let thread = std::thread::spawn(move || {
+            b.wait();
+            other.clone_workflow_version_command(&second).unwrap()
+        });
+        barrier.wait();
+        let first = store.clone_workflow_version_command(&c).unwrap();
+        let second = thread.join().unwrap();
+        assert_eq!(first.id, second.id);
+        store
+            .with_connection(|db| {
+                assert_eq!(
+                    db.query_row("SELECT COUNT(*) FROM workflow_drafts", [], |r| r
+                        .get::<_, i64>(0))?,
+                    2
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
 }
