@@ -1,5 +1,13 @@
 # Agent A — UI Preview handoff
 
+## Pending visual approval (2026-09-09)
+
+Frozen UI baseline: `68f2568dc2e9ef3ed3119a0401ec37bb1a2685c5` on the verified `codex/agent-ui-frontend` worktree. This is the already-pushed frontend baseline; this acceptance round is local only. The new ordered screenshot gallery is `http://127.0.0.1:5174/evidence/acceptance.html`. Current 5174 is the correct existing Vite instance; 8787 remains untouched.
+
+Re-captured and inspected all required surfaces without changing the user's browser state. Screenshot pixels are unchanged from the existing baseline. Minor remaining judgments: multi-line sidebar titles, tall model picker, small annotation text at Fit, incomplete English copy. No major structural visual correction was necessary this round.
+
+Agent A is the continuing frontend owner and **sole future frontend/backend integration executor**. Do not start HTTP wiring, merge backend branches, replace production entry or modify Rust before receiving **“UI确认，开始集成”**. Fixture stop/install/credential-slot/prediction states are not backend functionality.
+
 ## Open and run
 
 Separate worktree: `/Users/oscar/Documents/my_workspace/AnnotAgent-frontend`.

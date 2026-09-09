@@ -1,5 +1,16 @@
 # UI First Frontend — Agent A
 
+## UI acceptance freeze — 2026-09-09
+
+- Actual branch/worktree confirmed: `codex/agent-ui-frontend`, `AnnotAgent-frontend`; starting HEAD `68f2568dc2e9ef3ed3119a0401ec37bb1a2685c5`, clean and tracking the same origin branch. No branch reconstruction.
+- **Pending-approval UI baseline: `68f2568dc2e9ef3ed3119a0401ec37bb1a2685c5`.** Its React/Fixture sources are identical to source commit `452ea02`; subsequent delivery commits only added evidence/documents.
+- Existing listener 5174 is PID 99099, Vite with `vite.preview.config.ts`, cwd in this frontend worktree. Reused, not killed/restarted; 8787 not touched.
+- Re-ran the actual-page capture walkthrough in a separate browser context. All 17 screenshots are byte-identical to the prior UI baseline; manifest now records this session's timestamp and exact baseline SHA. Inspected new task, Plan, picker, running, stopping, interrupted/continue, human correction and all six Settings screenshots.
+- Ordered visual review: `http://127.0.0.1:5174/evidence/acceptance.html`. This is a screenshot gallery, clearly separated from the interactive React UI and original prototype comparison. No test count is treated as user visual approval.
+- No major navigation/layout divergence found requiring a redesign. Minor pending visual judgments: long task titles wrap to multiple sidebar lines; model picker is relatively tall; annotation text is small at Fit scale; English copy is incomplete. Native 200% zoom and human usability remain unverified.
+- Only evidence/gallery/acceptance records changed this round. No feature expansion, HTTP integration, Rust changes, backend merge, production entry replacement, remote changes or workspace cleanup. Prior `68f2568` was pushed on the user's preceding explicit request; **this acceptance round is not pushed**.
+- Agent A remains frontend owner and the future sole integration executor. Integration remains gated on the exact user instruction **“UI确认，开始集成”**. Await that instruction after delivery; do not perform background integration.
+
 Current: **F0–F3 UI Preview delivered for visual review; no HTTP integration authorized or started.** Final source commit `452ea027d1c87488ba6d34c392ade996681d979b`.
 
 ## Baseline and boundaries
