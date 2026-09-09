@@ -373,7 +373,8 @@ pub(super) async fn start_operation(
                     consent.task_id,
                     &consent.scope_hash,
                 )
-                .map_err(ApiError::bad_request)?,
+                .map_err(ApiError::bad_request)?
+                .for_sample_operation(id),
         )
     } else {
         None

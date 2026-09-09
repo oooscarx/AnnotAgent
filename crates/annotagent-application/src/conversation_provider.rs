@@ -14,6 +14,7 @@ pub struct ConversationTaskProvider<'a> {
     task: Uuid,
     scope: String,
     model: String,
+    builder_operation: Option<Uuid>,
     recorded_call: Option<(Uuid, &'static str, serde_json::Value)>,
 }
 
@@ -53,11 +54,17 @@ impl crate::LocalApplication {
             scope: scope.into(),
             model: model.into(),
             recorded_call: None,
+            builder_operation: None,
         })
     }
 }
 
 impl ConversationTaskProvider<'_> {
+    pub(crate) fn for_builder_operation(mut self, id: Uuid) -> Self {
+        self.builder_operation = Some(id);
+        self
+    }
+
     /// Fixed identity and frozen evidence for a single bounded feedback call.
     /// The same task ledger and pending-human/expiry/Project limits still apply.
     pub(crate) fn for_feedback_call(mut self, id: Uuid, context: serde_json::Value) -> Self {
@@ -132,7 +139,14 @@ impl VisionModelProvider for ConversationTaskProvider<'_> {
         );
         let admission = self
             .store
-            .reserve_conversation_call(&self.project, self.task, id, &self.scope, &hash)
+            .reserve_conversation_operation_call(
+                &self.project,
+                self.task,
+                id,
+                &self.scope,
+                &hash,
+                self.builder_operation,
+            )
             .map_err(|error| CoreError::Provider(error.to_string()))?;
         if admission != ConversationCallAdmission::Admitted {
             return Err(CoreError::Provider(

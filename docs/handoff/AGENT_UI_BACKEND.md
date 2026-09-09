@@ -182,3 +182,8 @@ Isolated Application/Runtime210 passed,1 existing ignored; workspace all-target 
 ## UIAPI-009 implemented: immutable workspace history scope
 
 See `docs/contracts/agent-ui-v1/UIAPI-009_HISTORY_SCOPE.md` for the executable contract and isolated acceptance tests. Passive GET, preview plus explicit privileged idempotent establishment, persisted identity membership, SQL-filtered scoped pagination and management preview/action guards are implemented. Direct references and Published/annotation data remain unchanged. Migration0059 only adds scope tables; no real workspace scope was established. Frontend must send the returned scope ID explicitly on both lists and management requests.
+
+
+## UIAPI-014 second-round repair admission
+
+Implemented exact Applied-source Builder and running-Sample ledger admission with other images still pending, preserving existing grants/limits/stop and sample leases. Saved typed local recovery is revalidated and reused without another pass. Real HTTP three-image TEST regression passed; contract and commands: `docs/contracts/agent-ui-v1/UIAPI-014_REPAIR_ADMISSION.md`. This increment contains no publication/0061 changes; those remain isolated and uncommitted.

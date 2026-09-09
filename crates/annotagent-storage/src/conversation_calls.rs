@@ -203,8 +203,16 @@ pub(crate) fn require_call_admission_clear(
     task: Uuid,
     call: Uuid,
 ) -> Result<(), StorageError> {
+    require_call_admission_clear_with_repair(db, task, call, false)
+}
+fn require_call_admission_clear_with_repair(
+    db: &rusqlite::Connection,
+    task: Uuid,
+    call: Uuid,
+    applied_repair: bool,
+) -> Result<(), StorageError> {
     let waiting: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM conversation_human_requests WHERE task_id=?1 AND status='pending' UNION ALL SELECT 1 FROM conversation_image_class_reviews WHERE task_id=?1 AND status='pending')", [task.to_string()], |row| row.get(0))?;
-    if waiting {
+    if waiting && !applied_repair {
         return Err(StorageError::ConversationContract {
             code: "human_input_pending",
             message: "Task is waiting for human input; no model call was admitted".into(),
@@ -554,6 +562,19 @@ impl SqliteStore {
         scope_hash: &str,
         request_hash: &str,
     ) -> Result<ConversationCallAdmission, StorageError> {
+        self.reserve_conversation_operation_call(project, task, id, scope_hash, request_hash, None)
+    }
+    /// Same ledger and limits; an operation ID only enables the exact Applied-repair
+    /// pending-human exception after its durable source has been verified.
+    pub fn reserve_conversation_operation_call(
+        &self,
+        project: &str,
+        task: Uuid,
+        id: Uuid,
+        scope_hash: &str,
+        request_hash: &str,
+        builder: Option<Uuid>,
+    ) -> Result<ConversationCallAdmission, StorageError> {
         if !digest(scope_hash) || !digest(request_hash) {
             return Err(invalid("invalid call snapshot digest"));
         }
@@ -566,7 +587,10 @@ impl SqliteStore {
                 if original_scope != scope_hash { return Err(invalid("call scope changed")); }
                 return Ok(ConversationCallAdmission::Existing(saved));
             }
-            require_call_admission_clear(&tx, task, id)?;
+            let applied_repair = if let Some(builder) = builder {
+                crate::conversation_builder::applied_repair_call(&tx, project, task, builder, scope_hash)?
+            } else { false };
+            require_call_admission_clear_with_repair(&tx, task, id, applied_repair)?;
             crate::conversation_queued_planning::require_call(&tx,project,task,id,request_hash)?;
             crate::conversation_future_schema_proposal::require_current_source_for_call(&tx,project,task,id)?;
             crate::conversation_stop::require_admission_clear(&tx,task,&id.to_string(),true)?;

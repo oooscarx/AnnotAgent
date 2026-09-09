@@ -2036,6 +2036,75 @@ mod tests {
             repair: Some(snapshot.clone()),
             ..build.clone()
         };
+        // Two other images in this Task still need answers. They must neither be
+        // accepted nor cleared by the separately authorized Applied repair.
+        reopened
+            .store
+            .finish_sample_operation(&sample.id, None)
+            .unwrap();
+        let mut pending_others = Vec::new();
+        for index in 1..=2 {
+            let mut other_sample = sample.clone();
+            other_sample.id = format!("TEST-other-sample-{index}");
+            other_sample.inputs[0].image_id = format!("TEST-other-image-{index}");
+            reopened
+                .store
+                .save_workflow_sample_test(&other_sample)
+                .unwrap();
+            reopened.store.reserve_sample_operation(&annotagent_storage::SampleOperation {
+                id:other_sample.id.clone(),project_id:"schema-test".into(),draft_id:generated.id.clone(),authorization_fingerprint:"TEST other image".into(),
+                request:json!({"conversation":{"conversation_id":conversation,"task_id":task}}),status:"completed".into(),error:None,
+                created_at:chrono::Utc::now().to_rfc3339(),updated_at:chrono::Utc::now().to_rfc3339(),
+            }).unwrap();
+            reopened
+                .store
+                .finish_sample_operation(&other_sample.id, None)
+                .unwrap();
+            let mut other = human.clone();
+            other.id = Uuid::new_v4();
+            other.resume_checkpoint_ref = Uuid::new_v4();
+            other.sample_test_id = other_sample.id;
+            other.image_id = other_sample.inputs[0].image_id.clone();
+            reopened
+                .store
+                .create_conversation_human_request(&owner, &other)
+                .unwrap();
+            pending_others.push(
+                reopened
+                    .store
+                    .conversation_human_request(&owner, other.id)
+                    .unwrap(),
+            );
+        }
+        let ordinary = reopened.store.reserve_conversation_call(
+            &owner,
+            task,
+            Uuid::new_v4(),
+            &repair.scope_hash,
+            &"a".repeat(64),
+        );
+        assert!(matches!(
+            ordinary,
+            Err(annotagent_storage::StorageError::ConversationContract {
+                code: "human_input_pending",
+                ..
+            })
+        ));
+        let spoof = reopened.store.reserve_conversation_operation_call(
+            &owner,
+            task,
+            Uuid::new_v4(),
+            &repair.scope_hash,
+            &"a".repeat(64),
+            Some(Uuid::new_v4()),
+        );
+        assert!(matches!(
+            spoof,
+            Err(annotagent_storage::StorageError::ConversationContract {
+                code: "human_input_pending",
+                ..
+            })
+        ));
         let repaired = reopened
             .build_conversation_pipeline(
                 "schema-test",
@@ -2048,6 +2117,29 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(repaired.status, "completed");
+        for other in &pending_others {
+            assert_eq!(
+                reopened
+                    .store
+                    .conversation_human_request(&owner, other.input.id)
+                    .unwrap(),
+                *other
+            );
+        }
+        assert!(
+            reopened
+                .store
+                .reserve_conversation_operation_call(
+                    &owner,
+                    task,
+                    Uuid::new_v4(),
+                    &repair.scope_hash,
+                    &"a".repeat(64),
+                    Some(repair.operation_id)
+                )
+                .is_err(),
+            "settled repair cannot provide a new admission exception"
+        );
         let repair_history = reopened
             .conversation_builder_history_scoped(
                 "schema-test",
