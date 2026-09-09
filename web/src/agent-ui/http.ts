@@ -1,9 +1,10 @@
-import { request, type JourneyPreview, type JourneyConsent, type ProcessingAuthorization, type ProcessingReceipt } from "../api";
+import { api, request, type JourneyPreview, type JourneyConsent, type ProcessingAuthorization, type ProcessingReceipt } from "../api";
 import type { ImageItem, ProviderProfile, RegistryModelProfile, GlobalModelDefaults, ExpertPluginRegistry, InstalledModelInstance, ConversationSchemaPreview, ConversationCallReceipt, ConversationBuilderItem, WorkflowSampleTestRecord, SampleFeedbackRevision, ExportReadiness, ProjectExportResult } from "../types";
 import { terminalSampleAnnotations } from "../sampleAnnotations";
 import { sampleFeedbackOverlay } from "../sampleFeedbackOverlay";
 import type { HumanRequest } from "../conversation-human-api";
 import type { QueuedMessage } from "../components/ConversationQueue";
+import type { QueueConsent, QueuePreview } from "../conversation-queue-api";
 import type { SendCommand, SendReceipt } from "../conversation-send";
 import type { StopRequestRecord } from "../conversation-stop-api";
 import type { WorkspaceAdapter, Snapshot, Task, Command, Settings, ImageId, Box, Phase, Action } from "./adapter";
@@ -25,7 +26,7 @@ type Workspace = {
   resume_actions?: {id:string;kind:string;available:boolean;reason:string;url:string;method:string}[];
   processing_operations?: ProcessingReceipt[];
 };
-type Thread = { id: string; role: "user"; task_id: string; project_owner_id: string; conversation_id: string; message: { input: { text: string } } };
+type Thread = { id: string; role: "user"; task_id: string; project_owner_id: string; conversation_id: string; message: { input: { text: string; reference?:{scope:string} } } };
 type SafeSettings = { revision: string; sections: { data_privacy: { workspace_id: string }; usage_budget: { future_run_budget: Record<string, unknown> & { max_cost?: string } } } };
 export type Transport = <T>(path: string, init?: RequestInit) => Promise<T>;
 const esc = encodeURIComponent;
@@ -45,7 +46,7 @@ export class HttpAdapter implements WorkspaceAdapter {
   private safeSettings?: SafeSettings;
   private defaults: GlobalModelDefaults = {};
   private modelCommands = new Map<string, {request_id: string; expected_revision: number; model_profile_id: string}>();
-  private approvals = new Map<string, {id:string; url:string; body: unknown; execution?:string}>();
+  private approvals = new Map<string, {id:string; url:string; body: unknown; execution?:string; view?:Task["approval"]}>();
   private dimensions = new Map<string, Promise<{width:number;height:number}>>();
   private measure(src:string) {
     if(!this.dimensions.has(src)) this.dimensions.set(src,new Promise((resolve,reject)=>{
@@ -103,7 +104,7 @@ export class HttpAdapter implements WorkspaceAdapter {
       const tasks: Task[] = rows.flatMap(({ p, tasks }) => tasks.map(t => {
         if (t.project_owner_id !== p.project_owner_id || t.conversation_id !== p.conversation_id) throw new Error("服务器任务归属不匹配");
         const old = this.state.tasks.find(x => x.id === t.task_id && x.project === p.project_id);
-        return { ...old, id: t.task_id, project: p.project_id, title: t.title, revision: t.schema_revision, phase: t.state, items: old?.items || [], queue: old?.queue || [], draft: this.stored(`draft.${t.task_id}`, ""), model: old?.model || "", boxes: old?.boxes || [], image: old?.image || "", actions: old?.actions || {} };
+        return { ...old, id: t.task_id, project: p.project_id, conversationId:p.conversation_id || undefined, title: t.title, revision: t.schema_revision, phase: t.state, items: old?.items || [], queue: old?.queue || [], draft: this.stored(`draft.${t.task_id}`, ""), model: old?.model || "", boxes: old?.boxes || [], image: old?.image || "", actions: old?.actions || {} };
       }));
       // Unsaved composers are local input only, never fabricated persisted tasks/messages.
       for (const p of nav) tasks.push({ id: `new:${p.project_id}`, project: p.project_id, title: "新任务", revision: "", phase: "idle", items: [], queue: [], draft: this.stored(`draft.new:${p.project_id}`, ""), model: "", boxes: [], image: "", actions: { send: { available: true, reason: "只保存目标，执行需另行批准" } } });
@@ -132,6 +133,12 @@ export class HttpAdapter implements WorkspaceAdapter {
         return { id: image.image_id, project, name: image.name, src: image.url, width: 0, height: 0 };
       });
       const current = this.task(id);
+      const pendingApproval=this.stored<{id:string;url:string;body:unknown;execution?:string;view?:Task["approval"]}|null>(`approval.${id}`,null);
+      if(pendingApproval) {
+        const safeUrl = (value:string) => value.startsWith(`${this.taskRoot(task)}/`) || value===`${this.root(project)}/export` || value===`${this.root(project)}/processing-operations`;
+        if(!safeUrl(pendingApproval.url) || (pendingApproval.execution&&!safeUrl(pendingApproval.execution))) throw new Error("已保存操作的地址不属于当前任务");
+        this.approvals.set(id,pendingApproval);
+      }
       const human = ws?.human_requests?.find(h=>h.status==="pending"&&!h.deferred);
       const sampleOp = ws?.sample_operations?.find(s=>s.status==="succeeded");
       const sampleId = human?.input.sample_test_id || sampleOp?.id;
@@ -178,7 +185,7 @@ export class HttpAdapter implements WorkspaceAdapter {
         result.sample={id:sampleId,draft:draftId,revision:record.draft_revision};
         if(human) result.human={id:human.input.id,image:human.input.image_id,kind:value.annotation_schema?.task.kind || "unsupported",labels:value.annotation_schema?.task.labels || [],label:requestedLabel,candidate:human.input.outcome_id || ""};
       }
-      const persistedStop = this.stored<{id:string}|null>(`stop.${id}`, null);
+      const persistedStop = this.stored<{id:string}|null>(`stop.${id}`, null) || [...thread].reverse().find(t=>t.message.input.reference?.scope==="stop_request");
       const stop = persistedStop && ws ? await this.transport<StopRequestRecord & {normalized_state: Phase|null}>(`${this.conversation(project)}/stop-requests/${esc(persistedStop.id)}`, {signal:ctrl.signal}) : null;
       if (seq !== this.sequence) return;
       const receipts = [
@@ -186,19 +193,30 @@ export class HttpAdapter implements WorkspaceAdapter {
         ...(ws?.builder_operations?.items || []).map(b=>({id:b.operation.id,title:"方案构建回执",status:b.operation.status,detail:b.operation.evidence?.error || b.operation.evidence?.outcome})),
         ...(ws?.sample_operations || []).map(s=>({id:s.id,title:"样例测试回执",status:s.status,detail:s.error})),
       ];
-      const active = ws?.calls.some(c=>c.status==="reserved") || ws?.sample_operations?.some(s=>["running","queued","cancelling"].includes(s.status));
+      const active = ws?.calls.some(c=>c.status==="reserved") || ws?.sample_operations?.some(s=>["running","queued","cancelling"].includes(s.status)) || result.processing?.some(p=>["pending","running","pausing"].includes(p.status));
       const phase: Phase = stop?.normalized_state || (ws?.calls.some(c=>c.status==="in_doubt") ? "outcome_unknown" : active ? "running" : human ? "waiting_for_human" : "idle");
       this.emit({ error: undefined, artifacts, tasks: this.state.tasks.map(t => t.id !== id ? t : { ...current,
         items: thread.map(t => ({ id: t.id, role: "user", text: t.message.input.text })),
-        ...result, actions: {...ws?.actions || current.actions,answer:{available:!!result.human && ["classification","bounding_box"].includes(result.human.kind),reason:"仅保存当前人工作答的样例修正"}}, model: ws?.agent_model.model_profile_id || this.defaults.pipeline_builder || current.model,
+        ...result, approval:pendingApproval?.view || current.approval, actions: {...ws?.actions || current.actions,answer:{available:!!result.human && ["classification","bounding_box"].includes(result.human.kind),reason:"仅保存当前人工作答的样例修正"}}, model: ws?.agent_model.model_profile_id || this.defaults.pipeline_builder || current.model,
         image: human?.input.image_id || artifacts[0]?.id || "", editBoxes: this.stored(`edits.${id}`, {}),
         phase, receipts, humanQuestion:human?.input.question,
+        stopTargets:stop?.status==="needs_selection"?stop.targets.map(t=>({id:`${t.kind}:${t.id}`,label:`${t.kind} · ${t.state}`})):[],
+        resumeTargets:ws?.resume_actions?.filter(a=>a.available).map(a=>({id:`${a.kind}:${a.id}`,label:a.kind,reason:a.reason})),
         queue: ws?.queue.filter(q => ["waiting_for_dispatch","authorized","running","in_doubt"].includes(q.status)).map(q => q.input.message.text) || [],
-        queueEntries: ws?.queue.map(q=>({id:q.input.message.id,text:q.input.message.text,status:q.status,canCancel:["waiting_for_dispatch","authorized","in_doubt"].includes(q.status)})),
+        queueEntries: ws?.queue.map(q=>({id:q.input.message.id,text:q.input.message.text,status:q.status,canCancel:["waiting_for_dispatch","authorized","in_doubt"].includes(q.status),canPlan:q.status==="waiting_for_dispatch"&&!q.planning_call_id})),
       }) });
     } catch (e) { if (seq !== this.sequence || ctrl.signal.aborted) return; this.emit({ error: (e as Error).message, artifacts: [] }); throw e; }
   };
   async createTask(project: string) { this.root(project); return `new:${project}`; }
+  async uploadImages(c:Command, files:File[]) {
+    const task=this.checked(c);
+    for (const file of files) {
+      const receipt=await api.uploadImage(task.project,file);
+      if(receipt.corrupt.length) throw new Error(receipt.corrupt.map(e=>`${e.name}: ${e.message}`).join("；"));
+      if(!receipt.imported&&!receipt.duplicates) throw new Error(`${file.name} 未被服务器导入`);
+    }
+    await this.loadTask(task.project,task.id);
+  }
   saveDraft(id: string, text: string) { this.task(id); this.save(`draft.${id}`, text); this.emit({ tasks: this.state.tasks.map(t => t.id === id ? { ...t, draft: text } : t) }); }
   saveArtifactDraft(id: string, image: ImageId, boxes: Box[]) { const t = this.task(id); const editBoxes = { ...t.editBoxes, [image]: boxes }; this.save(`edits.${id}`, editBoxes); this.emit({ tasks: this.state.tasks.map(t => t.id === id ? { ...t, editBoxes } : t) }); }
   async sendMessage(c: Command, text: string, mode: "plan" | "execute", _model: string) {
@@ -250,11 +268,21 @@ export class HttpAdapter implements WorkspaceAdapter {
       this.emit({tasks:this.state.tasks.map(t=>t.id===task.id?{...t,approval:{id:c.id,title:"批准构建方案并测试样例",revision:consent.builder_scope_hash,budget:null,scope:[`${consent.images.length} 张图片；最多 ${consent.maximum_builder_calls} 次规划调用 + ${consent.maximum_sample_calls} 次样例调用`,p.builder.model_name,p.builder.destination,...p.data.models.map(m=>`${m.display_name} → ${m.destination}`),`有效期：${consent.expires_at}`,"仅保存草稿与样例测试，不发布、不批量处理、不写正式标注"]}}:t)});
     }
   }
+  async prepareQueue(c:Command,message:string) {
+    const task=this.checked(c);
+    if(!task.queueEntries?.some(q=>q.id===message&&q.canPlan))throw new Error("此输入当前不能开始新的规划");
+    if(this.stored(`approval.${task.id}`,null))throw new Error("上次授权结果待核对，请先恢复原回执");
+    const root=`${this.taskRoot(task)}/message-queue/${esc(message)}`;
+    const p=await this.transport<QueuePreview>(`${root}/schema-preview`);
+    const body:QueueConsent={call_id:c.id,model_id:p.model_id,scope_hash:p.scope_hash,request_hash:p.request_hash,previous_grant_id:p.previous_grant_id,maximum_calls:p.maximum_calls,expires_at:p.expires_at,allow_unknown_cost:true};
+    this.approvals.set(task.id,{id:c.id,url:`${root}/schema-proposals`,body});
+    this.emit({tasks:this.state.tasks.map(t=>t.id===task.id?{...t,approval:{id:c.id,title:"批准此补充输入的文本规划",revision:p.scope_hash,budget:null,scope:[p.model_name,p.destination,p.data_scope,`${p.new_request_limit} 次新调用；累计上限 ${p.maximum_calls} 次`,p.operation,"不自动修改 Workflow、不执行图片、不派发剩余队列"]}}:t)});
+  }
   async approveAction(c: Command) {
     const task = this.checked(c), p = this.approvals.get(task.id);
     if(!p || p.id!==task.approval?.id) throw new Error("精确授权已失效，请重新读取范围");
     // Persist the exact intent before POST. Neither mount nor refresh executes it.
-    this.save(`approval.${task.id}`,p);
+    this.save(`approval.${task.id}`,{...p,view:task.approval});
     await this.transport(p.url,{method:"POST",body:JSON.stringify(p.body)});
     if(p.execution) await this.transport(p.execution,{method:"POST",body:"{}"});
     this.approvals.delete(task.id); this.save(`approval.${task.id}`,null);
@@ -267,13 +295,22 @@ export class HttpAdapter implements WorkspaceAdapter {
     this.save(`stop.${task.id}`,input);
     const result = await this.transport<StopRequestRecord>(`${this.conversation(task.project)}/stop-requests`,{method:"POST",body:JSON.stringify(input)});
     await this.loadTask(task.project,task.id);
-    if(result.status==="needs_selection") throw new Error("有多个活动操作，需选择精确停止目标；尚未宣称停止完成");
     if(result.dispatch_error) throw new Error(result.dispatch_error);
   }
-  async resumeOperation(c: Command) {
+  async selectStop(c:Command,target:string) {
+    const task=this.checked(c),input=this.stored<{id:string}|null>(`stop.${task.id}`,null);
+    if(!input || !task.stopTargets?.some(t=>t.id===target))throw new Error("停止目标已变化，请重新读取");
+    const root=`${this.conversation(task.project)}/stop-requests/${esc(input.id)}`;
+    const record=await this.transport<StopRequestRecord>(root);
+    const chosen=record.targets.find(t=>`${t.kind}:${t.id}`===target);
+    if(!chosen)throw new Error("此目标不在已冻结的停止请求中");
+    await this.transport(`${root}/select`,{method:"POST",body:JSON.stringify({target:{kind:chosen.kind,id:chosen.id,task_id:chosen.task_id}})});
+    await this.loadTask(task.project,task.id);
+  }
+  async resumeOperation(c: Command, target?:string) {
     const task = this.checked(c), actions = this.workspaces.get(task.id)?.resume_actions?.filter(a=>a.available)||[];
-    if(actions.length!==1) throw new Error("需要唯一、明确可用的恢复点；不会恢复未知或已取消操作");
-    const a=actions[0];
+    const a=target?actions.find(a=>`${a.kind}:${a.id}`===target):actions.length===1?actions[0]:undefined;
+    if(!a) throw new Error("需要唯一、明确可用的恢复点；不会恢复未知或已取消操作");
     if(a.method!=="POST" || !(a.url.startsWith(`${this.taskRoot(task)}/human-requests/`) || /^\/api\/batches\/[a-f0-9-]+\/resume$/.test(a.url))) throw new Error("继续地址不是受控站内任务动作");
     await this.transport(a.url,{method:"POST",body:"{}"}); await this.loadTask(task.project,task.id);
   }
@@ -344,6 +381,11 @@ export class HttpAdapter implements WorkspaceAdapter {
   async testProvider(id: string, _result: "success" | "failed" | "unknown") {
     if (!this.state.settings.providers.some(p=>p.id===id)) throw new Error("Provider 不存在");
     await this.transport(`/api/providers/${esc(id)}/check`, {method:"POST"}); await this.refresh();
+  }
+  async saveCredential(id:string,secret:string) {
+    if(!this.state.settings.providers.some(p=>p.id===id) || !secret.trim())throw new Error("请先保存 Provider，再输入新凭证");
+    await this.transport(`/api/providers/${esc(id)}/credential`,{method:"POST",body:JSON.stringify({source:"workspace_file",secret})});
+    await this.refresh();
   }
   async installPlugin(_id: string, _fail: boolean) { unsupported("模型安装必须使用真实权限和许可证流程"); }
 }

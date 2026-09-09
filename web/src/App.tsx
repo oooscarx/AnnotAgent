@@ -1,4 +1,5 @@
 import { t, localeTag, useLocale } from "./i18n";
+import { isAgentEntry, managementReturn } from "./agent-ui/routes";
 import { reviewLabelText, withReviewLabel } from "./review-label";
 import { canRefreshReviewDraft, mergeReviewQueue } from "./reviewQueue";
 import { isTextEditingTarget, workspaceShortcutAllowed } from "./workspaceKeyboard";
@@ -302,6 +303,12 @@ export function App() {
 
   const navigate = (path: string, replace = false) => {
     if (navigationGuardRef.current && !navigationGuardRef.current()) return false;
+    if (isAgentEntry(new URL(path, window.location.origin))) {
+      const target=managementReturn(new URL(path,window.location.origin),new URL(window.location.href));
+      if (replace) window.location.replace(target.href);
+      else window.location.assign(target.href);
+      return true;
+    }
     if (replace) window.history.replaceState({}, "", path);
     else window.history.pushState({}, "", path);
     acceptedLocationRef.current = `${window.location.pathname}${window.location.search}${window.location.hash}`;

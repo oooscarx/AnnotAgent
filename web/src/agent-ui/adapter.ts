@@ -53,6 +53,7 @@ export type ThreadItem = {
 export type Task = {
   id: string;
   project: string;
+  conversationId?: string;
   title: string;
   phase: Phase;
   revision: string;
@@ -73,8 +74,10 @@ export type Task = {
   imageResults?: Record<ImageId, {labels:string[]; risks:string[]}>;
   approval?: Approval;
   receipts?: {id:string; title:string; status:string; detail?:string}[];
-  queueEntries?: {id:string;text:string;status:string;canCancel:boolean}[];
+  queueEntries?: {id:string;text:string;status:string;canCancel:boolean;canPlan:boolean}[];
   processing?: {id:string;batch:string;status:string;url:string}[];
+  stopTargets?: {id:string;label:string}[];
+  resumeTargets?: {id:string;label:string;reason:string}[];
   exports?: {id:string;status:string;url?:string;detail:string}[];
   error?: string;
   plan?: {
@@ -137,6 +140,8 @@ export interface WorkspaceAdapter {
   saveArtifactDraft(task: string, image: ImageId, boxes: Box[]): void;
   loadTask?(project: string, task: string): Promise<void>;
   refresh?(): Promise<void>;
+  saveCredential?(provider: string, secret: string): Promise<void>;
+  uploadImages?(command: Command, files: File[]): Promise<void>;
   sendMessage(
     command: Command,
     text: string,
@@ -145,9 +150,11 @@ export interface WorkspaceAdapter {
   ): Promise<void | string>;
   prepareAction?(command: Command, kind: "plan" | "sample" | "process" | "export"): Promise<void>;
   cancelQueue?(command: Command, message: string): Promise<void>;
+  prepareQueue?(command: Command, message: string): Promise<void>;
   approveAction(command: Command): Promise<void>;
   interruptOperation(command: Command): Promise<void>;
-  resumeOperation(command: Command): Promise<void>;
+  resumeOperation(command: Command, target?:string): Promise<void>;
+  selectStop?(command:Command,target:string):Promise<void>;
   selectAgentModel(command: Command, model: string): Promise<void>;
   answerHumanRequest(command: Command, boxes: Box[], classification?:string): Promise<void>;
   updateSettings(revision: string, settings: Settings): Promise<void>;

@@ -1,5 +1,17 @@
 # Agent UI integration — decisions and interface issues
 
+## Current delta (supersedes earlier progress snapshots)
+
+Production entry is now wired in the integration branch: `web/src/main.tsx`, `web/src/agent-ui/routes.ts`, `web/src/agent-ui/http.ts`. Management uses existing `App.tsx` via a separate code/CSS entry; Project work links return to the approved UI. `/ui-preview` is not the production adapter. Eight independent real HTTP browser cases passed; sample-to-processing extension confirms one start on double click. Web unit suite passed 260 tests/54 files before latest queue/upload additions. Final regression is pending.
+
+UIAPI-002 verified: backend `4676652` merged at `ac54a92`; own port regression `python3 -m unittest discover -s crates/annotagent-e2e-fixture/support -p test_http_fixture_ports.py` passed 3 tests. New isolated fixture started successfully at 8796/8797 using production `web/dist`; no Origin rewrite, no fixture fallback, no 8787 takeover.
+
+### UIAPI-003 — authentic geometry and long-running control browser evidence (P1)
+
+Sent message `01a085e7-8460-7091-aad2-eb3423e58a58` to fixed backend UUID. Integration base `ac54a92`. Current main fixture emits classification terminal results and a classification HumanRequest; it cannot verify pixel→normalized bbox saving. Need committed TEST bbox candidate + pending HumanRequest (image dimensions, candidate ID, feedback revision) and existing delayed/failure Provider procedure for real stop transitions / unknown outcome. Asked backend to change only its fixture/support ownership, not production model behavior. Awaiting delivery; frontend continues unrelated work. Do not fabricate JSON/browser responses to satisfy this evidence.
+
+Current test service: `http://127.0.0.1:8796`, marked workspace `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-2ul2_zxk`. Runtime backend base recorded as `ac54a92`; UI served from production build, not old dist-integration. Fixture model accuracy is not Live accuracy.
+
 ## Frozen inputs (2026-09-09)
 
 - User approved the existing Paper & Graphite UI and explicitly authorized integration.

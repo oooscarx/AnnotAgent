@@ -47,6 +47,15 @@ export function ArtifactPane({
   } | null>(null);
   const dirty = JSON.stringify(boxes) !== JSON.stringify(savedBoxes) || classification !== (task.human?.label || "");
   useEffect(() => {
+    // Box drafts are already persisted. Classification edits need an explicit guard.
+    if(fixture || classification === (task.human?.label || "")) return;
+    const leave=(event:Event)=>{if(!window.confirm("当前类别修改尚未保存，放弃修改并离开？"))event.preventDefault();};
+    const unload=(event:BeforeUnloadEvent)=>{event.preventDefault();event.returnValue="";};
+    window.addEventListener("ui-preview:before-navigate",leave);
+    window.addEventListener("beforeunload",unload);
+    return()=>{window.removeEventListener("ui-preview:before-navigate",leave);window.removeEventListener("beforeunload",unload);};
+  },[fixture,classification,task.human?.label]);
+  useEffect(() => {
     adapter.saveArtifactDraft(task.id, image, boxes);
   }, [boxes, image, task.id, adapter]);
   const update = (id: string, changes: Partial<Box>) => {
@@ -221,7 +230,7 @@ export function ArtifactPane({
       <p className="canvas-warning">
         {fixture ? "示意图与手工框 · 非模型推理。杯柄边界待确认，语义得分不代表几何质量。" : task.imageResults?.[image]?.risks.join("；") || "样例评估结果 · 不是已接受的正式标注。语义分数不等于几何质量。"}
       </p>
-      {!fixture && task.imageResults?.[image]?.labels.map((label,i)=><p key={i}>分类结果：{label}</p>)}
+      {!fixture && task.imageResults?.[image]?.labels.map((label,i)=><p className="artifact-toolbar" key={i}>分类结果：{label}</p>)}
       {!fixture && task.human?.kind==="classification" && task.human.image===image && <label className="artifact-toolbar">确认类别<select aria-label="确认类别" value={classification} onChange={e=>setClassification(e.target.value)}>{task.human.labels.map(label=><option key={label}>{label}</option>)}</select></label>}
       <div className="thumbnails">
         {assets.map((a) => (

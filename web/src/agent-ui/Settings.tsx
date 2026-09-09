@@ -55,6 +55,7 @@ export function SettingsView({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState("");
   const [editor, setEditor] = useState<Provider | null>(null);
+  const [credential, setCredential] = useState("");
   const [confirm, setConfirm] = useState<{
     title: string;
     body: string;
@@ -312,8 +313,13 @@ export function SettingsView({
                           <option value="empty">未配置</option>
                         </select>
                       </label>}
+                      {!fixture && !editor.id.startsWith("new-") && <div>
+                        <label>替换 API Key（只写）<input type="password" autoComplete="new-password" value={credential} onChange={e=>setCredential(e.target.value)} /></label>
+                        <p>保存到服务器本地工作区文件，重启后保留；不使用系统钥匙串，不写入浏览器存储。</p>
+                        <button disabled={!credential.trim() || saving || !adapter.saveCredential} onClick={()=>void run(async()=>{setSaving(true);try{await adapter.saveCredential!(editor.id,credential);setCredential("");setEditor({...editor,credential:true});setSaved("凭证已由服务器保存；不会返回密钥内容");}finally{setSaving(false);}})}>保存新凭证</button>
+                      </div>}
                       <p>
-                        {fixture ? "不提供 API Key 输入框。" : "凭证只显示是否配置；凭证编辑接线尚未完成。"}不要在名称或 Endpoint 中填写密钥。
+                        {fixture ? "不提供 API Key 输入框。" : "只显示凭证是否已配置，不会读取原密钥。"}不要在名称或 Endpoint 中填写密钥。
                       </p>
                       <div className="actions">
                         <button onClick={() => setEditor(null)}>

@@ -37,6 +37,11 @@ button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
+.project-sidebar > a.task-link {
+  color: inherit;
+  text-decoration: none;
+  display: block;
+}
 button[aria-pressed="true"],
 .selected {
   background: var(--aa-primary-soft);

@@ -10,6 +10,7 @@ import { Dialog } from "./Dialog";
 import { PlanBlock } from "./PlanBlock";
 import { SettingsView } from "./Settings";
 import { ArtifactPane } from "./ArtifactPane";
+import { routeProject, taskLocation } from "./routes";
 export const phaseNames: Record<Phase, string> = {
   idle: "准备任务",
   planning: "正在模拟规划",
@@ -72,23 +73,26 @@ export function AgentPreviewApp({
   );
   const [busy, setBusy] = useState(false);
   const [approvalBusy, setApprovalBusy] = useState(false);
-  const task = state.tasks.find(
-    (t) => t.id === (url.searchParams.get("task") || state.tasks[0]?.id),
-  );
+  const approvalPending = useRef(false);
+  const owner = fixture ? null : routeProject(url);
+  const selectedId = url.searchParams.get("task");
+  const task = state.tasks.find(t => (!owner || t.project === owner) &&
+    (!url.searchParams.get("conversation") || t.conversationId === url.searchParams.get("conversation")) &&
+    (selectedId ? t.id === selectedId : owner ? t.id === `new:${owner}` : true));
   const allowed = (action: "send" | "stop" | "resume" | "approve" | "answer") => fixture || task?.actions?.[action]?.available === true;
   useEffect(() => {
     if (task && adapter.loadTask) void adapter.loadTask(task.project, task.id).catch(e => setError(e.message));
   }, [adapter, task?.id, task?.project]);
   useEffect(() => {
-    if (!task || !adapter.loadTask || !["planning","running","stopping"].includes(task.phase)) return;
+    if (!task || !adapter.loadTask || (!approvalBusy && !["planning","running","stopping"].includes(task.phase))) return;
     const timer = setInterval(() => { void adapter.loadTask!(task.project,task.id).catch(e=>setError(e.message)); }, 2000);
     return () => clearInterval(timer);
-  }, [adapter,task?.id,task?.phase]);
+  }, [adapter,task?.id,task?.phase,approvalBusy]);
   useEffect(() => {
     if (!state.settings.collapsed && state.projects.length) setExpanded(x => x.length ? x : [state.projects[0].id]);
   }, [state.projects.length]);
-  const section = url.searchParams.get("settings") as Section | null;
-  const pane = url.searchParams.get("pane") === "image";
+  const section = (url.searchParams.get("settings") || (url.pathname === "/settings" ? "general" : null)) as Section | null;
+  const pane = ["image", "artifacts"].includes(url.searchParams.get("pane") || "");
   const theme = previewTheme || state.settings.theme;
   const en = state.settings.language === "en";
   const text = (zh: string, eng: string) => (en ? eng : zh);
@@ -159,7 +163,15 @@ export function AgentPreviewApp({
     alreadyConfirmed = false,
   ) => {
     if (!alreadyConfirmed && !canNavigate()) return;
-    const next = new URL(location.href);
+    let next = new URL(location.href);
+    if (!fixture && values.task) {
+      const target = adapter.snapshot().tasks.find(t => t.id === values.task);
+      if (target) next = taskLocation(next, target.project);
+      next.searchParams.delete("conversation");
+      next.searchParams.delete("image");
+    } else if (!fixture && values.settings === null && task && next.pathname === "/settings") {
+      next = taskLocation(next, task.project);
+    }
     for (const [k, v] of Object.entries(values))
       v === null ? next.searchParams.delete(k) : next.searchParams.set(k, v);
     history.pushState(null, "", next);
@@ -178,6 +190,7 @@ export function AgentPreviewApp({
   const send = async () => {
     if (!task || sendPending.current || !task.draft.trim() || !allowed("send")) return;
     sendPending.current = true;
+    const sentFrom = urlRef.current.href;
     setBusy(true);
     const signature = JSON.stringify([
       task.project,
@@ -203,7 +216,7 @@ export function AgentPreviewApp({
         task.model,
       );
       retryCommand.current = null;
-      if (typeof resultTask === "string") navigate({task:resultTask});
+      if (typeof resultTask === "string" && urlRef.current.href === sentFrom) navigate({task:resultTask});
     });
     sendPending.current = false;
     setBusy(false);
@@ -257,6 +270,7 @@ export function AgentPreviewApp({
             onClick={() =>
               void act(async () => {
                 if (!canNavigate()) return;
+                if (!fixture && !state.projects.length) { location.assign("/projects?new=1"); return; }
                 const id = await adapter.createTask(
                   task?.project || state.projects[0]?.id,
                 );
@@ -266,6 +280,7 @@ export function AgentPreviewApp({
           >
             ＋ {text("新任务", "New task")}
           </button>
+          {!fixture && <a className="task-link" href="/projects?new=1">＋ 新建项目</a>}
           <input
             aria-label="搜索任务"
             placeholder={text("搜索会话", "Search tasks")}
@@ -354,12 +369,12 @@ export function AgentPreviewApp({
                       <p>
                         原应用中的数据、方案、处理记录、审核、导出与回收站保持不变。
                       </p>
-                      {fixture ? <p>此隔离界面尚未连接这些真实管理操作。</p> : <a href={`/projects/${encodeURIComponent(task.project)}`}>项目管理 →</a>}
+                      {fixture ? <p>此隔离界面尚未连接这些真实管理操作。</p> : <a href={`/projects/${encodeURIComponent(task.project)}?${new URLSearchParams({return_task:task.id,...(pane?{return_pane:"image",return_image:url.searchParams.get("image") || String(task.image)}:{})})}`}>项目管理 →</a>}
                     </div>
                   </details>
                 </>
               )}
-              <span className="preview-chip">{fixture ? "UI Preview" : "HTTP 联调"}</span>
+              <span className="preview-chip">{fixture ? "UI Preview" : "服务器工作区"}</span>
             </div>
           </header>
           {(error || state.error) && (
@@ -459,17 +474,18 @@ export function AgentPreviewApp({
                             </small>
                           )}
                         </div>
-                        {!fixture && task.receipts?.map(r=><details className="plan-history" key={r.id}><summary>{r.title} · {r.status}</summary><p>{r.detail || "系统已保存此操作回执；未记录自然语言回复。"}</p></details>)}
+                        {!fixture && !!task.receipts?.length && <details className="plan-history"><summary>执行记录 · {task.receipts.length} 项</summary>{task.receipts.map(r=><details key={r.id}><summary>{r.title} · {r.status}</summary><p>{r.detail || "系统已保存此操作回执；未记录自然语言回复。"}</p></details>)}</details>}
                         {!fixture && !active && adapter.prepareAction && task.items.length > 0 && <div className="actions">
                           <button disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),"plan"))}>查看规划授权</button>
                           <button disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),"sample"))}>构建方案并测试样例…</button>
                           {task.sample && <button disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),"process"))}>确认方案并开始处理…</button>}
                           <button disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),"export"))}>导出…</button>
                         </div>}
-                        {!fixture && task.phase!=="interrupted" && allowed("resume") && <button onClick={()=>void act(()=>adapter.resumeOperation(command(task)))}>继续已保存的任务</button>}
+                        {!fixture && task.resumeTargets?.map(r=><p key={r.id}>{r.reason}<button onClick={()=>void act(()=>adapter.resumeOperation(command(task),r.id))}>继续 {r.label}</button></p>)}
+                        {!fixture && !!task.stopTargets?.length && <div className="notice"><strong>请选择停止哪一项</strong>{task.stopTargets.map(t=><button key={t.id} onClick={()=>void act(()=>adapter.selectStop!(command(task),t.id))}>{t.label}</button>)}</div>}
                         {!fixture && task.processing?.map(p=><p key={p.id}>处理批次 · {p.status} <a href={p.url}>查看本次结果 →</a></p>)}
                         {!fixture && task.exports?.map(e=><p key={e.id}>导出 · {e.status} · {e.detail} {e.url && <a href={e.url} download>下载真实导出文件</a>}</p>)}
-                        {!fixture && task.approval && <section className="plan-block"><strong>{task.approval.title}</strong><ul>{task.approval.scope.map((s,i)=><li key={i}>{s}</li>)}</ul><p>费用：{task.approval.budget ?? "未知；可能产生费用"}</p><button className="primary" onClick={()=>setApproval(command(task))}>查看并确认授权</button></section>}
+                        {!fixture && task.approval && <section className="plan-block"><strong>{task.approval.title}</strong><ul>{task.approval.scope.map((s,i)=><li key={i}>{s}</li>)}</ul><p>费用：{task.approval.budget ?? "未知；可能产生费用"}</p><button className="primary" disabled={approvalBusy} onClick={()=>setApproval(command(task))}>查看并确认授权</button>{approvalBusy && <p role="status">请求已提交，正在读取服务器执行状态；离开不会取消。</p>}</section>}
                         {task.plan && (
                           <PlanBlock
                             plan={task.plan}
@@ -554,9 +570,9 @@ export function AgentPreviewApp({
                   {(task.queue.length > 0 || !!task.queueEntries?.length) && (
                     <details className="queue">
                       <summary>
-                        {task.queue.length} 条排队输入 · {fixture ? "模拟，" : ""}未自动执行
+                        {task.queue.length ? `${task.queue.length} 条排队输入 · ${fixture ? "模拟，" : ""}未自动执行` : `已保存输入历史 · ${task.queueEntries?.length || 0} 条`}
                       </summary>
-                      {task.queueEntries ? task.queueEntries.map(q=><div key={q.id}><p>{q.text} · {q.status}</p>{q.canCancel && <button type="button" onClick={()=>void act(()=>adapter.cancelQueue!(command(task),q.id))}>取消此输入</button>}</div>) : task.queue.map((q, i) => (
+                      {task.queueEntries ? task.queueEntries.map(q=><div key={q.id}><p>{q.text} · {q.status}</p>{q.canPlan && adapter.prepareQueue && <button type="button" onClick={()=>void act(()=>adapter.prepareQueue!(command(task),q.id))}>查看此输入的规划范围</button>}{q.canCancel && <button type="button" onClick={()=>void act(()=>adapter.cancelQueue!(command(task),q.id))}>取消此输入</button>}</div>) : task.queue.map((q, i) => (
                         <p key={i}>{q}</p>
                       ))}
                     </details>
@@ -642,16 +658,24 @@ export function AgentPreviewApp({
                           type="file"
                           accept="image/*"
                           multiple
-                          onChange={(e) =>
+                          disabled={busy || (!fixture && !adapter.uploadImages)}
+                          onChange={(e) => {
+                            const files=Array.from(e.target.files || []);
+                            e.target.value="";
+                            if(!fixture) {
+                              setBusy(true);
+                              void act(async()=>{try{await adapter.uploadImages!(command(task),files);navigate({pane:"image"});}finally{setBusy(false);}});
+                              return;
+                            }
                             setAttachments((old) => [
                               ...old,
-                              ...Array.from(e.target.files || []).map((f) => ({
+                              ...files.map((f) => ({
                                 name: f.name,
                                 task: task.id,
                                 url: URL.createObjectURL(f),
                               })),
-                            ])
-                          }
+                            ]);
+                          }}
                         />
                       </label>
                       <button
@@ -890,9 +914,12 @@ export function AgentPreviewApp({
               disabled={approvalBusy || (!fixture && !task.approval)}
               onClick={() =>
                 void act(async () => {
-                  if(approvalBusy)return;
+                  if(approvalPending.current)return;
+                  approvalPending.current=true;
                   setApprovalBusy(true);
-                  try { await adapter.approveAction(approval);setApproval(null); } finally { setApprovalBusy(false); }
+                  const confirmed=approval;
+                  setApproval(null);
+                  try { await adapter.approveAction(confirmed); } finally { approvalPending.current=false;setApprovalBusy(false); }
                 })
               }
             >

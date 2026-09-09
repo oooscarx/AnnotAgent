@@ -1,5 +1,19 @@
 # UI First Frontend — Agent A
 
+## Authorized integration — 2026-09-09 (current)
+
+User explicitly approved the UI and integration. The acceptance-only entries below are historical, not the current authorization boundary.
+
+- Approved frontend `f0bbbc692904aef9f89392bd4cbb1ba3cd79172a`; backend initially `ce46c6f7e52da4a1e2fa216256351d8689d05fa5`; common base `c41b281b49252d520117029d39611865133798af`.
+- Isolated worktree `AnnotAgent-integration`, branch `codex/agent-ui-integration`. Pinned backend fixes integrated through `4676652` at `ac54a92`. No main changes, source-branch overwrite or push.
+- Production `main.tsx` now selects the approved Agent UI + HttpAdapter for `/`, `/projects`, `/settings`, `/projects/:id/work`. Preview remains its separate Fixture entry. Existing management views load independently, without bringing back the old functional sidebar; exact same-project return context is retained.
+- Real HTTP browser evidence: owned navigation/images and Back/refresh; all six settings reads/local preferences; IME/double Send; explicit Plan; explicit sample Journey; sandbox classification correction; explicit Native download; saved stop and checkpoint Batch resume. These eight cases passed against real SQLite/Router with only the external model replaced by a marked TEST provider.
+- Extended sample test also verified explicit publish/start produces one batch despite double click; refresh did not create another operation. Full web unit suite: 54 files / 260 tests passed before the latest queue/upload additions. Production build/typecheck passed. Full regression and final screenshots remain in progress.
+- Additional wiring: write-only workspace credential storage; next-request model CAS; Provider/default model/future-budget writes; image upload through existing API; exact queue text-planning consent; stop selection; restored pending grants. Write-path browser coverage is still being expanded, not assumed from code.
+- Current same-origin isolated service: `http://127.0.0.1:8796`, workspace `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-2ul2_zxk`, serves production `web/dist`. Original 8787 and approved 5174 untouched.
+- UIAPI-003 sent to fixed backend UUID for authentic bbox HumanRequest and delayed/unknown stop scenes. No Rust authored by frontend. Details and handoff records: `docs/handoff/AGENT_UI_INTEGRATION_ISSUES.md`.
+- Still not established: real commercial-model accuracy, native IME/native 200% scaling, human usability, bbox HTTP correction, full stop-transition evidence. No automatic queue dispatcher or fictitious global cost is presented.
+
 ## UI acceptance freeze — 2026-09-09
 
 - Actual branch/worktree confirmed: `codex/agent-ui-frontend`, `AnnotAgent-frontend`; starting HEAD `68f2568dc2e9ef3ed3119a0401ec37bb1a2685c5`, clean and tracking the same origin branch. No branch reconstruction.
