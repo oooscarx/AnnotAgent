@@ -12,6 +12,7 @@ import { ProjectMenu } from "./ProjectMenu";
 import { PlanBlock } from "./PlanBlock";
 import { SettingsView } from "./Settings";
 import { ArtifactPane } from "./ArtifactPane";
+import { ExecutionProgress } from "./ExecutionProgress";
 import { routeProject, taskLocation } from "./routes";
 import { conversationSettingsPath, projectWorkPath } from "../navigation";
 export const phaseNames: Record<Phase, string> = {
@@ -91,8 +92,15 @@ export function AgentPreviewApp({
   }, [adapter, task?.id, task?.project]);
   useEffect(() => {
     if (!task || !adapter.loadTask || (!approvalBusy && !["planning","running","stopping"].includes(task.phase))) return;
-    const timer = setInterval(() => { void adapter.loadTask!(task.project,task.id).catch(e=>setError(e.message)); }, 2000);
-    return () => clearInterval(timer);
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try { await adapter.loadTask!(task.project, task.id); }
+      catch (error) { if (!disposed) setError((error as Error).message); }
+      if (!disposed) timer = setTimeout(poll, 2000);
+    };
+    timer = setTimeout(poll, 2000);
+    return () => { disposed = true; clearTimeout(timer); };
   }, [adapter,task?.id,task?.phase,approvalBusy]);
   useEffect(() => {
     if (!state.settings.collapsed && state.projects.length) setExpanded(x => x.length ? x : [state.projects[0].id]);
@@ -494,7 +502,7 @@ export function AgentPreviewApp({
                             </small>
                           )}
                         </div>
-                        {!fixture && !!task.receipts?.length && <details className="plan-history"><summary>执行记录 · {task.receipts.length} 项</summary>{task.receipts.map(r=><details key={r.id}><summary>{r.title} · {r.status}</summary><p>{r.detail || "系统已保存此操作回执；未记录自然语言回复。"}</p></details>)}</details>}
+                        {!fixture && !!task.receipts?.length && <ExecutionProgress receipts={task.receipts} />}
                         {!fixture && !active && !task.approval && adapter.prepareAction && task.items.length > 0 && <div className="task-next-actions">
                           {(() => {
                             const choices = [{kind:"plan" as const,label:"查看规划授权",icon:"plan" as const},{kind:"sample" as const,label:"构建方案并测试样例…",icon:"image" as const},...(task.sample?[{kind:"process" as const,label:"确认方案并开始处理…",icon:"play" as const}]:[]),{kind:"export" as const,label:"导出…",icon:"download" as const}];

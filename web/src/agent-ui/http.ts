@@ -2,6 +2,7 @@ import { api, ApiRequestError, request, type JourneyPreview, type JourneyConsent
 import type { ImageItem, ProviderProfile, RegistryModelProfile, GlobalModelDefaults, ExpertPluginRegistry, InstalledModelInstance, ConversationSchemaPreview, ConversationCallReceipt, ConversationBuilderItem, WorkflowSampleTestRecord, SampleFeedbackRevision, ExportReadiness, ProjectExportResult } from "../types";
 import { terminalSampleAnnotations } from "../sampleAnnotations";
 import { sampleFeedbackOverlay } from "../sampleFeedbackOverlay";
+import { callStage, failureDetail } from "./ExecutionProgress";
 import type { HumanRequest } from "../conversation-human-api";
 import type { QueuedMessage } from "../components/ConversationQueue";
 import type { QueueConsent, QueuePreview } from "../conversation-queue-api";
@@ -210,12 +211,12 @@ export class HttpAdapter implements WorkspaceAdapter {
       const stop = persistedStop && ws ? await this.transport<StopRequestRecord & {normalized_state: Phase|null}>(`${this.conversation(project)}/stop-requests/${esc(persistedStop.id)}`, {signal:ctrl.signal}) : null;
       if (seq !== this.sequence) return;
       const receipts = [
-        ...(ws?.calls || []).map(c=>({id:c.id,title:"模型结构化决策",status:c.status,detail:c.evidence?.decision?.Ok?.rationale || c.evidence?.error})),
+        ...(ws?.calls || []).map(c=>({id:c.id,title:"模型结构化决策",status:c.status,detail:failureDetail(c.failure) || c.evidence?.decision?.Ok?.rationale || c.evidence?.error,startedAt:c.started_at || undefined,finishedAt:c.completed_at || undefined,durationMs:c.duration_ms ?? undefined,stage:callStage(c.stage)})),
         ...(ws?.builder_operations?.items || []).map(b=>({id:b.operation.id,title:"方案构建回执",status:b.operation.status,detail:b.operation.evidence?.error || b.operation.evidence?.outcome})),
         ...(ws?.sample_operations || []).map(s=>({id:s.id,title:"样例测试回执",status:s.status,detail:s.error})),
       ];
       const active = ws?.calls.some(c=>c.status==="reserved") || ws?.sample_operations?.some(s=>["running","queued","cancelling"].includes(s.status)) || result.processing?.some(p=>["pending","running","pausing"].includes(p.status));
-      const phase: Phase = stop?.normalized_state || (ws?.calls.some(c=>c.status==="in_doubt") ? "outcome_unknown" : active ? "running" : human ? "waiting_for_human" : "idle");
+      const phase: Phase = stop?.normalized_state || (active ? "running" : ws?.calls.some(c=>c.status==="in_doubt") ? "outcome_unknown" : human ? "waiting_for_human" : "idle");
       const edits=this.stored<{revision?:string;boxes?:Record<ImageId,Box[]>}>(`edits.${id}`,{});
       this.emit({ error: undefined, artifacts, tasks: this.state.tasks.map(t => t.id !== id ? t : { ...t,
         items: thread.map(t => ({ id: t.id, role: "user", text: t.message.input.text })),

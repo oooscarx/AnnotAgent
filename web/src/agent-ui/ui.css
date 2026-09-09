@@ -996,3 +996,8 @@ caption {
   .ui-app .workspace-header > div:first-of-type { flex: 1; }
   .ui-app .model-anchor { flex: 1; }
 }
+.ui-app .execution-progress { display: grid; gap: 10px; padding: 14px 0; border-block: 1px solid var(--aa-border); overflow-wrap: anywhere; }
+.ui-app .execution-progress p { margin: 0; }
+.ui-app .execution-progress small { color: var(--aa-text-secondary); }
+.ui-app .execution-progress details { padding-block: 6px; }
+.ui-app .execution-progress details p { margin-block: 8px; }

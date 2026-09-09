@@ -74,7 +74,7 @@ export type Task = {
   sample?: {id:string;draft:string;revision:number};
   imageResults?: Record<ImageId, {labels:string[]; risks:string[]}>;
   approval?: Approval;
-  receipts?: {id:string; title:string; status:string; detail?:string}[];
+  receipts?: {id:string; title:string; status:string; detail?:string; startedAt?:string; finishedAt?:string; durationMs?:number; stage?:string}[];
   queueEntries?: {id:string;text:string;status:string;canCancel:boolean;canPlan:boolean}[];
   processing?: {id:string;batch:string;status:string;url:string}[];
   stopTargets?: {id:string;label:string}[];

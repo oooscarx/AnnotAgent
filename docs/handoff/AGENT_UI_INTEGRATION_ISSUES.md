@@ -1,5 +1,13 @@
 # Agent UI integration — decisions and interface issues
 
+## UIAPI-008 — execution feedback and streaming investigation (2026-09-09)
+
+User authorized progress/error repair and investigation of streaming. Queued request `01a08659-4bb7-7fb2-9b4a-1aa70a0e3e19` to the pinned Backend task UUID, not another project. Main baseline `83d2adb`; frontend owns Web only. Backend proposed additive nullable `started_at`, `completed_at`, `duration_ms`, `stage` and safe typed `failure {stage,category,http_status}`. No raw Provider response or credential is requested. Legacy unknown results must not be relabeled successful or automatically retried.
+
+Frontend now displays the current receipt outside collapsed history, distinguishes local-ended/remote-unknown from running, renders available persisted timing and typed error categories, and retains IDs/history. Serial completion-based polling replaces overlapping two-second requests. An old unknown call no longer masks a newer active call. Unknown legacy timestamps remain unknown. Web unit 272/272, typecheck and production build passed; backend integration pending at this point.
+
+Streaming audit: existing registry `bytes_stream()` only bounds response accumulation; it is not model-text streaming. Current Schema `VisionModelProvider.complete()` returns the whole structured result, with no incremental callback. No simulated token stream or chain-of-thought display added. Real stage feedback and token streaming are separate capabilities; backend delivery and final limitations recorded below when verified.
+
 ## Verified delivery — 2026-09-09 (authoritative current status)
 
 Application source: `9cbdbbf89a` (frozen-model fix); capture tooling: `34bd750172`. Approved frontend, initial backend and common base remain pinned below. Backend fixes are integrated through `334f6713adc1e9d45819cf94eff1f77a80a49a67`. Main and the original frontend branch have not moved. This is a local integration delivery, not a merge to main or a deployment to the real workspace.

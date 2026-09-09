@@ -1917,6 +1917,11 @@ export interface ConversationBuilderOperation {
 export interface ConversationBuilderItem { operation: ConversationBuilderOperation; session?: AgentSession | null; schema_id?: string | null; schema_revision?: number | null }
 export interface ConversationCallReceipt {
   id: string; task_id: string; status: "reserved" | "completed" | "failed" | "in_doubt";
+  started_at?: string | null;
+  completed_at?: string | null;
+  duration_ms?: number | null;
+  stage?: string | null;
+  failure?: { stage: string; category: string; http_status?: number | null } | null;
   evidence?: { error?: string; decision?: { Err?: string; Ok?: { decision: "draft" | "clarify"; kind?: string; labels?: string[]; question?: string; rationale: string; boundary_rules?: string[] } } };
 }
 export interface ConversationCallCancellation { call_id: string; task_id: string; requested_at: string }
