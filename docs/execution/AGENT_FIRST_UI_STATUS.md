@@ -515,3 +515,50 @@ cross-provider historical replay/summary tests, full stop→checkpoint→continu
 the remaining visual/feedback integration. Existing narrow consent proves no automatic
 new transmission, not a general multi-provider conversation replay implementation.
 No push, remote changes, real-workspace mutation, paid call or prototype output introduced.
+
+## M3 Send boundary — concrete model preference snapshot
+
+Previous goal turn made verified progress (91409e3). Found the remaining interval between
+Send and later scope preparation: reading only current preferences could reinterpret a
+message after another selection. Send now records its concrete preference in the existing
+atomic receipt transaction, alongside task/message admission. No separate message or task
+store, execution grant, Runtime or migration was required.
+
+The input may carry observed agent_model {revision, model_profile_id}; the storage transaction
+compares it to the current preference before creating either message or task. A mismatched
+selection fails without admission. Exact retries return the original receipt/snapshot even
+after another selection or restart. New receipts always contain a snapshot; deserializing a
+historical receipt without one leaves it absent, never inventing a historical model.
+
+Initial Schema and candidate-feedback resolution now consult the source Send's concrete
+Model Profile ID before the current preference. Explicit saved consent IDs still win and
+retain their original exact scope hash. Independent Builder/future-rule preparations remain
+new authorized requests, while a combined Journey carries its already frozen consent model.
+No Model Profile revision, Provider config or budget is granted by the message snapshot;
+those still freeze and validate at explicit authorization.
+
+Limits deliberately retained: receipts without a selected Model Profile ID (including
+Project-default/unconfigured messages) still resolve during setup/authorization; the current
+Composer does not yet attach its locally observed preference for client-side CAS recovery.
+Server-side admission snapshots therefore work, but displayed-choice multi-tab rejection,
+safe rejected-send re-editing, resolved default-model snapshot and full queued turn config
+remain to connect. Do not claim this is the entire mode/model/budget Send envelope.
+
+Evidence:
+
+- Storage Send tests 3/3 passed (49899), including snapshot restart/retry, stale-input
+  no-message/no-receipt, original transaction rollback and legacy receipt compatibility.
+- Web recovery parser now validates optional snapshot fields and keeps them in exact-command
+  comparisons; typecheck and all 239 tests / 49 files passed (80803).
+- Picker/Send browser regressions passed 5/5 (73611), fresh isolated TEST workspace
+  `/tmp/annotagent-guided-e2e-62546`. New assertions send a goal with Beta, select Alpha,
+  verify that goal's unqualified Schema preview still uses Beta, retry Send with the same
+  immutable receipt, and reject a new stale-choice Send without increasing message count.
+  Existing slow in-flight Alpha/Beta boundary and refresh/lost-ack Send assertions pass.
+- Strict Storage/Application/Server Clippy passed (61778); cargo fmt --all --check and
+  git diff --check passed (5965). Production Web build in browser harness passed with
+  existing large-chunk warning. These are TEST transport checks, not Live accuracy evidence.
+
+Goal remains incomplete: Plan/Execute Composer control, queued input, full continuation
+trace and substantial remaining view convergence are still pending. No push, real-data
+cleanup, Published Version edits, remote changes or paid model calls.

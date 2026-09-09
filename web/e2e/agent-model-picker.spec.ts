@@ -70,4 +70,15 @@ test("Registry picker persists next-scope model without probes, sends or changin
   expect(calls[0].id).toBe(consent.call_id);
   expect(calls[0].evidence.response.tool_calls[0].arguments.rationale).toContain("TEST received model: e2e-conversation-classification-schema-background");
   expect((await (await request.get(`${root}/agent-model`)).json()).model_profile_id).toBe(models[1].id);
+  const observed = await (await request.get(`${root}/agent-model`)).json();
+  const frozenMessage = {message:{id:randomUUID(),text:"TEST freeze Beta for this goal",image:null},task_id:null,schema_revision:revision,agent_model:observed};
+  const captured = await (await request.post(`${root}/send`,{data:frozenMessage})).json();
+  expect(captured.agent_model).toEqual(observed);
+  expect((await request.post(`${root}/agent-model`,{data:{request_id:randomUUID(),expected_revision:observed.revision,model_profile_id:models[0].id}})).ok()).toBe(true);
+  expect((await (await request.get(`${root}/tasks/${captured.task_id}/schema-preview`)).json()).model_id).toBe(models[1].id);
+  expect(await (await request.post(`${root}/send`,{data:frozenMessage})).json()).toEqual(captured);
+  const count = (await (await request.get(`${root}/messages`)).json()).length;
+  const stale = await request.post(`${root}/send`,{data:{...frozenMessage,message:{...frozenMessage.message,id:randomUUID()}}});
+  expect(stale.status()).toBe(400);
+  expect((await (await request.get(`${root}/messages`)).json()).length).toBe(count);
 });

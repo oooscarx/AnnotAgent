@@ -12,3 +12,13 @@ it("compares saved commands independent of JSON key order but not scope",()=>{
   expect(sameSendCommand(pending.input,{schema_revision:pending.input.schema_revision,task_id:null,message:{text:"测试",image:null,id:pending.input.message.id}})).toBe(true);
   expect(sameSendCommand(pending.input,{...pending.input,schema_revision:"b".repeat(64)})).toBe(false);
 });
+it("retains an observed model choice and rejects corrupt recovery metadata",()=>{
+  const choice={revision:3,model_profile_id:pending.conversation};
+  const value={...pending,input:{...pending.input,agent_model:choice}};
+  expect(parsePendingSend(JSON.stringify(value))).toEqual(value);
+  expect(sameSendCommand(value.input,{...value.input,agent_model:{...choice,revision:4}})).toBe(false);
+  expect(sameSendCommand(value.input,{...value.input,agent_model:{...choice,model_profile_id:null}})).toBe(false);
+  for(const invalid of [null,{}, {revision:-1,model_profile_id:null},{revision:1.5,model_profile_id:null},{revision:3,model_profile_id:"foreign"}]) {
+    expect(parsePendingSend(JSON.stringify({...pending,input:{...pending.input,agent_model:invalid}}))).toBeUndefined();
+  }
+});

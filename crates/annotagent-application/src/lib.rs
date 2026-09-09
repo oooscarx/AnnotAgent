@@ -9473,6 +9473,24 @@ impl LocalApplication {
         )
     }
 
+    /// A concrete choice admitted with a message takes precedence over later
+    /// preferences. A saved consent's explicit ID remains the strongest scope.
+    /// Legacy receipts and messages sent without a selected model still require
+    /// explicit setup/authorization through the existing default resolver.
+    pub fn resolve_conversation_message_model(
+        &self,
+        project_id: &str,
+        conversation: uuid::Uuid,
+        message: uuid::Uuid,
+        explicit_model: Option<ModelProfileId>,
+    ) -> Result<PipelineBuilderModelRuntime> {
+        let snapshot = self
+            .project_conversation_send_receipt(project_id, conversation, message)?
+            .and_then(|(_, receipt)| receipt.agent_model)
+            .and_then(|preference| preference.model_profile_id);
+        self.resolve_conversation_agent_model(project_id, conversation, explicit_model.or(snapshot))
+    }
+
     /// Save a next-request preference, not a call grant. Resolution is passive;
     /// invocation must still freeze and authorize its actual Model/Provider scope.
     pub fn select_project_conversation_agent_model(
@@ -28237,6 +28255,7 @@ export:
             },
             task_id: None,
             schema_revision: "0".repeat(64),
+            agent_model: None,
         };
         assert!(
             app.send_project_conversation_message("TEST-send", conversation, &command)

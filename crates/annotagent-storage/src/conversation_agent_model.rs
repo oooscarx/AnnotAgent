@@ -20,7 +20,7 @@ pub struct SelectConversationAgentModel {
     pub model_profile_id: Option<ModelProfileId>,
 }
 
-fn read(
+pub(crate) fn read(
     db: &rusqlite::Connection,
     conversation: Uuid,
 ) -> Result<ConversationAgentModel, StorageError> {

@@ -71,7 +71,7 @@ export function AgentModelPicker({ project, conversation, onConversation, onSett
     <summary ref={summary} aria-label="Choose Agent model">{selected ? `${selected.display_name} · ${providers.find(provider => provider.id === selected.provider_id)?.display_name ?? "Missing Provider"}` : (preference?.model_profile_id ? "Unavailable model reference" : "Project Agent default")}</summary>
     <section aria-label="Agent model selection" className="agent-model-panel">
       <strong>Agent model · next authorization</strong>
-      <p>Existing requests and image-model bindings stay unchanged. A new request still requires its own data and cost authorization.</p>
+      <p>Sent message scopes, authorized requests and image-model bindings stay unchanged. A new request still requires its own data and cost authorization.</p>
       <label>Search models<input type="search" value={search} onChange={event => setSearch(event.target.value)} /></label>
       <label>Provider / account and model<select aria-label="Agent model" disabled={!preference || busy || pending} value={preference?.model_profile_id ?? ""} onChange={event => void choose(event.target.value || null)}>
         <option value="">Use Project Agent default</option>

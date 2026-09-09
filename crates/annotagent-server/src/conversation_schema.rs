@@ -249,7 +249,12 @@ pub(super) fn preview_scope(
     }
     let selected = state
         .application
-        .resolve_conversation_agent_model(project, conversation, model_id)
+        .resolve_conversation_message_model(
+            project,
+            conversation,
+            task_record.input.source_message_id,
+            model_id,
+        )
         .map_err(ApiError::bad_request)?;
     let mut config = selected
         .openai_compatible_config()

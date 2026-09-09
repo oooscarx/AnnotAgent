@@ -13,6 +13,9 @@ pub struct ConversationSendInput {
     pub message: ConversationMessageInput,
     pub task_id: Option<Uuid>,
     pub schema_revision: String,
+    /// Optional observed preference for CAS admission; absent for older clients.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_model: Option<crate::ConversationAgentModel>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,6 +31,9 @@ pub struct ConversationSendReceipt {
     pub message: ConversationMessage,
     pub task_id: Uuid,
     pub disposition: ConversationSendDisposition,
+    /// None means a historical receipt predating model snapshots, not default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_model: Option<crate::ConversationAgentModel>,
 }
 
 fn invalid(message: &str) -> StorageError {
@@ -65,6 +71,10 @@ impl SqliteStore {
                 return Ok(serde_json::from_str(&receipt)?);
             }
             if input.schema_revision.len()!=64 || !input.schema_revision.bytes().all(|b|b.is_ascii_hexdigit()) { return Err(invalid("Send requires a schema revision digest")); }
+            let agent_model=crate::conversation_agent_model::read(&tx,conversation)?;
+            if input.agent_model.as_ref().is_some_and(|observed| *observed!=agent_model) {
+                return Err(invalid("Agent model choice changed before Send; reload the selection before sending this message"));
+            }
             // A legacy journal ID cannot silently acquire a new dispatch meaning.
             let existing:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE conversation_id=?1 AND message_id=?2)",params![conversation.to_string(),input.message.id.to_string()],|r|r.get(0))?;
             if existing { return Err(invalid("Message already belongs to the legacy journal; create a new send command")); }
@@ -87,7 +97,7 @@ impl SqliteStore {
             if disposition==ConversationSendDisposition::NewTask {
                 tx.execute("INSERT INTO conversation_tasks(id,conversation_id,source_message_id,schema_revision,created_at) VALUES(?1,?2,?3,?4,?5)",params![task_id.to_string(),conversation.to_string(),message.input.id.to_string(),input.schema_revision,chrono::Utc::now().to_rfc3339()])?;
             }
-            let receipt=ConversationSendReceipt{message,task_id,disposition};
+            let receipt=ConversationSendReceipt{message,task_id,disposition,agent_model:Some(agent_model)};
             tx.execute("INSERT INTO conversation_send_receipts(conversation_id,message_id,input_json,receipt_json) VALUES(?1,?2,?3,?4)",params![conversation.to_string(),input.message.id.to_string(),serde_json::to_string(input)?,serde_json::to_string(&receipt)?])?;
             tx.commit()?;
             Ok(receipt)
@@ -98,6 +108,75 @@ impl SqliteStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn send_freezes_model_and_stale_choice_rolls_back_before_message_admission() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TEST-send-model.db");
+        let store = SqliteStore::open(&path).unwrap();
+        let owner = Uuid::new_v4().to_string();
+        let conversation = store.create_conversation(&owner).unwrap();
+        let selection = crate::SelectConversationAgentModel {
+            request_id: Uuid::new_v4(),
+            expected_revision: 0,
+            model_profile_id: Some(annotagent_core::ModelProfileId::new()),
+        };
+        let first = store
+            .select_conversation_agent_model(&owner, conversation, &selection)
+            .unwrap();
+        let mut command = input();
+        command.agent_model = Some(first.clone());
+        let admitted = store
+            .send_conversation_message(&owner, conversation, &command)
+            .unwrap();
+        assert_eq!(admitted.agent_model, Some(first));
+        store
+            .select_conversation_agent_model(
+                &owner,
+                conversation,
+                &crate::SelectConversationAgentModel {
+                    request_id: Uuid::new_v4(),
+                    expected_revision: 1,
+                    model_profile_id: Some(annotagent_core::ModelProfileId::new()),
+                },
+            )
+            .unwrap();
+        let mut stale = command.clone();
+        stale.message.id = Uuid::new_v4();
+        assert!(
+            store
+                .send_conversation_message(&owner, conversation, &stale)
+                .is_err()
+        );
+        assert!(
+            store
+                .conversation_message(&owner, conversation, stale.message.id)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .conversation_send_receipt(&owner, conversation, stale.message.id)
+                .unwrap()
+                .is_none()
+        );
+        drop(store);
+        let store = SqliteStore::open(&path).unwrap();
+        assert_eq!(
+            store
+                .send_conversation_message(&owner, conversation, &command)
+                .unwrap(),
+            admitted
+        );
+        let mut legacy = serde_json::to_value(&admitted).unwrap();
+        legacy.as_object_mut().unwrap().remove("agent_model");
+        assert!(
+            serde_json::from_value::<ConversationSendReceipt>(legacy)
+                .unwrap()
+                .agent_model
+                .is_none()
+        );
+    }
+
     fn input() -> ConversationSendInput {
         ConversationSendInput {
             message: ConversationMessageInput {
@@ -108,6 +187,7 @@ mod tests {
             },
             task_id: None,
             schema_revision: "a".repeat(64),
+            agent_model: None,
         }
     }
 
