@@ -5,6 +5,46 @@ const project = { project_id: "TEST-alpha", project_owner_id: "owner-a", title: 
 const settings = { revision: "revision-1", sections: { data_privacy: { workspace_id: "TEST-workspace" }, usage_budget: { future_run_budget: { max_requests: 10, max_cost: "2.50" } } } };
 const navTask = (id: string) => ({ task_id: id, title: `TEST ${id}`, schema_revision: "schema-1", project_owner_id: "owner-a", conversation_id: "conversation-a", state: "idle" });
 const root = "/api/projects/TEST-alpha/conversations/conversation-a/tasks";
+it("formal delivery reads never dispatch and commands retain frozen scope across retries", async () => {
+  const reads = mockTransport();
+  const calls: {path:string; method:string; body:unknown; signal?:AbortSignal|null}[] = [];
+  let failure = false;
+  const transport:Transport = async<T>(path:string, init?:RequestInit) => {
+    if (!path.includes("/delivery-images/") && !path.includes("/delivery-packages")) return reads.transport<T>(path,init);
+    calls.push({path,method:init?.method || "GET",body:init?.body ? JSON.parse(String(init.body)) : null,signal:init?.signal});
+    if (failure) throw new Error("TEST stale whole-image snapshot");
+    return {job:{id:"package",phase:"validating"},active:false,interrupted:true} as T;
+  };
+  const adapter = new HttpAdapter(transport);
+  await adapter.refresh(); await adapter.loadTask("TEST-alpha","t1");
+  expect(calls).toEqual([]);
+  const ctrl = new AbortController();
+  await adapter.delivery.image("TEST-alpha","t1","image/one","run/one",ctrl.signal);
+  await adapter.delivery.image("TEST-alpha","t1","image/one",null);
+  const status = await adapter.delivery.packageStatus("TEST-alpha","t1","package",ctrl.signal);
+  expect(status.interrupted).toBe(true);
+  expect(calls.every(c=>c.method==="GET")).toBe(true);
+  expect(calls[0].path).toBe(`${root}/t1/delivery-images/image%2Fone?source_run_id=run%2Fone`);
+  expect(calls[0].signal).toBe(ctrl.signal);
+  expect(calls[1].path).not.toContain("source_run_id");
+  const input = {command_id:"package",intent_revision:7,intent_sha256:"frozen",image_reviews:{"image/one":4},confirmed:true};
+  await adapter.delivery.startPackage("TEST-alpha","t1",input);
+  await adapter.delivery.startPackage("TEST-alpha","t1",input);
+  expect(calls[3]).toEqual(calls[4]); expect(calls[3].body).toEqual(input);
+  const confirmation = {command_id:"confirm",intent_revision:7,intent_sha256:"frozen",image_id:"image/one",source_run_id:"run/one",expected_snapshot_sha256:"snapshot",expected_review_revision:4,decision:"positive_complete" as const,reason:null,confirmed:true};
+  await adapter.delivery.confirmImage("TEST-alpha","t1",confirmation);
+  expect(calls.at(-1)?.body).toEqual(confirmation);
+  await adapter.delivery.cancelPackage("TEST-alpha","t1","package");
+  expect(calls.at(-1)?.body).toEqual({confirmed:true});
+  const count = calls.length;
+  expect(adapter.delivery.downloadUrl("TEST-alpha","t1","package")).toBe(`${root}/t1/delivery-packages/package/download`);
+  expect(calls).toHaveLength(count);
+  expect(()=>adapter.delivery.downloadUrl("OTHER","t1","package")).toThrow("任务不属于");
+  expect(calls).toHaveLength(count);
+  failure = true;
+  await expect(adapter.delivery.startPackage("TEST-alpha","t1",input)).rejects.toThrow("stale whole-image snapshot");
+  await expect(adapter.delivery.confirmImage("TEST-alpha","t1",confirmation)).rejects.toThrow("stale whole-image snapshot");
+});
 it("planning an existing task never overrides its frozen Send model with the next-request preference", async () => {
   const { transport, paths } = mockTransport({
     "/api/agent-model-bindings": {pipeline_builder:"new-preference"},

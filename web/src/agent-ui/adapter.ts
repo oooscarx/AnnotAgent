@@ -135,6 +135,7 @@ export type Command = {
 };
 export interface WorkspaceAdapter {
   readonly deliveryIntake?: import("./DeliveryIntake").DeliveryIntakeService;
+  readonly delivery?: import("./deliveryService").DeliveryService;
   readonly reviewManagement?: import("./ReviewManagement").ReviewService;
   readonly runDetail?: import("./RunDetail").RunDetailService;
   readonly batchDetail?: import("./BatchDetail").BatchDetailService;

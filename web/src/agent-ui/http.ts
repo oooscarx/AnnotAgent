@@ -36,6 +36,19 @@ const initialSettings: Settings = { revision: "", theme: "system", language: "zh
 
 /** Only this boundary knows HTTP routes. Reads never create conversations, tasks or execution. */
 export class HttpAdapter implements WorkspaceAdapter {
+  private deliveryRoot(project: string, id: string) {
+    const task = this.task(id);
+    if (task.project !== project) throw new Error("任务不属于此项目");
+    return this.taskRoot(task);
+  }
+  readonly delivery: import("./deliveryService").DeliveryService = {
+    image: (project, task, image, run, signal) => this.transport(`${this.deliveryRoot(project,task)}/delivery-images/${esc(image)}${run === null ? "" : `?source_run_id=${esc(run)}`}`, { signal }),
+    confirmImage: (project, task, input) => this.transport(`${this.deliveryRoot(project,task)}/delivery-images/${esc(input.image_id)}`, { method: "POST", body: JSON.stringify(input) }),
+    startPackage: (project, task, input) => this.transport(`${this.deliveryRoot(project,task)}/delivery-packages`, { method: "POST", body: JSON.stringify(input) }),
+    packageStatus: (project, task, id, signal) => this.transport(`${this.deliveryRoot(project,task)}/delivery-packages/${esc(id)}`, { signal }),
+    cancelPackage: (project, task, id) => this.transport(`${this.deliveryRoot(project,task)}/delivery-packages/${esc(id)}/cancel`, { method: "POST", body: JSON.stringify({ confirmed: true }) }),
+    downloadUrl: (project, task, id) => `${this.deliveryRoot(project,task)}/delivery-packages/${esc(id)}/download`,
+  };
   readonly deliveryIntake: import("./DeliveryIntake").DeliveryIntakeService = {
     read: (project, id, signal) => { const task = this.task(id); if (task.project !== project) throw new Error("任务不属于此项目"); return this.transport(`${this.taskRoot(task)}/delivery-intent`, { signal }); },
     save: (project, id, input) => { const task = this.task(id); if (task.project !== project) throw new Error("任务不属于此项目"); return this.transport(`${this.taskRoot(task)}/delivery-intent`, { method: "POST", body: JSON.stringify(input) }); },

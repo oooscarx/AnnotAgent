@@ -158,4 +158,10 @@ Remaining M1/M3: natural-language slot extraction and ambiguity handling, explic
 
 ## Not complete / not executed
 
+### Formal delivery HttpAdapter boundary (after `52b1738`)
+
+Added typed `deliveryService.ts` and a real HttpAdapter service for owned whole-image reads/confirmations, package creation/status/cancellation and download URLs. Fixture Adapter does not expose this capability. Callers retain exact command IDs, frozen intent hashes, source Run IDs and image review revisions; GET and URL generation never dispatch work. Unknown/interrupted status remains visible in the contract rather than becoming a resumable success. Foreign task ownership fails before transport; HTTP errors propagate without fixture fallback.
+
+Verification: Web typecheck passed; `http.test.ts` 12 tests passed, including escaped image/Run paths, cancellation payload, abort signal forwarding, exact retries, interrupted reads, ownership and error propagation. Production build passed with the existing >500 kB bundle warning. These are transport contract tests, not browser evidence. No Rust or user service changed. Formal review UI and explicit source selection are still the next integration step, not completed by this boundary.
+
 The inline three-slot card, typed persistence, delivery-bound Schema/Builder admission, strict ZIP generator with typed provenance, whole-image receipt storage/HTTP and server-owned package download exist. Full processing/authorization-range binding, natural-language intake, formal confirmation/package UI and automatic authorized delivery continuation remain incomplete. Browser screenshots, browser+HttpAdapter delivery, official loader smoke, full workspace checks and live model quality evaluation have not run. Two-directory extraction is covered by library and downloaded HTTP TEST ZIP cases, not the official loader. No completed user delivery or cost is claimed.
