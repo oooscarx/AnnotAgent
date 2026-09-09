@@ -1,0 +1,47 @@
+# Raw Images → Training Dataset
+
+## Baseline and boundaries (2026-09-10)
+
+- Active request: three-slot intake and a complete `ultralytics_yolo_detection` delivery preset; bounding boxes only for this new preset. Preserve existing task kinds, services and approved Agent UI.
+- Audited main advanced during inspection from `c8923a8` to `0fcfc5d1d5b085583d9506e4ef89c6caa01204d7` due to concurrent work. Main's pre-existing edits were not overwritten.
+- Independent branch: `codex/raw-images-to-dataset`, worktree `/Users/oscar/Documents/my_workspace/AnnotAgent-dataset-delivery`, based on the latter commit. No push, remote changes, real workspace changes, paid calls, service restarts or training.
+- No repository AGENTS.md or Sites hosting configuration was found during baseline inspection.
+- This document is the single execution record for this task. Prior UI migration is not counted as delivery progress.
+
+## M0 — audit and first regression
+
+### Verified reuse and gaps
+
+| Existing code | Verified behavior / required change |
+| --- | --- |
+| `annotagent-storage/src/conversation_tasks.rs` | Owned persistent Task tied to saved goal message and Schema revision; reuse, no parallel task executor. |
+| `annotagent-application/src/conversation_schema.rs` | Authorized bounded Schema proposal; extend input with structured delivery context rather than infer bbox from label names. |
+| `annotagent-storage/src/conversation_exports.rs` and server `export_jobs.rs` | Owned persistent export job/event records; retain boundaries and extend snapshot/idempotency scope. |
+| `annotagent-application/src/lib.rs::export_project_dataset_with_id` | Reads project-wide readiness/snapshot, exports, packages generated files. Not yet exact Task delivery scope or whole-image completeness. |
+| `annotagent-export/src/lib.rs::export_yolo` | Flat labels plus classes.txt only; no images, splits, portable data.yaml or image-level negative evidence. Current categories combine and sort Schema and observed labels; do not reuse this as stable preset class mapping. |
+| `annotagent-application/src/export_delivery.rs` | Streaming ZIP of exporter-produced files, confined paths and download digest. Explicitly excludes original images unless exporter produced them. Not a ready training package. |
+| `web/src/agent-ui/http.ts` | Real task export cards/download receipts exist. Preserve HttpAdapter boundary; no Fixture fallback. |
+
+### Official format baseline
+
+- Documentation checked: https://docs.ultralytics.com/datasets/detect/ and https://docs.ultralytics.com/reference/data/utils/.
+- Pin: Ultralytics **v8.3.0**, peeled source commit **6e43d1e1e5db72afbf686dee6745669bcb124b0a**. The tag object is not the source commit.
+- Read pinned `ultralytics/data/utils.py::check_det_dataset`: without `path`, root derives from the YAML filename's parent. The planned package omits `path` and uses relative train/val; verification must pass an absolute YAML filename from an unrelated working directory after extraction.
+- The pinned loader calls `check_font`, potentially downloading a font. A real loader smoke must be isolated/network-disabled with installed dependencies; none has been executed yet. Source inspection is not a loader smoke.
+- YOLO rows are zero-based class + normalized center x/y/width/height. Core stores normalized top-left boxes already, so no second division by pixel dimensions.
+
+### First implemented fix
+
+Reproduced and fixed silent flat-file overwrite when images have matching stems. Both existing YOLO exporters now reject collisions before creating output, including case-insensitive collisions and reserved `classes.txt`. The new full preset will use stable image IDs, not these legacy stems.
+
+Test evidence: added failing collision regression and observed failure before fix. Final checks: `cargo fmt --all --check` passed after formatting; `cargo test --offline -p annotagent-export --target-dir /tmp/annotagent-dataset-delivery-target` passed (1 unit + 7 integration tests); `cargo clippy --offline -p annotagent-export --all-targets -- -D warnings` passed. Full workspace tests have not run.
+
+## Next implementation stages
+
+- M1: versioned Task delivery request with persistent missing slots, ownership/CAS, stable labels and explicit training target. Connect to real Schema/Builder and same-thread summary/authorization. Do not auto-run on refresh.
+- M2: image-level evidence/readiness, deterministic source-image package, frozen manifests/splits, streaming atomic ZIP, independent validator, owned receipt/download and recovery.
+- M3: same-chat full delivery with isolated TEST HTTP E2E, real ZIP extraction and two-path portability evidence. Synthetic data does not establish model accuracy.
+
+## Not complete / not executed
+
+No new three-slot UI or persisted delivery request is connected yet. No complete training ZIP has been generated. Whole-image confirmation, explicit negatives/exclusions, exact-scope authorization and automatic authorized packaging remain to implement. Browser screenshots, end-to-end HTTP delivery, official loader smoke, two-path extraction, full workspace checks and live model quality evaluation have not run. No completed delivery or cost is claimed.

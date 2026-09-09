@@ -269,6 +269,16 @@ impl DatasetExporter for LabelMeExporter {
 }
 
 fn export_yolo(request: &ExportRequest, segmentation: bool) -> CoreResult<ExportReport> {
+    // Both variants use a flat output directory. Validate every destination before
+    // writing, including the reserved classes file and case-insensitive hosts.
+    let mut destinations = std::collections::BTreeSet::from(["classes".to_owned()]);
+    for image in &request.project.images {
+        if !destinations.insert(safe_stem(image).to_lowercase()) {
+            return Err(CoreError::Export(
+                "YOLO output filenames collide; use unique image stems before exporting".into(),
+            ));
+        }
+    }
     fs::create_dir_all(&request.output)
         .map_err(|error| CoreError::Export(format!("cannot create output: {error}")))?;
     let labels = categories(&request.project);

@@ -107,6 +107,57 @@ fn import_request(project: &ProjectSnapshot, source: PathBuf, dry_run: bool) -> 
 }
 
 #[tokio::test]
+async fn yolo_rejects_same_stem_collisions_before_writing_any_output() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut project = snapshot();
+    let mut second = project.images[0].clone();
+    second.id = ImageId::new();
+    second.relative_path = PathBuf::from("other/demo.jpg");
+    project.images.push(second);
+    let output = temp.path().join("labels");
+    let result = YoloDetectionExporter
+        .export(ExportRequest {
+            project,
+            output: output.clone(),
+        })
+        .await;
+    assert!(
+        result.is_err(),
+        "same stem must not overwrite another image's labels"
+    );
+    assert!(
+        !output.exists(),
+        "collision must fail before partial output exists"
+    );
+}
+
+#[tokio::test]
+async fn both_yolo_variants_protect_reserved_and_case_insensitive_filenames() {
+    for path in ["other/DEMO.jpg", "other/classes.png", "other/CLASSES.jpg"] {
+        for segmentation in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let mut project = snapshot();
+            let mut second = project.images[0].clone();
+            second.id = ImageId::new();
+            second.relative_path = PathBuf::from(path);
+            project.images.push(second);
+            let output = temp.path().join("labels");
+            let request = ExportRequest {
+                project,
+                output: output.clone(),
+            };
+            let result = if segmentation {
+                YoloSegmentationExporter.export(request).await
+            } else {
+                YoloDetectionExporter.export(request).await
+            };
+            assert!(result.is_err(), "must reject {path}");
+            assert!(!output.exists(), "preflight must not create partial output");
+        }
+    }
+}
+
+#[tokio::test]
 async fn coco_and_native_emit_versioned_json_and_report_skips() {
     let temporary = tempfile::tempdir().expect("temporary output");
     let native = NativeExporter
