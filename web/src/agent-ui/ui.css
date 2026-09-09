@@ -1111,3 +1111,10 @@ caption {
 .ui-app .task-trace-record header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; }
 .ui-app .task-trace-record time { font-size: 12px; }
 .ui-app .task-trace-record li { padding-block: 8px; }
+.ui-app .native-task-history .settings-row { grid-template-columns: minmax(0,1fr) auto; }
+.ui-app .native-task-history .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.ui-app .context-archive-view { display: grid; gap: 16px; padding-block: 20px; border-block: 1px solid var(--aa-border); margin-block: 20px; min-width: 0; }
+.ui-app .context-archive-view > button { justify-self: start; }
+.ui-app .context-archive-view > label { max-width: 720px; }
+.ui-app .native-task-history pre { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media(max-width:640px) { .ui-app .native-task-history .settings-row { grid-template-columns: minmax(0,1fr); gap: 12px; } }
