@@ -43,4 +43,16 @@ Committed visual evidence: `single-ui-clean-cut/m0/disclosure-expanded.png` (144
 
 ## Remaining
 
+### Revised history scope (user clarification)
+
+Migrate history-management functions, but do not include pre-cutover Pipeline/Run records in the new history lists. Preserve old server records and all references. No data deletion is authorized. A persistent server-side cutover scope still needs implementation and verification; browser-local dates or deleting old rows are not acceptable substitutes. Current-task references must remain resolvable independently of history-list filtering.
+
+### M1 progress
+
+New `PluginSettings` uses an explicit `WorkspaceAdapter.pluginManagement` boundary exposed by real HttpAdapter only. Added plugin/instance/bundle reads; separate old weight status versus Ready instances; plugin test/enable/disable/uninstall; instance smoke test; bundle enable/disable with reference lookup; local package inspection and explicit permission/license installation confirmation. Existing API CSRF/privileged protections are reused, not bypassed. No real mutation performed during development. Custom-transport tests do not receive real mutation services.
+
+Verification: typecheck and isolated production build passed; 281 unit tests passed with the existing one pending cutover test. Actual browser used separate Vite 5184 with GET-only browser interception against existing 8788 HTTP service: Ready instance visible, test confirmation opened/cancelled, refresh restored results, zero mutation attempts. No mutation E2E claimed. Screenshot `single-ui-clean-cut/m1/plugin-settings-live-read.png`: actual React new UI, 1440×900, DPR 1, light, Live read-only data, URL `http://127.0.0.1:5184/settings?settings=vision`, baseline 7a7e50a plus this commit's source. This temporary query path remains until standalone routing migration. No user service rebuilt or restarted. Isolated inspection server stopped after capture.
+
+Not yet complete: curated bundle install/import, full model configuration, new standalone Settings routing, storage APIs, history scope and M2 removal. Inspection of old `SettingsPage(view=storage)` shows it actually edits pricing/budgets, not disk statistics/cleanup; do not claim those controls already exist there. This corrects the initial broad inventory assumption.
+
 Complete M0 browser evidence/inventory, then M1 native plugin/bundle/storage operations; M2 all remaining management, standalone Settings and typed return, remove old root/routes/styles only afterward; M3 isolated real HTTP and production-module-manifest regressions. The requested single-UI migration is **not complete**.

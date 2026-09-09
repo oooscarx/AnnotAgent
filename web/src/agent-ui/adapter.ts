@@ -134,6 +134,7 @@ export type Command = {
   selection?: { image: string; candidate: string; revision: string };
 };
 export interface WorkspaceAdapter {
+  readonly pluginManagement?: import("./pluginManagement").PluginManagement;
   readonly kind: "fixture" | "http";
   snapshot(): Snapshot;
   subscribe(listener: () => void): () => void;

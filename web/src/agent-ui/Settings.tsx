@@ -11,6 +11,7 @@ import { sections } from "./adapter";
 import { Dialog } from "./Dialog";
 import { Icon } from "./Icon";
 import { Disclosure } from "./Disclosure";
+import { PluginSettings } from "./PluginSettings";
 function Row({
   title,
   help,
@@ -495,7 +496,8 @@ export function SettingsView({
                   {managementLinks?.models && <a href={managementLinks.models} onClick={e=>{if(!window.dispatchEvent(new Event("ui-preview:before-navigate",{cancelable:true})))e.preventDefault();}}>管理模型配置 →</a>}
                 </>
               )}
-              {section === "vision" && (
+              {section === "vision" && !fixture && adapter.pluginManagement && <PluginSettings service={adapter.pluginManagement} />}
+              {section === "vision" && (fixture || !adapter.pluginManagement) && (
                 <>
                   {managementLinks?.plugins && <p><a href={managementLinks.plugins} onClick={e=>{if(!window.dispatchEvent(new Event("ui-preview:before-navigate",{cancelable:true})))e.preventDefault();}}>打开真实模型与插件管理 →</a> · 安装需单独确认权限和许可证。</p>}
                   {draft.plugins.map((p) => (
@@ -655,7 +657,7 @@ export function SettingsView({
                   </p>
                 </>
               )}
-              {!editor && (
+              {!editor && !(section === "vision" && !fixture && adapter.pluginManagement) && (
                 <div className="settings-actions">
                   <span role="status">
                     {saving
