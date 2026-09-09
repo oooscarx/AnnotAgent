@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Native excluded-candidate inspection
+
+HttpAdapter now retains the excluded side of the existing sampleFeedbackOverlay result instead of dropping it, alongside the same owned/hash-checked sample/image. Native ArtifactPane mounts ExcludedCandidates on demand, with one read-only canvas, selection, explicit exclusion reason/note and source revision. No candidate is restored or written by inspection. Removed old SampleExcludedCandidates.tsx; the still-unmounted legacy SampleFeedbackEditor now refers to the single native inspector until its remaining operations migrate (not a second inspector implementation).
+
+322 unit tests across99 files passed, typecheck/build passed; corrected an initial overly broad test that mistook the Disclosure's legitimate SVG chevron for a mounted image canvas. Existing overlay tests preserve exclusions and later corrections. Build /tmp/annotagent-native-excluded-candidates-dist, source12f65da plus slice. Dedicated actual HTTP exclusion-inspection case remains to execute; no browser success claimed for this slice. Existing active HumanRequest/exclusion interactions must remain fail-closed until their owned scope is reconciled. No real workspace, paid Provider, original image/Published, user service, Rust or remote changes. Full migration goal stays active.
+
 ## Retire old sample geometry-comparison component
 
 Native ArtifactPane now offers an unmounted-until-open GeometryStageView using sample evidence already fetched and ownership/content-hash checked by HttpAdapter. No extra comparison API, model call, editing side effect or old CSS/component mount. Stage toggles preserve coarse-root-coordinate checks, deduplicate repeated debug artifacts, use stable label colors and distinguish stages with text/dashes. Final retained boxes now come from the shared terminalSampleAnnotations projection, correcting the old component's unsafe sample.outcomes aggregation. Old SampleGeometryComparison.tsx and its tests were removed; coordinate/dedup regressions migrated to native geometryComparison tests with the corrected terminal-only expectation.

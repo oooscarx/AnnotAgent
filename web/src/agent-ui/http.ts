@@ -188,7 +188,7 @@ export class HttpAdapter implements WorkspaceAdapter {
       const sampleId = human?.input.sample_test_id || sampleOp?.id;
       const draftId = sampleOp?.draft_id;
       if(human&&!draftId)throw new Error("人工问题的 Sample 未提供所属 Draft 映射；不会把 checkpoint 当作 Draft ID");
-      const result: Partial<Task> = {human:undefined,geometryEvidence:{}};
+      const result: Partial<Task> = {human:undefined,geometryEvidence:{},excludedCandidates:{}};
       const proposal=ws?.builder_operations?.items.find(item=>item.session?.builder_proposal)?.session?.builder_proposal;
       if(proposal) {
         const steps=proposal.draft.label_pipeline ? [...proposal.draft.label_pipeline.shared_stages.flatMap(s=>s.steps),...proposal.draft.label_pipeline.label_pipelines.flatMap(p=>p.steps)] : [];
@@ -217,7 +217,8 @@ export class HttpAdapter implements WorkspaceAdapter {
           const feedback=await this.transport<{revisions:SampleFeedbackRevision[]}>(`/api/workflow-sample-tests/${esc(sampleId)}/images/${esc(input.image_id)}/feedback`,{signal:ctrl.signal});
           feedbackVersion+=`${input.image_id}:${feedback.revisions.at(-1)?.sequence || 0};`;
           const original=terminalSampleAnnotations(sample,input.image_id,sampleId);
-          const annotations=sampleFeedbackOverlay(original,feedback.revisions).annotations;
+          const overlay=sampleFeedbackOverlay(original,feedback.revisions);
+          const annotations=overlay.annotations;result.excludedCandidates![input.image_id]=overlay.excluded;
           const dims=await this.measure(asset.src);asset.width=dims.width;asset.height=dims.height;
           boxesByImage[input.image_id]=annotations.flatMap(a=>a.value.kind==="bounding_box"?[{id:a.id,label:a.label || "",x:a.value.rect[0]*dims.width,y:a.value.rect[1]*dims.height,w:a.value.rect[2]*dims.width,h:a.value.rect[3]*dims.height}]:[]);
           imageResults[input.image_id]={labels:annotations.flatMap(a=>a.value.kind==="classification"?a.value.labels:[]),risks:sample.projection?.review_candidates.map(r=>r.explanation.summary) || (sample.projection?[]:["旧样例没有终端投影，未显示中间框"])};

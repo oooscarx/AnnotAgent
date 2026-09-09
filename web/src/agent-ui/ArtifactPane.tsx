@@ -3,6 +3,7 @@ import { Icon, IconButton } from "./Icon";
 import { Disclosure } from "./Disclosure";
 import { ImageBrowser } from "./ImageBrowser";
 import {GeometryStageView} from "./GeometryStageView";
+import {ExcludedCandidates} from "./ExcludedCandidates";
 import { labelColor } from "../annotationVisuals";
 import type { WorkspaceAdapter, Task, Box, Snapshot, ImageId } from "./adapter";
 import { command } from "./App";
@@ -292,6 +293,7 @@ export function ArtifactPane({
         </button>
       </Disclosure>
       {!fixture&&asset&&task.geometryEvidence?.[image]&&<Disclosure title="查看几何阶段对比" onToggle={e=>setGeometryOpen(e.currentTarget.open)}>{geometryOpen&&<GeometryStageView key={`${task.sample?.id}:${image}`} sample={task.geometryEvidence[image]} imageUrl={asset.src}/>}</Disclosure>}
+      {!fixture&&asset&&task.excludedCandidates?.[image]&&<ExcludedCandidates key={`${task.sample?.id}:${image}`} excluded={task.excludedCandidates[image]} imageUrl={asset.src}/>}
       <div className="artifact-footer">
         <small>
           {!fixture && !editable ? "只读样例；当前没有待回答的人工问题" : dirty ? "浏览器编辑草稿 · 尚未提交" : fixture ? "演示候选 · 非正式标注" : "样例终端候选 · 非正式标注"}
