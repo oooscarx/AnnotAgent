@@ -10655,6 +10655,58 @@ async fn uninstall_expert_model_plugin(
 
 #[cfg(test)]
 mod tests {
+    /// Subprocess-only fixture: commit a real answer, expose the pre-dispatch
+    /// boundary, then let the owning browser test SIGKILL this process.
+    /// This helper is never compiled into the production server binary.
+    #[test]
+    #[ignore = "spawned only by isolated answer-restart browser test"]
+    fn answer_checkpoint_process() {
+        use std::io::Write;
+        let raw = std::env::var("ANNOTAGENT_TEST_ANSWER_CHECKPOINT")
+            .expect("explicit TEST checkpoint input");
+        let input: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let workspace = std::path::Path::new(input["workspace"].as_str().unwrap())
+            .canonicalize()
+            .unwrap();
+        assert!(
+            workspace
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("TEST-answer-restart-")
+        );
+        assert!(workspace.starts_with(std::env::temp_dir().canonicalize().unwrap()));
+        let app = annotagent_application::LocalApplication::new(&workspace).unwrap();
+        let project = input["project"].as_str().unwrap();
+        let parse = |key: &str| uuid::Uuid::parse_str(input[key].as_str().unwrap()).unwrap();
+        let (conversation, task, request, consent) = (
+            parse("conversation"),
+            parse("task"),
+            parse("request"),
+            parse("consent"),
+        );
+        let answer = serde_json::from_value(input["answer"].clone()).unwrap();
+        app.answer_conversation_human_request_in_journey(
+            project,
+            conversation,
+            task,
+            request,
+            &answer,
+            Some(consent),
+        )
+        .unwrap();
+        app.continue_conversation_correction(project, conversation, task, request)
+            .unwrap();
+        let state = app
+            .conversation_journey_execution_status(project, conversation, task, consent)
+            .unwrap();
+        assert_eq!(state["answer_delivery"]["status"], "pending");
+        assert!(state["dispatch"].is_null());
+        println!("TEST_ANSWER_COMMITTED_BEFORE_DISPATCH");
+        std::io::stdout().flush().unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(60));
+        panic!("Owning test did not terminate checkpoint helper");
+    }
     use annotagent_core::RunStatus;
     use annotagent_image_tools::{generate_synthetic_inspection, generate_synthetic_robocup};
     use annotagent_provider::InMemorySecretStore;

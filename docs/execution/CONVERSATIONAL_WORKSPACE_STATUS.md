@@ -5303,3 +5303,38 @@ and 228 Web unit tests pass (17077). Existing production chunk warning only. No 
 Provider/data/remote changes and no push. Actual process-kill/restart delivery testing
 and a forced local preparation-failure integration case remain to be demonstrated;
 the full acceptance matrix and combined regression sweep remain open.
+
+### 2026-09-09 — Real SIGKILL checkpoint and production startup recovery verified
+
+Added a dedicated browser process test with its own temporary workspace and ephemeral
+port, not the shared E2E server or the user's 8787 service. Setup uses real HTTP and
+the existing TEST transport; canvas submission supplies a real structured correction.
+The browser request is intentionally intercepted before persistence. A subprocess-only
+ignored Rust test invokes the actual Application answer and local repair services,
+verifies pending delivery/no dispatch, flushes a checkpoint marker, then is SIGKILLed
+by its owning test. This fixture is compiled only into the test executable; no production
+fault injection or pause hook was added. The normal production `annotagent serve`
+binary then reopens that same workspace and admits the pending continuation at startup.
+
+The recovered sample succeeds under the original sample operation ID and exact repair
+checkpoint Draft. Exactly one Sandbox feedback revision exists. A second normal server
+restart preserves the completed result and leaves both call receipts and the complete
+task/Project budget unchanged. This demonstrates a real process death at the Application
+commit/pre-dispatch boundary, not a production HTTP handler killed at an arbitrary line.
+
+12103 passed the initial process test. 92168 exercised all recovery assertions but failed
+only when writing its evidence JSON because its new output directory was absent; fixed
+the test artifact directory creation. Final **7009 passes 6/6 (15.2s)**: restart plus the
+five normal/failure joint-repair cases. Server tests: 48 passed, one subprocess helper
+intentionally ignored in the ordinary suite and explicitly exercised by the browser;
+server clippy/fmt pass (75992). No real credentials, datasets or remotes touched; no push.
+
+Inspected evidence:
+`/tmp/annotagent-answer-process-final/conversational-workspace/answer-restart-evidence.json`.
+Workspace `TEST-answer-restart-n7rAvm`, task `2e8c27cb-33f3-4f4c-9e1b-834662134451`, consent
+`9b798e57-cd1a-46f8-b8ae-7078eedb46d7`, recovered sample
+`74ce3cdb-973d-4806-8e13-8c2c7757f682`. Reserved calls were 7 before the authorized repair,
+13 after it, and remained 13 after completed-work restart. This is fixture protocol and
+recovery evidence, not Live inference or annotation quality evidence. Next: combined
+full regression and current requirement-by-requirement acceptance audit; no completion
+claim is made from these targeted tests alone.
