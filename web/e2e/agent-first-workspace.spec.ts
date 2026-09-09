@@ -8,16 +8,12 @@ test("artifact pane opens on demand and restores without losing unsent text", as
   await page.goto(`/projects/${id}/work`);
   const input = page.getByRole("textbox", { name: "Your message", exact: true });
   await expect(input).toBeEnabled();
-  const navigation = page.getByRole("navigation", { name: "Conversations", exact: true });
-  await expect(navigation).toContainText("No saved tasks yet");
-  await navigation.getByRole("button", { name: "Hide tasks", exact: true }).click();
-  await expect(navigation.getByRole("searchbox")).not.toBeVisible();
-  await navigation.getByRole("button", { name: "Show tasks", exact: true }).click();
-  await expect(navigation.getByRole("searchbox")).toBeVisible();
+  await expect(page.locator(".sidebar")).toHaveCount(0);
+  await expect(page.locator(".agent-conversation-navigation")).toHaveCount(0);
+  await expect(page.getByRole("navigation", { name: "Conversations", exact: true })).toHaveCount(0);
   for (const theme of ["light", "dark"] as const) {
     await page.evaluate(value => document.documentElement.setAttribute("data-aa-theme", value), theme);
     await expect(page.locator("body")).toHaveCSS("background-color", theme === "light" ? "rgb(247, 247, 244)" : "rgb(24, 26, 24)");
-    await expect(navigation.getByRole("button", { name: "Projects", exact: true })).toHaveCSS("background-color", theme === "light" ? "rgb(255, 255, 255)" : "rgb(32, 35, 32)");
     await page.screenshot({ path: `/tmp/annotagent-agent-first-${theme}-navigation.png`, fullPage: true, animations: "disabled" });
   }
   await page.evaluate(() => document.documentElement.setAttribute("data-aa-theme", "light"));
@@ -49,11 +45,8 @@ test("mobile task navigation opens on demand without covering the composer", asy
     "version: 1\nproject:\n  name: TEST mobile task navigation\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n",
   } })).ok()).toBe(true);
   await page.goto(`/projects/${id}/work`);
-  const nav = page.getByRole("navigation", { name: "Conversations", exact: true });
-  await expect(nav.getByRole("searchbox")).not.toBeVisible();
-  await nav.getByRole("button", { name: "Show tasks", exact: true }).click();
-  await expect(nav).toContainText("No saved tasks yet");
-  await nav.getByRole("button", { name: "Hide tasks", exact: true }).click();
+  await expect(page.locator(".agent-conversation-navigation")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Choose task", exact: true })).toHaveCount(0);
   const input = page.getByRole("textbox", { name: "Your message", exact: true });
   await input.fill("测试输入保持可达");
   await expect(input).toHaveValue("测试输入保持可达");
@@ -73,6 +66,14 @@ test("mobile task navigation opens on demand without covering the composer", asy
   await input.press("Enter");
   await expect(page.getByRole("list", { name: "Saved messages", exact: true })).toContainText("测试输入保持可达");
   expect(messageWrites).toBe(1);
+  const taskChooser = page.getByRole("button", { name: "Choose task", exact: true });
+  await taskChooser.click();
+  const tasks = page.getByRole("region", { name: "Task selection", exact: true });
+  await expect(tasks).toContainText("测试输入保持可达");
+  await tasks.getByRole("searchbox").press("Escape");
+  await expect(tasks).toHaveCount(0);
+  await expect(taskChooser).toBeFocused();
+  expect(messageWrites).toBe(1);
   await expect(input).toHaveValue("");
 });
 
@@ -87,7 +88,7 @@ test("Agent-first empty task centers the thread and exposes one send control", a
   await expect(page.getByRole("region", { name: "Annotation workspace", exact: true })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Your message", exact: true })).toBeVisible();
   await page.screenshot({ path: `/tmp/annotagent-agent-first-m0.png`, fullPage: true });
-  await expect.soft(page.getByRole("navigation", { name: "Conversations", exact: true })).toBeVisible();
+  await expect.soft(page.getByRole("navigation", { name: "Conversations", exact: true })).toHaveCount(0);
   await expect.soft(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
   await expect.soft(page.getByRole("button", { name: /Save (goal|message)/ })).toHaveCount(0);
   await expect.soft(page.locator(".conversation-image-empty")).not.toBeVisible();

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { api, ApiRequestError, type ProcessingReceipt } from "../api";
 import { queryKeys, workspaceQueries } from "../queryCache";
 import { boundedReads } from "../boundedReads";
@@ -26,14 +26,15 @@ import { ConversationStopCard } from "./ConversationStopCard";
 import { t } from "../i18n";
 import { imageClassApi, type ImageClassReview } from "../conversation-image-class-api";
 import { mergeImageClassReview } from "../conversation-image-class";
-import { ConversationNavigation } from "./ConversationNavigation";
+import { AgentProjectHeader } from "./AgentProjectHeader";
 import { AgentComposer } from "./AgentComposer";
 import { ConversationQueue } from "./ConversationQueue";
 import { AgentModelPicker } from "./AgentModelPicker";
 import { parsePendingSend, sameSendCommand, type SendModel, type SendMode } from "../conversation-send";
 
 /** The journal and image importer share the existing Project; neither starts inference. */
-export function ConversationWorkspace({ project, pane, conversationId, imageId, draftId, sampleTestId, taskId, humanRequestId, classReviewId, referenceMessageId, processingOperationId, exportBefore, results, onNavigate, onNavigationGuardChange }: {
+export function ConversationWorkspace({ project, titleRef, pane, conversationId, imageId, draftId, sampleTestId, taskId, humanRequestId, classReviewId, referenceMessageId, processingOperationId, exportBefore, results, onNavigate, onNavigationGuardChange }: {
+  titleRef?: RefObject<HTMLHeadingElement | null>;
   pane?: "thread" | "artifacts";
   project: ProjectSummary; conversationId?: string; imageId?: string; draftId?:string; sampleTestId?:string;
   taskId?:string; humanRequestId?:string; classReviewId?:string; referenceMessageId?:string; processingOperationId?:string;
@@ -483,9 +484,8 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
     }catch(error){if(alive.current && request===sampleNavigation.current)setError((error as Error).message);}
   }
   return <section className="conversation-workspace agent-workspace-layout" aria-label="Annotation workspace">
-    <ConversationNavigation projectName={project.name} tasks={tasks} messages={[...messages,...messageContext]} selectedTask={referenceTask?.id ?? taskId} ready={ready && (!conversation || requestsReady)} onSelect={id=>onNavigate(projectWorkPath(project.id,{conversationId:conversation,taskId:id}))} onProjects={()=>onNavigate("/projects")} onSettings={()=>onNavigate(conversationSettingsPath(project.id,"providers",navigationContext))}/>
+    <AgentProjectHeader titleRef={titleRef} projectName={project.name} tasks={tasks} messages={[...messages,...messageContext]} selectedTask={referenceTask?.id ?? taskId} ready={ready && (!conversation || requestsReady)} artifactsOpen={artifactsOpen} onToggleArtifacts={toggleArtifacts} onSelect={id=>onNavigate(projectWorkPath(project.id,{conversationId:conversation,taskId:id}))} onProjects={()=>onNavigate("/projects")} onSettings={()=>onNavigate(conversationSettingsPath(project.id,"providers",navigationContext))} onManagement={()=>onNavigate(`/projects/${encodeURIComponent(project.id)}`)} />
     <div className="agent-workspace-main">
-    <div className="conversation-surface-controls"><button type="button" aria-expanded={artifactsOpen} aria-controls="conversation-artifacts" onClick={toggleArtifacts}>{artifactsOpen ? "Close data and results" : "Open data and results"}</button></div>
     <nav className="conversation-mobile-tabs" aria-label="Workspace panels">
       <button aria-pressed={mobileView === "conversation"} onClick={() => setMobileView("conversation")}>Conversation</button>
       <button aria-pressed={mobileView === "images"} onClick={() => { setMobileView("images"); if (!artifactsOpen) toggleArtifacts(); }}>Images ({images.length})</button>
@@ -555,7 +555,7 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
         </>}
       </section>
     </div>
-    <p className="conversation-status" role="status">{status || (ready ? "Saved workspace loaded" : "Loading saved workspace…")}</p>
+    {(status || !ready) && <p className="conversation-status" role="status">{status || "Loading saved workspace…"}</p>}
     {error && <p role="alert">{error}</p>}
     </div>
   </section>;

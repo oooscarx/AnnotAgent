@@ -45,7 +45,7 @@ test("Composer attaches the uploaded content identity and retains it through los
   await page.setViewportSize({width:1440,height:900});
   let guarded=false;
   page.once("dialog",async dialog=>{guarded=true;expect(dialog.type()).toBe("confirm");await dialog.dismiss();});
-  await page.getByRole("button",{name:"Back to project",exact:true}).click();
+  await page.getByRole("button",{name:"← Projects",exact:true}).click();
   expect(guarded).toBe(true);
   expect(new URL(page.url()).pathname).toBe(`/projects/${project}/work`);
   const sends:unknown[]=[];

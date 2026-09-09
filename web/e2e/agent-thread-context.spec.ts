@@ -36,13 +36,14 @@ test("selected goal is context, not a redundant action; other goals remain reach
   expect(writes).toEqual([]);
   for(const width of [1440,1024,390]){
     await page.setViewportSize({width,height:900});
-    await expect(page.getByRole("button",{name:width<=1024?"Show tasks":"Hide tasks",exact:true})).toBeVisible();
+    await expect(page.getByRole("button",{name:"Choose task",exact:true})).toBeVisible();
+    await expect(page.locator(".agent-conversation-navigation")).toHaveCount(0);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     if(width!==1024)await page.screenshot({path:`/tmp/annotagent-thread-context-${width}.png`,fullPage:true});
   }
-  await page.getByRole("button",{name:"Show tasks",exact:true}).click();
-  await expect(page.getByRole("navigation",{name:"Conversations",exact:true}).getByRole("button",{name:"TEST find cups",exact:true})).toHaveAttribute("aria-current","page");
-  await page.getByRole("button",{name:"Hide tasks",exact:true}).click();
+  await page.getByRole("button",{name:"Choose task",exact:true}).click();
+  await expect(page.getByRole("region",{name:"Task selection",exact:true}).getByRole("button",{name:"TEST find cups",exact:true})).toHaveAttribute("aria-current","page");
+  await page.getByRole("button",{name:"Close task selection",exact:true}).click();
   expect(await (await request.get(`${root}/tasks`)).json()).toHaveLength(2);
   for(const task of tasks) expect((await (await request.get(`${root}/tasks/${task}/budget`)).json()).total_reserved_calls).toBe(0);
 });

@@ -49,11 +49,8 @@ import {
 import { isAbortError, queryKeys, workspaceQueries } from "./queryCache";
 import { useRouteQuery } from "./useRouteQuery";
 import {
-  NO_PROJECT_MESSAGE,
   PRIMARY_NAVIGATION,
   PRODUCT_NAME,
-  PRODUCT_TAGLINE,
-  activeSkills,
   type ProductPage,
 } from "./productIdentity";
 import type {
@@ -519,34 +516,13 @@ export function App() {
   const projectLookupError = !selectedProject ? resolvedRouteProject?.error : undefined;
   const projectNotFound = projectLookupError instanceof ApiRequestError && projectLookupError.status===404;
   const loaded = dashboardLoaded && (!routeProjectId || Boolean(selectedProject) || projectNotFound);
-  const isProjectWorkspace = Boolean(routeProjectId);
   const setProjectContext = (id: string) => {
     if (id) window.localStorage.setItem("annotagent.preferredProjectId", id);
     else window.localStorage.removeItem("annotagent.preferredProjectId");
   };
   const openProject = (id: string) => {
-    if (navigate(id ? `/projects/${encodeURIComponent(id)}` : "/projects"))
+    if (navigate(id ? projectWorkPath(id) : "/projects"))
       setProjectContext(id);
-  };
-  const switchProject = (id: string) => {
-    let destination = "/projects";
-    if (id && route.kind === "export")
-      destination = `/projects/${encodeURIComponent(id)}/export`;
-    else if (id && route.kind === "build")
-      destination = `/projects/${encodeURIComponent(id)}/build/${route.step}`;
-    else if (id && route.kind === "projectTrash")
-      destination = projectTrashPath(id, route.objectKind);
-    else if (id && (
-      route.kind === "projectRuns" ||
-      route.kind === "projectRun" ||
-      route.kind === "projectBatch"
-    ))
-      destination = projectRunsPath(id);
-    else if (id && route.kind === "projectReview")
-      destination = projectReviewPath(id);
-    else if (id && route.kind === "project")
-      destination = `/projects/${encodeURIComponent(id)}`;
-    if (navigate(destination)) setProjectContext(id);
   };
   useEffect(() => {
     const resolved = routeProjectId || routeRunProject?.id;
@@ -582,101 +558,20 @@ export function App() {
 
   const focusLayout = usesFocusLayout(route);
   return (
-    <div className={`app-shell ${focusLayout ? "focus-layout" : ""}`} data-layout={focusLayout ? "focus" : "management"}>
+    <div className={`app-shell ${route.kind === "conversation" ? "agent-app-layout" : focusLayout ? "focus-layout" : ""}`} data-layout={route.kind === "conversation" ? "agent" : focusLayout ? "focus" : "management"}>
       <a className="skip-link" href="#main-content">{t("Skip to workspace")}</a>
-      {!focusLayout && <aside className="sidebar aa-dark">
-        <a
-          className="brand"
-          href="/"
-          aria-label={`${PRODUCT_NAME} home`}
-          onClick={(event) => {
-            event.preventDefault();
-            navigate("/");
-          }}
-        >
-          <img
-            className="brand-lockup"
-            src="/brand/core/annotagent-lockup-dark.svg"
-            alt={PRODUCT_NAME}
-          />
-          <img
-            className="brand-mark-compact"
-            src="/brand/core/annotagent-mark-dark-surface.svg"
-            alt=""
-            aria-hidden="true"
-          />
-        </a>
-        <nav aria-label={t("Primary navigation")}>
-          {PRIMARY_NAVIGATION.map((item) => (
-            <Nav
-              key={item.page}
-              icon={item.icon}
-              active={
-                item.page === "projects"
-                  ? route.kind === "projects" ||
-                    route.kind === "project" ||
-                    route.kind === "build" ||
-                    route.kind === "export" ||
-                    route.kind === "projectRuns" ||
-                    route.kind === "projectRun" ||
-                    route.kind === "projectBatch" ||
-                    route.kind === "projectReview"
-                    || route.kind === "projectTrash"
-                  : !isProjectWorkspace && page === item.page
-              }
-              href={item.href}
-              onClick={() => navigate(item.href)}
-            >
-              {t(item.label)}
-            </Nav>
-          ))}
-        </nav>
-        <div className="sidebar-foot">
-          <span className={`live-dot ${connection}`} aria-hidden="true" /> SSE {t(connection)}
-          <small>
-            {events.at(-1)?.kind.replaceAll("_", " ") ?? t("waiting for events")}
-          </small>
-        </div>
-      </aside>}
       <main
         key={`${routeScope}:${routeRetryVersion}`}
         id="main-content"
         aria-busy={!loaded}
         className={page === "review" ? "review-main" : undefined}
       >
-        {focusLayout ? <FocusHeader project={selectedProject} route={route} titleRef={pageTitleRef} loaded={loaded} connection={connection} onNavigate={navigate} /> : <header className="topbar">
-          <div>
-            <span className="product-tagline">{t(PRODUCT_TAGLINE)}</span>
-            <h1 ref={pageTitleRef} tabIndex={-1}>{t(PAGE_TITLES[page])}</h1>
-          </div>
+        {route.kind === "conversation" ? null : focusLayout ? <FocusHeader project={selectedProject} route={route} titleRef={pageTitleRef} loaded={loaded} connection={connection} onNavigate={navigate} /> : <header className="app-topbar">
+          <a className="app-brand" href="/projects" aria-label="AnnotAgent Projects" onClick={event=>{event.preventDefault();navigate("/projects");}}><img src="/brand/core/icons/agent-trace.svg" alt="" aria-hidden="true" />{PRODUCT_NAME}</a>
+          <nav aria-label={t("Primary navigation")}>{PRIMARY_NAVIGATION.map(item=><Nav key={item.page} icon={item.icon} active={item.page==="projects" ? page!=="settings" : page==="settings"} href={item.href} onClick={()=>navigate(item.href)}>{t(item.label)}</Nav>)}</nav>
+          <h1 className="sr-only" ref={pageTitleRef} tabIndex={-1}>{t(PAGE_TITLES[page])}</h1>
+          {selectedProject && <button onClick={()=>openProject(selectedProject.id)}>{t("Back to annotation workspace")}</button>}
           <LanguageSelector />
-          {routeProjectId && <div className="project-switch">
-            {activeSkills(selectedProject).map((skill) => {
-              const profile = visualProfilesForSkills([skill.id])[0];
-              return (
-                <span className="skill-badge" key={skill.id}>
-                  {profile?.icon && (
-                    <img src={profile.icon} alt="" aria-hidden="true" />
-                  )}
-                  {skill.display_name}
-                </span>
-              );
-            })}
-            <span aria-hidden="true">{t("Project context")}</span>
-            <label className="sr-only" htmlFor="active-project">{t("Active project")}</label>
-            <select
-              id="active-project"
-              value={projectId}
-              onChange={(event) => switchProject(event.target.value)}
-            >
-              <option value="">{t(NO_PROJECT_MESSAGE)}</option>
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
-          </div>}
         </header>}
         {visibleError && (
           <div className="error-banner" role="alert">
@@ -709,7 +604,7 @@ export function App() {
           />
         )}
         {loaded && route.kind === "conversation" && (
-          selectedProject ? <ConversationWorkspace key={route.projectId} project={selectedProject} pane={route.pane} classReviewId={route.classReviewId} referenceMessageId={route.referenceMessageId} conversationId={route.conversationId} imageId={route.imageId} draftId={route.draftId} sampleTestId={route.sampleTestId} taskId={route.taskId} humanRequestId={route.humanRequestId} processingOperationId={route.processingOperationId} exportBefore={route.exportBefore} results={route.results} onNavigate={navigate} onNavigationGuardChange={setNavigationGuard} />
+          selectedProject ? <ConversationWorkspace key={route.projectId} project={selectedProject} titleRef={pageTitleRef} pane={route.pane} classReviewId={route.classReviewId} referenceMessageId={route.referenceMessageId} conversationId={route.conversationId} imageId={route.imageId} draftId={route.draftId} sampleTestId={route.sampleTestId} taskId={route.taskId} humanRequestId={route.humanRequestId} processingOperationId={route.processingOperationId} exportBefore={route.exportBefore} results={route.results} onNavigate={navigate} onNavigationGuardChange={setNavigationGuard} />
             : <NotFoundPage invalidPath={route.canonicalPath} onNavigate={navigate} />
         )}
         {loaded && route.kind === "journey" && (

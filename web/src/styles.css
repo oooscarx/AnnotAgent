@@ -40,7 +40,13 @@ code, pre { font-family: var(--aa-font-mono); }
 .sample-feedback-label { display: grid; gap: 8px; max-width: 32rem; margin-block: 16px; }
 .sample-add-missing { justify-self: start; }
 
-.app-shell { display: grid; grid-template-columns: var(--aa-sidebar-width, 15rem) minmax(0, 1fr); min-height: 100vh; }
+.app-shell { display: block; min-height: 100vh; }
+.app-topbar { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; min-height: 52px; padding: 8px 20px; border-bottom: 1px solid var(--aa-border); background: var(--aa-bg); }
+.app-topbar nav { display: flex; align-items: center; gap: 8px; }
+.app-topbar nav a, .app-brand { display: inline-flex; align-items: center; gap: 8px; padding: 6px 8px; color: var(--aa-text); text-decoration: none; font-size: 14px; }
+.app-topbar nav a[aria-current=page] { background: var(--aa-primary-soft); border-radius: var(--aa-radius-sm); }
+.app-topbar img { width: 20px; height: 20px; }
+.app-topbar > :last-child { margin-inline-start: auto; }
 .app-shell.focus-layout { display: block; }
 .journey-scene { width: min(100%, 1120px); margin-inline: auto; padding: clamp(24px, 4vw, 56px); min-height: calc(100dvh - 100px); display: flex; flex-direction: column; gap: 24px; animation: journey-enter 200ms ease-out; }
 .journey-intro { max-width: 800px; }
@@ -1727,7 +1733,6 @@ button[aria-disabled="true"] { cursor: not-allowed; opacity: .55; }
   .run-needs-attention { grid-column: 1 / -1; }
   .run-node-timeline { grid-column: 1 / -1; display: flex; overflow-x: auto; }
   .run-node-timeline > button { min-width: 190px; }
-  .app-shell { grid-template-columns: 6.5rem minmax(0, 1fr); }
   .sidebar { padding-inline: 10px; }
   .brand-lockup { display: none; }
   .brand-mark-compact { display: block; }

@@ -29,6 +29,37 @@ before geometry checks; geometry is not claimed measured in V0.
 Next core commit must remove mounted sidebars and replace the Header, not expand
 queue permissions. V2/V3 and the complete requested acceptance remain pending.
 
+### V1 — actual no-sidebar mount paths
+
+`App.tsx` no longer mounts the old functional aside. PRIMARY_NAVIGATION is exactly
+Projects/Settings, in a horizontal App header. Conversation bypasses FocusHeader;
+`ConversationWorkspace.tsx` replaces the ConversationNavigation import/mount and
+independent surface-controls with AgentProjectHeader. Old navigation width/collapse
+rules are removed, not hidden. Tasks retain real IDs and guarded `/work` selection
+in an on-demand, unmounted-when-closed Header popover. Escape restores focus.
+Project management remains `/projects/:id`, reached from Header → Project menu →
+Project management. It retains existing data/automation/history/review/export and
+trash routes. Main workspace returns now use `projectWorkPath`; old management URLs
+are not redirected, avoiding loops. The routine loaded/SSE banner is absent in work.
+
+Real isolated TEST screenshots, 1440×900 light, no inference:
+[empty workspace](ui-convergence/v1-empty-workspace.png),
+[data workspace](ui-convergence/v1-data-workspace.png),
+[Projects](ui-convergence/v1-projects.png).
+[Build/route metadata](ui-convergence/v1-metadata.json) records the baseline SHA plus
+dirty V1 edits and actual loaded JS asset. Server serves rebuilt disk web/dist via
+ServeDir (not an old embedded frontend), isolated 8791 workspace
+`/tmp/annotagent-guided-e2e-85770`. User 8787 untouched.
+
+Validation: typecheck passed; Web unit 245/245 (69604); production build passed with
+existing large-chunk warning; six relevant E2E passed (65612): no sidebar DOM,
+52±4px header, centered max-width Composer, full-width two-pane allocation, real
+task popover, management return, Settings navigation, pane refresh, IME/Shift+Enter,
+single Send, frozen attachment and lost-ack retry. Updated obsolete navigation unit
+assertion after its expected initial failure (244 passed/1 old-contract failure).
+Full regression and V3 six final states have not run. V1 screenshots still show
+legacy budget/form presentation; V2 must address those, not claim visual completion.
+
 ## Current checkpoint — M3 queue/Builder integration in progress (2026-09-09)
 
 Current implementation spans M1 layout/Composer, M2 enforced planning and M3

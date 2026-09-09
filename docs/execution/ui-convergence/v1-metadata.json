@@ -1,0 +1,15 @@
+{
+  "sha": "7e3212ba66c18f7179528b6e203f8bc1fb22c2a6",
+  "dirty": true,
+  "url": "http://127.0.0.1:8791/projects/TEST-ui-convergence-1788942376590/work?pane=artifacts&image=b9a365a7-9c51-51dc-9588-066148dd3b60",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "theme": "light",
+  "data": "TEST synthetic image; no inference",
+  "service": "real isolated AnnotAgent server 8791",
+  "bundles": [
+    "/assets/index-DEAJpQ3R.js"
+  ]
+}
