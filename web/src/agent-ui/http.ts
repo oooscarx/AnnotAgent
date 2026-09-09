@@ -2,6 +2,7 @@ import { api, ApiRequestError, request, type JourneyPreview, type JourneyConsent
 import type { ImageItem, ProviderProfile, RegistryModelProfile, GlobalModelDefaults, ExpertPluginRegistry, InstalledModelInstance, ConversationSchemaPreview, ConversationCallReceipt, ConversationBuilderItem, WorkflowSampleTestRecord, SampleFeedbackRevision, ExportReadiness, ProjectExportResult } from "../types";
 import { terminalSampleAnnotations } from "../sampleAnnotations";
 import { sampleFeedbackOverlay } from "../sampleFeedbackOverlay";
+import { sampleRisks } from "./sampleRisks";
 import { callStage, failureDetail } from "./ExecutionProgress";
 import type { HumanRequest } from "../conversation-human-api";
 import type { QueuedMessage } from "../components/ConversationQueue";
@@ -222,7 +223,7 @@ export class HttpAdapter implements WorkspaceAdapter {
             if(pi>=0&&prior.report.samples[pi])result.beforeRepair.boxes[input.image_id]=terminalSampleAnnotations(prior.report.samples[pi],input.image_id,prior.id).flatMap(a=>a.value.kind==="bounding_box"?[{id:a.id,label:a.label||"",x:a.value.rect[0]*dims.width,y:a.value.rect[1]*dims.height,w:a.value.rect[2]*dims.width,h:a.value.rect[3]*dims.height}]:[]);
           }
           boxesByImage[input.image_id]=annotations.flatMap(a=>a.value.kind==="bounding_box"?[{id:a.id,label:a.label || "",x:a.value.rect[0]*dims.width,y:a.value.rect[1]*dims.height,w:a.value.rect[2]*dims.width,h:a.value.rect[3]*dims.height}]:[]);
-          imageResults[input.image_id]={labels:annotations.flatMap(a=>a.value.kind==="classification"?a.value.labels:[]),risks:sample.projection?.review_candidates.map(r=>r.explanation.summary) || (sample.projection?[]:["旧样例没有终端投影，未显示中间框"])};
+          imageResults[input.image_id]={labels:annotations.flatMap(a=>a.value.kind==="classification"?a.value.labels:[]),risks:sampleRisks(sample)};
           if(human?.input.image_id===input.image_id) {
             const annotation=annotations.find(a=>a.id===human.input.outcome_id);
             if(!annotation) throw new Error("人工请求的候选不是当前样例终端结果；没有替换成其他候选");
