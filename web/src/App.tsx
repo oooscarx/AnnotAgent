@@ -28,7 +28,8 @@ import {
   isEnvironmentVariableName,
 } from "./providerCatalog";
 import { visualProfilesForSkills } from "./skills/visualProfiles";
-import { projectOriginalRectToSubmitted, workflowNodeTitle, guidedWorkflowNodes, guidedPipelineStepGroups, pipelineNodeOutput, pipelineNodeKind, pipelineNodeParameters, workflowNodeModelCapability, decodeCocoRleMask, artifactMasks, artifactRects, artifactCrops, evidenceGateReport, geometrySemanticsLabel, scoreSemanticsLabel, artifactDetectionMarks, artifactCropMarks, annotationDetectionMarks, clampUnit, guidedWorkflowConcept, parseArtifactRect, artifactPolygonBounds, geometryStateFromDetection, artifactVisualContext, markColor, detectionScoreValue, parseDetectionEvidence, type ArtifactRect, type ArtifactMask, type ArtifactMark, type ModelInputTraceView } from "./pipelinePresentation";
+import { projectOriginalRectToSubmitted, workflowNodeTitle, guidedWorkflowNodes, guidedPipelineStepGroups, pipelineNodeOutput, pipelineNodeKind, pipelineNodeParameters, workflowNodeModelCapability, artifactMasks, artifactRects, artifactCrops, evidenceGateReport, geometrySemanticsLabel, scoreSemanticsLabel, artifactDetectionMarks, artifactCropMarks, annotationDetectionMarks, clampUnit, guidedWorkflowConcept, parseArtifactRect, artifactPolygonBounds, geometryStateFromDetection, artifactVisualContext, markColor, detectionScoreValue, parseDetectionEvidence, type ArtifactRect, type ArtifactMark, type ModelInputTraceView } from "./pipelinePresentation";
+import {ArtifactMaskLayer} from "./components/ArtifactMaskLayer";
 import { annotationColor, annotationVisual, type LabelVisualMapping } from "./annotationVisuals";
 import { deriveProjectRunView } from "./runState";
 import { projectForReview, projectForRun, resolvedReviewProjectId, resolvedRunProjectId, runsForContext } from "./workspaceContext";
@@ -5556,35 +5557,6 @@ function PipelineArtifactInspector({
 
 
 
-function ArtifactMaskLayer({ masks }: { masks: ArtifactMask[] }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const first = masks[0];
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !first) return;
-    canvas.width = first.width;
-    canvas.height = first.height;
-    const context = canvas.getContext("2d");
-    if (!context) return;
-    const pixels = context.createImageData(first.width, first.height);
-    for (const mask of masks) {
-      if (mask.width !== first.width || mask.height !== first.height) continue;
-      const decoded = decodeCocoRleMask(mask.width, mask.height, mask.counts);
-      if (!decoded) continue;
-      decoded.forEach((active, index) => {
-        if (!active) return;
-        const offset = index * 4;
-        pixels.data[offset] = 24;
-        pixels.data[offset + 1] = 153;
-        pixels.data[offset + 2] = 171;
-        pixels.data[offset + 3] = Math.min(150, pixels.data[offset + 3] + 82);
-      });
-    }
-    context.putImageData(pixels, 0, 0);
-  }, [masks, first]);
-  if (!first) return null;
-  return <canvas ref={canvasRef} className="artifact-mask-layer" aria-hidden="true" />;
-}
 
 
 

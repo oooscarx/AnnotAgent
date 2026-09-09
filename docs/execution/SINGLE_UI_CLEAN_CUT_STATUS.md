@@ -1,5 +1,13 @@
 # Single UI Clean Cut
 
+## Extracted native Mask rendering
+
+Moved `ArtifactMaskLayer` out of the old root into a reusable component; the old temporary caller and native Artifact preview now share it. Native preview supports valid COCO RLE only at exact original image dimensions and keeps source pixels separate from the overlay. Unsupported/invalid/mismatched masks are explicitly described rather than stretched or replaced with boxes. Polygon/transformed-region display and full replay remain missing, as do final history-scope and old-root removal.
+
+Own verification: typecheck/isolated build,313 unit tests and17 management browser tests passed (15 real TEST HTTP, two explicitly intercepted Worker/Mask response fixtures). The Mask browser case checks one known RLE pixel, adjacent transparent pixels, original-toggle removing the layer and zero writes. Browser premultiplied-alpha round-trip produced RGB25/152/171 versus requested24/153/171; tolerance is now one RGB level only, with exact alpha/geometry assertions. No claim of real SAM inference or model quality. Shared helper unit tests cover invalid RLE, dimension mismatch, source immutability and allocation bounds. No Rust changed.
+
+Backend worktree still has uncommitted history-scope work; no new delivered commit exists beyond UIAPI-013, so it was not imported or overwritten. TEST service owned on8794/8795 stopped after checks. User servers, workspace and web/dist untouched; no push. Goal active.
+
 ## Native Artifact visual inspection and deep links
 
 RunInspector now selects saved input/output Artifact IDs through the URL, restores them on refresh/popstate, and rejects missing IDs without silently selecting another object. A native read-only preview reuses shared detection/Crop geometry and stable label colors. It renders the exact owned image endpoint at its natural aspect ratio, bounded non-scaling strokes, an accessible object list, semantic/geometry facts and parent references. Crop views use original image coordinates without changing source pixels. Missing/mismatched image identity or a non-null transformed root region refuses preview instead of guessing. Mask/polygon visualization, transformed-image inputs, zoom/linked comparison and Replay are still incomplete; their raw data remains accessible, not presented as a final bbox.

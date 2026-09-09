@@ -1,6 +1,19 @@
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
+test("controlled mask response fixture renders exact RLE pixels and original toggle removes overlay",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const run="4d348027-ff6e-4241-a46c-1c2b6c7aaaef";const endpoint=`/api/runs/${run}/pipeline-artifacts`;
+  const inspection=await(await request.get(endpoint)).json();const node=inspection.nodes[0];const source=node.outputs[0].artifact;
+  node.outputs=[{kind:"mask_set",artifact:{image_id:inspection.image_id,reference:{artifact_id:"TEST-mask"},masks:[{mask_id:"TEST-pixel",mask:{encoding:"coco_rle",width:source.width,height:source.height,counts:`0 1 ${source.width*source.height-1}`}}]}}];
+  await page.route(`**${endpoint}`,route=>route.fulfill({json:inspection}));const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});
+  await page.goto(`/projects/${inspection.project_id}/manage/runs/${run}?view=debug&node=${encodeURIComponent(node.node_id)}&artifact=TEST-mask`);
+  const region=page.getByRole("region",{name:"中间产物预览",exact:true});const canvas=region.locator("canvas");await expect(canvas).toBeVisible();
+  // Browser canvas round-trips premultiplied alpha; tolerate one RGB level, not geometry/alpha drift.
+  const expected=[24,153,171,82,0,0,0,0];
+  await expect.poll(async()=>{const pixels=await canvas.evaluate((c:HTMLCanvasElement)=>Array.from(c.getContext("2d")!.getImageData(0,0,2,1).data));return pixels.every((v,i)=>Math.abs(v-expected[i])<=(i<3?1:0));}).toBe(true);
+  await region.getByRole("button",{name:"只看原图",exact:true}).click();await expect(canvas).toHaveCount(0);expect(writes).toEqual([]);
+});
 test("native Artifact deep link shows its actual input image and refresh remains passive",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
   const run="4d348027-ff6e-4241-a46c-1c2b6c7aaaef";

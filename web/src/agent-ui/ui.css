@@ -1080,6 +1080,7 @@ caption {
 .native-artifact-image { position: relative; width: 100%; max-width: 960px; }
 .native-artifact-image img { display: block; width: 100%; height: auto; }
 .native-artifact-image > svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.native-artifact-image > .artifact-mask-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .native-artifact-preview ul { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; padding: 0; }
 .native-artifact-crops { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(180px,100%),1fr)); gap: 16px; }
 .native-artifact-crops figure { margin: 0; min-width: 0; overflow-wrap: anywhere; }
