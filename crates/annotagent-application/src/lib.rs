@@ -9447,6 +9447,24 @@ impl LocalApplication {
         Ok(self.store.project_conversation(&owner)?)
     }
 
+    /// Read an owned admission receipt without repeating a command or granting execution.
+    pub fn project_conversation_send_receipt(
+        &self,
+        project_id: &str,
+        conversation: uuid::Uuid,
+        message: uuid::Uuid,
+    ) -> Result<
+        Option<(
+            annotagent_storage::ConversationSendInput,
+            annotagent_storage::ConversationSendReceipt,
+        )>,
+    > {
+        let owner = self.conversation_project_identity(project_id)?;
+        Ok(self
+            .store
+            .conversation_send_receipt(&owner, conversation, message)?)
+    }
+
     /// Admit one frozen send command without granting inference or execution.
     pub fn send_project_conversation_message(
         &self,

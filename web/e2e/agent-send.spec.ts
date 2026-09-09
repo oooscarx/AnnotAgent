@@ -14,6 +14,11 @@ test("server send freezes task admission without inference or duplicate tasks", 
   expect(firstResponse.ok(), await firstResponse.text()).toBe(true);
   const first = await firstResponse.json();
   expect(first.disposition).toBe("new_task");
+  const recovered = await (await request.get(`${root}/send/${input.message.id}`)).json();
+  expect(recovered.receipt).toEqual(first);
+  expect(recovered.input).toEqual(input);
+  expect(await (await request.get(`${root}/send/${randomUUID()}`)).json()).toBeNull();
+  expect((await request.get(`/api/projects/foreign-owner/conversations/${conversation}/send/${input.message.id}`)).ok()).toBe(false);
   expect(await (await request.post(`${root}/send`, { data: input })).json()).toEqual(first);
   expect((await request.post(`${root}/send`, { data: { ...input, task_id: first.task_id } })).ok()).toBe(false);
   expect((await request.post(`${root}/send`, { data: { ...input, execute: true } })).ok()).toBe(false);
@@ -26,6 +31,39 @@ test("server send freezes task admission without inference or duplicate tasks", 
   const budget = await (await request.get(`${root}/tasks/${first.task_id}/budget`)).json();
   expect(budget.total_authorized_calls).toBe(0);
   expect(budget.total_reserved_calls).toBe(0);
+});
+
+for (const admitted of [true, false]) test(`pending send refresh reads receipt without repeating POST (admitted=${admitted})`, async ({ page, request }) => {
+  const project = `TEST-send-refresh-${admitted}-${Date.now()}`;
+  expect((await request.post("/api/projects", { data: { id: project, yaml:
+    "version: 1\nproject:\n  name: TEST send refresh\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n",
+  } })).ok()).toBe(true);
+  const commands: unknown[] = [];
+  await page.route(`**/projects/${project}/conversations/*/send`, async route => {
+    commands.push(route.request().postDataJSON());
+    if (commands.length === 1) {
+      if (admitted) expect((await fetchWithinMutationLimit(route)).ok()).toBe(true);
+      await route.abort("failed");
+    } else await route.continue();
+  });
+  await page.goto(`/projects/${project}/work`);
+  const input = page.getByRole("textbox", { name: "Your message", exact: true });
+  await input.fill("TEST original frozen target");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Retry same send", exact: true })).toBeEnabled();
+  await page.reload();
+  if (admitted) {
+    await expect(input).toHaveValue("");
+    await expect(page.getByRole("list", { name: "Saved messages", exact: true })).toContainText("TEST original frozen target");
+    expect(commands).toHaveLength(1);
+  } else {
+    await expect(input).toHaveValue("TEST original frozen target");
+    await expect(page.getByRole("button", { name: "Retry same send", exact: true })).toBeEnabled();
+    expect(commands).toHaveLength(1);
+    await page.getByRole("button", { name: "Retry same send", exact: true }).click();
+    await expect(input).toHaveValue("");
+    expect(commands[1]).toEqual(commands[0]);
+  }
 });
 
 test("Composer retries the identical frozen send after a lost acknowledgement", async ({ page, request }) => {

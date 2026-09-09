@@ -276,3 +276,30 @@ separate existing recovery). Successful-message refresh is tested and never re-P
 it does not prove pending-send refresh. Plan policy, approval binding, queued execution,
 model picker, advanced form reduction and final visual deliverables remain incomplete.
 No Live call, push, remote modification or user-data cleanup.
+
+## Pending-send refresh recovery
+
+Previous turn was progress (2b6a57c unified Send and frozen in-view retry). Added owned,
+read-only GET `/conversations/:conversation/send/:message` returning the saved command and
+receipt or null. The client stores a pending command in this tab's sessionStorage before
+POST; storage failure stops admission rather than sending an unrecoverable request. Reload
+validates the pending envelope and reads that exact server receipt. A matching persisted
+receipt restores the message and clears pending input; a missing/failed GET retains the
+original command for explicit Retry same send. GET/mount never posts or grants model calls.
+The existing AbortController guards prevent an old receipt response from overriding a newer
+view. No published plan, grant or model binding is reconstructed from local storage.
+
+Web typecheck/token check and 238 unit tests passed (45247), including malformed pending
+envelopes and semantic command comparison. Four real isolated HTTP/browser cases passed
+twice (45247, final 88936), covering lost response after server admission, transport failure
+before admission, refresh with zero new POSTs, exact manual retry, same-page retry and
+foreign-owner/missing receipt reads. Fresh production builds ran. Application/Server
+all-target/all-feature clippy passed 40655 after correcting a map/unwrap lint. Initial npm
+typecheck was accidentally invoked at repo root and failed; rerun from web passed. No claim
+of full Rust/E2E, native zoom, Live quality or human usability validation.
+
+This closes pending-command recovery within the same browser tab; it is not a cross-device
+outbox, queued execution or unsent-text persistence. SessionStorage loss cannot restore text
+the server never received. Old broad E2E selectors and new-task navigation remain work, along
+with the central missing Plan/approval/queue/model contracts and final visual delivery.
+No push, remote change, real workspace restart/cleanup or paid invocation.

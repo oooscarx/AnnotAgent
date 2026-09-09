@@ -28,6 +28,7 @@ import { imageClassApi, type ImageClassReview } from "../conversation-image-clas
 import { mergeImageClassReview } from "../conversation-image-class";
 import { ConversationNavigation } from "./ConversationNavigation";
 import { AgentComposer } from "./AgentComposer";
+import { parsePendingSend, sameSendCommand } from "../conversation-send";
 
 /** The journal and image importer share the existing Project; neither starts inference. */
 export function ConversationWorkspace({ project, pane, conversationId, imageId, draftId, sampleTestId, taskId, humanRequestId, classReviewId, referenceMessageId, processingOperationId, exportBefore, results, onNavigate, onNavigationGuardChange }: {
@@ -179,6 +180,7 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
   const frozenTask = useRef<{ id: string | null; revision?: string }>({id:null});
   const stopConversation = useRef<string | null>(null);
   const stopStorageKey = `annotagent.stop-send:${project.id}`;
+  const sendStorageKey = `annotagent.pending-send:${project.id}`;
   const alive = useRef(true);
   const selected = images.find((image) => image.image_id === imageId) ?? (!imageId ? images[0] : undefined);
   const availableMessages = [...messages, ...messageContext];
@@ -232,6 +234,24 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
       if (controller.signal.aborted) return;
       setMessageContext(context); setDefaultGoal(initialGoal);
       setConversation(current.conversation_id ?? undefined); setImages(dataset.images); setMessages(previous => current.conversation_id ? mergeConversationMessages(previous, saved, current.conversation_id) : []);
+      try {
+        const previous = parsePendingSend(sessionStorage.getItem(sendStorageKey));
+        if (previous && previous.conversation === current.conversation_id && !pending.current && (!frozen.current || frozen.current.id === previous.input.message.id) && (!unsent.current || unsent.current === previous.input.message.text)) {
+          frozenSend.current = previous; frozen.current = previous.input.message;
+          frozenTask.current = {id:previous.input.task_id,revision:previous.input.schema_revision};
+          unsent.current = previous.input.message.text; setText(previous.input.message.text);
+          setStatus("Checking the original send receipt. Refresh does not resend the command.");
+          const recovered = await api.conversationSendReceipt(project.id, previous.conversation, previous.input.message.id, controller.signal);
+          if (controller.signal.aborted) return;
+          if (recovered) {
+            if (!sameSendCommand(recovered.input, previous.input)) throw new Error("Saved send context conflicts with the pending command. No retry was performed.");
+            setMessages(items=>mergeConversationMessages(items,[recovered.receipt.message],previous.conversation));
+            sessionStorage.removeItem(sendStorageKey);
+            frozenSend.current=undefined; frozen.current=undefined; unsent.current=""; setText("");
+            setStatus("Original message recovered from the server. No command or model call was repeated.");
+          } else setStatus("This send has no saved receipt. Retry same send keeps its original scope; nothing was resent on refresh.");
+        }
+      } catch (reason) { if (!controller.signal.aborted) setError((reason as Error).message); }
       try {
         const previous = parsePendingStop(sessionStorage.getItem(stopStorageKey));
         if (previous && (!previous.conversation_id || previous.conversation_id === current.conversation_id) && !pending.current) {
@@ -310,6 +330,9 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
         return;
       }
       if (!frozenSend.current) frozenSend.current = {conversation:id,input:{message:input,task_id:frozenTask.current.id,schema_revision:frozenTask.current.revision ?? (await api.projectGoal(project.id)).revision}};
+      // Persist before POST. If storage is unavailable, do not send a command that
+      // the browser cannot recover after a lost acknowledgement and refresh.
+      sessionStorage.setItem(sendStorageKey, JSON.stringify(frozenSend.current));
       const receipt = await api.submitConversationMessage(project.id, frozenSend.current.conversation, frozenSend.current.input);
       const saved = receipt.message;
       if (saved.input.id !== input.id || saved.conversation_id !== id) throw new Error("Send receipt does not match the frozen command.");
@@ -322,6 +345,7 @@ export function ConversationWorkspace({ project, pane, conversationId, imageId, 
         if(!alive.current)return;
       }
       setTasks(existing);
+      sessionStorage.removeItem(sendStorageKey);
       frozen.current = undefined; frozenSend.current=undefined; unsent.current = ""; setText(""); setPinnedSelection(undefined); setStatus("Message sent and saved. No new model call was authorized.");
       if(receipt.disposition === "new_task"){
         pending.current=false;

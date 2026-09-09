@@ -138,6 +138,20 @@ pub(super) async fn send(
         .map_err(ApiError::bad_request)
 }
 
+pub(super) async fn send_receipt(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, message)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+) -> ApiResult<Json<Value>> {
+    let receipt = state
+        .application
+        .project_conversation_send_receipt(&project, conversation, message)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(receipt.map_or(
+        Value::Null,
+        |(input, receipt)| json!({"input":input,"receipt":receipt}),
+    )))
+}
+
 pub(super) async fn tasks(
     State(state): State<ServerState>,
     AxumPath((project, conversation)): AxumPath<(String, uuid::Uuid)>,
