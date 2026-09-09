@@ -46,8 +46,9 @@ sample services continue under that grant. A real SIGKILL/restart test verifies 
 operation resumes once, without another feedback revision or budget reset (027b8ea). An expired,
 revoked or changed binding still blocks inference without discarding the saved correction.
 
-Last fully Rust-verified production code is 2502ab3. Full Rust fmt/clippy/test/build process 6393 exited 0
-(713 tests passed, 6 explicitly ignored); see `/tmp/annotagent-rust-post-binding-20260909.log`.
+Last fully Rust-verified production code is befcaa0. Full Rust fmt/clippy/test/build process
+26940 exited 0 (714 tests passed, 6 explicitly ignored); see
+`/tmp/annotagent-rust-export-schema-final.log`.
 Web typecheck, 231 unit tests and production build passed. The 178-case browser sweep
 37872 exited 1: 156 passed, one Review ownership failure, 21 serial cases did not run.
 Log: `/tmp/annotagent-web-combined-20260909.log`. The Review pagination repair passed Web
@@ -5711,3 +5712,20 @@ the temporary Run cleanup and retained export data), Application+Storage all-tar
 clippy. No real Run or file was deleted. Browser 66282 remains live against the pre-export-change
 server; it is not evidence for this change. Full Rust and fresh browser archive assertions are
 still required. Existing exports and Published Versions were not modified; no push/remotes.
+
+### 2026-09-09 — Full post-Schema Rust pass; browser test-only rate bypass found
+
+26940 exited 0 for all four full Rust commands: fmt, workspace/all-target/all-feature clippy,
+workspace/all-feature tests (**714 passed, 6 ignored**) and workspace/all-feature build.
+Log: `/tmp/annotagent-rust-export-schema-final.log`. This covers befcaa0, including actual
+export restart, Schema conflicts and retained annotation definitions. No Live quality claim.
+
+Browser 66282 is still live but case 79 failed: its intercepted canvas answer used
+`route.continue`, bypassing the shared fixture's `fetchWithinMutationLimit` handler. The server
+correctly returned `mutation_rate_limited` 429 before execution. The interceptor now uses
+`route.fallback` with the same answer body so the existing bounded test-only pacing applies.
+It still only retries the explicit pre-execution code, never an unknown Provider outcome;
+production security limits are unchanged. The non-intercepted UI cases remain independent.
+Trace/error/screenshot retained in `/tmp/annotagent-joint-rate-failure` before any new runner.
+The file's current worker was already running, so this change requires a later targeted run.
+The fresh export-Schema browser assertions must likewise wait for the current suite to finish.

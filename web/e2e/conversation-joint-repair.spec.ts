@@ -41,7 +41,9 @@ test("preauthorized pending correction waits without inference and the saved ans
   let answerBody: any;
   await page.route(`**${state.taskRoot}/human-requests/${help.input.id}/answer`, async route => {
     answerBody = { ...route.request().postDataJSON(), journey_consent_id: consent.id };
-    await route.continue({ postData: JSON.stringify(answerBody) });
+    // Preserve the suite's existing pre-execution mutation-rate pacing handler.
+    // continue() bypasses it and fails only when a full run fills the shared window.
+    await route.fallback({ postData: JSON.stringify(answerBody) });
   });
   await page.goto(`${state.url}&request=${help.input.id}`);
   await page.getByLabel("Correct label", { exact: true }).fill("cup");
