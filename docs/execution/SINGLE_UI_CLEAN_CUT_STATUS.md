@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Native geometry policy and calibration evidence
+
+Added GeometryEvidence to native immutable Workflow detail behind an unmounted-until-open disclosure. Reuses actual HttpAdapter geometry policy/calibration reads; no old GeometrySafetyPanel import. Shows project-level requirements, effective/original calibration state, measured metrics versus unknown, stale reasons and exact evidence scope. Explicitly does not claim a project report calibrates the viewed version. Generation cleanup prevents old reads replacing a newer project/read.
+
+Initial HTTP check caught distinct namespaces: policy/calibration project_id is Core stable UUID, while summary/model-bindings outer project_id and URL are the route slug. Verified application project_geometry_policies and server registry_project_id resolve via project_path, not Active Project/name guesses. Removed invalid UUID==slug assertion; rely on project-scoped server endpoints, reject mixed Core IDs and never synthesize a UUID. Real frozen-version HTTP case now passes lazy mounting, actual empty calibration response, refresh, immutable snapshot/compare and invalid-version handling with zero writes. 319 unit tests across97 files and build/typecheck passed; /tmp/annotagent-native-geometry-evidence-dist, source69c2d21 plus slice. No fixture response replacement, paid calls, real data/user-service or Rust changes. Creation of calibration and proposal improvement/comparison/application remain required before retiring the old panel. Full goal not complete.
+
 ## Actual HTTP parity for manual classification and mask additions
 
 Added three browser scenarios for classification, semantic_mask and instance_mask. Each defines only TEST labels, adds through native HumanAnnotation, changes label, undoes and changes again, saves exactly once, checks actual server-owned Review/value/source/status, follows the native Review link and refreshes without a second write. All three passed (2.9 s). Initial mask assertions exposed expected f32 serialization, verified directly in Core NormalizedPoint; assertions now require the exact Math.fround representation of each coordinate, not a broad geometry tolerance. The classification label/value synchronization passed unchanged. An additional preexisting manual Schema scenario passed in the first broader test selection.
