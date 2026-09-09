@@ -1,0 +1,15 @@
+.delivery-intake { margin-block: 16px; padding-block: 12px; border-block: 1px solid var(--aa-border); }
+.delivery-intake-heading, .delivery-intake-selection, .delivery-intake-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.delivery-intake-heading { justify-content: space-between; }
+.delivery-intake form { display: grid; gap: 16px; padding-top: 12px; max-width: 680px; }
+.delivery-intake fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+.delivery-intake legend { margin-bottom: 8px; }
+.delivery-intake form > label { display: grid; gap: 8px; }
+.delivery-intake textarea, .delivery-intake select { width: 100%; min-width: 0; padding: 9px 12px; border: 1px solid var(--aa-border); border-radius: 8px; background: var(--aa-bg); }
+.delivery-intake p, .delivery-intake small { margin: 0; line-height: 1.6; overflow-wrap: anywhere; }
+.delivery-intake-images { display: grid; gap: 8px; max-height: 180px; overflow: auto; padding-block: 10px; }
+.delivery-intake-images label { display: flex; gap: 8px; align-items: start; overflow-wrap: anywhere; }
+.delivery-intake-images input { flex: none; }
+.delivery-intake-images span { min-width: 0; }
+.delivery-intake-actions button { border-color: var(--aa-border); }
+@media (max-width: 600px) { .delivery-intake-actions { align-items: stretch; } .delivery-intake-actions button { flex: 1 1 140px; } }

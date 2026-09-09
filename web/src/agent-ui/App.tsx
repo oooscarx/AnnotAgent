@@ -23,6 +23,7 @@ import { PlanBlock } from "./PlanBlock";
 import { SettingsView } from "./Settings";
 import { ArtifactPane } from "./ArtifactPane";
 import { ExecutionProgress } from "./ExecutionProgress";
+import { DeliveryIntake } from "./DeliveryIntake";
 import { routeProject, taskLocation } from "./routes";
 import { parseAgentRoute } from "./navigationContract";
 export const phaseNames: Record<Phase, string> = {
@@ -521,6 +522,7 @@ export function AgentPreviewApp({
                           )}
                         </div>
                         {!fixture && !!task.receipts?.length && <ExecutionProgress receipts={task.receipts} />}
+                        {!fixture && adapter.deliveryIntake && !task.id.startsWith("new:") && <DeliveryIntake key={task.id} service={adapter.deliveryIntake} project={task.project} task={task.id} locked={active} images={state.artifacts.filter(i => i.project === task.project).map(i => ({id:String(i.id),name:i.name}))} />}
                         {!fixture && !active && !task.approval && adapter.prepareAction && task.items.length > 0 && <div className="task-next-actions">
                           {(() => {
                             const choices = [{kind:"plan" as const,label:"查看规划授权",icon:"plan" as const},{kind:"sample" as const,label:"构建方案并测试样例…",icon:"image" as const},...(task.sample?[{kind:"process" as const,label:"确认方案并开始处理…",icon:"play" as const}]:[]),{kind:"export" as const,label:"导出…",icon:"download" as const}];

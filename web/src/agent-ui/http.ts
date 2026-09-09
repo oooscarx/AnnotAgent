@@ -36,6 +36,10 @@ const initialSettings: Settings = { revision: "", theme: "system", language: "zh
 
 /** Only this boundary knows HTTP routes. Reads never create conversations, tasks or execution. */
 export class HttpAdapter implements WorkspaceAdapter {
+  readonly deliveryIntake: import("./DeliveryIntake").DeliveryIntakeService = {
+    read: (project, id, signal) => { const task = this.task(id); if (task.project !== project) throw new Error("任务不属于此项目"); return this.transport(`${this.taskRoot(task)}/delivery-intent`, { signal }); },
+    save: (project, id, input) => { const task = this.task(id); if (task.project !== project) throw new Error("任务不属于此项目"); return this.transport(`${this.taskRoot(task)}/delivery-intent`, { method: "POST", body: JSON.stringify(input) }); },
+  };
   readonly kind = "http" as const;
   private state: Snapshot = { loading: true, projects: [], tasks: [], models: [], artifacts: [], usage: [], knownCost: "", protectedCache: 0, settings: initialSettings };
   private listeners = new Set<() => void>();
