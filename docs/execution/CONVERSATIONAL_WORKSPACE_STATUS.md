@@ -5729,3 +5729,48 @@ production security limits are unchanged. The non-intercepted UI cases remain in
 Trace/error/screenshot retained in `/tmp/annotagent-joint-rate-failure` before any new runner.
 The file's current worker was already running, so this change requires a later targeted run.
 The fresh export-Schema browser assertions must likewise wait for the current suite to finish.
+
+### 2026-09-09 — Combined sweep terminal; exact-source test fixtures and archive checks
+
+66282 exited 1: **158 passed, 2 failed, 18 did not run (23.2m)**. Besides the previously
+diagnosed intercepted-answer 429, the active-Run fixture dereferenced an absent Project in
+the paged dashboard. This failure is test setup, before any production assertion. It now
+uses the exact `/api/projects/:id/summary` response and inserts that fixture explicitly into
+the test inventory. The Review canonical-owner fix passed its former failure; the whole
+Guided group did not pass. A commentary inferred too much from the log tail and was explicitly
+corrected once the complete terminal output was available.
+
+Retained second failure trace/screenshot/context under `/tmp/annotagent-active-fixture-page-failure`.
+After the sample test file finished, added real native archive assertions: its task must exist
+in exported Schema, have the annotation's kind and contain its label. These assertions were
+not executed by that already-running file. Started 12822: Web typecheck/unit, then joint-repair,
+all sample paths and Guided management against a fresh server containing the latest Rust fix.
+Log `/tmp/annotagent-export-schema-browser-verified.log`, screenshots under
+`/tmp/annotagent-export-schema-browser-verified`. Result pending. No production limiter changes,
+no real Workspace writes, no push or remote edits.
+
+### 2026-09-09 — Latest real archive assertions and management sweep pass
+
+12822 exited 0: Web typecheck, **232 unit tests**, fresh server/build and **50/50 browser
+tests (4.5m)** across joint repair, all sample variants and the 36-case Guided suite.
+This verifies the fallback pacing change, exact-project active-state fixture, both native
+Schema assertions, actual Review/save/export paths and retained lifecycle tests. Production
+Rust is befcaa0. No skipped cases in this targeted sweep. Full combination still pending.
+
+Read actual fresh export JSON, not just UI status, from workspace
+`/tmp/annotagent-guided-e2e-36132`:
+
+- Bbox delivery `7e787e5e-9125-4aa7-abc4-dc8f272d2bdd`, task
+  `c0341730-f299-4f83-a330-2e71262998ca`, folder
+  `conversation-samples-1788918820007/exports/deliveries/7e787e5e-9125-4aa7-abc4-dc8f272d2bdd`.
+  Schema contains `annotation_c0341730f2994f83a3302e71262998ca`, kind `bounding_box`, label
+  `cup`; its human-accepted annotation references exactly that task.
+- Classification delivery `69a05ff3-94a9-404d-abd7-3cd61c2cfc11`, task
+  `ea5b8f44-ae7e-44d9-af94-7e6ce6e4385d`, folder
+  `conversation-samples-1788918869957/exports/deliveries/69a05ff3-94a9-404d-abd7-3cd61c2cfc11`.
+  Schema contains `annotation_ea5b8f44ae7e44d9af947e6ce6e4385d`, kind `classification`, labels
+  `室内` and `室外`; the accepted result is `室外` with matching task ID.
+
+These are isolated protocol fixtures, not real recognition or accuracy evidence. Screenshots
+are in `/tmp/annotagent-export-schema-browser-verified`; historical dirty screenshots remain
+untouched. A final 178-case combined run must verify current production and test code together.

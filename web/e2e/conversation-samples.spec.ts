@@ -765,6 +765,10 @@ test(`conversation ${scenario} authorizes HTTP fixture samples and restores edit
       expect(exported.project.annotations[0].review_status).toBe("human_accepted");
       expect(exported.project.annotations[0].task_id).toBeTruthy();
       expect(exported.project.annotations[0].task_id).not.toBe("unbound");
+      const exportedTask = exported.project.schema.tasks.find((task:{id:string}) => task.id === exported.project.annotations[0].task_id);
+      expect(exportedTask, "native delivery must contain the frozen annotation task, not an empty current Project Schema").toBeTruthy();
+      expect(exportedTask.kind).toBe(exported.project.annotations[0].value.kind);
+      expect(exportedTask.labels).toContain(exported.project.annotations[0].label);
       await expect(page.getByRole("heading",{name:"Dataset exported successfully",exact:true})).toBeVisible();
       for (const restored of [false,true]) {
         if(restored) await page.reload();

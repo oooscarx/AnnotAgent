@@ -1191,10 +1191,13 @@ test("Review workspace has tablet and mobile layouts without horizontal overflow
 
 test("an active Run restores from the server and locks duplicate Start", async ({ page, request }) => {
   const state = await dashboard(request);
-  const project = state.projects.find((item: { id: string }) => item.id === projectId);
   const summaryResponse = await request.get(`/api/projects/${projectId}/summary`);
   expect(summaryResponse.ok()).toBeTruthy();
   const summary = await summaryResponse.json();
+  const project = summary.project;
+  // Build this explicit active-state fixture from the exact owned summary,
+  // not a dashboard page that may legitimately omit the project.
+  state.projects = [...state.projects.filter((item:{id:string})=>item.id!==projectId), project];
   const activeId = "00000000-0000-4000-8000-000000000001";
   project.active_run = { id: activeId, status: "running" };
   project.last_run = project.active_run;
