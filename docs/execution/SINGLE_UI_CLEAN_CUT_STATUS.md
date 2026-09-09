@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Native feedback scope actual HTTP and pagination
+
+Real TEST browser scenario now creates a saved candidate-feedback message against the marked seed sample, explicitly previews/authorizes/executes its loopback TEST text interpretation, and selects future-rule scope through native UI. Existing pending human requests in that TEST seed only were explicitly cancelled for admission; product code does not bypass that gate. Forwarded actual scope-answer POST then dropped response. Reload restored the exact saved choice/context and the sample record was unchanged, with exactly one browser POST and no automatic model execution. Added101 real TEST filler messages, refreshed the latest100-message page and navigated to older history: original saved scope remained reachable without writes. Extended scenario passed; earlier non-pagination run also passed but is not counted as an additional independent scenario.
+
+Rebuilt final conflict-display source ba8b02a into /tmp/annotagent-native-feedback-scope-verified-dist and hosted only isolated8794/8795. Existing313-unit/typecheck evidence remains from that source slice; no new production code in this test commit. Unrelated true workspace, Published records, user services/dist and remotes unchanged. Future-rule editing, image-class correction, authorized continuation and final full acceptance remain required. Goal active.
+
 ## Native feedback history and intent scope entry
 
 Audited future-rule dependency: saved feedback scope must distinguish one candidate, the current image class and future project rules before downstream changes. Added native TaskFeedback disclosure through HttpAdapter-only service. Reads bounded100-message history pages, filters owned sample_candidate references, fetches actual saved feedback and checks message/conversation/grant task identity; older history remains reachable. It does not create feedback authorization or call a model. Native scope form uses existing domain choice validation and exact command/context semantics, persists choices/frozen command, rechecks cancellation and context before POST, and verifies the owned response. Different saved scope is reported as a conflict, not overwritten. Intent is explicitly not an applied annotation/rule change.
