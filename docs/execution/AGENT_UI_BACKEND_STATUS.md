@@ -102,3 +102,11 @@ inspect_models_batch now declares and resolves admitted ModelProfile plus expert
 Isolated delivery-only verification: Application 159 passed, 0 failed, 1 existing ignored; workspace all-target Clippy -D warnings, fmt and diff checks passed. Eight-turn manual drafting regression verifies separate statically valid segmentation alternative and preserved partial graph. Disabling budget fallback reproduces the failure (no separate alternative). Four-turn discovery, native-instance inspection/materialization and unavailable-model tests pass. Contract: docs/contracts/agent-ui-v1/UIAPI-011_BUDGET_FALLBACK.md.
 
 No paid calls, real artifacts/weights, service updates, Schema output-tool changes, history_scope/0059, frontend edits, push or merge in this delivery. Integration owner must verify actual VLM/SAM artifacts; static planning is not execution evidence. Final SHA is fixed in delivery response.
+
+## UIAPI-012 durable installation commands
+
+Implemented optional client command UUID, transaction-atomic reservation before dispatch, exact five-selection-plus-installation-root scope, same-command replay of original operation and changed-scope409. Existing active Bundle/Plugin duplicate guard now persists across lost responses/process state. Progress/terminal receipts persist; command/direct operation GET are passive. Orphan running receipts project unknown and cannot implicitly restart. Last32 list entries do not bound command lookup retention. Compatibility and unknown-state handling: docs/contracts/agent-ui-v1/UIAPI-012_INSTALL_COMMANDS.md.
+
+Isolated delivery-only verification: Storage/Server246 passed,0failed,2existingignored; actual HTTP concurrent202/200 same ID, lost-response replay, changed-scope409, process-state recreation, passive orphan/unknown lookup, and separate-connection atomic winner. Full workspace all-target Clippy -D warnings, fmt and diff checks pass. Additive migration0060 is independent of pending0059. No Web changes, real data, service restart, paid calls/large weights, push or merge. Final SHA is in delivery response.
+
+UIAPI-009 remains unfinished; its uncommitted history_scope/0059 work is preserved and excluded from this delivery. UIAPI-010 CAS integration acceptance is acknowledged as complete from the frontend's verified report.

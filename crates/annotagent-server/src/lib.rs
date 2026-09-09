@@ -700,6 +700,7 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
             "/api/model-installations",
             get(list_model_install_operations).post(start_model_install_operation),
         )
+        .route("/api/model-installations/commands/{command_id}", get(get_model_install_command))
         .route(
             "/api/model-installations/{operation_id}",
             get(get_model_install_operation),
@@ -8248,8 +8249,11 @@ struct ModelBundleInstallRequest {
     bundle_version: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ModelInstallOperationRequest {
+    #[serde(default)]
+    command_id: Option<uuid::Uuid>,
     catalog_id: String,
     bundle_id: String,
     bundle_version: String,
@@ -8257,15 +8261,16 @@ struct ModelInstallOperationRequest {
     plugin_version: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum ModelInstallOperationStatus {
+    Unknown,
     Running,
     Succeeded,
     Failed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum ModelInstallStage {
     ResolvingModel,
@@ -8280,8 +8285,10 @@ enum ModelInstallStage {
     Ready,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ModelInstallOperation {
+    command_id: uuid::Uuid,
+    scope: Value,
     id: uuid::Uuid,
     catalog_id: String,
     bundle_id: String,
@@ -8903,31 +8910,91 @@ async fn accept_model_bundle_license(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn list_model_install_operations(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
-    let operations = state.model_install_operations.read().await;
-    let mut operations = operations.values().cloned().collect::<Vec<_>>();
-    operations.sort_by_key(|operation| std::cmp::Reverse(operation.updated_at));
-    Ok(Json(json!({ "operations": operations })))
+fn install_scope(state: &ServerState, request: &ModelInstallOperationRequest) -> ApiResult<Value> {
+    let root = model_bundle_registry_root(state)?;
+    Ok(
+        json!({"catalog_id":request.catalog_id,"bundle_id":request.bundle_id,"bundle_version":request.bundle_version,"plugin_id":request.plugin_id,"plugin_version":request.plugin_version,"installation_root":root}),
+    )
 }
-
+fn install_command_error(error: StorageError) -> ApiError {
+    ApiError::management(error.into())
+}
+async fn recover_install_receipt(state: &ServerState, mut receipt: Value) -> Value {
+    if receipt["status"] == "running" {
+        let live = receipt["id"]
+            .as_str()
+            .and_then(|id| id.parse::<uuid::Uuid>().ok());
+        if let Some(id) = live
+            && let Some(operation) = state.model_install_operations.read().await.get(&id)
+        {
+            return json!(operation);
+        }
+        receipt["status"] = json!("unknown");
+        receipt["detail"] = json!(
+            "No live installer owns this persisted receipt; inspect installed artifacts before any new installation"
+        );
+        receipt["suggested_action"] = json!("inspect_installed_models_do_not_retry");
+    }
+    receipt
+}
+async fn get_model_install_command(
+    State(state): State<ServerState>,
+    AxumPath(command): AxumPath<uuid::Uuid>,
+) -> ApiResult<Json<Value>> {
+    let receipt = state
+        .application
+        .store()
+        .model_install_command(command, None)
+        .map_err(install_command_error)?
+        .ok_or_else(|| {
+            ApiError::not_found(
+                "Model installation command was not found; absence does not authorize retry",
+            )
+        })?;
+    Ok(Json(recover_install_receipt(&state, receipt).await))
+}
+async fn list_model_install_operations(State(state): State<ServerState>) -> ApiResult<Json<Value>> {
+    let receipts = state
+        .application
+        .store()
+        .model_install_receipts()
+        .map_err(install_command_error)?;
+    let mut operations = Vec::new();
+    for receipt in receipts {
+        operations.push(recover_install_receipt(&state, receipt).await);
+    }
+    Ok(Json(json!({"operations":operations})))
+}
 async fn get_model_install_operation(
     State(state): State<ServerState>,
-    AxumPath(operation_id): AxumPath<String>,
+    AxumPath(id): AxumPath<uuid::Uuid>,
 ) -> ApiResult<Json<Value>> {
-    let operation_id = operation_id
-        .parse::<uuid::Uuid>()
-        .map_err(|_| ApiError::bad_request("invalid model installation operation id"))?;
-    let operations = state.model_install_operations.read().await;
-    let operation = operations
-        .get(&operation_id)
+    let receipt = state
+        .application
+        .store()
+        .model_install_receipt(id)
+        .map_err(install_command_error)?
         .ok_or_else(|| ApiError::not_found("Model installation operation was not found"))?;
-    Ok(Json(json!(operation)))
+    Ok(Json(recover_install_receipt(&state, receipt).await))
 }
 
 async fn start_model_install_operation(
     State(state): State<ServerState>,
     Json(request): Json<ModelInstallOperationRequest>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
+    let scope = install_scope(&state, &request)?;
+    let command = request.command_id.unwrap_or_else(uuid::Uuid::new_v4);
+    if let Some(receipt) = state
+        .application
+        .store()
+        .model_install_command(command, Some(&scope))
+        .map_err(install_command_error)?
+    {
+        return Ok((
+            StatusCode::OK,
+            Json(recover_install_receipt(&state, receipt).await),
+        ));
+    }
     let bundle_id = ModelBundleId::parse(&request.bundle_id).map_err(ApiError::bad_request)?;
     let bundle_version =
         semver::Version::parse(&request.bundle_version).map_err(ApiError::bad_request)?;
@@ -8973,6 +9040,8 @@ async fn start_model_install_operation(
 
     let now = Utc::now();
     let operation = ModelInstallOperation {
+        command_id: command,
+        scope: scope.clone(),
         id: uuid::Uuid::new_v4(),
         catalog_id: request.catalog_id.clone(),
         bundle_id: request.bundle_id.clone(),
@@ -8992,21 +9061,17 @@ async fn start_model_install_operation(
     };
     {
         let mut operations = state.model_install_operations.write().await;
-        if operations.values().any(|existing| {
-            existing.status == ModelInstallOperationStatus::Running
-                && existing.bundle_id == request.bundle_id
-                && existing.bundle_version == request.bundle_version
-                && existing.plugin_id == request.plugin_id
-                && existing.plugin_version == request.plugin_version
-        }) {
-            return Err(ApiError {
-                status: StatusCode::CONFLICT,
-                body: json!({
-                    "code": "model_installation_active",
-                    "error": "This exact model installation is already running.",
-                    "suggested_action": "Open the existing installation progress instead of starting a duplicate."
-                }),
-            });
+        let (receipt, created) = state
+            .application
+            .store()
+            .reserve_model_install_command(command, &scope, &json!(operation))
+            .map_err(install_command_error)?;
+        if !created {
+            drop(operations);
+            return Ok((
+                StatusCode::OK,
+                Json(recover_install_receipt(&state, receipt).await),
+            ));
         }
         operations.insert(operation.id, operation.clone());
         while operations.len() > 32 {
@@ -9034,6 +9099,20 @@ async fn start_model_install_operation(
     Ok((StatusCode::ACCEPTED, Json(json!(operation))))
 }
 
+fn persist_install_receipt(state: &ServerState, operation: &mut ModelInstallOperation) {
+    if state
+        .application
+        .store()
+        .update_model_install_receipt(operation.id, &json!(operation))
+        .is_err()
+    {
+        operation.status = ModelInstallOperationStatus::Unknown;
+        operation.error =
+            Some("Installation receipt could not be persisted; outcome requires inspection".into());
+        operation.suggested_action = Some("inspect_installed_models_do_not_retry".into());
+    }
+}
+
 async fn update_model_install_operation(
     state: &ServerState,
     operation_id: uuid::Uuid,
@@ -9057,6 +9136,7 @@ async fn update_model_install_operation(
             operation.bytes_total = bytes_total;
         }
         operation.updated_at = Utc::now();
+        persist_install_receipt(state, operation);
     }
 }
 
@@ -9076,6 +9156,7 @@ async fn finish_model_install_operation_failure(
         operation.error = Some(error);
         operation.suggested_action = Some(suggested_action);
         operation.updated_at = Utc::now();
+        persist_install_receipt(state, operation);
     }
 }
 
@@ -9342,6 +9423,7 @@ async fn run_model_install_operation(
                 .map(|instance| instance.id.to_string())
                 .collect();
             operation.updated_at = Utc::now();
+            persist_install_receipt(state, operation);
         }
     }
     update_model_install_operation(
@@ -9431,6 +9513,7 @@ async fn run_model_install_operation(
         operation.error = None;
         operation.suggested_action = None;
         operation.updated_at = Utc::now();
+        persist_install_receipt(state, operation);
     }
     Ok(())
 }
@@ -11547,6 +11630,71 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn installation_command_orphan_is_unknown_and_get_never_dispatches() {
+        let temp = tempfile::tempdir().unwrap();
+        let application = Arc::new(LocalApplication::new(temp.path()).unwrap());
+        let state = test_state(
+            application.clone(),
+            Arc::new(InMemorySecretStore::default()),
+        )
+        .await;
+        let command = uuid::Uuid::new_v4();
+        let id = uuid::Uuid::new_v4();
+        let request:ModelInstallOperationRequest=serde_json::from_value(json!({"command_id":command,"catalog_id":"TEST","bundle_id":"TEST","bundle_version":"1.0.0","plugin_id":"TEST","plugin_version":"1.0.0"})).unwrap();
+        let scope = install_scope(&state, &request).unwrap();
+        let saved = json!({"id":id,"command_id":command,"scope":scope,"status":"running","stage":"downloading_bundle","updated_at":Utc::now()});
+        application
+            .store()
+            .reserve_model_install_command(command, &scope, &saved)
+            .unwrap();
+        let service = router(state, None);
+        for method in [
+            axum::http::Method::GET,
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+        ] {
+            let uri = if method == axum::http::Method::POST {
+                "/api/model-installations".into()
+            } else {
+                format!("/api/model-installations/commands/{command}")
+            };
+            let (status, receipt) = call_json(
+                &service,
+                method,
+                &uri,
+                serde_json::to_value(&request).unwrap(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(receipt["status"], "unknown");
+            assert_eq!(receipt["id"], id.to_string());
+        }
+        assert_eq!(
+            application
+                .store()
+                .model_install_command(command, None)
+                .unwrap(),
+            Some(saved)
+        );
+        assert_eq!(
+            application.store().model_install_receipts().unwrap().len(),
+            1
+        );
+        let (status, _) = call_json(
+            &service,
+            axum::http::Method::GET,
+            &format!("/api/model-installations/commands/{}", uuid::Uuid::new_v4()),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            application.store().model_install_receipts().unwrap().len(),
+            1
+        );
+    }
+
+    #[tokio::test]
     async fn model_install_operation_exposes_recoverable_stage_and_actionable_failure() {
         let temp = tempfile::tempdir().expect("temp");
         let application = Arc::new(LocalApplication::new(temp.path()).expect("application"));
@@ -11571,23 +11719,44 @@ mod tests {
                 },
             )
             .expect("CLI-equivalent trusted-user installation fixture");
-        let state = test_state(application, Arc::new(InMemorySecretStore::default())).await;
+        let state = test_state(
+            application.clone(),
+            Arc::new(InMemorySecretStore::default()),
+        )
+        .await;
         let service = router(state, None);
 
+        let command = uuid::Uuid::new_v4();
         let request = json!({
+            "command_id":command,
             "catalog_id": catalog.catalog_id,
             "bundle_id": entry.bundle_id,
             "bundle_version": entry.bundle_version,
             "plugin_id": "org.annotagent.sam-onnx",
             "plugin_version": "1.1.0"
         });
-        let (status, started) = call_json(
-            &service,
-            axum::http::Method::POST,
-            "/api/model-installations",
-            request,
-        )
-        .await;
+        let (first, second) = tokio::join!(
+            call_json(
+                &service,
+                axum::http::Method::POST,
+                "/api/model-installations",
+                request.clone()
+            ),
+            call_json(
+                &service,
+                axum::http::Method::POST,
+                "/api/model-installations",
+                request.clone()
+            )
+        );
+        let ((status, started), (replay_status, parallel_replay)) =
+            if first.0 == StatusCode::ACCEPTED {
+                (first, second)
+            } else {
+                (second, first)
+            };
+        assert_eq!(replay_status, StatusCode::OK);
+        assert_eq!(parallel_replay["id"], started["id"]);
         assert_eq!(status, StatusCode::ACCEPTED, "{started:#?}");
         assert_eq!(started["status"], json!("running"));
         assert_eq!(started["stage"], json!("resolving_model"));
@@ -11632,6 +11801,42 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{recovered:#?}");
         assert_eq!(recovered["operations"][0]["id"], json!(operation_id));
         assert_eq!(recovered["operations"][0]["status"], json!("failed"));
+        // Discard the first POST response: the original command recovers the same durable operation.
+        let (status, replay) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/model-installations",
+            request.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(replay["id"], operation_id);
+        assert_eq!(replay["command_id"], command.to_string());
+        let mut changed = request;
+        changed["plugin_version"] = json!("9.0.0");
+        let (status, conflict) = call_json(
+            &service,
+            axum::http::Method::POST,
+            "/api/model-installations",
+            changed,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(conflict["code"], "model_install_command_conflict");
+        let restarted = router(
+            test_state(application, Arc::new(InMemorySecretStore::default())).await,
+            None,
+        );
+        let (status, receipt) = call_json(
+            &restarted,
+            axum::http::Method::GET,
+            &format!("/api/model-installations/commands/{command}"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(receipt["id"], operation_id);
+        assert_eq!(receipt["status"], "failed");
     }
 
     #[test]
