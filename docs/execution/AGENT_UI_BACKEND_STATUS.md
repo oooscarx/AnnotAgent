@@ -173,3 +173,25 @@ Added an executable immutable-snapshot/checkpoint substitution regression and ex
 Current per-descendant Model Profile/Plugin bindings are admitted by exact permission digest and executed through existing adapters with immutable source Workflow/checkpoint. GET preview accepts optional JSON `bindings`; POST repeats them with explicit1–12 request limit/unknown-cost confirmation for external models. Shared allowance and permission guard precede invocations; no redirects/Provider auto-retry. Durable receipts add `authorized_scope`; results add `execution_bindings`. No new migration. Actual loopback HTTP classification positive/stale/revoked/duplicate/source-preservation regression passed. Full contract and bounded operation-family limits: `docs/contracts/agent-ui-v1/UIAPI-017_LIVE_REPLAY.md`.
 
 Round3 verification: 323 full-suite passes/3 existing ignored, plus1 durable Storage command pass. Final actual loopback HTTP verifies current TEST auth/model, stale/revoked/duplicate rejection and unchanged source/Published/full Annotation objects. Strict clippy/fmt passed.
+
+## UIAPI-018 — versioned context archive implemented
+
+Highest-priority history/context request delivered as real owned HTTP APIs and
+additive0064 isolated archive storage. One SQLite snapshot exports all saved messages
+and Tasks, observed calls/tool traces/Builder proposals, Schema/Draft/Sample/feedback
+and references. Explicit preview + command confirmation creates only a new inert
+context with local object IDs; durable replay/restart and project ownership guards
+apply. No live journal/grant/queue/outbox/Published/annotation mutation.
+
+Contract and actual TEST JSON: UIAPI-018_CONTEXT_ARCHIVE.md / UIAPI-018_EXAMPLES.json.
+Validation: full Application162 + Server65 + Storage186 =413 passed,3 existing ignored;
+final archive Storage7 regression pass after reference/redaction/order refinements;
+Server2 tests include actual random-port loopback HTTP session/CSRF/import/recovery.
+Strict selected clippy, fmt and diff checks passed. No network except TEST loopback,
+no paid model, credential resolution, installation, real workspace or user port access.
+
+Scope limits are explicit: imported contexts are inspection-only and cannot resume;
+fresh live task + fresh authorization is required. External bytes/Published/Run
+snapshots remain references; absent raw model HTTP transcripts are not reconstructed.
+1MiB/10000-record cap fails explicitly, no export truncation. Existing tool-result
+bounds remain observable as stored. No Web/package edits, push, merge or remote change.

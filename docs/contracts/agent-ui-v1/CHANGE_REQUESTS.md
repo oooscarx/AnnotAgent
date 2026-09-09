@@ -66,3 +66,13 @@ Existing Replay path now has passive owned GET preview, exact scope-bound POST a
 ## UIAPI-017 round 3 implemented live overlay
 
 Current per-descendant Model Profile/Plugin bindings are admitted by exact permission digest and executed through existing adapters with immutable source Workflow/checkpoint. GET preview accepts optional JSON `bindings`; POST repeats them with explicit1–12 request limit/unknown-cost confirmation for external models. Shared allowance and permission guard precede invocations; no redirects/Provider auto-retry. Durable receipts add `authorized_scope`; results add `execution_bindings`. No new migration. Actual loopback HTTP classification positive/stale/revoked/duplicate/source-preservation regression passed. Full contract and bounded operation-family limits: `docs/contracts/agent-ui-v1/UIAPI-017_LIVE_REPLAY.md`.
+
+## UIAPI-018 — implemented safe archival loading
+
+Atomic full journal/task evidence export and versioned inert import are implemented,
+including ownership, preview digest, explicit command confirmation, durable recovery,
+new context/object IDs and resource/completeness manifests. Details and exact UI
+mapping: UIAPI-018_CONTEXT_ARCHIVE.md. Execution-state restoration remains explicitly
+unsupported: existing storage has one live Conversation per project; v1 archives do
+not recreate live Task/authorization/queue rows. Raw model HTTP transcripts absent
+from existing persistence cannot be reconstructed. No hidden reasoning fabricated.

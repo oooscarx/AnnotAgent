@@ -39,6 +39,7 @@ pub use conversation_schema::{
 mod export_delivery;
 mod management;
 pub use export_delivery::ExportDelivery;
+mod context_archives;
 mod localization_repair;
 mod published_run;
 mod replay_overlay;

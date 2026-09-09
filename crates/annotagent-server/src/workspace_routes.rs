@@ -29,6 +29,12 @@ use super::{
 
 pub(super) fn routes() -> Router<ServerState> {
     Router::new()
+        .route("/api/projects/{project_id}/conversations/{conversation_id}/context-archive", get(super::context_archives::export))
+        .route("/api/projects/{project_id}/context-imports/preview", post(super::context_archives::preview))
+        .route("/api/projects/{project_id}/context-imports", post(super::context_archives::confirm))
+        .route("/api/projects/{project_id}/context-imports/{command_id}", get(super::context_archives::receipt))
+        .route("/api/projects/{project_id}/archived-contexts", get(super::context_archives::list))
+        .route("/api/projects/{project_id}/archived-contexts/{context_id}", get(super::context_archives::get))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/task-navigation", get(super::agent_ui::tasks))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/workspace", get(super::agent_ui::snapshot))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/thread", get(super::agent_ui::thread))

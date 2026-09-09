@@ -75,6 +75,7 @@ pub use conversation_send::{
     ConversationSendReceipt,
 };
 pub use conversation_task_selection::{ConversationTaskSelection, SelectConversationTask};
+pub mod context_archives;
 mod conversations;
 pub use conversation_tasks::{BeginConversationTask, ConversationTask};
 pub use conversations::{
@@ -720,6 +721,8 @@ impl SqliteStore {
             transaction.execute_batch(include_str!("../../../migrations/0061_workflow_publication_commands.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0062_workflow_clone_commands.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0063_replay_commands.sql"))?;
+            transaction.execute_batch(include_str!("../../../migrations/0064_context_archives.sql"))?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(64,'context_archives',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(63,'replay_commands',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(62,'workflow_clone_commands',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(61,'workflow_publication_commands',?1)",[Utc::now().to_rfc3339()])?;

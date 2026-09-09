@@ -185,3 +185,16 @@ Existing Replay path now has passive owned GET preview, exact scope-bound POST a
 ## UIAPI-017 round 3 implemented live overlay
 
 Current per-descendant Model Profile/Plugin bindings are admitted by exact permission digest and executed through existing adapters with immutable source Workflow/checkpoint. GET preview accepts optional JSON `bindings`; POST repeats them with explicit1–12 request limit/unknown-cost confirmation for external models. Shared allowance and permission guard precede invocations; no redirects/Provider auto-retry. Durable receipts add `authorized_scope`; results add `execution_bindings`. No new migration. Actual loopback HTTP classification positive/stale/revoked/duplicate/source-preservation regression passed. Full contract and bounded operation-family limits: `docs/contracts/agent-ui-v1/UIAPI-017_LIVE_REPLAY.md`.
+
+## UIAPI-018 archive loading
+
+Use the separate `archived-contexts` identity space; never send imported object IDs
+to live Task/Draft mutation endpoints. Full route/request/record-field mapping:
+[UIAPI-018_CONTEXT_ARCHIVE.md](UIAPI-018_CONTEXT_ARCHIVE.md).
+GET export returns `{format,version,payload,archive_hash}`. Keep this object unchanged
+for preview/confirmation. POST preview `{archive}`; confirmation requires
+`{command_id,preview_hash,archive,confirm_archive_only:true}`. Recover a lost response
+through owned GET `context-imports/{command_id}` or repeat the identical POST.
+Loaded GET returns `{receipt,archive,objects,trust:"untrusted_import"}`; only
+`receipt.continuation.available_actions` (`view`, `export`) are allowed. `id_map`
+assigns new local identities while retaining original reference IDs in inert data.
