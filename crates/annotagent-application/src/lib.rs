@@ -10189,7 +10189,7 @@ impl LocalApplication {
 
     fn project_export_data(&self, project_id: &str) -> Result<ProjectExportData> {
         let project_path = self.project_path(project_id)?;
-        let (schema, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
+        let (mut schema, _) = load_project_schema_with_registry(&project_path, &self.skills)?;
         let project_root = project_path
             .parent()
             .unwrap_or(&self.workspace)
@@ -10235,6 +10235,7 @@ impl LocalApplication {
         let mut annotations = Vec::new();
         let mut image_ids = BTreeMap::<usize, BTreeSet<ImageId>>::new();
         let mut revisions = Vec::new();
+        let mut frozen_tasks = BTreeMap::<TaskId, TaskConfig>::new();
         for (image_index, (run, candidates)) in selected_runs {
             let accepted = candidates
                 .into_iter()
@@ -10246,6 +10247,23 @@ impl LocalApplication {
                         && run.status == RunStatus::Completed)
                 })
                 .collect::<Vec<_>>();
+            if !accepted.is_empty() {
+                let frozen_schema: ProjectSchema =
+                    serde_json::from_str(&run.project_schema_json)
+                        .context("cannot recover export Schema from the selected Run")?;
+                for task in frozen_schema.tasks {
+                    if frozen_tasks
+                        .get(&task.id)
+                        .is_some_and(|prior| prior != &task)
+                    {
+                        bail!(
+                            "selected Runs use incompatible frozen definitions for task {}; export requires a consistent Schema",
+                            task.id
+                        );
+                    }
+                    frozen_tasks.insert(task.id.clone(), task);
+                }
+            }
             let accepted_ids = accepted
                 .iter()
                 .map(|annotation| annotation.id)
@@ -10284,6 +10302,16 @@ impl LocalApplication {
             annotations.push(annotation);
         }
         let processed_image_count = processed_images.len();
+
+        // Current project settings remain useful for delivery configuration, but
+        // cannot reinterpret annotations produced under a published Schema.
+        for (id, task) in frozen_tasks {
+            if let Some(current) = schema.tasks.iter_mut().find(|current| current.id == id) {
+                *current = task;
+            } else {
+                schema.tasks.push(task);
+            }
+        }
 
         let mut images = Vec::new();
         for (index, image_path) in image_paths.iter().enumerate() {
@@ -23733,10 +23761,30 @@ export:
             checkpoint(None);
         }
         // Simulate termination after durable files but before the receipt completion write.
+        // A conversation can publish its own Schema without replacing project.yaml.
+        // Export must recover annotation semantics from the frozen Run, not today's file.
+        let schema_path = temporary.path().join("label-classification/project.yaml");
+        let original_yaml = std::fs::read_to_string(&schema_path).unwrap();
+        let mut empty_current = ProjectSchema::from_yaml(&original_yaml).unwrap();
+        empty_current.tasks.clear();
+        std::fs::write(&schema_path, serde_yaml::to_string(&empty_current).unwrap()).unwrap();
         let export = application
             .export_project_dataset_with_id("label-classification", "native", export_operation)
             .await
             .expect("native Project export");
+        std::fs::write(&schema_path, &original_yaml).unwrap();
+        let delivered: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(export.output_path.join("annotagent-native.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            delivered["project"]["schema"]["tasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|task| task["id"] == "scene"),
+            "export must retain the frozen annotation task even when current Schema is empty"
+        );
         checkpoint(Some(&export));
         assert!(
             application

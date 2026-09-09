@@ -46,7 +46,7 @@ sample services continue under that grant. A real SIGKILL/restart test verifies 
 operation resumes once, without another feedback revision or budget reset (027b8ea). An expired,
 revoked or changed binding still blocks inference without discarding the saved correction.
 
-Latest production code is 2502ab3. Full Rust fmt/clippy/test/build process 6393 exited 0
+Last fully Rust-verified production code is 2502ab3. Full Rust fmt/clippy/test/build process 6393 exited 0
 (713 tests passed, 6 explicitly ignored); see `/tmp/annotagent-rust-post-binding-20260909.log`.
 Web typecheck, 231 unit tests and production build passed. The 178-case browser sweep
 37872 exited 1: 156 passed, one Review ownership failure, 21 serial cases did not run.
@@ -5653,3 +5653,39 @@ The production bundle still emits the existing >500 kB chunk warning; not a buil
 Rust sources were unchanged since the full 713-pass verification. The complete browser
 combination must still be rerun against this latest Web code. No Live calls, real user data
 changes, push or remote edits.
+
+### 2026-09-09 — Archive audit exposes missing frozen export Schema
+
+After f4b1eb1, complete browser process 66282 started with log
+`/tmp/annotagent-final-review-owner-combined.log` and evidence directory
+`/tmp/annotagent-final-review-owner-combined`. It is still live; this uses the pre-export-fix
+server binary, so even a pass cannot verify the subsequent Rust export change.
+
+Read the actual bbox archive from the preceding combined run, delivery
+`cc69eb56-3cdc-4143-a8b8-0cf8e5af564d`. Its annotation task was correctly bound, but
+`project.schema.tasks` was empty. The exporter read current project.yaml rather than the
+published Run's Schema. Conversation-specific Schema intentionally does not overwrite the
+project file; this was a real semantic export defect, not an image-accuracy issue.
+
+Added a regression to the real published classification/export test: temporarily clear the
+isolated current Schema after execution, export, restore the file and require the frozen
+`scene` task in the actual JSON. Exact process 46337 **failed** on that assertion. The first
+attempt omitted the module prefix with `--exact`; it is not counted as a regression execution.
+
+Export now gathers selected source Runs' frozen task definitions and uses them instead of
+current definitions with the same ID, also including tasks absent from project.yaml.
+Conflicting definitions among selected Runs are explicitly rejected rather than silently
+merged. It does not alter a saved Run, Published Version or existing delivery. 59638 exited 0
+for the exact classification/export regression after the fix (1 passed); Application all-target,
+all-feature clippy 30848 also exited 0. The full Rust/browser matrix needs verification on this code.
+
+Remaining associated work: conflict coverage, the schema-retention path after permanent Run
+cleanup, and archive assertions for both browser golden paths. Current provenance tombstones
+do not store frozen task definitions; this must not be represented as already solved.
+The inspected bbox object chain was conversation `2ece9c6f-9464-4837-9dad-ca8de16481ed`, task
+`67edecc3-1134-4cfb-9b56-6a413abaf124`, applied request
+`e78ace5b-fbcd-42ea-a572-f7b8bf38dabe`, Sandbox revision
+`6a2063fd-b72c-4693-affd-abf029234fdf`, Draft `8879c436-8c72-4f34-bdaf-d134eeb12a3c`
+revision 3, selected sample `18045324-23e0-4e73-8e65-95492319a81e`, processing/Batch
+`bbb61e1c-f0d9-41e1-a6de-b3ecaea73c5a`. This records the observed chain and defect, not a
+claim that the old archive was retroactively fixed. No Live quality or novice study performed.
