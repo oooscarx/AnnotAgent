@@ -29,7 +29,7 @@ export type DeliveryPackageInput = {
 export type DeliveryPackageStatus = {
   id: string; phase: "preparing" | "exporting" | "validating" | "ready" | "failed" | "cancelled";
   intent_revision: number; snapshot_sha256: string;
-  result: { sha256: string; bytes: number; images: number; objects: number; negatives: number; excluded: number } | null;
+  result: { sha256: string; bytes: number; images: number; objects: number; negatives: number; excluded: number; summary?:{labels:string[];splits:Partial<Record<"train"|"val"|"test",number>>;warnings:string[];exclusions:Record<string,string>}|null } | null;
   error: string | null;
 };
 export type DeliveryPackageRead = { job: DeliveryPackageStatus; active: boolean; interrupted: boolean };
@@ -37,6 +37,7 @@ export type DeliveryPackageStart = { job: DeliveryPackageStatus; active: boolean
 
 /** Explicit commands retain caller-owned idempotency keys; reads never start jobs. */
 export interface DeliveryService {
+  history(project: string, task: string, before?:string, signal?:AbortSignal): Promise<{items:{id:string;created_at:string}[];next_cursor:string|null}>;
   image(project: string, task: string, image: string, run: string | null, signal?: AbortSignal): Promise<DeliveryImageView>;
   confirmImage(project: string, task: string, input: DeliveryReviewInput): Promise<DeliveryReview>;
   startPackage(project: string, task: string, input: DeliveryPackageInput): Promise<DeliveryPackageStart>;

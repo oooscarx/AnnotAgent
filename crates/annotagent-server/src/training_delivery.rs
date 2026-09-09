@@ -284,6 +284,17 @@ mod tests {
         assert_eq!(finished["job"]["result"]["objects"], 20);
         assert_eq!(finished["job"]["result"]["negatives"], 1);
         assert_eq!(finished["job"]["result"]["excluded"], 1);
+        let summary = &finished["job"]["result"]["summary"];
+        assert_eq!(summary["labels"].as_array().unwrap().len(), 2);
+        assert!(summary["splits"]["train"].as_u64().unwrap() > 0);
+        assert!(summary["splits"]["val"].as_u64().unwrap() > 0);
+        assert_eq!(
+            summary["splits"]["train"].as_u64().unwrap()
+                + summary["splits"]["val"].as_u64().unwrap(),
+            11
+        );
+        assert_eq!(summary["exclusions"].as_object().unwrap().len(), 1);
+        assert!(!summary["warnings"].as_array().unwrap().is_empty());
         assert_eq!(
             response_json(
                 request(

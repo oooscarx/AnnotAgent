@@ -3,6 +3,7 @@ import "./delivery-intake.css";
 import { DeliveryReview } from "./DeliveryReview";
 import type { DeliveryService } from "./deliveryService";
 import { Disclosure } from "./Disclosure";
+import { DeliveryPackage } from "./DeliveryPackage";
 
 export type DeliveryLabel = { stable_id: string; display_name: string; aliases: string[]; include: string; exclude: string };
 type Target = { annotation_kind: string; framework: string; export_profile: string; profile_revision: number };
@@ -30,6 +31,7 @@ export function DeliveryIntake({ service, delivery, project, task, images, locke
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(false);
+  const [reviewOpen,setReviewOpen]=useState(()=>new URL(location.href).searchParams.has("delivery_image"));
   const retry = useRef<{ signature: string; input: IntakeInput } | null>(null);
   const inFlight = useRef(false);
   const preparation = useRef<{command_id:string;expected_revision:number;expected_sha256:string} | null>(null);
@@ -88,6 +90,9 @@ export function DeliveryIntake({ service, delivery, project, task, images, locke
       <div className="delivery-intake-actions"><button type="button" disabled={busy || !dirty} onClick={() => { apply(view); setError(""); retry.current = null; }}>取消修改</button><button type="submit" disabled={busy || locked || !dirty}>{busy ? "保存中…" : "保存交付信息"}</button><span role="status">{dirty ? "尚未保存" : view.saved ? "已保存到服务器" : "等待填写"}</span></div>
       <small>保存不会调用模型或开始处理。样例最多 {view.maximum_sample_images} 张，执行前需要确认模型、数据目的地和费用范围。</small>
     </form>}
-    {delivery && view?.saved && !view.missing_slots.length && !view.blockers.length && !dirty && <Disclosure title="检查正式训练图片（整图审核）"><DeliveryReview key={`${task}:${view.saved.revision}`} service={delivery} project={project} task={task} locked={locked} images={(view.saved.intent.dataset_scope || []).flatMap(i=>{const image=images.find(a=>a.id===i.image_id);return image?[image]:[{id:i.image_id,name:"原图不可用"}];})}/></Disclosure>}
+    {delivery && view?.saved && <>
+      {!view.missing_slots.length && !view.blockers.length && !dirty && <Disclosure title="检查正式训练图片（整图审核）" open={reviewOpen} onToggle={e=>setReviewOpen(e.currentTarget.open)}>{reviewOpen&&<DeliveryReview key={`${task}:${view.saved.revision}`} service={delivery} project={project} task={task} locked={locked} images={(view.saved.intent.dataset_scope || []).flatMap(i=>{const image=images.find(a=>a.id===i.image_id);return image?[image]:[{id:i.image_id,name:"原图不可用"}];})}/>}</Disclosure>}
+      <DeliveryPackage key={`${task}:${view.saved.revision}`} service={delivery} project={project} task={task} locked={locked||dirty||!!view.missing_slots.length||!!view.blockers.length} scope={{revision:view.saved.revision,content_sha256:view.saved.content_sha256,image_ids:(view.saved.intent.dataset_scope||[]).map(i=>i.image_id)}} onInspect={id=>{const url=new URL(location.href);url.searchParams.set("delivery_image",id);url.searchParams.delete("delivery_run");history.pushState(history.state,"",url);window.dispatchEvent(new PopStateEvent("popstate"));setReviewOpen(true);}}/>
+    </>}
   </section>;
 }

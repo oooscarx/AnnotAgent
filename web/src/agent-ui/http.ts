@@ -42,6 +42,10 @@ export class HttpAdapter implements WorkspaceAdapter {
     return this.taskRoot(task);
   }
   readonly delivery: import("./deliveryService").DeliveryService = {
+    history: async(project,task,before,signal)=>{
+      const rows=await this.transport<{id:string;created_at:string;format:string}[]>(`${this.deliveryRoot(project,task)}/exports?limit=100${before?`&before=${esc(before)}`:""}`,{signal});
+      return {items:rows.filter(r=>r.format==="ultralytics_yolo_detection").map(r=>({id:r.id,created_at:r.created_at})),next_cursor:rows.length===100?rows.at(-1)!.id:null};
+    },
     image: (project, task, image, run, signal) => this.transport(`${this.deliveryRoot(project,task)}/delivery-images/${esc(image)}${run === null ? "" : `?source_run_id=${esc(run)}`}`, { signal }),
     confirmImage: (project, task, input) => this.transport(`${this.deliveryRoot(project,task)}/delivery-images/${esc(input.image_id)}`, { method: "POST", body: JSON.stringify(input) }),
     startPackage: (project, task, input) => this.transport(`${this.deliveryRoot(project,task)}/delivery-packages`, { method: "POST", body: JSON.stringify(input) }),
@@ -201,8 +205,9 @@ export class HttpAdapter implements WorkspaceAdapter {
         result.plan={revision:String(proposal.draft.revision),steps:steps.length ? steps.map(s=>`${s.node_type}${s.model_binding?` · ${s.model_binding.model_id}`:""}`) : proposal.draft.nodes.map(n=>n.id),images:0,models:steps.flatMap(s=>s.model_binding?[s.model_binding.model_id]:[]),destination:"已保存的 Builder proposal（不是新推理）",budget:null};
       }
       if(ws) {
-        const jobs=await this.transport<{id:string;result?:ProjectExportResult;error?:string}[]>(`${this.taskRoot(task)}/exports`,{signal:ctrl.signal});
-        result.exports=jobs.map(j=>({id:j.id,status:j.error?"failed":j.result?.delivery?"ready":"unknown",url:j.result?.delivery?`${this.root(project)}/exports/${esc(j.result.delivery.id)}/download`:undefined,detail:j.error || (j.result?`${j.result.report.exported_count} 条已导出；${j.result.report.skipped_count} 条跳过`:"未取得完成回执，不显示成功下载")}));
+        const jobs=await this.transport<{id:string;format?:string;result?:ProjectExportResult;error?:string}[]>(`${this.taskRoot(task)}/exports`,{signal:ctrl.signal});
+        // Training packages have a different frozen receipt and their own same-chat card.
+        result.exports=jobs.filter(j=>j.format!=="ultralytics_yolo_detection").map(j=>({id:j.id,status:j.error?"failed":j.result?.delivery?"ready":"unknown",url:j.result?.delivery?`${this.root(project)}/exports/${esc(j.result.delivery.id)}/download`:undefined,detail:j.error || (j.result?.report?`${j.result.report.exported_count} 条已导出；${j.result.report.skipped_count} 条跳过`:"未取得完成回执，不显示成功下载")}));
         result.processing=await Promise.all((ws.processing_operations||[]).filter(p=>p.batch_id).map(async p=>{
           const batch=await this.transport<{batch:{project_id:string;status:string}}>(`/api/batches/${esc(p.batch_id!)}`,{signal:ctrl.signal});
           if(batch.batch.project_id!==project)throw new Error("处理批次不属于当前项目");

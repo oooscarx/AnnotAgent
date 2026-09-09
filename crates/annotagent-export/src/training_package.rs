@@ -49,6 +49,17 @@ pub struct PackageReceipt {
     pub objects: usize,
     pub negatives: usize,
     pub excluded: usize,
+    /// Older receipts have no summary; clients must show unknown rather than zero.
+    #[serde(default)]
+    pub summary: Option<PackageSummary>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PackageSummary {
+    pub labels: Vec<String>,
+    pub splits: BTreeMap<String, usize>,
+    pub warnings: Vec<String>,
+    pub exclusions: BTreeMap<ImageId, String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -615,6 +626,39 @@ pub fn write_training_package_with_lineage(
         objects,
         negatives,
         excluded: sources.len() - included.len(),
+        summary: Some(PackageSummary {
+            labels: manifest
+                .intent
+                .label_spec
+                .as_ref()
+                .context("labels missing")?
+                .iter()
+                .map(|l| l.display_name.clone())
+                .collect(),
+            splits: manifest.images.iter().filter_map(|i| i.split).fold(
+                BTreeMap::new(),
+                |mut counts, split| {
+                    let name = match split {
+                        DatasetSplit::Train => "train",
+                        DatasetSplit::Val => "val",
+                        DatasetSplit::Test => "test",
+                    };
+                    *counts.entry(name.into()).or_insert(0) += 1;
+                    counts
+                },
+            ),
+            warnings: manifest.warnings,
+            exclusions: manifest
+                .images
+                .iter()
+                .filter_map(|i| match &i.confirmation {
+                    ImageConfirmation::Excluded { reason, .. } => {
+                        Some((i.image_id, reason.clone()))
+                    }
+                    _ => None,
+                })
+                .collect(),
+        }),
     })
 }
 

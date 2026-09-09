@@ -17,4 +17,9 @@
 .delivery-review-controls { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,230px),1fr)); gap: 12px; }
 .delivery-review label { display: grid; gap: 8px; min-width: 0; }
 .delivery-review .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.delivery-package, .delivery-package-receipt { display: grid; gap: 12px; min-width: 0; padding-block: 12px; }
+.delivery-package h3 { margin: 0; }
+.delivery-package label { display: grid; gap: 8px; }
+.delivery-package button, .delivery-package a { justify-self: start; }
+.delivery-package-receipt { border-top: 1px solid var(--aa-border); }
 @media (max-width: 600px) { .delivery-intake-actions { align-items: stretch; } .delivery-intake-actions button { flex: 1 1 140px; } }

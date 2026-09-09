@@ -5,6 +5,14 @@ const project = { project_id: "TEST-alpha", project_owner_id: "owner-a", title: 
 const settings = { revision: "revision-1", sections: { data_privacy: { workspace_id: "TEST-workspace" }, usage_budget: { future_run_budget: { max_requests: 10, max_cost: "2.50" } } } };
 const navTask = (id: string) => ({ task_id: id, title: `TEST ${id}`, schema_revision: "schema-1", project_owner_id: "owner-a", conversation_id: "conversation-a", state: "idle" });
 const root = "/api/projects/TEST-alpha/conversations/conversation-a/tasks";
+it("training package history restores without interpreting its receipt as a legacy export report",async()=>{
+  const packageRow={id:"package",format:"ultralytics_yolo_detection",created_at:"TEST",result:{images:11,objects:20,sha256:"frozen",bytes:500}};
+  const reads=mockTransport({[`${root}/t1/exports`]:[packageRow],[`${root}/t1/exports?limit=100`]:[packageRow]});
+  const adapter=new HttpAdapter(reads.transport);await adapter.refresh();await adapter.loadTask("TEST-alpha","t1");
+  expect(adapter.snapshot().error).toBeUndefined();
+  expect(adapter.snapshot().tasks.find(t=>t.id==="t1")?.exports).toEqual([]);
+  expect(await adapter.delivery.history("TEST-alpha","t1")).toEqual({items:[{id:"package",created_at:"TEST"}],next_cursor:null});
+});
 it("formal delivery reads never dispatch and commands retain frozen scope across retries", async () => {
   const reads = mockTransport();
   const calls: {path:string; method:string; body:unknown; signal?:AbortSignal|null}[] = [];
