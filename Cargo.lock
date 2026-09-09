@@ -173,12 +173,17 @@ name = "annotagent-export"
 version = "0.1.0"
 dependencies = [
  "annotagent-core",
+ "anyhow",
  "async-trait",
  "chrono",
+ "image",
  "serde",
  "serde_json",
+ "serde_yaml",
+ "sha2",
  "tempfile",
  "tokio",
+ "zip",
 ]
 
 [[package]]

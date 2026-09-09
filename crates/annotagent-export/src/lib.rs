@@ -1,6 +1,7 @@
 //! Dataset exporters with explicit compatibility and skip reports.
 
 mod importers;
+pub mod training_package;
 
 pub use importers::*;
 
