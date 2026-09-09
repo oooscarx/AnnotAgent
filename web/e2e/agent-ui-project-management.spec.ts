@@ -198,6 +198,7 @@ test("native human geometry creation freezes requests and recovers without dupli
   await page.goto(`/projects/${run.project_id}/manage/review/${seedId}`);await page.getByRole("button",{name:"补充遗漏标注…",exact:true}).click();const creation=page.locator(".native-human-annotation");await creation.getByRole("button",{name:/新增 TEST Manual Box/}).click();
   await expect(creation.getByLabel("新增标注类别",{exact:true})).toHaveValue("TEST_manual_box");
   const move=creation.getByRole("button",{name:"Move box with arrow keys",exact:true});await move.focus();await move.press("ArrowRight");
+  await expect(creation.getByRole("button",{name:"撤销新增标注编辑",exact:true})).toBeEnabled();await creation.getByRole("button",{name:"撤销新增标注编辑",exact:true}).click();await expect(creation.getByRole("button",{name:"撤销新增标注编辑",exact:true})).toBeDisabled();await move.focus();await move.press("ArrowRight");
   await creation.screenshot({path:"/tmp/annotagent-native-human-creation.png"});
   const bodies:unknown[]=[];await page.route(`**/api/runs/${run.id}/annotations`,async route=>{if(route.request().method()!=="POST")return route.continue();bodies.push(route.request().postDataJSON());const response=await route.fetch();expect(response.ok()).toBeTruthy();if(bodies.length===1)await route.abort();else await route.fulfill({response});});
   await creation.getByRole("button",{name:"保存新增标注",exact:true}).click();await expect(creation.getByRole("alert")).toBeVisible();await expect(creation.getByLabel("新增标注类别",{exact:true})).toBeDisabled();

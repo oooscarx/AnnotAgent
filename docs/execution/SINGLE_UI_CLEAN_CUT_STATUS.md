@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Retire old manual Run editor after restoring missing native types
+
+Dependency audit found RunAnnotationEditor unmounted, but its classification and polygon-encoded semantic/instance-mask additions were absent from native HumanAnnotation. Added all three to the existing native factory/canvas (no fabricated prediction), synchronized classification value.labels when changing the visible label, and added bounded in-session Undo. Submitted/unknown requests remain frozen; Undo is disabled after dispatch. Fresh manual objects reset Undo so a cancelled object's history cannot leak into another annotation. Removed old RunAnnotationEditor.tsx and its component-specific tests; migrated type/label invariants to native tests. No remaining source/E2E imports of the old editor.
+
+Initial unit regression correctly caught an outdated expectation rejecting classification/masks; updated it to verify supported human values and continue rejecting unsupported kinds. 317 unit tests across 96 files, typecheck and isolated build passed. Actual HTTP manual-addition E2E passed (1.9 s): keyboard edit, Undo, new edit, dropped successful save response, reload, same-body retry, one actual annotation and owned Review navigation. Classification/mask factory and label payload have unit coverage; dedicated browser save coverage for those three types remains outstanding. Actual TEST screenshot /tmp/annotagent-native-human-creation.png inspected; it is a scrolled section capture, not final full-page/viewport visual acceptance. Build /tmp/annotagent-human-parity-dist, source1a6110a plus this slice, owned8794/8795. Remaining old components and final product gates are not waived. No true data, Published, user service, Rust, paid API or remote changes.
+
 ## Keep active proposal and Stop visible after independent rule save
 
 Fixed a real mounting defect: FutureRules no longer removes SavedFutureProposal when a future-rule record exists. The saved rule disables new proposal/adoption but leaves an independently running suggestion's status and Stop available. This matters when another tab saves a rule while the model request is pending; same-view edit guards alone were insufficient.
