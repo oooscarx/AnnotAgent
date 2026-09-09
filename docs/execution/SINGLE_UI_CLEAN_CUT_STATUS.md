@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Native clarification real HTTP recovery evidence
+
+Registered and actively probed an explicit loopback TEST e2e-conversation-clarify Profile, selected it before each TEST Send with CAS and restored the prior TEST preference afterward. Two actual schema calls produced owned pending questions. Native UI answered one and cancelled the other; browser forwarded each real POST and dropped only its response. Refresh recovered applied/cancelled respectively. Answer payload references the exact call and Schema revision, contains no Journey authorization; browser wrote exactly those two requests, original call evidence and export-readiness remained unchanged. Editing disables question cancellation. One real HTTP browser test passed on /tmp/annotagent-native-clarification-dist, source99b6578, isolated8794/8795.
+
+Initial assertion refreshed as soon as the pending-request button appeared, before the actual POST finished, interrupting the test itself; corrected it to await transport-error rendering and assert durable server application before reload. That failed run is not counted as recovery evidence. No response bodies fabricated, no true workspace/Provider/user service mutation, no paid API or push. Current manual-answer path intentionally does not trigger authorized Journey continuation; migration of its explicit continuation remains open, as do future rules/repair, Replay and final full acceptance. Goal active.
+
 ## Native task clarification answer/cancellation entry
 
 Added SchemaClarifications inside the existing on-demand task semantics area. It reads completed clarify calls and validates returned call/task/conversation ownership, revision and pending/applied/cancelled state. Actual question text is rendered; explicit cancellation rechecks the exact revision and reads the durable result. Unknown response is not presented as successful cancellation. Existing CreateTaskSchema form now also supports a strictly bound clarification reference with distinct workspace/project/conversation/task/call/revision recovery key. Its parser rejects changed references and any journey_consent_id or additional execution authority. Saving answers therefore does not automatically resume inference. Existing manual creation remains separate and still rejects clarification fields.
