@@ -39,6 +39,7 @@ pub use conversation_schema::{
 mod export_delivery;
 mod management;
 pub use export_delivery::ExportDelivery;
+mod localization_repair;
 mod published_run;
 mod result_projection;
 mod sample_limits;
@@ -12977,6 +12978,7 @@ impl LocalApplication {
                 tool_calls: Vec::new(),
             },
         ];
+        let mut saved_repair_evidence = None;
         if let Some(draft_id) = build_mode.source_draft_id()
             && let Some(evidence) = self.store.sample_plan_evidence(draft_id)?
         {
@@ -12990,6 +12992,7 @@ impl LocalApplication {
                 )?
                 .ok_or_else(|| anyhow!("Original Sample Test is unavailable"))?;
             let observations = sample_repair_evidence::observations(&baseline, &evidence)?;
+            saved_repair_evidence = Some((evidence.clone(), observations.clone()));
             messages.push(ModelMessage {
                 role: ModelRole::User,
                 content: serde_json::to_string(&json!({
@@ -13053,6 +13056,61 @@ impl LocalApplication {
         } else {
             None
         };
+        let mut prepared_localization_hash = None;
+        if matches!(
+            build_mode,
+            annotagent_core::PipelineBuildMode::RepairDraft { .. }
+        ) && !cancellation.is_cancelled()
+            && let Some((evidence, observations)) = &saved_repair_evidence
+            && let Some(suggestion) = current.as_mut()
+            && let Some(mut repaired) = localization_repair::candidate(
+                &suggestion.draft,
+                &localization_repair::affected_labels(evidence, observations),
+            )
+        {
+            normalize_profile_compatibility_bindings(&mut repaired, &models)?;
+            let report = self.validate_workflow_draft(&repaired, settings, false)?;
+            let candidate = candidate_from_draft(
+                CandidateDraftSource {
+                    id: format!("sample-localization-repair-{}", session.id),
+                    name: "Saved-feedback local re-localization with guarded refinement".into(),
+                    source: annotagent_core::PipelineCandidateSource::RegistrySynthesis,
+                    fragment_ids: vec![],
+                    evidence: evidence["feedback"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|item| item["revision_id"].as_str())
+                        .map(|id| annotagent_core::ObservationRef {
+                            id: id.into(),
+                            tool_name: "saved_sample_feedback".into(),
+                            original_call_id: id.into(),
+                            context_revision: context_revision.clone(),
+                        })
+                        .collect(),
+                },
+                &repaired,
+                &input,
+                &context_revision,
+            );
+            if report.valid && candidate.is_runnable() {
+                self.store.save_workflow_draft(&repaired)?;
+                suggestion.draft = self.store.get_workflow_draft(&repaired.id)?;
+                prepared_localization_hash = Some(suggestion.draft.content_hash.clone());
+                suggestion.estimated_model_calls_per_image = suggestion
+                    .draft
+                    .nodes
+                    .iter()
+                    .filter(|n| n.model_binding.is_some() || n.model_profile_binding.is_some())
+                    .count();
+                suggestion.estimated_latency_ms = None;
+                suggestion.estimated_cost_tier =
+                    "unmeasured; separate sample authorization required".into();
+                suggestion.rationale.push("Saved terminal-box feedback seeded one local search pass on the existing repair copy. Existing model bindings and Schema are preserved. Coverage failure still routes to Review; improvement requires a separately authorized same-image comparison.".into());
+                session.record_plan_candidate(candidate);
+                messages.push(ModelMessage {role:ModelRole::User,content:serde_json::to_string(&json!({"controlled_repair_prepared":suggestion.draft.id,"source_sample_test_id":evidence["sample_test_id"],"revision":suggestion.draft.revision,"static_validation":report,"quality_verified":false,"rule":"Inspect and preserve this typed local-relocalization candidate; no additional inference, budget, model permission, or acceptance is granted."}))?,tool_call_id:None,tool_calls:vec![]});
+            }
+        }
         if let Some(suggestion) = current.as_mut()
             && reconcile_persisted_setup_draft(suggestion, &input, &feasibility)
         {
@@ -13239,6 +13297,28 @@ impl LocalApplication {
                 }
                 self.store.save_agent_session(&session)?;
                 break;
+            }
+            // A finite planning budget can still return the actual prepared, unchanged graph.
+            // Never replace later authored edits or treat a failed Provider call as success.
+            if (session.usage.steps >= session.budget.max_steps
+                || provider_turns >= builder_constraints.maximum_agent_turns)
+                && let (Some(expected_hash), Some(suggestion)) =
+                    (&prepared_localization_hash, current.as_mut())
+            {
+                let mut saved = self.store.get_workflow_draft(&suggestion.draft.id)?;
+                if &saved.content_hash == expected_hash {
+                    let report = self.validate_workflow_draft(&saved, settings, false)?;
+                    if report.valid {
+                        saved.status = WorkflowDraftStatus::ReadyForHumanReview;
+                        self.store.save_workflow_draft(&saved)?;
+                        suggestion.draft = self.store.get_workflow_draft(&saved.id)?;
+                        validation = Some(report);
+                        session.complete_builder(annotagent_core::PipelineBuilderOutcome::DraftReadyForHumanReview,
+                            if provider_turns >= builder_constraints.maximum_agent_turns {annotagent_core::BuilderStopReason::ModelTurnBudgetReached} else {annotagent_core::BuilderStopReason::TotalToolBudgetReached},
+                            "Prepared localization repair is statically valid; quality is unverified and a separate sample authorization is required");
+                        break;
+                    }
+                }
             }
             if session.usage.steps >= session.budget.max_steps {
                 session.complete_builder(
@@ -13663,6 +13743,7 @@ impl LocalApplication {
                         ))
                     }
                     Ok(PipelineBuilderTool::CreateBlockedDraft) => {
+                        if prepared_localization_hash.is_some() {bail!("Preserve the saved feedback repair; do not replace it with a setup template");}
                         let (mut created, outcome) =
                             materialize_feasibility_draft(&safe_suggestion, &input, &feasibility)?;
                         adopt_builder_working_draft_identity(&session, &mut created.draft)?;
@@ -14863,6 +14944,7 @@ impl LocalApplication {
                         tool @ (PipelineBuilderTool::CreatePipelineDraft
                         | PipelineBuilderTool::CreateDraftFromTemplate),
                     ) => {
+                        if prepared_localization_hash.is_some() {bail!("Preserve the saved typed feedback repair; replacing it with an empty or legacy template is not supported in this repair operation");}
                         if !inspected_project
                             || !inspected_label
                             || !inspected_skills
@@ -26936,6 +27018,419 @@ export:
                 .expect("Published versions")
                 .len(),
             1
+        );
+    }
+
+    #[tokio::test]
+    async fn saved_feedback_builds_typed_localization_repair_without_changing_source_or_models() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "candidate-revalidation",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("RoboCup Project");
+        let selected_model = register_pipeline_builder_model(&application, "revalidation-builder");
+        register_available_vision_model(
+            &application,
+            &selected_model,
+            "revalidation-detector",
+            [ModelCapability::VisionLanguage],
+        );
+        let segmenter = register_available_vision_model(
+            &application,
+            &selected_model,
+            "revalidation-segmenter",
+            [ModelCapability::PromptedSegmentation],
+        );
+        let mut provider = application
+            .store
+            .get_provider_profile(selected_model.provider.id)
+            .expect("Provider");
+        provider.adapter = ProviderAdapterKind::OpenAiCompatible;
+        provider.credential_ref = Some(CredentialReference {
+            provider_id: provider.id,
+            source: CredentialSource::EnvironmentVariable,
+            locator: "BUILDER_REVALIDATION_FIXTURE_KEY".to_owned(),
+        });
+        application
+            .store
+            .save_provider_profile(&provider)
+            .expect("non-Mock Provider state");
+        let settings = load_settings(None).expect("settings");
+        let input = application
+            .workflow_advisor_input_for_label(
+                "candidate-revalidation",
+                &settings,
+                WorkflowConstraints::default(),
+                Some("objects"),
+                Some("ball"),
+            )
+            .expect("Builder input");
+        let mut safe_suggestion = application
+            .suggest_label_pipeline_preview(
+                "candidate-revalidation",
+                &settings,
+                "objects",
+                "ball",
+                &WorkflowConstraints::default(),
+            )
+            .expect("safe suggestion");
+        safe_suggestion.draft = controlled_label_composition(
+            &input.project_schema,
+            "objects",
+            "ball",
+            &WorkflowConstraints::default(),
+            &ModelRegistry::new(),
+        )
+        .unwrap()
+        .compile_draft(
+            "candidate-revalidation",
+            "TEST VLM",
+            input.project_schema.project.enabled_skill_versions(),
+            chrono::Utc::now(),
+        );
+        bind_available_registry_models(&mut safe_suggestion.draft, &input);
+        safe_suggestion.draft.annotation_schema = Some(annotagent_core::WorkflowSchemaBinding {
+            schema_draft_id: uuid::Uuid::new_v4().to_string(),
+            revision: 1,
+            goal: "TEST precise object bounds".into(),
+            task: input.project_schema.tasks[0].clone(),
+            boundary_rules: Vec::new(),
+        });
+        let snapshot = application
+            .pipeline_builder_context_snapshot(&input)
+            .expect("context snapshot");
+        let feasibility = LocalApplication::resolve_pipeline_feasibility(&input, &snapshot);
+        let mut session = AgentSession::start(
+            AgentKind::PipelineBuilder,
+            PipelineBuilderConstraints::default().agent_budget(),
+        )
+        .with_builder_progress(
+            annotagent_core::PipelineBuilderBudget::default(),
+            annotagent_core::BuilderProgressInvariant::default(),
+        );
+        session.set_builder_working_draft(
+            "revalidation-working",
+            annotagent_core::PipelineBuildMode::FromScratch,
+            snapshot.context_revision.clone(),
+        );
+        let (nodes, _) = application
+            .workflow_catalog(&settings)
+            .expect("Workflow Registry");
+        let paths = annotagent_core::ArtifactConversionRegistry::default().find_conversion_path(
+            ArtifactKind::DetectionSet,
+            ArtifactKind::DetectionSet,
+            &nodes,
+        );
+        persist_discovered_conversion_fragments(
+            &mut session,
+            "find_geometry_refinement_path",
+            "revalidation-observation",
+            &annotagent_core::AgentToolResult::summary(
+                "path",
+                json!({"registered_conversion_paths": paths}),
+            ),
+            &snapshot.context_revision,
+            &input.node_catalog,
+        )
+        .expect("persisted Fragment");
+        synthesize_registry_plan_candidates(
+            &mut session,
+            &safe_suggestion,
+            &input,
+            &feasibility,
+            annotagent_core::OptimizationPriority::Accurate,
+        )
+        .expect("Candidates");
+        let selected = session
+            .plan_candidates
+            .iter()
+            .find(|c| {
+                c.node_blueprints
+                    .iter()
+                    .any(|n| n.node_type == "capability.segment")
+            })
+            .unwrap();
+        let mut original = safe_suggestion.draft.clone();
+        annotagent_core::RegistryPipelineSynthesizer
+            .materialize_candidate(selected, &mut original)
+            .unwrap();
+        let (_, compatibility_models) = application.workflow_catalog(&settings).unwrap();
+        normalize_profile_compatibility_bindings(&mut original, &compatibility_models).unwrap();
+        let original_json = serde_json::to_value(&original).unwrap();
+        let repaired = localization_repair::candidate(&original, &BTreeSet::from(["ball".into()]))
+            .expect("typed repair");
+        assert_eq!(original_json, serde_json::to_value(&original).unwrap());
+        assert_eq!(repaired.annotation_schema, original.annotation_schema);
+        assert_eq!(repaired.id, original.id);
+        assert_eq!(repaired.runtime_policies, original.runtime_policies);
+        assert!(
+            localization_repair::candidate(&repaired, &BTreeSet::from(["ball".into()])).is_none()
+        );
+        assert!(
+            localization_repair::candidate(&original, &BTreeSet::from(["unrelated".into()]))
+                .is_none()
+        );
+        for node in &original.nodes {
+            let after = repaired.nodes.iter().find(|n| n.id == node.id).unwrap();
+            assert_eq!(node.model_binding, after.model_binding);
+            assert_eq!(node.model_profile_binding, after.model_profile_binding);
+        }
+        let local = repaired
+            .nodes
+            .iter()
+            .find(|n| n.id.ends_with(".localization_repair.localize"))
+            .unwrap();
+        let detector = original
+            .nodes
+            .iter()
+            .find(|n| n.kind == WorkflowNodeKind::VisionLanguageModel)
+            .unwrap();
+        assert_eq!(local.model_profile_binding, detector.model_profile_binding);
+        assert_eq!(local.model_binding, detector.model_binding);
+        assert_eq!(local.parameters["coordinate_space"], "local_crop");
+        let coverage = repaired
+            .nodes
+            .iter()
+            .find(|n| n.node_type == annotagent_runtime::CORE_PROMPT_COVERAGE_GATE)
+            .unwrap();
+        assert_eq!(
+            coverage.parameters["recovery_route_policy"]["allow_uncertain_refinement"],
+            false
+        );
+        assert_eq!(
+            coverage.parameters["recovery_route_policy"]["maximum_attempts"],
+            1
+        );
+        let segment = repaired
+            .nodes
+            .iter()
+            .find(|n| n.node_type == "capability.segment")
+            .unwrap();
+        assert!(repaired.edges.iter().any(|e| e.from_node == coverage.id
+            && e.to_node == segment.id
+            && e.route.as_deref() == Some("refine")));
+        let (_, models) = application.workflow_catalog(&settings).unwrap();
+        let extensions = application
+            .skills
+            .validation_catalog_for(&repaired.enabled_skills.keys().cloned().collect::<Vec<_>>())
+            .unwrap();
+        let report = WorkflowStaticValidator.validate_for_publish(
+            &repaired,
+            &nodes,
+            &models,
+            &extensions,
+            &repaired
+                .enabled_skills
+                .keys()
+                .cloned()
+                .collect::<BTreeSet<_>>(),
+            false,
+        );
+        assert!(report.valid, "{report:#?}");
+        let grammar = PipelineGrammarValidator.validate(
+            &repaired,
+            &nodes,
+            &models,
+            &extensions,
+            &repaired
+                .enabled_skills
+                .keys()
+                .cloned()
+                .collect::<BTreeSet<_>>(),
+            &PipelineBuilderConstraints::default(),
+        );
+        assert!(grammar.valid, "{grammar:#?}");
+        let accepted = candidate_from_draft(
+            CandidateDraftSource {
+                id: "TEST-repair".into(),
+                name: "TEST".into(),
+                source: annotagent_core::PipelineCandidateSource::RegistrySynthesis,
+                fragment_ids: vec![],
+                evidence: vec![],
+            },
+            &repaired,
+            &input,
+            &snapshot.context_revision,
+        );
+        assert!(accepted.is_runnable(), "{accepted:#?}");
+        let mut revoked = input.clone();
+        revoked.model_profiles.retain(|m| m.id != segmenter.id);
+        let refused = candidate_from_draft(
+            CandidateDraftSource {
+                id: "TEST-revoked".into(),
+                name: "TEST".into(),
+                source: annotagent_core::PipelineCandidateSource::RegistrySynthesis,
+                fragment_ids: vec![],
+                evidence: vec![],
+            },
+            &repaired,
+            &revoked,
+            &snapshot.context_revision,
+        );
+        assert!(!refused.is_runnable());
+        // Persist an exact TEST sample and a correction without invented correct geometry.
+        let owner = application
+            .conversation_project_identity("candidate-revalidation")
+            .unwrap();
+        let conversation = application.store.create_conversation(&owner).unwrap();
+        let message = annotagent_storage::ConversationMessageInput {
+            reference: None,
+            id: uuid::Uuid::new_v4(),
+            text: "TEST local repair".into(),
+            image: None,
+        };
+        application
+            .store
+            .append_conversation_message(&owner, conversation, &message)
+            .unwrap();
+        let task = uuid::Uuid::new_v4();
+        application
+            .store
+            .begin_conversation_task(
+                &owner,
+                conversation,
+                &annotagent_storage::BeginConversationTask {
+                    id: task,
+                    source_message_id: message.id,
+                    schema_revision: "a".repeat(64),
+                },
+            )
+            .unwrap();
+        let binding = original.annotation_schema.as_mut().unwrap();
+        let schema = application
+            .store
+            .create_human_conversation_schema_draft(
+                &owner,
+                task,
+                uuid::Uuid::new_v4(),
+                &annotagent_storage::ConversationSchemaDefinition {
+                    goal: binding.goal.clone(),
+                    task: binding.task.clone(),
+                    boundary_rules: binding.boundary_rules.clone(),
+                },
+            )
+            .unwrap();
+        binding.schema_draft_id = schema.id.to_string();
+        application.store.save_workflow_draft(&original).unwrap();
+        let original = application.store.get_workflow_draft(&original.id).unwrap();
+        let now = chrono::Utc::now();
+        let outcome = json!({"id":"TEST-final","label":"ball","confidence":0.8,"status":"needs_review","failure_classes":["geometry_error"],"value":{"kind":"bounding_box","rect":[0.1,0.1,0.2,0.2]}});
+        let terminal = json!({"source_artifact_id":uuid::Uuid::new_v4(),"source_artifact_ref":"TEST-terminal","lineage_id":"TEST-lineage","outcome":outcome,"localization":"coarse","geometry":"refiner_drift","final_status":"review"});
+        let sample:annotagent_storage::WorkflowSampleTest=serde_json::from_value(json!({"id":"TEST-before","draft_id":original.id,"project_id":original.project_id,"draft_revision":original.revision,"request_revision":1,"draft_content_hash":original.content_hash,"image_set_hash":"TEST-images","model_snapshot_hash":"TEST-models","status":"passed","inputs":[{"image_id":"TEST-image","content_hash":"TEST-pixels"}],"model_bindings":{},"started_at":now,"completed_at":now,"report":{"sandbox":true,"validation":{"valid":true,"issues":[],"execution_order":[]},"samples":[{"image_index":0,"image_name":"TEST.png","width":100,"height":100,"nodes":[],"outcomes":[outcome],"projection":{"final_candidates":[terminal],"review_candidates":[],"committed_annotations":[],"no_target":false,"intermediate_artifact_ids":[]}}],"total_latency_ms":0,"estimated_cost":"TEST only"}})).unwrap();
+        application
+            .store
+            .save_workflow_sample_test(&sample)
+            .unwrap();
+        let answer:annotagent_storage::SampleFeedbackRevision=serde_json::from_value(json!({"revision_id":"TEST-feedback","sample_test_id":sample.id,"image_id":"TEST-image","sequence":1,"reason":"poor_boundary","outcome_id":"TEST-final","corrected_value":null,"note":"TEST observed miss; not an accepted box","created_at":now})).unwrap();
+        application.store.save_sample_feedback(&answer).unwrap();
+        let repair_copy = application
+            .store
+            .copy_sample_plan(&sample.id, "candidate-revalidation", "TEST-repair-copy")
+            .unwrap();
+        let evidence_before = application
+            .store
+            .sample_plan_evidence(&repair_copy.id)
+            .unwrap();
+        let mut seed = safe_suggestion.clone();
+        seed.draft = repair_copy.clone();
+        let scripted = MockVisionProvider::new(MockScript {
+            steps: ["get_pipeline_builder_context", "create_draft_from_template"]
+                .into_iter()
+                .map(|name| MockStep {
+                    expect_task: Some("pipeline_builder".into()),
+                    expect_message_contains: None,
+                    response: MockResponseSpec::ToolCall {
+                        name: name.into(),
+                        arguments: json!({"template_id":"safe_default"}),
+                    },
+                    usage: MockUsage {
+                        input_tokens: 0,
+                        output_tokens: 0,
+                    },
+                })
+                .collect(),
+        });
+        let limits = PipelineBuilderConstraints {
+            planning_only: true,
+            maximum_agent_turns: 2,
+            maximum_dry_runs: 0,
+            ..PipelineBuilderConstraints::default()
+        };
+        let report = application
+            .run_workflow_advisor_loop(
+                "candidate-revalidation",
+                &settings,
+                &WorkflowConstraints::default(),
+                Some(("objects", "ball")),
+                input,
+                seed,
+                &scripted,
+                None,
+                None,
+                limits,
+                annotagent_core::PipelineBuildMode::RepairDraft {
+                    draft_id: repair_copy.id.clone(),
+                },
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(scripted.remaining_steps(), 0);
+        assert_eq!(
+            report.session.outcome,
+            Some(annotagent_core::PipelineBuilderOutcome::DraftReadyForHumanReview),
+            "{:#?}",
+            report.session
+        );
+        assert_eq!(
+            report.session.builder_stop_reason,
+            Some(annotagent_core::BuilderStopReason::ModelTurnBudgetReached)
+        );
+        assert!(report.validation.unwrap().valid);
+        assert!(report.dry_run.is_none());
+        let after = report.suggestion.unwrap().draft;
+        assert_eq!(after.id, repair_copy.id);
+        assert!(after.label_pipeline.is_some());
+        assert!(
+            after
+                .nodes
+                .iter()
+                .any(|n| n.node_type == annotagent_runtime::CORE_EXPAND_REGION)
+        );
+        assert!(
+            report
+                .session
+                .plan_candidates
+                .iter()
+                .any(|c| c.evidence.iter().any(|e| e.id == "TEST-feedback"))
+        );
+        assert_eq!(
+            application.store.get_workflow_draft(&original.id).unwrap(),
+            original
+        );
+        assert_eq!(
+            application
+                .store
+                .get_workflow_sample_test_by_id(&sample.id)
+                .unwrap()
+                .unwrap(),
+            sample
+        );
+        assert_eq!(
+            application.store.sample_plan_evidence(&after.id).unwrap(),
+            evidence_before
+        );
+        assert!(application.store.list_runs().unwrap().is_empty());
+        assert!(
+            application
+                .store
+                .list_published_workflow_versions(None)
+                .unwrap()
+                .is_empty()
         );
     }
 
