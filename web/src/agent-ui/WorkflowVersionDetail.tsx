@@ -3,6 +3,7 @@ import type {api} from "../api";
 import type {FrozenWorkflowVersion} from "../types";
 import {Disclosure} from "./Disclosure";
 import {agentPath} from "./navigationContract";
+import {WorkflowComparison} from "./WorkflowComparison";
 export type WorkflowVersionService=Pick<typeof api,"frozenWorkflowVersion">;
 export function verifyFrozenVersion(value:FrozenWorkflowVersion,projectId:string,workflowId:string,version:number) {
   if(value.project_id!==projectId||value.workflow_id!==workflowId||value.version!==version||value.draft.project_id!==projectId||value.source_draft_id!==value.draft.id||!value.content_hash)throw new Error("冻结版本身份不匹配，没有用当前 Draft 替代。");
@@ -27,7 +28,8 @@ export function WorkflowVersionDetail({service,projectId,workflowId,version}:{se
       <Disclosure title="Label Pipeline 与共享阶段"><pre>{JSON.stringify(value.draft.label_pipeline??null,null,2)}</pre></Disclosure>
       <Disclosure title="完整冻结配置与模型资源"><pre>{JSON.stringify(value.snapshot,null,2)}</pre></Disclosure>
       <Disclosure title="完整发布对象（只读）"><pre>{JSON.stringify(value,null,2)}</pre></Disclosure>
-      <p>版本复制与比较仍在迁移；不会自动创建草稿或重新发布。</p>
+      <WorkflowComparison key={`${value.workflow_id}@${value.version}`} source={value} service={service}/>
+      <p>版本复制仍在迁移；不会自动创建草稿或重新发布。</p>
     </>}
   </section>;
 }

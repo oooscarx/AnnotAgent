@@ -1,5 +1,13 @@
 # Single UI Clean Cut
 
+## Native immutable version comparison
+
+Audited clone route: each legacy POST creates another random-ID Draft, with no caller Project/hash/command or lost-response recovery. Sent UIAPI-016 to fixed backend UUID, receipt01a0874b-170b-7de2-bc31-494814d30abb, requesting exact owner/hash/idempotent clone and independent tests. No unsafe auto-retry adapter was substituted and no backend-owned Rust edited.
+
+In parallel completed read-only native frozen comparison: explicit same-Project Workflow ID/version, URL compare_workflow/compare_version with refresh/Back restoration, actual owner-scoped frozen GET, malformed/missing target failures without defaults, sorted-key structural comparison of every saved authoring/snapshot field group, expandable side-by-side content with narrow-screen stacking. Metadata differences are included and not described as quality improvements. No model execution, merge, clone or publication. No pre-cutover history list is reconstructed from this direct-reference comparison.
+
+324 unit tests (one cutover TODO), typecheck/build and actual TEST HTTP version browser regression passed. Browser verifies same-version zero diff, refresh restoration, missing-version error clearing prior results, full saved snapshot and zero writes. Different-version presentation covered by pure diff test, not yet a populated two-real-version browser screenshot. Owned fixture stopped; user data/services/dist, Published records and remotes unchanged; no paid calls or push. Clone, remaining old root/page/style deletion and full regression remain. Goal active.
+
 ## Native exact publication confirmation
 
 Added WorkflowPublication to native owned Draft editor. Exact request freezes command/project/revision/content_hash and persists before POST, keyed by workspace/project/Draft. UI states publication updates the Project default but does not execute a Run, refresh samples, call a model or accept annotation outputs. Dirty/saving editor blocks fresh confirmation; known revision/hash rejection permits a new review, uncertain errors retain the original request and explicit replay action. Refresh/mount never publish. Success validates source/revision/hash and switches the editor to the returned published read-only Draft, linking the frozen version. No empty-body legacy publish is used.
