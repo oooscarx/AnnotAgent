@@ -1,0 +1,1087 @@
+[
+  {
+    "path": "/api/health",
+    "registration": "get(health))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/session",
+    "registration": "get(local_session))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/session/privileged-confirmation",
+    "registration": "post(issue_privileged_confirmation),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/provider-presets",
+    "registration": "get(list_provider_presets))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/registry-migrations/legacy",
+    "registration": "get(preview_legacy_registry_import).post(apply_legacy_registry_import),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/providers",
+    "registration": "get(list_provider_profiles).post(create_provider_profile),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/providers/{provider_id}",
+    "registration": "get(get_provider_profile)\n                .patch(update_provider_profile)\n                .delete(delete_provider_profile),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/providers/{provider_id}/credential",
+    "registration": "post(save_provider_credential).delete(delete_provider_credential),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/providers/{provider_id}/migrate-credential",
+    "registration": "post(migrate_provider_credential),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/providers/{provider_id}/check",
+    "registration": "post(check_provider_profile),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/providers/{provider_id}/active-probe",
+    "registration": "post(probe_provider_profile),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/providers/{provider_id}/discover-models",
+    "registration": "post(discover_models_for_provider),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-profiles",
+    "registration": "get(list_model_profiles).post(create_model_profile),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-profiles/compatible",
+    "registration": "get(list_compatible_model_profiles),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-profiles/{model_id}",
+    "registration": "get(get_model_profile)\n                .patch(update_model_profile)\n                .delete(delete_model_profile),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-profiles/{model_id}/usage",
+    "registration": "get(get_model_profile_usage),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-profiles/{model_id}/quality-contracts",
+    "registration": "get(get_model_profile_quality_contracts),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/plugins",
+    "registration": "get(list_expert_model_plugins))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-catalogs",
+    "registration": "get(list_model_catalogs))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-catalogs/refresh",
+    "registration": "post(refresh_model_catalog))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-catalogs/{catalog_id}",
+    "registration": "get(get_model_catalog))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-bundles",
+    "registration": "get(list_model_bundles))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-bundles/available",
+    "registration": "get(list_available_model_bundles),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-bundles/packages/inspect",
+    "registration": "post(inspect_model_bundle_package),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-bundles/install",
+    "registration": "post(install_model_bundle))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-installations",
+    "registration": "get(list_model_install_operations).post(start_model_install_operation),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-installations/{operation_id}",
+    "registration": "get(get_model_install_operation),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-bundles/import",
+    "registration": "post(import_model_bundle))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-bundles/{bundle_id}/{version}",
+    "registration": "get(get_model_bundle).delete(remove_model_bundle),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-bundles/{bundle_id}/{version}/verify",
+    "registration": "post(verify_installed_model_bundle),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-bundles/{bundle_id}/{version}/test",
+    "registration": "post(test_model_bundle),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-bundles/{bundle_id}/{version}/enable",
+    "registration": "post(enable_model_bundle),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-bundles/{bundle_id}/{version}/disable",
+    "registration": "post(disable_model_bundle),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-bundles/{bundle_id}/{version}/references",
+    "registration": "get(list_model_bundle_references),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-bundles/{bundle_id}/{version}/compatibility",
+    "registration": "get(get_model_bundle_compatibility),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-bundles/gc",
+    "registration": "post(garbage_collect_model_bundles))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-bundles/{bundle_id}/{version}/license-acceptance",
+    "registration": "post(accept_model_bundle_license),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-instances",
+    "registration": "get(list_model_instances))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-instances/{instance_id}",
+    "registration": "get(get_model_instance),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/model-instances/{instance_id}/test",
+    "registration": "post(test_model_instance),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/plugins/{plugin_id}/{version}/compatible-model-bundles",
+    "registration": "get(list_plugin_compatible_model_bundles),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/plugins/packages/inspect",
+    "registration": "post(inspect_expert_model_plugin_package),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/plugins/packages/install",
+    "registration": "post(install_expert_model_plugin_package),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/plugins/{plugin_id}/{version}",
+    "registration": "delete(uninstall_expert_model_plugin),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/plugins/{plugin_id}/{version}/weights",
+    "registration": "post(provision_expert_model_plugin_weights),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/plugins/{plugin_id}/{version}/legacy-model-bundle",
+    "registration": "post(create_legacy_local_model_bundle),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/plugins/{plugin_id}/{version}/test",
+    "registration": "post(test_expert_model_plugin),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/plugins/{plugin_id}/{version}/enable",
+    "registration": "post(enable_expert_model_plugin),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/plugins/{plugin_id}/{version}/disable",
+    "registration": "post(disable_expert_model_plugin),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/model-bindings",
+    "registration": "get(get_project_model_bindings).put(put_project_model_bindings).post(select_project_model_binding),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/agent-model-bindings",
+    "registration": "get(get_agent_model_bindings).put(put_agent_model_bindings),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/skills",
+    "registration": "get(list_skills))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/skills/{skill_id}",
+    "registration": "get(get_skill))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/projects",
+    "registration": "get(list_projects).post(create_project))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/workflows",
+    "registration": "get(list_workflows))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/workflow-drafts",
+    "registration": "get(list_workflow_drafts).post(create_workflow_draft),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/workflow-drafts/suggest",
+    "registration": "post(suggest_workflow))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/sample-plan-copies/{copy_id}",
+    "registration": "post(copy_sample_plan).get(get_sample_plan_evidence))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/workflow-drafts/diff",
+    "registration": "post(diff_workflow_drafts))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/workflow-drafts/{draft_id}",
+    "registration": "patch(save_workflow_draft),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/workflow-drafts/{draft_id}/apply-diff",
+    "registration": "post(apply_workflow_draft_diff),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/workflow-drafts/{draft_id}/dry-run",
+    "registration": "post(dry_run_workflow),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/workflow-drafts/{draft_id}/sample-preview",
+    "registration": "get(preview_workflow_samples))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/workflow-drafts/{draft_id}/sample-test",
+    "registration": "get(get_workflow_sample_test),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/workflow-sample-tests/{test_id}/samples/{image_index}/nodes/{node_id}/model-input",
+    "registration": "get(get_workflow_sample_model_input),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/workflow-sample-tests/{test_id}/images/{image_id}/feedback",
+    "registration": "get(get_sample_feedback).post(save_sample_feedback))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/workflow-drafts/{draft_id}/publish",
+    "registration": "post(publish_workflow),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/workflow-drafts/{draft_id}/archive",
+    "registration": "post(archive_workflow_draft),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/workflows/{workflow_id}/versions/{version}/clone",
+    "registration": "post(clone_workflow_version),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/workflows/{workflow_id}/versions/{version}/create-geometry-safe-draft",
+    "registration": "post(create_geometry_safe_draft),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/workflows/compare",
+    "registration": "post(compare_workflow_versions))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/pipeline-improvements",
+    "registration": "get(list_pipeline_improvements).post(create_pipeline_improvement),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/pipeline-improvements/{improvement_id}",
+    "registration": "get(get_pipeline_improvement),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/pipeline-improvements/{improvement_id}/compare",
+    "registration": "post(compare_pipeline_improvement),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/pipeline-improvements/{improvement_id}/apply-to-draft",
+    "registration": "post(apply_pipeline_improvement),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/models",
+    "registration": "get(list_models))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/models/{model_id}/test",
+    "registration": "post(test_detection_worker))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/models/{model_id}/sample-test",
+    "registration": "post(sample_test_detection_worker),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/geometry-calibrations/{calibration_id}",
+    "registration": "get(get_geometry_calibration),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/agent-sessions/{session_id}/cancel",
+    "registration": "post(cancel_agent_session),\n        )",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/settings",
+    "registration": "get(get_settings).put(put_settings))",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/events",
+    "registration": "get(events))\n        .with_state(state)",
+    "source": "crates/annotagent-server/src/lib.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/send",
+    "registration": "post(super::conversations::send))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/agent-model",
+    "registration": "get(super::conversations::agent_model).post(super::conversations::select_agent_model))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/send/{message_id}",
+    "registration": "get(super::conversations::send_receipt))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/message-queue",
+    "registration": "get(super::conversations::message_queue))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/message-queue/{message_id}/cancel",
+    "registration": "post(super::conversations::cancel_queued_message))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/message-queue/{message_id}/schema-preview",
+    "registration": "get(super::conversation_queue::preview))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/message-queue/{message_id}/schema-authorization",
+    "registration": "get(super::conversation_queue::authorization))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/message-queue/{message_id}/schema-proposals",
+    "registration": "post(super::conversation_queue::propose))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/stop-requests",
+    "registration": "post(super::conversation_stop::begin))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/stop-requests/{message_id}",
+    "registration": "get(super::conversation_stop::get))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/stop-requests/{message_id}/select",
+    "registration": "post(super::conversation_stop::select))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/task-selection",
+    "registration": "get(super::conversations::selection).post(super::conversations::select_task))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/budget",
+    "registration": "get(super::processing_operations::conversation_budget))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversation-call-limit",
+    "registration": "get(super::conversations::call_limit).post(super::conversations::set_call_limit))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/processing-operations",
+    "registration": "get(super::processing_operations::conversation_history))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/human-requests",
+    "registration": "get(super::conversation_human_requests::list).post(super::conversation_human_requests::create))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/human-requests/{request_id}/answer",
+    "registration": "post(super::conversation_human_requests::answer))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/human-requests/{request_id}/cancel",
+    "registration": "post(super::conversation_human_requests::cancel))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/human-requests/{request_id}/deferral",
+    "registration": "post(super::conversation_human_requests::defer))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/human-requests/{request_id}/resume",
+    "registration": "post(super::conversation_human_requests::resume))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/sample-preview",
+    "registration": "get(super::sample_operations::conversation_preview))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/sample-operations",
+    "registration": "get(super::sample_operations::conversation_history))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/builder-preview",
+    "registration": "get(super::conversation_builder::preview))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/journey-preview",
+    "registration": "get(super::conversation_journey::preview))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/journey-consents",
+    "registration": "get(super::conversation_journey::history).post(super::conversation_journey::save))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/journey-consents/{consent_id}",
+    "registration": "get(super::conversation_journey::get))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/journey-consents/{consent_id}/execution",
+    "registration": "get(super::conversation_journey::status).post(super::conversation_journey::execute))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/journey-consents/{consent_id}/revoke",
+    "registration": "post(super::conversation_journey::revoke))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/builder-operations",
+    "registration": "get(super::conversation_builder::history).post(super::conversation_builder::launch))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/cancellations",
+    "registration": "get(super::conversation_schema::cancellations))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/calls",
+    "registration": "get(super::conversation_schema::history))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/calls/{call_id}/cancel",
+    "registration": "post(super::conversation_schema::cancel))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/schema-preview",
+    "registration": "get(super::conversation_schema::preview))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/feedback-preview",
+    "registration": "get(super::conversation_feedback::preview))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/feedback",
+    "registration": "get(super::conversation_feedback::for_message))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/feedback-authorizations",
+    "registration": "post(super::conversation_feedback::authorize))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/feedback/{call_id}",
+    "registration": "get(super::conversation_feedback::status))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/feedback/{call_id}/execute",
+    "registration": "post(super::conversation_feedback::execute))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/feedback/{call_id}/human-request",
+    "registration": "post(super::conversation_feedback::human_request))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/feedback/{call_id}/scope-answer",
+    "registration": "post(super::conversation_feedback::answer_scope))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/feedback/{call_id}/image-class-preview",
+    "registration": "get(super::conversation_image_class::preview))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/feedback/{call_id}/image-class",
+    "registration": "get(super::conversation_image_class::for_feedback).post(super::conversation_image_class::create))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/image-class-reviews/{review_id}",
+    "registration": "get(super::conversation_image_class::get))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/image-class-reviews/{review_id}/answer",
+    "registration": "post(super::conversation_image_class::answer))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/image-class-reviews/{review_id}/resume",
+    "registration": "post(super::conversation_image_class::resume))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/image-class-reviews/{review_id}/cancel",
+    "registration": "post(super::conversation_image_class::cancel))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/feedback/{call_id}/future-schema",
+    "registration": "get(super::conversation_feedback::future_schema).post(super::conversation_feedback::save_future_schema))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/feedback/{call_id}/future-schema/proposal-preview",
+    "registration": "get(super::conversation_future_proposal::preview))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/feedback/{call_id}/future-schema/proposal",
+    "registration": "get(super::conversation_future_proposal::get).post(super::conversation_future_proposal::authorize))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/feedback/{call_id}/future-schema/proposal/execute",
+    "registration": "post(super::conversation_future_proposal::execute))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/calls/{call_id}/clarification",
+    "registration": "get(super::conversation_schema::clarification))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/calls/{call_id}/clarification/cancel",
+    "registration": "post(super::conversation_schema::cancel_clarification))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/schema-authorizations/pending",
+    "registration": "get(super::conversation_schema::pending_authorization))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/schema-proposals",
+    "registration": "post(super::conversation_schema::propose))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/human-schema-drafts",
+    "registration": "get(super::conversation_schema::human_drafts).post(super::conversation_schema::save_human_draft))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/calls/{call_id}/schema-draft",
+    "registration": "get(super::conversation_schema::draft_for_call).post(super::conversation_schema::save_draft))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversation-schema-drafts/{draft_id}",
+    "registration": "get(super::conversation_schema::read_draft).post(super::conversation_schema::edit_draft))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/calls/{call_id}",
+    "registration": "get(super::conversation_schema::receipt))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations",
+    "registration": "get(super::conversations::current).post(super::conversations::create),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/messages",
+    "registration": "get(super::conversations::messages).post(super::conversations::append),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/messages/{message_id}",
+    "registration": "get(super::conversations::message),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation_id}/tasks",
+    "registration": "get(super::conversations::tasks).post(super::conversations::begin_task),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/processing-preview",
+    "registration": "get(super::processing_operations::preview),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/processing-operations",
+    "registration": "post(super::processing_operations::confirm),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/processing-operations/{operation_id}",
+    "registration": "get(super::processing_operations::get),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/sample-operations",
+    "registration": "post(super::sample_operations::start_operation),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/sample-operations/{operation_id}",
+    "registration": "get(super::sample_operations::get_operation),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/sample-operations/{operation_id}/cancel",
+    "registration": "post(super::sample_operations::cancel_operation),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/goal",
+    "registration": "get(super::get_project_goal).put(super::put_project_goal),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/runs",
+    "registration": "get(list_run_summaries))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}",
+    "registration": "get(get_project))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/guidance",
+    "registration": "get(get_project_guidance),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/readiness",
+    "registration": "get(get_project_readiness),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/summary",
+    "registration": "get(get_project_summary),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/schema/labels",
+    "registration": "post(add_project_label),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/schema/tasks",
+    "registration": "post(add_project_task),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/skills",
+    "registration": "post(set_project_skills),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/workflow-catalog",
+    "registration": "get(get_workflow_catalog),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/import",
+    "registration": "post(import_images))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/annotation-import",
+    "registration": "post(import_annotations),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/images",
+    "registration": "get(list_images))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/image-upload",
+    "registration": "post(upload_project_image)",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/images/{index}",
+    "registration": "delete(remove_image),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/agent-sessions",
+    "registration": "get(list_project_agent_sessions),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/correction-memory",
+    "registration": "get(list_project_correction_memory),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/geometry-corrections",
+    "registration": "get(list_project_geometry_corrections),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/geometry-policy",
+    "registration": "get(get_project_geometry_policy).put(put_project_geometry_policy),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/geometry-calibrations",
+    "registration": "get(list_project_geometry_calibrations).post(create_project_geometry_calibration),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/images/{index}/content",
+    "registration": "get(image_content),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/images/{index}/thumbnail",
+    "registration": "get(super::image_previews::thumbnail),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/runs",
+    "registration": "post(start_run))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/management/preview",
+    "registration": "post(preview_project_management),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/management/actions",
+    "registration": "post(execute_project_management),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/management/operations/{operation_id}",
+    "registration": "get(get_project_management_operation),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/management/usage",
+    "registration": "get(get_project_management_usage),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/trash",
+    "registration": "get(list_project_trash))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/pipelines",
+    "registration": "get(list_project_pipeline_lifecycle),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/batches",
+    "registration": "post(start_batch))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/batches",
+    "registration": "get(list_batches))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/batches/{batch_id}",
+    "registration": "get(get_batch))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/batches/{batch_id}/pause",
+    "registration": "post(pause_batch))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/batches/{batch_id}/resume",
+    "registration": "post(resume_batch))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/batches/{batch_id}/cancel",
+    "registration": "post(cancel_batch))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/export-readiness",
+    "registration": "get(get_export_readiness),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/export",
+    "registration": "post(export_dataset))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project}/conversations/{conversation}/tasks/{task}/exports/events",
+    "registration": "get(super::export_jobs::events))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project}/conversations/{conversation}/tasks/{task}/exports/{id}",
+    "registration": "get(super::export_jobs::status))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/conversations/{conversation}/tasks/{task}/exports",
+    "registration": "get(super::conversation_export_history))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/exports/{export_id}/download",
+    "registration": "get(super::download_export))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/runs/{run_id}",
+    "registration": "get(get_run))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/runs/{run_id}/provenance",
+    "registration": "get(get_run_provenance))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/runs/{run_id}/result-summary",
+    "registration": "get(get_run_result_summary),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/runs/{run_id}/debug-summary",
+    "registration": "get(get_run_debug_summary),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/runs/{run_id}/geometry-quality",
+    "registration": "get(get_run_geometry_quality),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/runs/{run_id}/pipeline-artifacts",
+    "registration": "get(inspect_run_pipeline_artifacts),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/runs/{run_id}/replay/{node_id}",
+    "registration": "post(replay_run_from_node),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/runs/{run_id}/pause",
+    "registration": "post(pause_run))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/runs/{run_id}/resume",
+    "registration": "post(resume_run))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/runs/{run_id}/cancel",
+    "registration": "post(cancel_run))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/runs/{run_id}/events",
+    "registration": "get(run_events))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/runs/{run_id}/annotations",
+    "registration": "get(list_run_annotations).post(create_annotation),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/runs/{run_id}/reviews",
+    "registration": "get(list_run_reviews))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/reviews",
+    "registration": "get(list_project_reviews),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/reviews/{review_id}",
+    "registration": "get(get_project_review),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/reviews/{review_id}/next",
+    "registration": "get(get_next_project_review),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/reviews/{review_id}/accept-and-next",
+    "registration": "post(accept_project_review_and_next),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/reviews/{review_id}/reject-and-next",
+    "registration": "post(reject_project_review_and_next),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/projects/{project_id}/reviews/{review_id}/revisions",
+    "registration": "get(project_review_revisions),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/reviews",
+    "registration": "get(list_reviews))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/reviews/{review_id}",
+    "registration": "get(get_review))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/reviews/{review_id}/next",
+    "registration": "get(get_next_review))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/reviews/{review_id}/decision",
+    "registration": "post(review_decision))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/reviews/{review_id}/accept-and-next",
+    "registration": "post(accept_review_and_next),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/reviews/{review_id}/reject-and-next",
+    "registration": "post(reject_review_and_next),\n        )",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  },
+  {
+    "path": "/api/annotations/{annotation_id}",
+    "registration": "patch(patch_annotation))",
+    "source": "crates/annotagent-server/src/workspace_routes.rs"
+  }
+]

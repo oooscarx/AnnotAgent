@@ -1,0 +1,28 @@
+{
+  "fixture": true,
+  "notice": "TEST only; placeholders are not runnable approvals",
+  "send": {
+    "message": {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "text": "TEST plan only",
+      "image": null
+    },
+    "task_id": null,
+    "schema_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "agent_model": {
+      "revision": 0,
+      "model_profile_id": null
+    },
+    "mode": "plan"
+  },
+  "select_agent_model": {
+    "request_id": "00000000-0000-4000-8000-000000000002",
+    "expected_revision": 0,
+    "model_profile_id": null
+  },
+  "legacy_error": {
+    "error": "TEST invalid owner",
+    "status": 400
+  },
+  "unknown_cost": null
+}
