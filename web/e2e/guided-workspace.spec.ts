@@ -909,6 +909,13 @@ test("actual model input thumbnails open an inspectable detail dialog", async ({
 });
 
 test("open Run Artifact from history without entering an ID", async ({ page }) => {
+  // The project inventory is paginated. Resolve this real Run's owner even when
+  // that owner is absent from the current inventory response (no fake owner API).
+  await page.route("**/api/projects", async route => {
+    const response = await route.fetch();
+    const data = await response.json();
+    await route.fulfill({response,json:{...data,projects:data.projects.filter((project:{id:string})=>project.id!==projectId)}});
+  });
   await page.goto("/runs");
   const row = page.locator(".run-row").filter({ hasText: projectName });
   await row.click();

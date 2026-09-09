@@ -1,5 +1,9 @@
 import type { HistoryRun, ProjectSummary, ReviewItem } from "./types";
 
+export function resolvedRunProjectId(run?: HistoryRun): string | undefined {
+  return run?.ownership_status === "resolved" ? run.project_id : undefined;
+}
+
 export function projectForRun(
   projects: ProjectSummary[],
   run?: HistoryRun,

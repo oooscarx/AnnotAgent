@@ -29,7 +29,7 @@ import {
 import { visualProfilesForSkills } from "./skills/visualProfiles";
 import { annotationColor, annotationVisual, type LabelVisualMapping } from "./annotationVisuals";
 import { deriveProjectRunView } from "./runState";
-import { projectForReview, projectForRun, runsForContext } from "./workspaceContext";
+import { projectForReview, projectForRun, resolvedRunProjectId, runsForContext } from "./workspaceContext";
 import {
   parseWorkspaceRoute,
   projectBuildPath,
@@ -552,10 +552,10 @@ export function App() {
     if (
       route.kind === "runs" &&
       route.runId &&
-      routeRunProject
+      resolvedRunProjectId(routeRun)
     ) {
       navigate(
-        projectRunPath(routeRunProject.id, route.runId, {
+        projectRunPath(resolvedRunProjectId(routeRun)!, route.runId, {
           annotationId: route.annotationId, canvasView: route.canvasView,
           imageId: route.imageId,
           nodeId: route.nodeId,
@@ -565,7 +565,7 @@ export function App() {
         true,
       );
     }
-  }, [route.kind, routeRun?.id, routeRunProject?.id]);
+  }, [route.kind, routeRun?.id, routeRun?.project_id, routeRun?.ownership_status]);
   const page: WorkspacePage =
     route.kind === "projectRuns" ||
     route.kind === "projectRun" ||
@@ -7925,12 +7925,13 @@ function RunsPage({
     : undefined;
   useEffect(() => {
     if (
-      route.kind === "projectRun" &&
-      runOwner &&
-      route.projectId !== runOwner.id
+      (route.kind === "projectRun" || route.kind === "runs") &&
+      route.runId &&
+      resolvedRunProjectId(run) &&
+      (route.kind === "runs" || route.projectId !== resolvedRunProjectId(run))
     )
       onNavigate(
-        projectRunPath(runOwner.id, route.runId, {
+        projectRunPath(resolvedRunProjectId(run)!, route.runId, {
           annotationId: route.annotationId, canvasView: route.canvasView,
           imageId: route.imageId,
           nodeId: route.nodeId,
@@ -7939,7 +7940,7 @@ function RunsPage({
         }),
         true,
       );
-  }, [route.kind, routeRunId, runOwner?.id]);
+  }, [route.kind, routeRunId, run?.project_id, run?.ownership_status]);
   if (detailRoute && routeRunId && run)
     return (
       <RunDetailWorkspace

@@ -5464,3 +5464,29 @@ audit; this targeted fix is not a claim that all legacy provenance is repaired.
 Full browser 34639 remains live, last observed through case 135, with the three known
 joint-repair test failures retained. The new build, targeted reruns and final complete
 regression remain pending. No user data, credentials or remotes were touched.
+
+### 2026-09-09 — Full sweep terminated; canonical Run owner pagination fixed
+
+**34639 exited 1: 150 passed, 4 failed, 24 did not run (23.5m).** Three failures are the
+joint-repair exact-model-selection cases already corrected in 14818ab. The fourth is
+`guided-workspace` case 136: a real Run opened at `/runs/:id` but did not redirect to its
+Project. Read the failure snapshot and current routing: both global and locally fetched
+Run details depended on finding their Project in the bounded dashboard list. The service
+already supplies a resolved canonical Project route ID in `HistoryRun.project_id`.
+
+Routing now uses that server-owned ID when `ownership_status` is `resolved`, independently
+of the dashboard page. Orphan records do not acquire an owner; the existing exact Project
+summary loader handles the canonical destination. Image, annotation, view, node and
+artifact query context is retained. The browser regression now explicitly excludes the
+real owning Project from the inventory response, so a small fresh workspace also tests
+this failure condition. No owner response is fabricated. The original failure was saved
+alongside the three joint-repair traces in `/tmp/annotagent-full-run-failures-20260909`.
+
+Typecheck, all **231 Web unit tests**, production Web build and all-feature annotagent
+binary build pass (19211). Existing large JS chunk warning remains. Because the previous
+browser process is terminal, fresh targeted browser **14035** now checks history, Project
+entry, joint repair and the complete serial Guided suite using new assets and an isolated
+workspace. Results are pending; these include the new goal query and the previously
+unrun management/review cases. New bbox export/task-binding verification and final Rust
+full regression still need to run. Generic geometry-review insertion audit remains open;
+old Published Versions and exports are unchanged. No push or remote changes.
