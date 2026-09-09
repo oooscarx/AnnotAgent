@@ -5780,3 +5780,24 @@ Read actual fresh export JSON, not just UI status, from workspace
 These are isolated protocol fixtures, not real recognition or accuracy evidence. Screenshots
 are in `/tmp/annotagent-export-schema-browser-verified`; historical dirty screenshots remain
 untouched. A final 178-case combined run must verify current production and test code together.
+
+### 2026-09-09 — Export reconnect reads its own truth outside dashboard pagination
+
+78366 exited 1: **169 passed, 1 failed, 8 not run (24.1m)**. The previous repair, export
+Schema and active-state cases passed. Export SSE recovery failed: reconnect refreshed only
+dashboard inventory. When the current Project was outside that page its counters did not
+change, so the export readiness effect never reran and retained a false ready state.
+
+Added a reconnect revision passed to the existing Export page, triggering its own read-only
+readiness fetch with the existing abort/owner/generation guards. It does not start another
+export, call a model or change authorization. The browser regression now explicitly excludes
+the owned Project from the dashboard response before disconnecting SSE, creates a real pending
+review, reconnects, and requires the blocked Export state. This remains an actual service
+state test, not a fabricated Export response.
+
+Failure trace/screenshot/context preserved in `/tmp/annotagent-export-reconnect-failure`.
+34100 exited 0: Web typecheck, **232 unit tests**, fresh production build and **36/36 Guided
+browser cases (42.4s)**. Log `/tmp/annotagent-export-reconnect-verified.log`; evidence
+`/tmp/annotagent-export-reconnect-verified`. Rust is unchanged from the 714-pass full run.
+The full current Web combination still needs verification. No real workspace writes, push,
+remote edits or Live model calls.

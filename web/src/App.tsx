@@ -282,6 +282,7 @@ export function App() {
   const [connection, setConnection] = useState<"connecting" | "connected" | "reconnecting">("connecting");
   const [routeRetryVersion, setRouteRetryVersion] = useState(0);
   const hasConnectedRef = useRef(false);
+  const [reconnectRevision, setReconnectRevision] = useState(0);
   const needsReconnectSyncRef = useRef(false);
   const pageTitleRef = useRef<HTMLHeadingElement>(null);
   const navigationGuardRef = useRef<(() => boolean) | undefined>(undefined);
@@ -463,7 +464,10 @@ export function App() {
         },
         () => {
           setConnection("connected");
-          if (hasConnectedRef.current || needsReconnectSyncRef.current) void refresh(true);
+          if (hasConnectedRef.current || needsReconnectSyncRef.current) {
+            setReconnectRevision(previous => previous + 1);
+            void refresh(true);
+          }
           hasConnectedRef.current = true;
           needsReconnectSyncRef.current = false;
         },
@@ -811,6 +815,7 @@ export function App() {
         )}
         {loaded && route.kind === "export" && (
           <ProjectExportPage
+            reconnectRevision={reconnectRevision}
             project={selectedProject}
             workspaceReturn={route.workspaceReturn}
             onNavigate={navigate}
@@ -2698,11 +2703,13 @@ function ProjectPage({
 
 function ProjectExportPage({
   project,
+  reconnectRevision,
   workspaceReturn,
   onNavigate,
   onError,
 }: {
   project?: ProjectSummary;
+  reconnectRevision: number;
   workspaceReturn?: string;
   onNavigate: (destination: string) => void;
   onError: (value: string) => void;
@@ -2747,6 +2754,7 @@ function ProjectExportPage({
     project?.review_count,
     project?.active_run?.updated_at,
     project?.active_batch?.event_sequence,
+    reconnectRevision,
   ]);
   const executeExport = () => {
     if (!project || !format || !activeReadiness?.ready || exportPending.current) return;

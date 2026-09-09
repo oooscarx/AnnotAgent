@@ -1797,6 +1797,11 @@ test("Build and Runs state survives refresh plus browser history", async ({ page
 });
 
 test("SSE reconnect refreshes Export from server truth", async ({ page, request }) => {
+  await page.route("**/api/projects", async route => {
+    const response = await route.fetch();
+    const data = await response.json();
+    await route.fulfill({response,json:{...data,projects:data.projects.filter((project:{id:string})=>project.id!==projectId)}});
+  });
   await page.route("**/api/events", (route) => route.abort("connectionfailed"));
   await page.goto(`/projects/${projectId}/export`);
   await expect(page.getByRole("heading", { name: "Dataset exported successfully" })).toBeVisible();
