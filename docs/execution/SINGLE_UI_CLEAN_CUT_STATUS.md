@@ -1,5 +1,13 @@
 # Single UI Clean Cut
 
+## UIAPI-012 integrated installation commands
+
+Read full delivery contract and server/storage diff; cherry-picked backend `1c24d4e8f8539f0770dfb0e2e9857179f9423dcf` as `fbe3296`. Resolved two documentation-only conflicts section-by-section, adding only UIAPI-012 and retaining existing history; unrelated UIAPI-011 deliveries are not imported or claimed integrated. Additive migration0060 is independent of pending history scope0059. No user server was restarted, so no migration ran on real workspace.
+
+Native installation now generates/persists command UUID before POST and reads `/api/model-installations/commands/:id` for recovery. Exact receipt command plus five scope fields and installation-root presence are checked; unknown/running receipts retain the guard, terminal known receipts release it. Aged-out list entries do not lose direct lookup recovery. Missing/legacy command IDs or 404 remain unconfirmed and never trigger a new POST; unknown operations disable further installs rather than pretending restart support. No automatic new-command retry is implemented.
+
+Own verification on main: four targeted Rust tests passed (two storage concurrency/reopen/scope tests and two server actual Router tests for orphan/GET passivity and concurrent/lost-response/terminal recovery); cargo fmt check passed. Frontend typecheck/build and 310 unit tests plus one explicit cutover TODO passed, including wrong-command/scope/unknown-preservation checks. Actual browser installation recovery remains to execute; no weights/downloads/paid calls, real workspace writes or user service changes. Old App/styles still emitted and full goal is incomplete. No push.
+
 ## Step dialog actual HTTP verification
 
 Real browser regression now clones a TEST published version through the existing clone API, opens its native step editor, verifies malformed JSON is retained with no write, applies a valid parameter locally with zero writes, explicitly saves exactly once, refreshes persisted parameters, and compares the original Published Draft unchanged. All fourteen management tests passed (thirteen actual TEST HTTP, one explicit Worker response fixture). This verifies parameter/save separation and immutability, not yet interactive shared-source selection or live model rebinding.

@@ -11,6 +11,6 @@ it("keeps explicit scope and failed-response protections independent of legacy p
   expect(source).toContain("!accepted||pending.current||uncertain");
   expect(source).toContain("selected.license_summary.license_digest");
   expect(source).toContain("JSON.stringify(same)!==JSON.stringify(selected)");
-  expect(source).toContain("operation.plugin_id!==pluginId");
+  expect(source).toContain("verifyInstallCommand(request,operation)");
   expect(source).not.toContain("../App");
 });

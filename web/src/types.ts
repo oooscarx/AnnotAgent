@@ -2403,13 +2403,15 @@ export type ModelInstallOperationStage =
   | "ready";
 
 export interface ModelInstallOperation {
+  command_id?: string;
+  scope?: {catalog_id:string;bundle_id:string;bundle_version:string;plugin_id:string;plugin_version:string;installation_root:string};
   id: string;
   catalog_id: string;
   bundle_id: string;
   bundle_version: string;
   plugin_id: string;
   plugin_version: string;
-  status: "running" | "succeeded" | "failed";
+  status: "running" | "succeeded" | "failed" | "unknown";
   stage: ModelInstallOperationStage;
   bytes_completed: number;
   bytes_total?: number;

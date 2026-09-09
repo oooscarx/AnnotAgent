@@ -6,6 +6,6 @@ export type PluginManagement = Pick<typeof api,
   "testExpertPlugin" | "setExpertPluginEnabled" | "uninstallExpertPlugin" |
   "testModelInstance" | "modelBundleReferences" | "setModelBundleEnabled" |
   "inspectExpertPluginPackage" | "installExpertPluginPackage" |
-  "compatibleModelBundles" | "modelInstallOperations" | "acceptModelBundleLicense" | "startModelInstallOperation" |
+  "compatibleModelBundles" | "modelInstallOperations" | "modelInstallCommand" | "acceptModelBundleLicense" | "startModelInstallOperation" |
   "inspectModelBundlePackage" | "importModelBundlePackage"
 >;

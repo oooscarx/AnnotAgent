@@ -1,6 +1,14 @@
 import {it,expect} from "vitest";
-import {bundleInstallKey,preserveBundleInstall} from "./bundleInstallRecovery";
+import {bundleInstallKey,preserveBundleInstall,verifyInstallCommand} from "./bundleInstallRecovery";
+import type {ModelInstallOperation} from "../types";
 const request={catalog_id:"c",bundle_id:"b",bundle_version:"1",plugin_id:"p",plugin_version:"1"};
+it("verifies command identity and exact scope without promoting unknown results",()=>{
+  const intent={...request,command_id:"command"};const receipt={...intent,id:"operation",scope:{...request,installation_root:"/TEST"},status:"unknown"} as ModelInstallOperation;
+  expect(verifyInstallCommand(intent,receipt).status).toBe("unknown");
+  expect(()=>verifyInstallCommand(intent,{...receipt,command_id:"other"})).toThrow();
+  expect(()=>verifyInstallCommand(intent,{...receipt,scope:{...receipt.scope!,bundle_id:"other"}})).toThrow();
+  expect(()=>verifyInstallCommand(request,receipt)).toThrow();
+});
 it("isolates workspace and plugin identities",()=>{
   expect(bundleInstallKey("a","p","1")).not.toBe(bundleInstallKey("b","p","1"));
   expect(bundleInstallKey("a","p","1")).not.toBe(bundleInstallKey("a","p","2"));

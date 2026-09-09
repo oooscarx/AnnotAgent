@@ -465,7 +465,10 @@ export const api = {
     request<{ operations: ModelInstallOperation[] }>("/api/model-installations"),
   modelInstallOperation: (operationId: string) =>
     request<ModelInstallOperation>(`/api/model-installations/${encodeURIComponent(operationId)}`),
+  modelInstallCommand: (commandId: string) =>
+    request<ModelInstallOperation>(`/api/model-installations/commands/${encodeURIComponent(commandId)}`),
   startModelInstallOperation: (value: {
+    command_id?: string;
     catalog_id: string;
     bundle_id: string;
     bundle_version: string;

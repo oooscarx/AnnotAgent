@@ -3,8 +3,8 @@ import type { api } from "../api";
 import type { ModelCatalogEntry, ModelInstallOperation } from "../types";
 import { Disclosure } from "./Disclosure";
 import { Dialog } from "./Dialog";
-import { bundleInstallKey, preserveBundleInstall } from "./bundleInstallRecovery";
-export type BundleInstallerService = Pick<typeof api,"compatibleModelBundles"|"modelInstallOperations"|"acceptModelBundleLicense"|"startModelInstallOperation">;
+import { bundleInstallKey, preserveBundleInstall, verifyInstallCommand,type PendingBundleInstall } from "./bundleInstallRecovery";
+export type BundleInstallerService = Pick<typeof api,"compatibleModelBundles"|"modelInstallOperations"|"modelInstallCommand"|"acceptModelBundleLicense"|"startModelInstallOperation">;
 export function BundleInstaller({service,pluginId,version,workspaceId}:{service:BundleInstallerService;pluginId:string;version:string;workspaceId?:string}) {
   const recoveryKey=workspaceId?bundleInstallKey(workspaceId,pluginId,version):undefined;
   const [catalog,setCatalog]=useState<Awaited<ReturnType<BundleInstallerService["compatibleModelBundles"]>>>();
@@ -12,9 +12,22 @@ export function BundleInstaller({service,pluginId,version,workspaceId}:{service:
   const pending=useRef(false);const alive=useRef(true);
   useEffect(()=>{const restore=()=>{try{setUncertain(!recoveryKey||localStorage.getItem(recoveryKey)!==null);}catch{setUncertain(true);setError("无法读取安装恢复记录，不能安全启动安装。");}};restore();window.addEventListener("storage",restore);return()=>window.removeEventListener("storage",restore);},[recoveryKey]);
   useEffect(()=>{alive.current=true;let current=true;let timer:ReturnType<typeof setTimeout>|undefined;
-    const read=async()=>{try{const [compatible,records]=await Promise.all([service.compatibleModelBundles(pluginId,version),service.modelInstallOperations()]);if(!current)return;setCatalog(compatible);const owned=records.operations.filter(o=>o.plugin_id===pluginId&&o.plugin_version===version);setOperations(owned);if(owned.some(o=>o.status==="running"))timer=setTimeout(()=>void read(),1500);}catch(e){if(current)setError((e as Error).message);}};
+    const read=async()=>{try{
+      const [compatible,records]=await Promise.all([service.compatibleModelBundles(pluginId,version),service.modelInstallOperations()]);
+      if(!current)return;setCatalog(compatible);
+      let owned=records.operations.filter(o=>o.plugin_id===pluginId&&o.plugin_version===version);setOperations(owned);
+      const raw=recoveryKey?localStorage.getItem(recoveryKey):null;
+      if(raw){
+        const request=JSON.parse(raw) as PendingBundleInstall;
+        if(request.plugin_id!==pluginId||request.plugin_version!==version||!request.command_id)throw new Error("旧的未核实记录没有可查询命令 ID，请核实安装状态；不会重新提交");
+        const receipt=verifyInstallCommand(request,await service.modelInstallCommand(request.command_id));
+        if(!current)return;owned=[receipt,...owned.filter(o=>o.id!==receipt.id)];setOperations(owned);
+        if(receipt.status==="succeeded"||receipt.status==="failed"){localStorage.removeItem(recoveryKey!);setUncertain(false);}else setUncertain(true);
+      }
+      if(owned.some(o=>o.status==="running"))timer=setTimeout(()=>void read(),1500);
+    }catch(e){if(current)setError((e as Error).message);}};
     void read();return()=>{current=false;alive.current=false;clearTimeout(timer);};
-  },[service,pluginId,version,reload]);
+  },[service,pluginId,version,reload,recoveryKey]);
   const install=async()=>{
     if(!selection?.catalog_id||!accepted||pending.current||uncertain||!recoveryKey)return;
     pending.current=true;setBusy(true);setError("");const selected=selection;
@@ -23,16 +36,16 @@ export function BundleInstaller({service,pluginId,version,workspaceId}:{service:
       const same=fresh.available.find(e=>e.catalog_id===selected.catalog_id&&e.bundle_id===selected.bundle_id&&e.bundle_version===selected.bundle_version);
       if(JSON.stringify(same)!==JSON.stringify(selected))throw new Error("目录、来源或许可证已变化，请重新选择。");
       if(fresh.setup_blockers.some(b=>b.bundle_id===selected.bundle_id&&b.bundle_version===selected.bundle_version))throw new Error("服务器报告安装阻塞，请重新读取目录。");
-      const active=(await service.modelInstallOperations()).operations.find(o=>o.plugin_id===pluginId&&o.plugin_version===version&&o.status==="running");
+      const active=(await service.modelInstallOperations()).operations.find(o=>o.plugin_id===pluginId&&o.plugin_version===version&&(o.status==="running"||o.status==="unknown"));
       if(active)throw new Error("此插件已有进行中的安装，请查看执行记录。");
       if(selected.license_summary.requires_acceptance)await service.acceptModelBundleLicense(selected.bundle_id,selected.bundle_version,selected.license_summary.license_digest);
       // A lost POST response is not a safe signal to initiate another download.
-      const request={catalog_id:selected.catalog_id!,bundle_id:selected.bundle_id,bundle_version:selected.bundle_version,plugin_id:pluginId,plugin_version:version};
+      const request={command_id:crypto.randomUUID(),catalog_id:selected.catalog_id!,bundle_id:selected.bundle_id,bundle_version:selected.bundle_version,plugin_id:pluginId,plugin_version:version};
       preserveBundleInstall(localStorage,recoveryKey,request);setUncertain(true);
       const operation=await service.startModelInstallOperation(request);
-      if(operation.plugin_id!==pluginId||operation.plugin_version!==version||operation.bundle_id!==selected.bundle_id||operation.bundle_version!==selected.bundle_version)throw new Error("安装回执归属不匹配");
-      localStorage.removeItem(recoveryKey);
-      if(alive.current){setUncertain(false);setSelection(undefined);setReload(n=>n+1);}
+      verifyInstallCommand(request,operation);
+      if(operation.status==="succeeded"||operation.status==="failed")localStorage.removeItem(recoveryKey);
+      if(alive.current){setUncertain(operation.status==="running"||operation.status==="unknown");setSelection(undefined);setReload(n=>n+1);}
     }catch(e){if(alive.current){setError(`${(e as Error).message}。没有自动重新安装；请查看服务器安装记录。`);setSelection(undefined);setReload(n=>n+1);}}
     finally{pending.current=false;if(alive.current)setBusy(false);}
   };
@@ -43,9 +56,9 @@ export function BundleInstaller({service,pluginId,version,workspaceId}:{service:
     <button disabled={busy} onClick={()=>setReload(n=>n+1)}>读取目录与安装记录</button>
     {!catalog?<p role="status">读取兼容目录…</p>:<><p>插件运行状态：{catalog.plugin_runtime_status}</p>{!catalog.available.length&&<p>服务器未提供兼容目录项。没有伪造可安装模型。</p>}{catalog.available.map(entry=>{
       const blockers=catalog.setup_blockers.filter(b=>b.bundle_id===entry.bundle_id&&b.bundle_version===entry.bundle_version);
-      return <article className="settings-row" key={`${entry.catalog_id}:${entry.bundle_id}@${entry.bundle_version}`}><div><strong>{entry.display_name}</strong><p>{entry.bundle_version} · {entry.fixture?"Fixture 测试包":"模型目录包"} · {entry.bundle_size_bytes} bytes</p><p>{entry.description}</p>{blockers.map(b=><p key={b.code}>{b.message}</p>)}</div><button disabled={busy||uncertain||!entry.catalog_id||blockers.length>0||operations.some(o=>o.status==="running")} onClick={()=>{setAccepted(false);setSelection(entry);}}>检查并安装…</button></article>;
+      return <article className="settings-row" key={`${entry.catalog_id}:${entry.bundle_id}@${entry.bundle_version}`}><div><strong>{entry.display_name}</strong><p>{entry.bundle_version} · {entry.fixture?"Fixture 测试包":"模型目录包"} · {entry.bundle_size_bytes} bytes</p><p>{entry.description}</p>{blockers.map(b=><p key={b.code}>{b.message}</p>)}</div><button disabled={busy||uncertain||!entry.catalog_id||blockers.length>0||operations.some(o=>(o.status==="running"||o.status==="unknown"))} onClick={()=>{setAccepted(false);setSelection(entry);}}>检查并安装…</button></article>;
     })}</>}
-    <Disclosure title="服务器安装记录" open={operations.some(o=>o.status==="running")||uncertain}>
+    <Disclosure title="服务器安装记录" open={operations.some(o=>(o.status==="running"||o.status==="unknown"))||uncertain}>
       {!operations.length&&<p>暂无服务器安装记录。没有记录不证明丢失响应的请求从未执行。</p>}
       {operations.map(operation=><article key={operation.id}><strong>{operation.bundle_id}@{operation.bundle_version} · {operation.status}</strong><p role={operation.status==="running"?"status":undefined}>{operation.stage} · {operation.detail}</p><p>已接收 {operation.bytes_completed} / {operation.bytes_total??"未知"} bytes</p>{operation.error&&<p role="alert">{operation.error}</p>}{operation.suggested_action&&<p>{operation.suggested_action}</p>}<p>模型实例：{operation.model_instance_ids.join(" · ")||"尚无回执"}</p><small>{operation.id} · {operation.updated_at}</small></article>)}
     </Disclosure>
