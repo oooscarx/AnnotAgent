@@ -136,6 +136,7 @@ export type Command = {
   selection?: { image: string; candidate: string; revision: string };
 };
 export interface WorkspaceAdapter {
+  readonly trashManagement?: import("./TrashManagement").TrashService;
   readonly projectManagement?: import("./ProjectManagement").ProjectManagementService;
   readonly runtimeSettingsManagement?: import("./RuntimeSettings").RuntimeSettingsService;
   readonly modelProfileManagement?: import("./ModelProfiles").ModelProfileService;

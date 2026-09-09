@@ -1040,3 +1040,8 @@ caption {
 .ui-app .native-image-grid img { width: 100%; height: 140px; object-fit: contain; }
 .ui-app .native-image-grid figcaption { overflow-wrap: anywhere; padding-block: 8px; }
 .ui-app .native-management-tabs { display: flex; flex-wrap: wrap; gap: 16px; }
+.ui-app .lifecycle-impact { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.ui-app .lifecycle-impact div { min-width: 0; }
+.ui-app .lifecycle-impact dd { margin: 4px 0 0; font-weight: 600; }
+.ui-app .native-project-manager > .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-block: 20px; }
+.ui-app .native-project-manager input[type="checkbox"] { width: auto; }

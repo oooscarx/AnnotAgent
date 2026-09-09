@@ -43,6 +43,16 @@ Committed visual evidence: `single-ui-clean-cut/m0/disclosure-expanded.png` (144
 
 ## Remaining
 
+### Goal continuation: native lifecycle and Trash
+
+Previous goal turn was goal setup/status only; this continuation changed production source. Added new `LifecycleOperation` and `TrashManagement` (not an old-page wrapper), routed `/projects/:id/manage/trash` into the Agent shell, and added the project menu entry. Existing impact-preview, confirmation-token, expected-revision, privileged-action and idempotency APIs are reused. Bulk selection, restore and typed DELETE purge confirmation are implemented. Preview project/action/object/revision mismatch fails closed. Default replacement/explicit clearing is supported by the shared dialog for subsequent Pipeline migration.
+
+Inspected storage implementation: receipt operation ID is a generated server UUID, **not** the client idempotency key. Recovery retains the exact confirmed request before POST, and only explicit user retry may replay it. A known operation ID uses read-only receipt lookup. Workspace/project-scoped local recovery state never initializes or repeats server actions on mount. Receipts display real statuses, including partial purge reports and failures, rather than unconditional completion.
+
+Verification: typecheck/build and 284 unit tests passed (one pending final-cutover assertion). Isolated real HTTP test created/deleted a TEST Draft, restored it from the new UI, intentionally dropped the successful response, refreshed, and retried the same frozen request; two request bodies were identical and the final server state was restored. The test's initial ambiguous status locator was corrected to scope the receipt region. Permanent purge execution and broader lifecycle combinations still require dedicated E2E. No real workspace writes; user server/dist not updated. The existing marked TEST workspace was reused on owned 8794/8795 and stopped after verification.
+
+History cutover filtering and legacy root/styles deletion remain outstanding; native Trash currently uses the existing unscoped API only in isolated verification. Do not deploy this slice as the completed historical-content isolation feature. Goal remains active.
+
 ### Native project-management slice
 
 New native project index, creation, data and label routes use `ProjectManagement` and the HttpAdapter service boundary. No old page is embedded. Created IDs are stable within one submitted form; buttons guard concurrent submits. File selection is explicitly unsaved until uploaded. File uploads, folder import, label-group creation and adding categories use existing APIs. Dirty navigation/unload guards and abortable owner-checked reads are retained. Project creation and data/labels entry links no longer use old build paths.
