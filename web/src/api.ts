@@ -404,7 +404,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(value),
     }),
-  updateModelProfile: (modelId: string, value: Partial<RegistryModelProfile>) =>
+  updateModelProfile: (modelId: string, value: Partial<RegistryModelProfile> & {expected_revision?:number}) =>
     request<RegistryModelProfile>(`/api/model-profiles/${encodeURIComponent(modelId)}`, {
       method: "PATCH",
       body: JSON.stringify(value),

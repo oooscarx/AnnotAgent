@@ -1,6 +1,31 @@
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
+test("native model CAS keeps a stale editor without overwriting the winning writer",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  const providers=await(await request.get("/api/providers")).json();
+  const session=await(await request.get("/api/session")).json();
+  const headers={"x-annotagent-csrf":session.csrf_token};
+  const name=`TEST CAS ${randomUUID()}`;
+  const created=await request.post("/api/model-profiles",{headers,data:{provider_id:providers.providers[0].id,display_name:name,remote_model_id:"test-no-call",input_modalities:["text"],task_capabilities:["text_generation"]}});
+  expect(created.ok()).toBeTruthy();const model=await created.json();
+  await page.goto("/settings/agent-models");const region=page.getByRole("region",{name:"模型配置",exact:true});
+  await region.getByLabel("搜索模型",{exact:true}).fill(name);await region.getByRole("button",{name:"编辑配置",exact:true}).click();
+  const dialog=page.getByRole("dialog",{name:"编辑模型配置",exact:true});
+  await dialog.getByLabel("显示名称",{exact:true}).fill(`${name} local edit`);
+  let patches=0;
+  await page.route(`**/api/model-profiles/${model.id}`,async route=>{
+    if(route.request().method()!=="PATCH"){await route.continue();return;}
+    patches++;expect(route.request().postDataJSON().expected_revision).toBe(model.revision);
+    const winner=await request.patch(`/api/model-profiles/${model.id}`,{headers,data:{expected_revision:model.revision,display_name:`${name} winner`}});
+    expect(winner.ok(),await winner.text()).toBeTruthy();await route.continue();
+  });
+  await dialog.getByRole("button",{name:"保存配置",exact:true}).click();
+  await expect(dialog.getByRole("alert")).toContainText("changed");
+  await expect(dialog.getByLabel("显示名称",{exact:true})).toHaveValue(`${name} local edit`);
+  expect(patches).toBe(1);
+  const latest=await(await request.get(`/api/model-profiles/${model.id}`)).json();expect(latest.model.display_name).toBe(`${name} winner`);expect(latest.model.revision).toBe(model.revision+1);
+});
 test("native Run deep links preserve ownership and refresh without execution",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
   const runs=await(await request.get("/api/runs?limit=100")).json();

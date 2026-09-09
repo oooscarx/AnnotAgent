@@ -33,8 +33,7 @@ export function ModelProfiles({service}:{service:ModelProfileService}) {
       else{
         const current=(await service.modelProfiles()).models.find(m=>m.id===edit.id);
         if(!current||current.revision!==edit.revision||current.locked)throw new Error("模型已变化或锁定；本地输入保留，请取消并重新读取后核对。");
-        // The current PATCH contract rejects revision; preflight is not atomic CAS.
-        await service.updateModelProfile(edit.id,value);
+        await service.updateModelProfile(edit.id,{...value,expected_revision:edit.revision});
       }
       if(!mounted.current)return;
       setEdit(undefined);setMessage("模型配置已保存。未执行探测或推理。");await reload();

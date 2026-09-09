@@ -1,5 +1,13 @@
 # Single UI Clean Cut
 
+## Latest continuation — atomic model edits
+
+Integrated backend UIAPI-010 `210091a17b1d4ff7b5fe0a306cb9100f1b548aea` as `7d1948cf9ceae6cb7e40e0a07acff349c337f759`. Documentation conflicts were resolved section-by-section, preserving existing material without importing unrelated backend deliveries. Native model editing and lock/unlock now send `expected_revision`; the server atomically checks and appends a revision. A 409 leaves local edits intact and never automatically retries against a newer revision.
+
+Verification on main source: Rust fmt check passed; both targeted server/storage `model_profile` tests passed. Typecheck, 289 unit tests (one explicit final-cutover TODO), isolated production build and all eight management HTTP E2E passed. New browser test inserts a competing writer after the frontend preflight and before PATCH, verifies the original PATCH fails, winning server value remains, local editor input survives, and no duplicate PATCH occurs. TEST server on 8794/8795 used backend SHA `7d1948c` and `/tmp/annotagent-model-cas-dist`; no user service/dist/workspace changes or paid inference. An initial attempt to share the backend worktree's Cargo target produced a stale cross-checkout Core type mismatch; rerunning against main's own target built and passed. Do not reuse the other worktree's target for release evidence.
+
+Still incomplete: persistent history cutover scope, advanced Workflow and Batch/debug migration, remaining model bundle/worker controls, old root/styles and URL compatibility removal. Build still emits the old App/styles chunks. Goal remains active; this safety prerequisite is not completion of the clean cut. No push.
+
 ## Baseline and boundaries
 
 2026-09-09: `main`, baseline `0c3e396a17280c50e23aed301d89248b0ace1e2c`, initially clean, six local commits ahead of origin. No AGENTS.md found in this checkout or applicable ancestors. No remote or real workspace changes. No paid calls, downloads, service restarts, or publication changes.

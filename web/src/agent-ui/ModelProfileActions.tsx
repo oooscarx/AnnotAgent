@@ -33,7 +33,7 @@ export function ModelProfileActions({model,provider,service,reload}:{model:Regis
       const result=await service.activeProbe(model.provider_id,model.id);
       if(live.current)setUsage(old=>[result.usage,...old??[]]);
     } else if(operation==="delete")await service.deleteModelProfile(model.id);
-    else await service.updateModelProfile(model.id,{locked:operation==="lock"});
+    else await service.updateModelProfile(model.id,{locked:operation==="lock",expected_revision:model.revision});
     if(live.current)setOperation(undefined);
     await reload();
   });
