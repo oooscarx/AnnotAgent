@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { Icon, IconButton } from "./Icon";
+import { Disclosure } from "./Disclosure";
 import { labelColor } from "../annotationVisuals";
 import type { WorkspaceAdapter, Task, Box, Snapshot, ImageId } from "./adapter";
 import { command } from "./App";
@@ -242,8 +243,7 @@ export function ArtifactPane({
           </button>
         ))}
       </div>
-      <details className="annotation-list">
-        <summary>标注列表与精确编辑 · {boxes.length} 个</summary>
+      <Disclosure className="annotation-list" title={`标注列表与精确编辑 · ${boxes.length} 个`}>
         {boxes.map((b) => (
           <div key={b.id}>
             <button
@@ -298,7 +298,7 @@ export function ArtifactPane({
         >
           <Icon name="plus" size={16} />添加遗漏目标
         </button>
-      </details>
+      </Disclosure>
       <div className="artifact-footer">
         <small>
           {!fixture && !editable ? "只读样例；当前没有待回答的人工问题" : dirty ? "浏览器编辑草稿 · 尚未提交" : fixture ? "演示候选 · 非正式标注" : "样例终端候选 · 非正式标注"}

@@ -1,5 +1,6 @@
 import type { Task } from "./adapter";
 import { Icon } from "./Icon";
+import { Disclosure } from "./Disclosure";
 export function PlanBlock({
   plan,
   expanded,
@@ -18,19 +19,17 @@ export function PlanBlock({
         ))}
       </ol>
       <small>{plan.destination} · {plan.budget ?? "费用未知"}{fixture ? "（演示不收费）" : ""}</small>
-      <details>
-        <summary>计划详情</summary>
+      <Disclosure title="计划详情">
         <p>精确版本：{plan.revision}</p>
         <p>模型：{plan.models.join(" → ")}</p>
-      </details>
+      </Disclosure>
     </section>
   );
   return expanded ? (
     content
   ) : (
-    <details className="plan-history">
-      <summary><Icon name="plan" size={16} />查看{fixture ? "演示" : ""}计划 · {plan.steps.length} 个步骤</summary>
+    <Disclosure className="plan-history" title={<>查看{fixture ? "演示" : ""}计划 · {plan.steps.length} 个步骤</>}>
       {content}
-    </details>
+    </Disclosure>
   );
 }

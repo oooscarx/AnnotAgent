@@ -7,6 +7,7 @@ import type {
   Section,
 } from "./adapter";
 import { Dialog } from "./Dialog";
+import { Disclosure } from "./Disclosure";
 import { Icon, BrandMark } from "./Icon";
 import { ProjectMenu } from "./ProjectMenu";
 import { PlanBlock } from "./PlanBlock";
@@ -257,8 +258,7 @@ export function AgentPreviewApp({
     >
       {preview && <div className="preview-banner">
         <span>UI 预览 · 演示数据 · 无真实模型调用</span>
-        <details>
-          <summary>演示场景</summary>
+        <Disclosure title="演示场景">
           <div className="scenario-menu">
             {task &&
               Object.entries(phaseNames).map(([phase, name]) => (
@@ -271,7 +271,7 @@ export function AgentPreviewApp({
               ))}
             <button onClick={preview.fail}>下一次保存失败</button>
           </div>
-        </details>
+        </Disclosure>
       </div>}
       <div className="app-body">
         <aside
@@ -329,7 +329,7 @@ export function AgentPreviewApp({
                     )
                   }
                 >
-                  <Icon name={expanded.includes(p.id) ? "chevron-down" : "chevron-right"} size={12} /><Icon name="folder" /><span>{p.title}</span>
+                  <span className="project-tree-chevron"><Icon name="chevron-right" size={14} /></span><Icon name="folder" /><span>{p.title}</span>
                 </button>
                 {(expanded.includes(p.id) || search) &&
                   state.tasks
@@ -509,7 +509,7 @@ export function AgentPreviewApp({
                             const primary = task.sample ? "process" : task.plan ? "sample" : "plan";
                             const action = choices.find(c=>c.kind===primary)!;
                             const render = (c:typeof action,main=false) => <button key={c.kind} className={main ? "primary" : undefined} disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),c.kind))}><Icon name={c.icon} size={16} />{c.label}</button>;
-                            return <>{render(action,true)}<details className="secondary-task-actions"><summary>其他操作<Icon name="chevron-down" size={14} /></summary><div>{choices.filter(c=>c!==action).map(c=>render(c))}</div></details></>;
+                            return <>{render(action,true)}<Disclosure className="secondary-task-actions" title="其他操作"><div>{choices.filter(c=>c!==action).map(c=>render(c))}</div></Disclosure></>;
                           })()}
                         </div>}
                         {!fixture && task.resumeTargets?.map(r=><p key={r.id}>{r.reason}<button onClick={()=>void act(()=>adapter.resumeOperation(command(task),r.id))}>继续 {r.label}</button></p>)}
@@ -582,15 +582,14 @@ export function AgentPreviewApp({
                           </p>
                         )}
                         {fixture && task.phase === "running" && (
-                          <details>
-                            <summary>查看模拟执行记录</summary>
+                          <Disclosure title="查看模拟执行记录">
                             <p>
                               已读取示意图片；候选来自 Fixture，不代表推理输出。
                             </p>
                             <p>
                               队列不会自动派发；本阶段只演示排队与控制状态。
                             </p>
-                          </details>
+                          </Disclosure>
                         )}
                       </>
                     )}
@@ -598,14 +597,11 @@ export function AgentPreviewApp({
                 </div>
                 <div className="composer-region">
                   {(task.queue.length > 0 || !!task.queueEntries?.length) && (
-                    <details className="queue">
-                      <summary>
-                        {task.queue.length ? `${task.queue.length} 条排队输入 · ${fixture ? "模拟，" : ""}未自动执行` : `已保存输入历史 · ${task.queueEntries?.length || 0} 条`}
-                      </summary>
+                    <Disclosure className="queue" title={task.queue.length ? `${task.queue.length} 条排队输入 · ${fixture ? "模拟，" : ""}未自动执行` : `已保存输入历史 · ${task.queueEntries?.length || 0} 条`}>
                       {task.queueEntries ? task.queueEntries.map(q=><div key={q.id}><p>{q.text} · {q.status}</p>{q.canPlan && adapter.prepareQueue && <button type="button" onClick={()=>void act(()=>adapter.prepareQueue!(command(task),q.id))}>查看此输入的规划范围</button>}{q.canCancel && <button type="button" onClick={()=>void act(()=>adapter.cancelQueue!(command(task),q.id))}>取消此输入</button>}</div>) : task.queue.map((q, i) => (
                         <p key={i}>{q}</p>
                       ))}
-                    </details>
+                    </Disclosure>
                   )}
                   <form
                     className="composer"

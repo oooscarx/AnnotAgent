@@ -1001,3 +1001,14 @@ caption {
 .ui-app .execution-progress small { color: var(--aa-text-secondary); }
 .ui-app .execution-progress details { padding-block: 6px; }
 .ui-app .execution-progress details p { margin-block: 8px; }
+.ui-app .ui-disclosure > summary { display: flex; align-items: center; gap: 8px; list-style: none; }
+.ui-app .ui-disclosure > summary::-webkit-details-marker { display: none; }
+.ui-app .ui-disclosure > summary::marker { content: ""; }
+.ui-app .disclosure-chevron { display: inline-flex; flex: 0 0 14px; transition: transform 120ms ease; }
+.ui-app .ui-disclosure[open] > summary > .disclosure-chevron { transform: rotate(90deg); }
+.ui-app .disclosure-title { min-width: 0; overflow-wrap: anywhere; }
+.ui-app .project-tree-chevron { display: inline-flex; flex: 0 0 14px; transition: transform 120ms ease; }
+.ui-app [aria-expanded="true"] > .project-tree-chevron { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) {
+  .ui-app .disclosure-chevron, .ui-app .project-tree-chevron { transition: none; }
+}

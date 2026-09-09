@@ -10,6 +10,7 @@ import type {
 import { sections } from "./adapter";
 import { Dialog } from "./Dialog";
 import { Icon } from "./Icon";
+import { Disclosure } from "./Disclosure";
 function Row({
   title,
   help,
@@ -162,8 +163,7 @@ export function SettingsView({
             <h1>{en ? config.en : config.zh}</h1>
             <p>{!fixture && section === "providers" ? "账户连接与凭证状态；不会在读取时自动探测模型。" : config.description}</p>
           </header>
-          {fixture && <details className="fixture-controls">
-            <summary>预览状态控制</summary>
+          {fixture && <Disclosure className="fixture-controls" title="预览状态控制">
             <div className="actions">
               <label>
                 页面状态{" "}
@@ -180,7 +180,7 @@ export function SettingsView({
               </label>
               <button onClick={fail}>模拟下一次保存失败</button>
             </div>
-          </details>}
+          </Disclosure>}
           {view === "loading" ? (
             <p role="status">
               正在加载演示设置…{" "}
@@ -504,12 +504,11 @@ export function SettingsView({
                       title={p.name}
                       help={`${p.version} · ${p.status}`}
                     >
-                      <details>
-                        <summary>兼容信息</summary>
+                      <Disclosure title="兼容信息">
                         <p>
                           {fixture ? "演示协议：HTTP Vision / ONNX；该信息不证明真实文件已安装。" : "状态来自已安装 Plugin/Model Instance；模型 Ready 与插件启用是不同状态。"}
                         </p>
-                      </details>
+                      </Disclosure>
                       {p.status !== "Ready" && (
                         <button
                           disabled={

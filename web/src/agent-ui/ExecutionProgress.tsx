@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Disclosure } from "./Disclosure";
 import type { Task } from "./adapter";
 import type { ConversationCallReceipt } from "../types";
 
@@ -40,11 +41,10 @@ export function ExecutionProgress({ receipts }: { receipts: NonNullable<Task["re
     {active && current.title === "模型结构化决策" && <small>当前接口接收完整模型响应，尚不提供逐段文本；状态更新不是模型文字流。</small>}
     {current.detail && <p>{current.detail}</p>}
     {current.status === "in_doubt" && <p>当前没有此请求的活动执行。远端是否完成和实际费用尚无法确认；刷新不会重新调用模型。</p>}
-    <details><summary>执行记录 · {receipts.length} 项</summary>{receipts.map(r => <details key={r.id}>
-      <summary>{r.title} · {executionStatus(r.status)}</summary>
+    <Disclosure title={`执行记录 · ${receipts.length} 项`}>{receipts.map(r => <Disclosure key={r.id} title={`${r.title} · ${executionStatus(r.status)}`}>
       <p>{r.detail || "已保存操作回执，未记录自然语言回复。"}</p>
       <small>开始：{r.startedAt || "未记录"} · 结束：{r.finishedAt || "未记录"}</small>
       <p>请求 ID：{r.id}</p>
-    </details>)}</details>
+    </Disclosure>)}</Disclosure>
   </section>;
 }
