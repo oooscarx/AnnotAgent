@@ -360,15 +360,23 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
         let key = self.temporary_api_key.clone().map_or_else(
             || {
                 std::env::var(&self.config.api_key_env).map_err(|_| {
-                    CoreError::Provider(format!(
-                        "API key environment variable {:?} is not set",
-                        self.config.api_key_env
-                    ))
+                    safe_failure(
+                        annotagent_core::ModelFailureStage::PrepareRequest,
+                        annotagent_core::ModelFailureCategory::Configuration,
+                        None,
+                    )
                 })
             },
             Ok,
         )?;
         let body = self.request_body(&request);
+        if body.get("stream").and_then(Value::as_bool) == Some(true) {
+            return Err(safe_failure(
+                annotagent_core::ModelFailureStage::PrepareRequest,
+                annotagent_core::ModelFailureCategory::Configuration,
+                None,
+            ));
+        }
         for attempt in 0..=self.config.max_retries {
             let mut builder = self
                 .client
@@ -378,21 +386,29 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
             let mut headers = HeaderMap::new();
             for (name, value) in &self.config.custom_headers {
                 let name =
-                    reqwest::header::HeaderName::from_bytes(name.as_bytes()).map_err(|error| {
-                        CoreError::Provider(format!("invalid custom header name: {error}"))
+                    reqwest::header::HeaderName::from_bytes(name.as_bytes()).map_err(|_| {
+                        safe_failure(
+                            annotagent_core::ModelFailureStage::PrepareRequest,
+                            annotagent_core::ModelFailureCategory::Configuration,
+                            None,
+                        )
                     })?;
-                let value = reqwest::header::HeaderValue::from_str(value).map_err(|error| {
-                    CoreError::Provider(format!("invalid custom header value: {error}"))
+                let value = reqwest::header::HeaderValue::from_str(value).map_err(|_| {
+                    safe_failure(
+                        annotagent_core::ModelFailureStage::PrepareRequest,
+                        annotagent_core::ModelFailureCategory::Configuration,
+                        None,
+                    )
                 })?;
                 headers.insert(name, value);
             }
             builder = builder.headers(headers);
             let response = tokio::select! {
                 () = cancellation.cancelled() => {
-                    return Err(CoreError::Provider("model request cancelled".to_owned()));
+                    return Err(safe_failure(annotagent_core::ModelFailureStage::ProviderRequest, annotagent_core::ModelFailureCategory::Cancelled, None));
                 }
                 result = builder.send() => result.map_err(|error| {
-                    CoreError::Provider(format!("request to {} failed: {error}", self.endpoint_summary()))
+                    transport_failure(&error, annotagent_core::ModelFailureStage::ProviderRequest)
                 })?,
             };
             let status = response.status();
@@ -405,33 +421,56 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
                 let delay = retry_delay(&self.config, response.headers(), attempt);
                 tokio::select! {
                     () = cancellation.cancelled() => {
-                        return Err(CoreError::Provider("model request cancelled".to_owned()));
+                        return Err(safe_failure(annotagent_core::ModelFailureStage::ProviderRequest, annotagent_core::ModelFailureCategory::Cancelled, None));
                     }
                     () = tokio::time::sleep(delay) => {}
                 }
                 continue;
             }
-            let bytes = response.bytes().await.map_err(|error| {
-                CoreError::Provider(format!("cannot read provider response: {error}"))
-            })?;
             if !status.is_success() {
-                let safe = String::from_utf8_lossy(&bytes).replace(&key, "[REDACTED]");
-                return Err(CoreError::Provider(provider_status_error(
-                    status,
-                    attempt.saturating_add(1),
-                    &safe,
-                )));
+                return Err(safe_failure(
+                    annotagent_core::ModelFailureStage::ProviderRequest,
+                    annotagent_core::ModelFailureCategory::HttpStatus,
+                    Some(status.as_u16()),
+                ));
             }
-            let value: Value = serde_json::from_slice(&bytes)
-                .map_err(|error| CoreError::Provider(format!("invalid provider JSON: {error}")))?;
-            let mut parsed = parse_chat_response(&value, request_id)?;
+            let bytes = tokio::select! {
+                () = cancellation.cancelled() => return Err(safe_failure(annotagent_core::ModelFailureStage::ResponseBody, annotagent_core::ModelFailureCategory::Cancelled, None)),
+                result = response.bytes() => result.map_err(|error| transport_failure(&error, annotagent_core::ModelFailureStage::ResponseBody))?,
+            };
+            let value: Value = serde_json::from_slice(&bytes).map_err(|_| {
+                safe_failure(
+                    annotagent_core::ModelFailureStage::ResponseDecode,
+                    annotagent_core::ModelFailureCategory::InvalidResponse,
+                    None,
+                )
+            })?;
+            let mut parsed = parse_chat_response(&value, request_id).map_err(|_| {
+                safe_failure(
+                    annotagent_core::ModelFailureStage::ResponseDecode,
+                    annotagent_core::ModelFailureCategory::InvalidResponse,
+                    None,
+                )
+            })?;
             parsed
                 .provider_metadata
                 .insert("retry_count".to_owned(), attempt.to_string());
             if self.config.supports_tool_calls {
-                try_promote_json_action(&mut parsed, &request.tools)?;
+                try_promote_json_action(&mut parsed, &request.tools).map_err(|_| {
+                    safe_failure(
+                        annotagent_core::ModelFailureStage::StructuredOutput,
+                        annotagent_core::ModelFailureCategory::InvalidStructuredOutput,
+                        None,
+                    )
+                })?;
             } else {
-                promote_json_action(&mut parsed, &request.tools)?;
+                promote_json_action(&mut parsed, &request.tools).map_err(|_| {
+                    safe_failure(
+                        annotagent_core::ModelFailureStage::StructuredOutput,
+                        annotagent_core::ModelFailureCategory::InvalidStructuredOutput,
+                        None,
+                    )
+                })?;
             }
             return Ok(parsed);
         }
@@ -459,21 +498,33 @@ fn retry_delay(config: &OpenAiCompatibleConfig, headers: &HeaderMap, attempt: u3
     )
 }
 
-fn provider_status_error(status: StatusCode, attempts: u32, safe_body: &str) -> String {
-    if status.is_server_error() {
-        return format!(
-            "provider is temporarily unavailable ({status}) after {attempts} attempts; retry this action from the saved Draft"
-        );
-    }
-    if status == StatusCode::TOO_MANY_REQUESTS {
-        return format!(
-            "provider rate limit persisted after {attempts} attempts; retry this action later from the saved Draft"
-        );
-    }
-    if safe_body.trim_start().starts_with('<') {
-        return format!("provider returned {status} with a non-JSON response");
-    }
-    format!("provider returned {status}: {}", truncate(safe_body, 500))
+fn safe_failure(
+    stage: annotagent_core::ModelFailureStage,
+    category: annotagent_core::ModelFailureCategory,
+    http_status: Option<u16>,
+) -> CoreError {
+    CoreError::ModelFailure(annotagent_core::ModelFailure {
+        stage,
+        category,
+        http_status,
+    })
+}
+fn transport_failure(
+    error: &reqwest::Error,
+    stage: annotagent_core::ModelFailureStage,
+) -> CoreError {
+    use annotagent_core::ModelFailureCategory as C;
+    safe_failure(
+        stage,
+        if error.is_timeout() {
+            C::Timeout
+        } else if error.is_connect() {
+            C::Connection
+        } else {
+            C::Transport
+        },
+        None,
+    )
 }
 
 fn json_action_schema(tools: &[annotagent_core::ToolDefinition]) -> Value {
@@ -646,10 +697,6 @@ fn parse_message_content(content: Option<&Value>) -> Option<String> {
     (!text.trim().is_empty()).then_some(text)
 }
 
-fn truncate(value: &str, max_chars: usize) -> String {
-    value.chars().take(max_chars).collect()
-}
-
 /// Redacts common secret-bearing fields before structured values reach logs or traces.
 #[must_use]
 pub fn redact_secrets(value: &Value) -> Value {
@@ -810,10 +857,146 @@ mod tests {
             .to_string();
 
         assert_eq!(calls.load(Ordering::SeqCst), 2);
-        assert!(error.contains("temporarily unavailable (502 Bad Gateway) after 2 attempts"));
-        assert!(error.contains("saved Draft"));
+        assert!(error.contains("HttpStatus"));
+        assert!(error.contains("502"));
         assert!(!error.contains("<html>"));
         assert!(!error.contains("nginx"));
+    }
+
+    #[tokio::test]
+    async fn safe_failure_preserves_http_and_decode_categories_without_remote_text() {
+        use annotagent_core::{ModelFailureCategory as C, ModelFailureStage as S};
+        for (status, body, category, stage) in [
+            (
+                StatusCode::UNAUTHORIZED,
+                "secret fixture-key raw server cause",
+                C::HttpStatus,
+                S::ProviderRequest,
+            ),
+            (
+                StatusCode::OK,
+                "secret fixture-key broken JSON",
+                C::InvalidResponse,
+                S::ResponseDecode,
+            ),
+            (StatusCode::OK, "{}", C::InvalidResponse, S::ResponseDecode),
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                axum::serve(
+                    listener,
+                    Router::new().route(
+                        "/v1/chat/completions",
+                        post(move || async move { (status, body) }),
+                    ),
+                )
+                .await
+                .unwrap();
+            });
+            let provider = OpenAiCompatibleProvider::new_with_api_key(
+                retry_test_config(format!("http://{addr}/v1"), 0),
+                Some("fixture-key".into()),
+            )
+            .unwrap();
+            let error = provider
+                .complete(retry_test_request(), CancellationToken::new())
+                .await
+                .unwrap_err();
+            assert!(!error.to_string().contains("fixture-key"));
+            assert!(!error.to_string().contains("raw server"));
+            let CoreError::ModelFailure(failure) = error else {
+                panic!("expected typed failure")
+            };
+            assert_eq!(failure.category, category);
+            assert_eq!(failure.stage, stage);
+            assert_eq!(
+                failure.http_status,
+                (!status.is_success()).then_some(status.as_u16())
+            );
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn stalled_response_body_has_safe_timeout_and_cancellation_causes() {
+        use futures::StreamExt;
+        for cancel in [false, true] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                axum::serve(
+                    listener,
+                    Router::new().route(
+                        "/v1/chat/completions",
+                        post(|| async {
+                            axum::body::Body::from_stream(
+                                futures::stream::once(async {
+                                    Ok::<_, std::io::Error>(axum::body::Bytes::from_static(b"{"))
+                                })
+                                .chain(futures::stream::pending()),
+                            )
+                        }),
+                    ),
+                )
+                .await
+                .unwrap();
+            });
+            let mut config = retry_test_config(format!("http://{addr}/v1"), 0);
+            config.request_timeout_seconds = 1;
+            let provider =
+                OpenAiCompatibleProvider::new_with_api_key(config, Some("TEST-only".into()))
+                    .unwrap();
+            let cancellation = CancellationToken::new();
+            let token = cancellation.clone();
+            let trigger = async move {
+                if cancel {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    token.cancel();
+                }
+            };
+            let (result, ()) = tokio::join!(
+                provider.complete(retry_test_request(), cancellation),
+                trigger
+            );
+            let CoreError::ModelFailure(failure) = result.unwrap_err() else {
+                panic!("typed failure required")
+            };
+            assert_eq!(
+                failure.stage,
+                annotagent_core::ModelFailureStage::ResponseBody
+            );
+            assert_eq!(
+                failure.category,
+                if cancel {
+                    annotagent_core::ModelFailureCategory::Cancelled
+                } else {
+                    annotagent_core::ModelFailureCategory::Timeout
+                }
+            );
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn unsupported_stream_does_not_make_a_network_request() {
+        let mut config = retry_test_config("http://127.0.0.1:1/v1".into(), 0);
+        config
+            .extra_request_fields
+            .insert("stream".into(), json!(true));
+        let provider =
+            OpenAiCompatibleProvider::new_with_api_key(config, Some("TEST-only".into())).unwrap();
+        let error = provider
+            .complete(retry_test_request(), CancellationToken::new())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            CoreError::ModelFailure(annotagent_core::ModelFailure {
+                category: annotagent_core::ModelFailureCategory::Configuration,
+                ..
+            })
+        ));
     }
 
     #[test]

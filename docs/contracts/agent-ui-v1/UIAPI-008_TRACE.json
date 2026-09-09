@@ -1,0 +1,88 @@
+{
+  "ticket": "UIAPI-008",
+  "parent_commit": "334f6713adc1e9d45819cf94eff1f77a80a49a67",
+  "compatibility_base_main": "83d2adb",
+  "base_check": "git diff HEAD main -- crates migrations was empty before changes; no main/frontend merge",
+  "tested_source": "parent plus this increment; fixture manifest HEAD is precommit base",
+  "source_sha256": {
+    "crates/annotagent-core/src/error.rs": "f10d9b9a0278d520035eecfa2fc449ff3cc941f14f663a7ce7595970d3781b0e",
+    "crates/annotagent-provider/src/openai_compatible.rs": "529d701f4da9a60d425c2a96079b31650fada6baf223824772a07c9ee8c273b4",
+    "crates/annotagent-storage/src/conversation_calls.rs": "a763c920898c017880baebb698024d7498f1722b29d8074475d84c7ce9600630",
+    "crates/annotagent-storage/src/lib.rs": "13f367192ca3b6bc96cdd7cb1f1e7f4709ce3978998d729f9967da08c8ca1c10",
+    "crates/annotagent-application/src/conversation_schema.rs": "86657d20bb6aa630c61e8fa3649afa40ba26cfb546c751b0d0c47afaf78632eb",
+    "migrations/0058_conversation_call_progress.sql": "b43905cb599d2f5ea079e9be5aacdd37d6c91cce3286e502b9d00fb552a1a6b0"
+  },
+  "http_request_count": 280,
+  "http": {
+    "base_url": "http://127.0.0.1:54535",
+    "receipt_observations": 42,
+    "call_ids": [
+      "020762fa-7757-47eb-bd39-7c4d41a2c646",
+      "0ef2ad4f-60ae-4d09-8999-368da7d70a08",
+      "0f6dc134-6472-4ae3-bf42-8b65452a0b20",
+      "13e57db9-2d2e-41a9-9626-fb70a97e4d52",
+      "210074f1-9a6a-4c1b-b385-b5b894d24464",
+      "3079406a-9210-4a80-8ac6-1203d617b47c",
+      "3d9aac20-5fdb-41ba-9741-49ce2d93fdb3",
+      "42fd44fc-33bd-4f7c-be69-f12a7932396a",
+      "5e206219-1022-42be-b1b2-8100ee233206",
+      "6131b57e-18bd-46fb-8429-7d3d242ebdec",
+      "61d90109-86e6-4af3-a4d6-2c328da00151",
+      "6956c4dd-210d-4601-910c-ef8f60a2b29e",
+      "80d6aca5-f3b1-41f1-9cf7-8c29aff82e2d",
+      "823427e9-1a0b-43a7-a2e3-33efdb6fdca6",
+      "8845c87c-ed54-4656-832c-128965822162",
+      "8d315633-c2a9-480c-8605-db015883d55f",
+      "8feb1b6e-17da-4fb6-ace4-8735d3c1ec52",
+      "9e4a5b2d-bc70-439e-bce1-04b6df0d2ed0",
+      "a150eefb-ea88-409c-8543-f46886e0aee6",
+      "aa03cb19-8082-4fdf-ab03-dce3fa14bf7d",
+      "bde14fed-cc3d-4035-bedd-ef21015ea6f1",
+      "ef81ac30-bf76-4dcf-a802-f15cbe8838f6",
+      "f397bdb8-8c0b-4a10-af87-119800136148"
+    ],
+    "stages_observed": [
+      "provider_request",
+      "settled"
+    ],
+    "unknown_example": {
+      "completed_at": "2026-09-09T13:36:58.389563+00:00",
+      "duration_ms": 13,
+      "evidence": {
+        "error": "Schema request did not return a complete response. Remote completion and cost are unknown; no automatic retry was scheduled.",
+        "failure": {
+          "category": "cancelled",
+          "http_status": null,
+          "stage": "provider_request"
+        }
+      },
+      "failure": {
+        "category": "cancelled",
+        "http_status": null,
+        "stage": "provider_request"
+      },
+      "id": "6956c4dd-210d-4601-910c-ef8f60a2b29e",
+      "request_hash": "f2ec329eb6527470bc03c2cdeafef763fc30646fdb7d834a2b84c59374af0f7b",
+      "stage": "settled",
+      "started_at": "2026-09-09T13:36:58.376509+00:00",
+      "status": "in_doubt",
+      "task_id": "1d9ca4d8-8226-4538-8975-360007d618f2"
+    }
+  },
+  "raw_trace_path": "/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-93qu41bg/HTTP_TRACE.json",
+  "http_verification_command": "python3 crates/annotagent-e2e-fixture/support/http_call_progress_check.py --manifest /private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-93qu41bg/manifest.json",
+  "test_log": "/tmp/annotagent-uiapi008-final.log",
+  "clippy_log": "/tmp/annotagent-uiapi008-clippy-final.log",
+  "migration": "0058 additive metadata; no fabricated historic end/failure",
+  "limits": [
+    "No provider delta stream is implemented",
+    "Reported real call/database was not accessed; previously discarded error cannot be reconstructed",
+    "Body-stage cancellation is local and cannot guarantee remote cancellation or refund"
+  ],
+  "test_totals": {
+    "passed": 563,
+    "failed": 0,
+    "ignored": 3
+  },
+  "validation": "affected five crates tests; full workspace all-targets strict Clippy; fmt and diff check passed"
+}

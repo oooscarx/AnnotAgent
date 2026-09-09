@@ -54,3 +54,11 @@ Queue preview/POST 现在对 pending human 返回 409 `human_input_pending`（Sc
 真实 HTTP 验证 preview 拒绝、preview 后新增 human 导致 POST 拒绝且授权/预算不变、回答后原 Consent 成功、重复 POST 仅一个 call；存储测试验证旧冻结授权跨 SQLite 重开恢复。Storage/Application/Server 共 397 passed、0 failed、3 原有 ignored，相关 all-targets 严格 Clippy 通过。详见 HTTP_ADAPTER.md UIAPI-004 与 UIAPI-004_TRACE.json。最终 SHA 在 UIAPI-004 交付回复固定。
 
 复现：先按 INTEGRATION_ENVIRONMENT.md 启动全新 TEST seed，再执行 `python3 crates/annotagent-e2e-fixture/support/http_queue_human_check.py --enable-fixture --manifest <TEST workspace>/manifest.json`。脚本消费 bbox pending 问题，每次回归用新 seed。未读真实密钥、未付费、未碰 8787/前端 worktree；自有测试进程已正常停止，隔离数据保留。提交后继续接口支持状态，只响应具体集成问题。
+
+## UIAPI-008 调用进度、原因与 streaming 调查
+
+已在 codex/agent-ui-backend 增量修复，基线334f671；核验 main83d2adb 的 Rust/migrations 与该基线一致，无合并前端或 main。call receipt 增加 started_at/completed_at/duration_ms/stage/failure，持久真实 reservation、Provider 调用、完整响应与结算边界；安全 failure 只含阶段/类别/HTTP状态。handler中断/重启仍为 in_doubt，同ID不重发。Builder operation是独立DTO，此次没有扩展其字段。
+
+迁移0058仅新建metadata表；旧call保留created_at但缺失end/failure为null，不能追回此前被丢弃的原因。未访问用户报告的robocup-ball数据库或调用。Provider没有现成文本/tool delta协议，本轮未新增streaming；stream:true在发送前拒绝，新增读取body阶段取消。详见 UIAPI-008_PROGRESS.md、UIAPI-008_EXAMPLES.json、UIAPI-008_TRACE.json。
+
+验证：563 passed、0 failed、3原有ignored（Core/Provider/Storage/Application/Server）；全workspace all-targets严格Clippy、fmt通过。隔离HTTP seed278请求，42个call回执观察/23个call身份，真实provider_request→settled/in_doubt、typed cancellation与计时验证通过。测试启动器已退出自有进程，数据保留。未接触8787/8788、真实密钥/服务/数据库、前端worktree；无push/merge。最终提交SHA在交付回复固定，继续接口支持状态。

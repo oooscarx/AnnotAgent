@@ -20,8 +20,44 @@ pub enum CoreError {
     Refinement(String),
     #[error("provider error: {0}")]
     Provider(String),
+    #[error("model request failed: {0:?}")]
+    ModelFailure(ModelFailure),
     #[error("export error: {0}")]
     Export(String),
 }
 
 pub type CoreResult<T> = Result<T, CoreError>;
+
+/// Safe machine-readable diagnostics. Never contains remote text, URLs or credentials.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ModelFailure {
+    pub stage: ModelFailureStage,
+    pub category: ModelFailureCategory,
+    pub http_status: Option<u16>,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelFailureStage {
+    PrepareRequest,
+    ProviderRequest,
+    ResponseBody,
+    ResponseDecode,
+    StructuredOutput,
+    Handler,
+    Recovery,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelFailureCategory {
+    Configuration,
+    Cancelled,
+    Timeout,
+    Connection,
+    Transport,
+    HttpStatus,
+    InvalidResponse,
+    InvalidStructuredOutput,
+    ProviderError,
+    LocalError,
+    Interrupted,
+}

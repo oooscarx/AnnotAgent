@@ -68,3 +68,7 @@ Schema：SCHEMAS.json 覆盖常用命令/投影；复杂 Builder/Journey/Human D
 ## UIAPI-004 queue admission correction
 
 Queue schema-preview / schema-proposals 对 pending human input 返回 409 `human_input_pending`，未回答 Schema clarification 为 `schema_clarification_pending`；附 `admitted:false` 与 `suggested_action:answer_human_then_retry_same_command`。新授权事务再次检查并整体回滚；旧冻结授权不变，回答后使用原 Consent / call_id 重试，受原 scope、有效期、预算和 FIFO 限制。已存在 call 时只还原其回执。准确恢复步骤及 JSON 见 HTTP_ADAPTER.md 的 UIAPI-004 节。无数据库迁移。
+
+## UIAPI-008 receipt additions
+
+现有 `T/calls`、`T/workspace.calls[]`、Schema/queued Schema POST receipt 添加 nullable `started_at,completed_at,duration_ms,stage,failure`。端点、权限、审批 payload 与幂等规则不变。详情见 UIAPI-008_PROGRESS.md；迁移0058仅新增调用进度表，不补造历史结束时间或错误。

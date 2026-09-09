@@ -66,6 +66,16 @@ pub struct ConversationCallReceipt {
     pub request_hash: String,
     pub status: ConversationCallStatus,
     pub evidence: Option<serde_json::Value>,
+    #[serde(default)]
+    pub started_at: Option<String>,
+    #[serde(default)]
+    pub completed_at: Option<String>,
+    #[serde(default)]
+    pub duration_ms: Option<i64>,
+    #[serde(default)]
+    pub stage: Option<String>,
+    #[serde(default)]
+    pub failure: Option<annotagent_core::ModelFailure>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -143,7 +153,13 @@ pub(crate) fn receipt(
 ) -> Result<Option<ConversationCallReceipt>, StorageError> {
     let row: Option<(String,String,String,Option<String>)> = db.query_row("SELECT task_id,request_hash,status,evidence_json FROM conversation_model_calls WHERE id=?1", [id.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).optional()?;
     row.map(|(task, request_hash, status, evidence)| {
+        let started: String = db.query_row("SELECT created_at FROM conversation_model_calls WHERE id=?1", [id.to_string()], |r| r.get(0))?;
+        let progress: Option<(String,Option<String>,Option<String>)> = db.query_row("SELECT stage,completed_at,failure_json FROM conversation_call_progress WHERE call_id=?1", [id.to_string()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
+        let (stage, completed_at, failure) = progress.map_or((None,None,None), |(s,c,f)| (Some(s),c,f));
+        let duration_ms = completed_at.as_ref().and_then(|end| Some((DateTime::parse_from_rfc3339(end).ok()? - DateTime::parse_from_rfc3339(&started).ok()?).num_milliseconds().max(0)));
         Ok(ConversationCallReceipt {
+            started_at: Some(started), completed_at, duration_ms, stage,
+            failure: failure.map(|f| serde_json::from_str(&f)).transpose()?,
             id,
             task_id: Uuid::parse_str(&task).map_err(|_| invalid("invalid saved task ID"))?,
             request_hash,
@@ -160,6 +176,26 @@ pub(crate) fn receipt(
         })
     })
     .transpose()
+}
+
+fn settle_interrupted(
+    db: &rusqlite::Connection,
+    target: Option<(Uuid, Uuid)>,
+    stage: annotagent_core::ModelFailureStage,
+) -> Result<(), StorageError> {
+    let tx = db.unchecked_transaction()?;
+    let failure = annotagent_core::ModelFailure {
+        stage,
+        category: annotagent_core::ModelFailureCategory::Interrupted,
+        http_status: None,
+    };
+    let evidence = serde_json::json!({"error":"The local handler or server stopped before saving a complete response. Remote outcome and cost are unknown; no automatic retry was started.","failure":failure});
+    let task = target.map(|(t, _)| t.to_string());
+    let call = target.map(|(_, c)| c.to_string());
+    tx.execute("INSERT INTO conversation_call_progress(call_id,stage,completed_at,failure_json) SELECT id,'settled',?3,?4 FROM conversation_model_calls WHERE status='reserved' AND (?1 IS NULL OR (task_id=?1 AND id=?2)) ON CONFLICT(call_id) DO UPDATE SET stage='settled',completed_at=excluded.completed_at,failure_json=excluded.failure_json",params![task,call,Utc::now().to_rfc3339(),serde_json::to_string(&failure)?])?;
+    tx.execute("UPDATE conversation_model_calls SET status='in_doubt',evidence_json=?3 WHERE status='reserved' AND (?1 IS NULL OR (task_id=?1 AND id=?2))",params![task,call,serde_json::to_string(&evidence)?])?;
+    tx.commit()?;
+    Ok(())
 }
 
 pub(crate) fn require_call_admission_clear(
@@ -344,15 +380,19 @@ impl SqliteStore {
         call: Uuid,
     ) -> Result<(), StorageError> {
         self.with_connection(|db| {
-            owner(db,project,task)?;
-            db.execute("UPDATE conversation_model_calls SET status='in_doubt',evidence_json=?3 WHERE id=?1 AND task_id=?2 AND status='reserved'",params![call.to_string(),task.to_string(),serde_json::json!({"error":"The call handler ended before saving its response. Remote outcome and cost are unknown; no automatic retry was started."}).to_string()])?;
+            owner(db, project, task)?;
+            settle_interrupted(
+                db,
+                Some((task, call)),
+                annotagent_core::ModelFailureStage::Handler,
+            )?;
             Ok(())
         })
     }
     /// Startup recovery never resends an indeterminate Provider request.
     pub fn recover_conversation_calls(&self) -> Result<(), StorageError> {
         self.with_connection(|db| {
-            db.execute("UPDATE conversation_model_calls SET status='in_doubt',evidence_json=?1 WHERE status='reserved'", [serde_json::json!({"error":"The server stopped before this call was settled. Remote outcome and cost are unknown; no automatic retry was started."}).to_string()])?;
+            settle_interrupted(db, None, annotagent_core::ModelFailureStage::Recovery)?;
             Ok(())
         })
     }
@@ -537,8 +577,28 @@ impl SqliteStore {
             if used >= maximum { return Err(invalid("task model-call allowance exhausted; no request sent")); }
             crate::conversation_project_budget::admit(&tx, project)?;
             tx.execute("INSERT INTO conversation_model_calls(id,task_id,request_hash,status,created_at) VALUES(?1,?2,?3,'reserved',?4)", params![id.to_string(),task.to_string(),request_hash,Utc::now().to_rfc3339()])?;
+            tx.execute("INSERT INTO conversation_call_progress(call_id,stage) VALUES(?1,'reserved')", [id.to_string()])?;
             tx.execute("INSERT INTO conversation_call_authorizations(call_id,grant_id) SELECT ?1,id FROM conversation_call_grants WHERE task_id=?2", params![id.to_string(),task.to_string()])?;
             tx.commit()?; Ok(ConversationCallAdmission::Admitted)
+        })
+    }
+
+    pub fn mark_conversation_call_stage(
+        &self,
+        project: &str,
+        task: Uuid,
+        id: Uuid,
+        stage: &str,
+    ) -> Result<(), StorageError> {
+        let previous = match stage {
+            "provider_request" => "reserved",
+            "response_received" => "provider_request",
+            _ => return Err(invalid("unsupported call stage")),
+        };
+        self.with_connection(|db| {
+            owner(db,project,task)?;
+            db.execute("UPDATE conversation_call_progress SET stage=?4 WHERE call_id=?1 AND stage=?3 AND EXISTS(SELECT 1 FROM conversation_model_calls WHERE id=?1 AND task_id=?2 AND status='reserved')",params![id.to_string(),task.to_string(),previous,stage])?;
+            Ok(())
         })
     }
 
@@ -556,7 +616,7 @@ impl SqliteStore {
         self.with_connection(|db| {
             let tx = db.unchecked_transaction()?;
             owner(&tx, project, task)?;
-            let mut saved =
+            let saved =
                 receipt(&tx, id)?.ok_or_else(|| invalid("model call reservation not found"))?;
             if saved.task_id != task {
                 return Err(invalid("model call belongs to another task"));
@@ -577,10 +637,11 @@ impl SqliteStore {
                 "UPDATE conversation_model_calls SET status=?2,evidence_json=?3 WHERE id=?1",
                 params![id.to_string(), state, serde_json::to_string(&evidence)?],
             )?;
+            tx.execute("INSERT INTO conversation_call_progress(call_id,stage,completed_at,failure_json) VALUES(?1,'settled',?2,?3) ON CONFLICT(call_id) DO UPDATE SET stage='settled',completed_at=excluded.completed_at,failure_json=excluded.failure_json",params![id.to_string(),Utc::now().to_rfc3339(),evidence.get("failure").filter(|v| !v.is_null()).map(serde_json::to_string).transpose()?])?;
+            let mut result = receipt(&tx,id)?.ok_or_else(|| invalid("model call missing"))?;
             tx.commit()?;
-            saved.status = status;
-            saved.evidence = Some(evidence);
-            Ok(saved)
+            result.evidence = Some(evidence);
+            Ok(result)
         })
     }
 
@@ -1086,6 +1147,121 @@ mod tests {
                 )
                 .is_err()
         );
+    }
+
+    #[test]
+    fn progress_recovery_and_legacy_nulls_survive_reopen_without_fabricated_end_times() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("TEST-progress.db");
+        let store = SqliteStore::open(&path).unwrap();
+        let project_id = Uuid::new_v4().to_string();
+        let project = project_id.as_str();
+        let conversation = store.create_conversation(project).unwrap();
+        let message = ConversationMessageInput {
+            id: Uuid::new_v4(),
+            text: "TEST progress".into(),
+            image: None,
+            reference: None,
+        };
+        store
+            .append_conversation_message(project, conversation, &message)
+            .unwrap();
+        let task = Uuid::new_v4();
+        store
+            .begin_conversation_task(
+                project,
+                conversation,
+                &BeginConversationTask {
+                    id: task,
+                    source_message_id: message.id,
+                    schema_revision: "a".repeat(64),
+                },
+            )
+            .unwrap();
+        let scope = "b".repeat(64);
+        let request = "c".repeat(64);
+        store
+            .authorize_conversation_calls(
+                project,
+                &ConversationCallGrant {
+                    id: Uuid::new_v4(),
+                    task_id: task,
+                    scope_hash: scope.clone(),
+                    maximum_calls: 2,
+                    expires_at: Utc::now() + Duration::minutes(10),
+                },
+            )
+            .unwrap();
+        let call = Uuid::new_v4();
+        store
+            .reserve_conversation_call(project, task, call, &scope, &request)
+            .unwrap();
+        store
+            .mark_conversation_call_stage(project, task, call, "provider_request")
+            .unwrap();
+        let active = store
+            .conversation_call(project, task, call)
+            .unwrap()
+            .unwrap();
+        assert_eq!(active.stage.as_deref(), Some("provider_request"));
+        assert!(active.completed_at.is_none());
+        assert!(
+            store
+                .mark_conversation_call_stage("foreign", task, call, "response_received")
+                .is_err()
+        );
+        drop(store);
+        let store = SqliteStore::open(&path).unwrap();
+        store.recover_conversation_calls().unwrap();
+        let recovered = store
+            .conversation_call(project, task, call)
+            .unwrap()
+            .unwrap();
+        assert_eq!(recovered.started_at, active.started_at);
+        assert!(recovered.duration_ms.is_some());
+        assert_eq!(
+            recovered.failure.as_ref().unwrap().stage,
+            annotagent_core::ModelFailureStage::Recovery
+        );
+        assert_eq!(recovered.status, ConversationCallStatus::InDoubt);
+        store.recover_conversation_calls().unwrap();
+        store
+            .mark_conversation_call_stage(project, task, call, "response_received")
+            .unwrap();
+        assert_eq!(
+            store
+                .conversation_call(project, task, call)
+                .unwrap()
+                .unwrap(),
+            recovered
+        );
+        assert_eq!(
+            store
+                .reserve_conversation_call(project, task, call, &scope, &request)
+                .unwrap(),
+            ConversationCallAdmission::Existing(recovered)
+        );
+        // Model an old completed row by dropping only the new metadata table in this TEST database.
+        store
+            .with_connection(|db| {
+                db.execute_batch("DROP TABLE conversation_call_progress;")?;
+                Ok(())
+            })
+            .unwrap();
+        drop(store);
+        let store = SqliteStore::open(&path).unwrap();
+        let legacy = store
+            .conversation_call(project, task, call)
+            .unwrap()
+            .unwrap();
+        assert!(legacy.started_at.is_some());
+        assert!(
+            legacy.completed_at.is_none()
+                && legacy.stage.is_none()
+                && legacy.duration_ms.is_none()
+                && legacy.failure.is_none()
+        );
+        assert_eq!(legacy.status, ConversationCallStatus::InDoubt);
     }
 
     #[test]
