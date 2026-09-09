@@ -1,5 +1,13 @@
 # Single UI Clean Cut
 
+## Keep active proposal and Stop visible after independent rule save
+
+Fixed a real mounting defect: FutureRules no longer removes SavedFutureProposal when a future-rule record exists. The saved rule disables new proposal/adoption but leaves an independently running suggestion's status and Stop available. This matters when another tab saves a rule while the model request is pending; same-view edit guards alone were insufficient.
+
+Added AGENT_UI_FUTURE_STOP=1 branch of the actual HTTP feedback scenario. It uses the explicitly registered/probed slow TEST proposer, starts through native authorization, saves an independent rule through the real API (simulating another tab), refreshes, opens the retained proposal, stops it, and refreshes again to verify server cancelled state. The saved rule and original sample remain exactly unchanged; browser model execution count is one. One browser scenario passed (3.4 s). This proves cancellation receipt persistence, not immediate remote termination/refund. Lost-stop-response and unknown-result cases still need dedicated verification.
+
+317 unit tests across 96 files, typecheck and isolated production build passed. Source5c319ab plus this slice; /tmp/annotagent-future-stop-visible-dist served by owned TEST8794/8795, not user8787/8788. No paid Provider, true workspace, Published Version, Rust or remote changes. Remaining capability migration and final removal acceptance are still open; goal remains active.
+
 ## Server-only saved proposal authorization continuation
 
 Native controls now offer original-authorization preview for an unexecuted, unexpired, uncancelled server record even without browser recovery. Preview uses the original call/model and compares call/model/scope hash/previous grant/expiry before confirmation. Any receipt, including reserved/failed/in_doubt, is ineligible; no new authorization identity or budget is substituted. Added eligibility unit coverage.
