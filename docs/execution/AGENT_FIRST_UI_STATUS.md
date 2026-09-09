@@ -1,5 +1,34 @@
 # AnnotAgent Agent-first UI — execution record
 
+## UI convergence corrective pass — V0 (2026-09-09)
+
+The new user-supplied `design/annotagent-ui-convergence` instructions supersede
+the permanent 216px/100px task sidebar and its old acceptance tests. M3 backend
+queue expansion is paused. V0 baseline → V1 actual layout removal → V2 real Thread,
+Composer and Picker convergence → V3 six-state application evidence and regressions.
+No push is authorized in this pass. Existing queue/Plan/Registry/stop contracts stay.
+
+Baseline HEAD is exactly `5096cabcc6a7aca461d25cf0e3681bba31c40c5b`, main synchronized
+with origin. Existing unrelated screenshots and untracked design packages are
+preserved. No applicable repository AGENTS.md found. Read both new instruction files,
+viewed all six desktop references. Browser policy blocked the local HTML URL;
+reference source was inspected instead, without executing a workaround. Prototype
+messages/images are not application data or model accuracy evidence.
+
+Actual isolated TEST server: http://127.0.0.1:8791, workspace
+`/tmp/annotagent-guided-e2e-84295`, fixture 8796, rebuilt Web bundle and Rust server.
+No change to user service 8787. Baseline light-theme 1440×900 screenshots:
+[Projects](ui-convergence/v0-projects.png),
+[empty task](ui-convergence/v0-empty-workspace.png). Application routes `/projects`
+and `/projects/TEST-ui-convergence-*/work`, created by the real Project API.
+New `ui-convergence.spec.ts` failed as expected (49482): mounted global sidebar,
+Runs/Review primary links, mounted ConversationNavigation, old FocusHeader and
+extra surface-controls. Six sequential soft assertions exhausted the test timeout
+before geometry checks; geometry is not claimed measured in V0.
+
+Next core commit must remove mounted sidebars and replace the Header, not expand
+queue permissions. V2/V3 and the complete requested acceptance remain pending.
+
 ## Current checkpoint — M3 queue/Builder integration in progress (2026-09-09)
 
 Current implementation spans M1 layout/Composer, M2 enforced planning and M3
