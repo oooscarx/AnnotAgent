@@ -46,6 +46,14 @@ pub struct DeliveryImageReview {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct DeliveryRunSource {
+    pub run_id: String,
+    pub model: String,
+    pub status: String,
+    pub created_at: String,
+}
+
 fn invalid(message: &str) -> StorageError {
     StorageError::InvalidConversation(message.into())
 }
@@ -139,6 +147,24 @@ pub(super) fn decode(
 }
 
 impl SqliteStore {
+    /// Explicit selectable formal sources, never an implicit latest-Run projection.
+    pub fn delivery_run_sources(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        image: ImageId,
+    ) -> Result<Vec<DeliveryRunSource>, StorageError> {
+        self.with_connection(|db| {
+            let saved = intent(db, project, conversation, task)?;
+            // Reuse ownership, scope and current image-version checks.
+            snapshot(db, &saved, image, None)?;
+            let mut stmt = db.prepare("SELECT r.id,r.model,r.status,r.created_at FROM runs r JOIN run_images i ON i.run_id=r.id WHERE r.project_id=?1 AND i.image_id=?2 AND r.status IN ('completed','completed_with_review','partial') ORDER BY r.created_at DESC,r.id")?;
+            stmt.query_map(params![project, image.to_string()], |r| Ok(DeliveryRunSource {
+                run_id: r.get(0)?, model: r.get(1)?, status: r.get(2)?, created_at: r.get(3)?,
+            }))?.collect::<Result<Vec<_>,_>>().map_err(Into::into)
+        })
+    }
     pub fn delivery_image_snapshot(
         &self,
         project: &str,
@@ -238,6 +264,49 @@ mod tests {
         image: ImageId,
         run: RunId,
         annotation: Annotation,
+    }
+    #[test]
+    fn formal_sources_are_explicit_owned_terminal_and_image_scoped() {
+        let root = tempfile::tempdir().unwrap();
+        let f = TestData::new(root.path());
+        let i = &f.saved.intent;
+        let sources = || {
+            f.store
+                .delivery_run_sources(&i.project_id, i.conversation_id, i.task_id, f.image)
+        };
+        let found = sources().unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].run_id, f.run.to_string());
+        assert!(
+            f.store
+                .delivery_run_sources("foreign", i.conversation_id, i.task_id, f.image)
+                .is_err()
+        );
+        assert!(
+            f.store
+                .delivery_run_sources(&i.project_id, i.conversation_id, i.task_id, ImageId::new())
+                .is_err()
+        );
+        f.store
+            .with_connection(|db| {
+                db.execute(
+                    "UPDATE runs SET status='running' WHERE id=?1",
+                    [f.run.to_string()],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(sources().unwrap().is_empty());
+        f.store
+            .with_connection(|db| {
+                db.execute(
+                    "UPDATE runs SET status='completed',project_id='foreign' WHERE id=?1",
+                    [f.run.to_string()],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(sources().unwrap().is_empty());
     }
     impl TestData {
         fn new(root: &std::path::Path) -> Self {

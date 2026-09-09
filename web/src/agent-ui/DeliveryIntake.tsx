@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import "./delivery-intake.css";
+import { DeliveryReview } from "./DeliveryReview";
+import type { DeliveryService } from "./deliveryService";
+import { Disclosure } from "./Disclosure";
 
 export type DeliveryLabel = { stable_id: string; display_name: string; aliases: string[]; include: string; exclude: string };
 type Target = { annotation_kind: string; framework: string; export_profile: string; profile_revision: number };
@@ -18,7 +21,7 @@ export function intakeLabels(text: string, previous: DeliveryLabel[], createId: 
   return text.split("\n").map(s => s.trim()).filter(Boolean).map(name => previous.find(p => p.display_name === name) || { stable_id: createId(), display_name: name, aliases: [], include: "", exclude: "" });
 }
 
-export function DeliveryIntake({ service, project, task, images, locked = false }: { service: DeliveryIntakeService; project: string; task: string; images: { id: string; name: string }[]; locked?: boolean }) {
+export function DeliveryIntake({ service, delivery, project, task, images, locked = false }: { service: DeliveryIntakeService; delivery?:DeliveryService; project: string; task: string; images: { id: string; name: string; src?:string }[]; locked?: boolean }) {
   const [view, setView] = useState<IntakeView>();
   const [ids, setIds] = useState<string[]>([]);
   const [labels, setLabels] = useState("");
@@ -85,5 +88,6 @@ export function DeliveryIntake({ service, project, task, images, locked = false 
       <div className="delivery-intake-actions"><button type="button" disabled={busy || !dirty} onClick={() => { apply(view); setError(""); retry.current = null; }}>取消修改</button><button type="submit" disabled={busy || locked || !dirty}>{busy ? "保存中…" : "保存交付信息"}</button><span role="status">{dirty ? "尚未保存" : view.saved ? "已保存到服务器" : "等待填写"}</span></div>
       <small>保存不会调用模型或开始处理。样例最多 {view.maximum_sample_images} 张，执行前需要确认模型、数据目的地和费用范围。</small>
     </form>}
+    {delivery && view?.saved && !view.missing_slots.length && !view.blockers.length && !dirty && <Disclosure title="检查正式训练图片（整图审核）"><DeliveryReview key={`${task}:${view.saved.revision}`} service={delivery} project={project} task={task} locked={locked} images={(view.saved.intent.dataset_scope || []).flatMap(i=>{const image=images.find(a=>a.id===i.image_id);return image?[image]:[{id:i.image_id,name:"原图不可用"}];})}/></Disclosure>}
   </section>;
 }

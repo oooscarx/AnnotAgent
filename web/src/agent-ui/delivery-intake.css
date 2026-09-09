@@ -12,4 +12,9 @@
 .delivery-intake-images input { flex: none; }
 .delivery-intake-images span { min-width: 0; }
 .delivery-intake-actions button { border-color: var(--aa-border); }
+.delivery-review { display: grid; gap: 14px; min-width: 0; padding-block: 12px; }
+.delivery-review h3 { margin: 0; }
+.delivery-review-controls { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,230px),1fr)); gap: 12px; }
+.delivery-review label { display: grid; gap: 8px; min-width: 0; }
+.delivery-review .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 @media (max-width: 600px) { .delivery-intake-actions { align-items: stretch; } .delivery-intake-actions button { flex: 1 1 140px; } }

@@ -17,6 +17,7 @@ export type DeliveryReview = {
   snapshot: DeliveryImageSnapshot; created_at: string;
 };
 export type DeliveryImageView = {
+  sources: {run_id: string; model: string; status: string; created_at: string}[];
   intent_revision: number; intent_sha256: string; snapshot: DeliveryImageSnapshot;
   review: DeliveryReview | null; confirmation_current: boolean;
   accepted_objects: number; unresolved_objects: number; notice: string;

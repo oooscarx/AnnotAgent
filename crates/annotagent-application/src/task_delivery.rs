@@ -77,6 +77,7 @@ pub struct TaskDeliveryView {
 
 #[derive(Debug, Serialize)]
 pub struct TaskDeliveryImageView {
+    pub sources: Vec<annotagent_storage::DeliveryRunSource>,
     pub intent_revision: u32,
     pub intent_sha256: String,
     pub snapshot: DeliveryImageSnapshot,
@@ -219,6 +220,12 @@ impl LocalApplication {
             "This image has not been confirmed as a whole. Empty results and accepted objects are not whole-image completion."
         }.into();
         Ok(TaskDeliveryImageView {
+            sources: self.store.delivery_run_sources(
+                &saved.intent.project_id,
+                conversation,
+                task,
+                image,
+            )?,
             intent_revision: saved.revision,
             intent_sha256: saved.content_sha256,
             snapshot,

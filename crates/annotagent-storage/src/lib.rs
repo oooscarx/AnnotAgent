@@ -84,6 +84,7 @@ pub use conversation_send::{
 pub use conversation_task_selection::{ConversationTaskSelection, SelectConversationTask};
 pub use delivery_image_review::{
     DeliveryImageDecision, DeliveryImageReview, DeliveryImageReviewInput, DeliveryImageSnapshot,
+    DeliveryRunSource,
 };
 pub use task_delivery::TaskDeliveryRevision;
 mod conversations;

@@ -158,6 +158,14 @@ Remaining M1/M3: natural-language slot extraction and ambiguity handling, explic
 
 ## Not complete / not executed
 
+### Same-chat whole-image review (after `1230903`)
+
+The persisted delivery card now opens a real `DeliveryReview` component, reusing AnnotationCanvas and the production HttpAdapter. The server image view includes explicitly selectable Project-owned terminal Run sources for the exact scoped image. No latest Run, sample overlays or active Task guess selects a source. Other Tasks' formal results may be explicitly reused within the same Project; the UI states this boundary. Image and chosen Run survive through URL keys `delivery_image`/`delivery_run` and Back. Current receipt/snapshot checks stay server-owned. Missing or unreadable original images disable positive/negative confirmation, and invalid old Run links offer a return to original/source selection.
+
+Users can explicitly confirm complete positives, confirm negatives only with zero accepted/unresolved objects, or exclude with a reason. Empty detection is never automatically confirmed. Retry retains the exact command/snapshot; failure does not display success or advance. This first panel is read-only for object geometry and says so: object editing and the final package card remain outstanding. It is not counted as the requested complete classroom path.
+
+Tests: 7 storage review/package tests (new terminal-source/ownership/scope regression); 2 real Rust HTTP intake/review tests; storage/Application/server all-target Clippy passed. Web typecheck, 77 unit files (320 passed, 1 todo), production build passed with the existing chunk warning. A Chromium component interaction test passed on isolated UI Preview port 5187 using an explicitly synthetic service, covering source-required confirmation, same-command failed retries, no false saved notice, exclusion reason and Back recovery. The first test attempt exposed module-resolution setup and then an accessible-name locator issue; corrected harness imports and explicit select accessible names pass. This is actual React interaction evidence, not full HttpAdapter/Rust browser delivery or real model accuracy. User services were not touched.
+
 ### Formal delivery HttpAdapter boundary (after `52b1738`)
 
 Added typed `deliveryService.ts` and a real HttpAdapter service for owned whole-image reads/confirmations, package creation/status/cancellation and download URLs. Fixture Adapter does not expose this capability. Callers retain exact command IDs, frozen intent hashes, source Run IDs and image review revisions; GET and URL generation never dispatch work. Unknown/interrupted status remains visible in the contract rather than becoming a resumable success. Foreign task ownership fails before transport; HTTP errors propagate without fixture fallback.
