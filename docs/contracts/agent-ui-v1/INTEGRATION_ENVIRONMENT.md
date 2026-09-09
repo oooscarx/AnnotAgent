@@ -84,3 +84,37 @@ python3 crates/annotagent-e2e-fixture/support/http_fixture.py --enable-fixture -
 回归命令：`python3 crates/annotagent-e2e-fixture/support/test_http_fixture_ports.py`。它在自动端口制造真实 TCP TIME_WAIT，先确认旧裸 bind 失败，再确认新探测与 listener 能立即重启；另检查活动 listener 拒绝及 8787 禁止。
 
 28d5ec3 已加入 SO_REUSEADDR；UIAPI-002 独立增量增加 listen 探测和回归测试。尚停在 dd98168 的集成可使用本目录 `UIAPI-002_PORT_FIX.patch`（仅 free_port，包含完整修复，不依赖 UIAPI-001 新场景），然后运行本次交付的回归脚本；无需复制未提交文件。已有 28d5ec3 时正常集成本增量即可，不重复应用完整 patch。
+
+## UIAPI-003：bbox 保存和浏览器停止证据
+
+默认启动现在增加 `manifest.bbox` 和 `manifest.manual_stop`，无需真实 Provider/模型安装。新 fixture 需要本次 `annotagent-e2e-fixture` 二进制；启动器会离线编译。
+
+`bbox` 是独立 TEST Project，使用现有 VLM Detection 节点和同一个本地 OpenAI-compatible transport。默认 bbox 模板含通用 detector，因此 seed 通过正常 Workflow PATCH（If-Match revision）明确设置 VLM operation/Registry binding，再获取新 Sample preview 并单独批准；没有改生产模板或直接写 SQL。
+
+|manifest.bbox 字段|用途|
+|---|---|
+|`task_root`|GET `.../workspace`、`.../human-requests`|
+|`sample_url, sample_test_id, draft_id`|读取真实保存的 Sample 和终端投影|
+|`candidate_id, source_artifact_id, terminal_candidate, projection_group`|真实候选身份与来源；几何待审核候选位于 `review_candidates`，不是正式已接受标注|
+|`image_id, content_hash, image_dimensions`|真实图像引用、hash、像素尺寸，本合成图为 640×400|
+|`feedback_url, feedback_revision_id, feedback_sequence`|seed 已真实保存一次 bbox 反馈并验证重复提交；当前 sequence=1|
+|`pending_request_id, answer_url, answer_example`|留下的新未回答请求；示例答案 sequence=2，归一化框 `[0.1,0.15,0.12,0.2]`|
+
+浏览器打开 `sample_url` 对应图像/候选，读取 HumanRequest 的 expected_feedback_sequence 和当前 feedback 后，通过 answer_url 提交 `{answer:...}`。`answer_example` 是可用的 TEST 请求体，UI 编辑时更新 rect/label/note；重试需保留原 revision_id、created_at 和完整内容。归一化顺序为 x/y/width/height，不是 x1/y1/x2/y2；像素框 `[64,60,76.8,80]` 对应示例归一化值。Rust f32 回读允许小数舍入，不比较 JSON 数字串字节相等。候选 ID（例如 detection-0）不是全局 UUID，必须连同 Task/Sample/image/Artifact 引用使用。
+
+停止证据的最小步骤（所有写请求继续使用真实 session/CSRF）：
+
+1. `manual_stop.status=prepared_not_started`。按 `manual_stop.start.method/url/body` 发起已存 TEST Journey。
+2. 轮询 `manual_stop.wait_for_reserved_url`，等待 schema call.status=reserved。仅命名的 TEST 模型在外部响应前延迟 30 秒，提供稳定的在途窗口。
+3. 在这 30 秒内按 `manual_stop.stop.method/url/body` 发 Stop。保存 POST 响应的 normalized_state/selected_target；真实初始回执为 stopping。
+4. GET `manual_stop.observation_url` 和 `manual_stop.workspace_url`，观察最终 outcome_unknown 与 calls[].status=in_doubt。Queue 可照常 GET `task_root/message-queue`；不会因读取自动授权或重发未知调用。
+
+**stopping 是短暂状态，不保证持续 30 秒。** 延迟的是外部模型；本地取消可能立即中断等待，两秒后的 GET 可能已经 outcome_unknown。前端应捕获真实 POST 回执与后续快照，不把旧回执伪装成当前状态、也不要求 fixture 延迟本地取消。最终未知状态持久、不可通用 resume，可用于浏览器稳定验收。
+
+原场景使用过或 consent 超过 `expires_at` 后，保持 fixture 运行，准备全新的待启动场景：
+
+```sh
+python3 crates/annotagent-e2e-fixture/support/http_stop_scene.py --enable-fixture --manifest /absolute/temp/TEST-agent-ui-xxxx/manifest.json
+```
+
+输出新的真实 Task/consent/start/stop 请求与独立 `UIAPI-003_STOP_<task>.json`。不自动执行；加 `--verify` 才自动开始、停止并检查真实状态链和 in_doubt。该命令仅接受带 marker 的 loopback fixture，检查响应 TEST header；不接触 8787。保留原 `manual_stop` 场景不变，终端 JSON 中使用新的 scene 字段。过期/撤销不能换 ID 重发原模型调用，新 scene 是明确创建的新测试。

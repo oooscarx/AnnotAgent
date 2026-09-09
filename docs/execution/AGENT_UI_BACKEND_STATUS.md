@@ -38,3 +38,11 @@ BASE：c41b281b49252d520117029d39611865133798af。
 ## UIAPI-002 TIME_WAIT 重启阻塞
 
 确认 dd98168 裸 bind 会在无 LISTEN 的 TIME_WAIT 上报 Errno48。28d5ec3 的 SO_REUSEADDR 修复现补 listen 探测与 3 项真实 socket 回归；已有服务仍拒绝、无 SO_REUSEPORT/安全豁免。带静态 dist 的真实 fixture Ctrl-C 后同库同端口立即重启通过，checkpoint/预算/SSE 不变。仅用自有 53155/53156，未操作前端 8792/8793 或用户 8787。见 UIAPI-002_TRACE.json；独立完整 patch 可用于 dd98168，不依赖 UIAPI-001 场景。
+
+## UIAPI-003 bbox/停止浏览器证据
+
+已在 fixture/support 范围增加 bbox seed 和手动 Stop 准备命令。bbox 通过 Workflow PATCH/CAS 选择现有 VLM Detection、真实 Sample/Geometry Safety、真实 HumanRequest answer 保存；留下独立待回答请求（当前 feedback sequence=1，下次为2），源图640×400。没有新增生产业务或读取收费模型。
+
+验证：完整 seed 278 条 HTTP 请求通过；bbox Sample failed_count=0、归一化坐标 f32 回读正确、原 revision 重试不重复、冲突拒绝；浏览器 answer_example 在另一 TEST 场景提交/重试成功。带 bbox 的同库重启不变。手动 Stop 场景在两秒后仍 reserved，Stop 初始 stopping，最终 outcome_unknown / call in_doubt，resume 不可用。外部30秒延迟不等于本地stopping持续30秒。fixture all-targets严格Clippy与fmt通过；生产Rust代码未改。
+
+证据：UIAPI-003_TRACE.json。自有测试服务已停止，测试数据保留；未操作前端 worktree、8787、真实密钥、安装、删除、push 或 merge。

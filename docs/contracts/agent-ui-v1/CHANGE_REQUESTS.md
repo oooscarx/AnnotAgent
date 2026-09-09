@@ -19,3 +19,5 @@
 - 本轮没有产品功能扩展、队列 scheduler/统一账本/Agent 架构改动；完成交接后只响应前端的具体集成问题。唯一合并和接线由视觉通过后的前端 Agent 在独立集成分支执行。
 
 - UIAPI-001 已交付：精确 paused/resumable 与 interrupted 测试场景；saved_plan 身份映射；首次实际 Send 建 Task 的 Adapter 说明。没有新增业务引擎或修改真实 Runtime 语义。见 UIAPI-001_TRACE.json。
+
+- UIAPI-003 已交付：真实 bbox terminal review candidate + 未回答 HumanRequest，manifest 提供候选/图像尺寸/feedback revision/answer 示例；实际保存与重试、同库重启已验证。外部 TEST 模型提供 30 秒在途窗口，另有可重复准备的手动 Stop 场景和验证命令。真实 stopping 回执最终到 outcome_unknown/in_doubt；不承诺 stopping 持续时长，不修改生产取消行为。

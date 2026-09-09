@@ -106,3 +106,11 @@ Session/evidence/proposal 可能尚未生成，字段必须检查 null；对象 
 fixture manifest 中 `plan_task_id` 是仅 Send 的待批准任务；`saved_plan` 则指向主 Task 已保存的 Builder proposal。二者必须分别验收，不要求前端凭空渲染 Plan 文本。
 
 UIAPI-002 再确认：`workspace.builder_operations` 的 JSON 形状是 **`{"items":[...]}`**，初始空值为 `{"items":[]}`，不是数组；使用 `workspace.builder_operations.items`。每项仍是 `{operation,schema_id,schema_revision,session}`，具体 Plan 字段见上一节。
+
+## UIAPI-003：bbox 与 Stop 的验收字段
+
+HumanRequest 本体不承诺有 `kind` 字段。bbox 类型从它引用的 Sample terminal candidate 的 `outcome.value.kind=bounding_box` 获取，原框为 `outcome.value.rect`；用 request.input.outcome_id 精确匹配候选，不能从当前模型名推断。候选可能在 `report.samples[].projection.review_candidates[].candidate`，也可能在 final_candidates，不能强行只读最终已接受列表。
+
+答案：`corrected_value={kind:"bounding_box",rect:[x,y,width,height]}`，各值归一化到源图；request 的 expected_feedback_sequence+1 用于 answer.sequence。`revision_id` 是此次答案的幂等 ID；并发基线改变要重读，不能生成新 revision_id 绕过冲突。保存只产生实际反馈/修订，不等于通过 Geometry Safety 或正式接受标注。
+
+Stop POST 的 `normalized_state=stopping` 与后续 GET 的 `outcome_unknown` 是两个真实观察时刻。fixture 的外部 30 秒延迟只保证可在途发 Stop，不承诺 stopping 动画持续时长；在途取消后 calls[].status=in_doubt 才是未知结果账本状态。页面不能把 model delay 当作假的服务端状态计时器。

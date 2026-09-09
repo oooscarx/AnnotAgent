@@ -91,3 +91,13 @@ Batch Trace：暂停后关掉应用再重开，继续相同 Batch checkpoint，�
 根因是旧 Python free_port 未设置 SO_REUSEADDR，与实际 listener 的地址复用行为不一致；无 LISTEN 不等于不存在 TIME_WAIT。现使用 SO_REUSEADDR + bind/listen，保持活动 listener/8787 拒绝及子进程最终绑定检查。3 个 socket 回归及真实带 web-dist Ctrl-C/同库同端口重启通过。
 
 如果集成仍是 dd98168，`docs/contracts/agent-ui-v1/UIAPI-002_PORT_FIX.patch` 只包含完整 free_port 修复，可独立应用而不引入 UIAPI-001 新场景。若已集成 28d5ec3，则按提交顺序取得本增量即可。HTTP_ADAPTER 已再次明确 workspace.builder_operations 是 {items:[...]}。
+
+## UIAPI-003 bbox 与手动停止交付
+
+本增量只改现有外部模型 fixture、Python seed/support 与文档，生产 Server/Runtime/Geometry Safety 不变，无数据库迁移。完整交付 SHA 在 UIAPI-003 回复中固定。
+
+默认启动命令不变，manifest 新增 `bbox`（candidate/source artifact、640×400、当前 feedback revision/sequence、pending_request_id、answer_url/answer_example）和 `manual_stop`（已授权未开始的start/stop请求）。bbox 终端几何安全候选可能在 review_candidates，不能当作正式已接受结果。
+
+`http_stop_scene.py --enable-fixture --manifest <TEST manifest>` 可重复创建浏览器专用场景；加 --verify 才自动执行停止验证。仅 TEST 外部模型延迟30秒，保证可在途发Stop；本地取消可能立即结算，stopping只取真实POST回执，最终in_doubt/outcome_unknown稳定持久，不允许伪造响应或强行维持stopping。
+
+完整seed278条HTTP及同库重启通过，bbox保存/幂等/冲突、手动Stop实际状态链验证通过，详见 UIAPI-003_TRACE.json 与 INTEGRATION_ENVIRONMENT.md 的 UIAPI-003 字段/步骤。接口支持状态继续保持。
