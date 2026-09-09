@@ -42,7 +42,7 @@ test("capture actual React preview pages and evidence metadata", async ({
       viewport: page.viewportSize(),
       dpr: await page.evaluate(()=>devicePixelRatio),
       cssZoom: await page.evaluate(()=>getComputedStyle(document.body).zoom),
-      theme: await page.locator("html").getAttribute("data-aa-theme"),
+      theme: await page.locator(".icon-gallery").count() ? await page.locator(".icon-gallery").evaluate(el=>el.closest("[data-aa-theme]")?.getAttribute("data-aa-theme")) : await page.locator("html").getAttribute("data-aa-theme"),
       status: "UI Preview / Fixture; no Live Provider",
       capturedAt: new Date().toISOString(),
     });
@@ -119,6 +119,10 @@ test("capture actual React preview pages and evidence metadata", async ({
       await page.getByRole("button",{name:"plus active",exact:true}).focus();
       await page.getByRole("button",{name:"folder active",exact:true}).hover();
       await shot(`icons-${theme}`);
+      await page.evaluate(()=>{document.body.style.zoom="2";});
+      await page.screenshot({path:`${dir}/icons-css-200-${theme}-full.png`,fullPage:true});
+      await shot(`icons-css-200-${theme}-not-native`);
+      await page.evaluate(()=>{document.body.style.zoom="1";});
     }
     await page.evaluate(()=>{document.body.style.zoom="2";});
     await shot("icons-css-200-not-native");

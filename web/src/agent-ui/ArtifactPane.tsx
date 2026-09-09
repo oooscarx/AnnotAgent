@@ -209,7 +209,7 @@ export function ArtifactPane({
                   vectorEffect="non-scaling-stroke"
                 />
                 <g className="bbox-label" pointerEvents="none" transform={`translate(${Math.max(2/screenScale,Math.min(b.x,width-Math.min(180,width*screenScale-4)/screenScale))} ${Math.max(16/screenScale,b.y-5/screenScale)}) scale(${1/screenScale})`}>
-                  <text fontSize="12" paintOrder="stroke" stroke="var(--aa-surface)" strokeWidth="3" strokeLinejoin="round" fill={labelColor(b.label)}><title>{b.label}</title>{Array.from(b.label).slice(0,20).join("")}{b.label.length>20?"…":""}{fixture ? " · 演示" : ""}</text>
+                  <text fontSize="12" paintOrder="stroke" stroke="var(--aa-surface)" strokeWidth="1.5" strokeLinejoin="round" fill={labelColor(b.label)}><title>{b.label}</title>{Array.from(b.label).slice(0,20).join("")}{b.label.length>20?"…":""}{fixture ? " · 演示" : ""}</text>
                 </g>
                 {selected === b.id && (
                   <circle

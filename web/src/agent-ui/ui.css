@@ -978,6 +978,7 @@ caption {
 .ui-app .settings-row strong { overflow-wrap: anywhere; }
 .ui-app .row-control > select, .ui-app .row-control > input:not([type=checkbox]) { width: 100%; max-width: 280px; }
 .ui-app .settings-row .row-control { max-width: 100%; }
+.ui-app .settings-nav button { justify-content: flex-start; }
 .ui-app .provider-editor { max-width: 100%; }
 .ui-app .provider-editor label { display: grid; grid-template-columns: minmax(0,1fr) minmax(180px,280px); align-items: center; gap: 24px; }
 .ui-app .artifact-toolbar > small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%; }
