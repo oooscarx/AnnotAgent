@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Remove duplicate old header/composer/model/stop controls
+
+Reference search found only definitions of old components/AgentComposer, AgentModelPicker, AgentProjectHeader, AgentStopControl and LanguageSelector; deleted these five dormant files. Native agent-ui App/HttpAdapter/Settings retain the actual project tree, Composer, model CAS, stop receipts and language preferences. Shared conversation-control/API protocols were not deleted. This is physical removal of detached controls, not rewriting their replacement or claiming new capabilities.
+
+Typecheck,323 unit tests and isolated build passed. /tmp/annotagent-old-controls-clean-dist is byte-identical to /tmp/annotagent-journey-clean-dist, including manifest/assets; actual HTTP validation against that build passed four scenarios: owned thread/image with Back/refresh/no GET execution, six Settings/save/cancel/return, IME and exactly one explicit Send, next-request model CAS with no probe. No paid inference. Stop-specific HTTP scenario passed in the previous initialized regression; not rerun in this slice. Existing TEST fixture used only; no real workspace/user-service changes. Remaining old cards/navigation and outstanding management/Review/Replay/advanced-model parity still prevent final completion. No push.
+
 ## Detached Journey pages physically removed
 
 Deleted the unreachable old Journey goal/images/model/local-model/sample/confirmation/revision/Run/Batch pages, FirstResultEntry and ConversationBatchResults. Preserved deterministic label parsing as agent-ui/labelInput and used it in native ProjectManagement; English/Chinese commas, newlines and duplicate labels are covered. Old Journey navigation tests were replaced with native Not Found assertions instead of retaining obsolete route compatibility. This deletion removes roughly1,100 dormant lines, not server objects or business APIs. Remaining detached Conversation cards and navigation.ts still require cleanup and capability parity review.
