@@ -16,6 +16,7 @@ mod event_replay;
 mod export_jobs;
 mod image_previews;
 mod processing_operations;
+mod replay_commands;
 mod sample_operations;
 mod security;
 mod workspace_routes;
@@ -6621,7 +6622,11 @@ async fn get_run_debug_summary(
 async fn replay_run_from_node(
     State(state): State<ServerState>,
     AxumPath((run_id, node_id)): AxumPath<(String, String)>,
+    request: Option<Json<replay_commands::ExactReplayRequest>>,
 ) -> ApiResult<Json<Value>> {
+    if let Some(Json(request)) = request {
+        return replay_commands::execute(state, run_id, node_id, request).await;
+    }
     let run_id = parse_run_id(&run_id)?;
     let settings = state.settings.read().await.clone();
     let replay = state
@@ -17022,6 +17027,95 @@ export:
         assert_eq!(debug_summary["failed_node_count"], json!(0));
         assert_eq!(debug_summary["issues"], json!([]));
 
+        let replay_path = format!("/api/runs/{run_id}/replay/scene.day.classifier");
+        let preview = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("{replay_path}?project_id=http-label"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(preview["available"], true, "{preview}");
+        assert_eq!(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!("{replay_path}?project_id=TEST-foreign"),
+                None
+            )
+            .await
+            .status(),
+            StatusCode::NOT_FOUND
+        );
+        let command = uuid::Uuid::new_v4();
+        let body = json!({"project_id":"http-label","command_id":command,"scope_hash":preview["scope_hash"],"maximum_model_requests":0,"allow_unknown_cost":false});
+        let mut wrong = body.clone();
+        wrong["scope_hash"] = json!("stale");
+        assert_eq!(
+            request(
+                &service,
+                axum::http::Method::POST,
+                &replay_path,
+                Some(wrong)
+            )
+            .await
+            .status(),
+            StatusCode::CONFLICT
+        );
+        let first = response_json(
+            request(
+                &service,
+                axum::http::Method::POST,
+                &replay_path,
+                Some(body.clone()),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(first["command_id"], command.to_string());
+        let receipt_path = format!("{replay_path}/commands/{command}?project_id=http-label");
+        let mut receipt = first;
+        for _ in 0..100 {
+            receipt = response_json(
+                request(&service, axum::http::Method::GET, &receipt_path, None).await,
+            )
+            .await;
+            if receipt["status"] != "running" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(receipt["status"], "completed", "{receipt}");
+        assert_eq!(receipt["result"]["sandbox"], true);
+        assert_eq!(
+            response_json(
+                request(
+                    &service,
+                    axum::http::Method::POST,
+                    &replay_path,
+                    Some(body.clone())
+                )
+                .await
+            )
+            .await,
+            receipt
+        );
+        let mut changed = body;
+        changed["maximum_model_requests"] = json!(1);
+        assert_eq!(
+            request(
+                &service,
+                axum::http::Method::POST,
+                &replay_path,
+                Some(changed)
+            )
+            .await
+            .status(),
+            StatusCode::CONFLICT
+        );
         let replay = response_json(
             request(
                 &service,

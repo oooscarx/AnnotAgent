@@ -41,6 +41,7 @@ mod management;
 pub use export_delivery::ExportDelivery;
 mod localization_repair;
 mod published_run;
+mod replay_preview;
 mod result_projection;
 mod sample_limits;
 mod sample_repair_evidence;
@@ -11040,12 +11041,46 @@ impl LocalApplication {
         node_id: &str,
         settings: &Settings,
     ) -> Result<NodeReplayReport> {
+        self.replay_run_from_node_inner(run_id, node_id, settings, None)
+            .await
+    }
+
+    pub async fn replay_run_from_node_exact(
+        &self,
+        run_id: RunId,
+        node_id: &str,
+        settings: &Settings,
+        source_record_hash: &str,
+    ) -> Result<NodeReplayReport> {
+        self.replay_run_from_node_inner(run_id, node_id, settings, Some(source_record_hash))
+            .await
+    }
+
+    async fn replay_run_from_node_inner(
+        &self,
+        run_id: RunId,
+        node_id: &str,
+        settings: &Settings,
+        source_record_hash: Option<&str>,
+    ) -> Result<NodeReplayReport> {
         let history = self
             .store
             .list_runs()?
             .into_iter()
             .find(|run| run.id == run_id)
             .ok_or_else(|| anyhow!("run {run_id} was not found"))?;
+        if let Some(expected) = source_record_hash {
+            anyhow::ensure!(
+                sha256(
+                    history
+                        .workflow_snapshot_json
+                        .as_deref()
+                        .unwrap_or("")
+                        .as_bytes()
+                ) == expected,
+                "Replay checkpoint changed before execution"
+            );
+        }
         let snapshot: serde_json::Value = serde_json::from_str(
             history
                 .workflow_snapshot_json
@@ -11113,7 +11148,7 @@ impl LocalApplication {
             .collect::<Vec<_>>();
         let (validators, refiners) =
             workflow_extension_implementations(&self.skills, &enabled_ids)?;
-        let runtime = PublishedWorkflowRuntime::new(
+        let mut runtime = PublishedWorkflowRuntime::new(
             workflow.clone(),
             &history.provider,
             settings,
@@ -11124,6 +11159,9 @@ impl LocalApplication {
             self.plugin_registry.clone(),
             self.model_bundle_registry.clone(),
         )?;
+        if source_record_hash.is_some() {
+            runtime = runtime.with_sample_request_limit(0, None);
+        }
         let image = Arc::new(load_image(image_path, 40_000_000).map_err(|error| anyhow!(error))?);
         let model_image = to_model_image(
             "label-pipeline-replay",
@@ -24366,10 +24404,73 @@ export:
         assert_eq!(debug_summary.succeeded_node_count, 3);
         assert_eq!(debug_summary.failed_node_count, 0);
         assert!(debug_summary.issues.is_empty());
+        let preview = application
+            .preview_node_replay("label-classification", started.run_id, "classifier")
+            .unwrap();
+        assert_eq!(preview["available"], true, "{preview}");
+        assert!(
+            application
+                .preview_node_replay("TEST-wrong-owner", started.run_id, "classifier")
+                .is_err()
+        );
+        assert!(
+            application
+                .replay_run_from_node_exact(started.run_id, "classifier", &settings, "stale")
+                .await
+                .is_err()
+        );
+        let before_snapshot = application
+            .store
+            .list_runs()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.id == started.run_id)
+            .unwrap()
+            .workflow_snapshot_json
+            .unwrap();
+        let mut live: serde_json::Value = serde_json::from_str(&before_snapshot).unwrap();
+        live["selected_workflow"]["draft"]["nodes"][0]["model_binding"] = json!("TEST-live-model");
+        live["selected_workflow"]["snapshot"]["draft"]["nodes"][0]["model_binding"] =
+            json!("TEST-live-model");
+        application
+            .store
+            .update_run_workflow_snapshot(started.run_id, &live.to_string())
+            .unwrap();
+        let refused = application
+            .preview_node_replay("label-classification", started.run_id, "classifier")
+            .unwrap();
+        assert_eq!(refused["available"], false);
+        assert!(
+            refused["refusal_reasons"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("current_binding_replay_unsupported"))
+        );
+        application
+            .store
+            .update_run_workflow_snapshot(started.run_id, &before_snapshot)
+            .unwrap();
         let replay = application
-            .replay_run_from_node(started.run_id, "classifier", &settings)
+            .replay_run_from_node_exact(
+                started.run_id,
+                "classifier",
+                &settings,
+                preview["source_record_hash"].as_str().unwrap(),
+            )
             .await
             .expect("classifier Replay");
+        assert_eq!(
+            application
+                .store
+                .list_runs()
+                .unwrap()
+                .into_iter()
+                .find(|r| r.id == started.run_id)
+                .unwrap()
+                .workflow_snapshot_json
+                .as_deref(),
+            Some(before_snapshot.as_str())
+        );
         assert!(replay.sandbox);
         assert!(replay.reexecuted_nodes.contains(&"classifier".to_owned()));
         assert!(
