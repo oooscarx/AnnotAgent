@@ -64,3 +64,7 @@ Plan 工具曝光同时检查 planning_only 和 maximum_dry_runs；强制 model 
 Trace：TRACES.json 为测试产生的数据；停止中/未知/已中断预算不变；Batch restart/resume 100 图片只有 100 个 child Run，累计账本与历史用量一致；queue 已完成项返回 Existing，未执行 cancelled 项重启不复活。Mock 费用不能作真实模型计费或精度证据。
 
 Schema：SCHEMAS.json 覆盖常用命令/投影；复杂 Builder/Journey/Human DTO 的精确定义见 DTO_INVENTORY.json 与对应 Rust serde attributes。EXAMPLES.json 为 TEST 安全示例，scope_hash 必须实际 preview 获取，示例授权不可用于生产。
+
+## UIAPI-004 queue admission correction
+
+Queue schema-preview / schema-proposals 对 pending human input 返回 409 `human_input_pending`，未回答 Schema clarification 为 `schema_clarification_pending`；附 `admitted:false` 与 `suggested_action:answer_human_then_retry_same_command`。新授权事务再次检查并整体回滚；旧冻结授权不变，回答后使用原 Consent / call_id 重试，受原 scope、有效期、预算和 FIFO 限制。已存在 call 时只还原其回执。准确恢复步骤及 JSON 见 HTTP_ADAPTER.md 的 UIAPI-004 节。无数据库迁移。

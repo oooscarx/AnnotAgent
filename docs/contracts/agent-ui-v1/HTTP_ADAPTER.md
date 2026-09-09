@@ -114,3 +114,24 @@ HumanRequest 本体不承诺有 `kind` 字段。bbox 类型从它引用的 Sampl
 答案：`corrected_value={kind:"bounding_box",rect:[x,y,width,height]}`，各值归一化到源图；request 的 expected_feedback_sequence+1 用于 answer.sequence。`revision_id` 是此次答案的幂等 ID；并发基线改变要重读，不能生成新 revision_id 绕过冲突。保存只产生实际反馈/修订，不等于通过 Geometry Safety 或正式接受标注。
 
 Stop POST 的 `normalized_state=stopping` 与后续 GET 的 `outcome_unknown` 是两个真实观察时刻。fixture 的外部 30 秒延迟只保证可在途发 Stop，不承诺 stopping 动画持续时长；在途取消后 calls[].status=in_doubt 才是未知结果账本状态。页面不能把 model delay 当作假的服务端状态计时器。
+
+## UIAPI-004：人工输入门禁与原授权恢复
+
+`GET T/message-queue/{message_id}/schema-preview` 和 `POST .../schema-proposals` 在 Task 有 pending HumanRequest 或 pending image-class review 时返回 HTTP **409**：
+
+```json
+{"status":409,"code":"human_input_pending","error":"invalid conversation operation: Task is waiting for human input; no model call was admitted","admitted":false,"suggested_action":"answer_human_then_retry_same_command"}
+```
+
+未回答的 Schema clarification 同样阻塞，code 为 `schema_clarification_pending`。deferred 但仍 pending 的问题也不能跳过。Adapter 应显示阻塞并刷新 `T/workspace` / 对应问题；成功 preview 才有可供审阅的 scope。`admitted:false` 只表示此次拒绝没有进入模型调用，不表示 Task 没有历史调用。Send supplement 仍可以保存到队列，不代表允许立即规划。
+
+服务端在 preview、POST scope 校验、新授权的数据库事务及实际 call reservation 复用同一门禁。事务拒绝会同时回滚新 grant/queue authorization，不消耗调用预算。preview 是当前快照，不是未来执行保证；所有其他 owner、FIFO、精确 scope、预算和过期检查继续生效。
+
+历史版本已留下 `authorized` 且没有 call 的项，以及授权写入后才出现人工问题的竞态，保留冻结 grant，不撤销、不自动派发。恢复步骤：
+
+1. GET `T/message-queue/{message_id}/schema-authorization` 保存原 Consent（含 `call_id, model_id, scope_hash, request_hash, previous_grant_id, maximum_calls, expires_at, allow_unknown_cost`）。
+2. 通过对应真实 answer API 保存答案，刷新 workspace 确认所有人工门禁已解除；仅关闭弹窗或 deferred 不算回答。
+3. POST 原 `schema-proposals`，使用**同一 call_id 和完整原 Consent**。仍要求授权未过期、未撤销、原 scope/model/provider 未变、预算/FIFO 可用。不能把新 preview 的 previous_grant_id 混进旧 Consent；过期或范围改变需要重新审阅，不能自动换 ID。
+4. 若该 call 已有 receipt，精确重试返回原 receipt，不再调用模型；`in_doubt` 仍是未知结果，不能借重试重发。若尚无 receipt，回答后原授权可首次 reservation；同 ID 再次提交仅恢复同一结果。
+
+回归：`http_queue_human_check.py --enable-fixture --manifest <fresh TEST workspace>/manifest.json`。该脚本会回答 seed 的 bbox 问题并创建一次真实测试补充；每次使用新 seed。它验证 pending preview、preview/POST 间新增问题、无授权/预算变化、回答后原 Consent 成功、重复 POST 只有一个 call。存储回归额外验证已冻结授权在人工回答及 SQLite 重开后仍能以原 ID reservation，重复 reservation 为 Existing。无 SQL migration，无自动清理历史授权。

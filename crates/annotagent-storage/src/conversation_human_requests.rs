@@ -956,6 +956,184 @@ mod tests {
     }
 
     #[test]
+    fn queued_human_gate_rolls_back_new_grants_and_recovers_frozen_authorization() {
+        use crate::{
+            ConversationCallAdmission, ConversationCallGrant, ConversationSendInput,
+            QueuedPlanningAuthorization,
+        };
+        for previously_authorized in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("TEST-queued-human.db");
+            let store = SqliteStore::open(&path).unwrap();
+            let (owner, human, answer) = setup(&store);
+            store
+                .finish_sample_operation(&human.sample_test_id, None)
+                .unwrap();
+            let command = ConversationSendInput {
+                message: ConversationMessageInput {
+                    id: Uuid::new_v4(),
+                    text: "TEST queued supplement".into(),
+                    image: None,
+                    reference: None,
+                },
+                task_id: Some(human.task_id),
+                schema_revision: "a".repeat(64),
+                agent_model: None,
+                mode: Some(crate::ConversationSendMode::Plan),
+            };
+            store
+                .send_conversation_message(&owner, human.conversation_id, &command)
+                .unwrap();
+            let authorization = QueuedPlanningAuthorization {
+                conversation_id: human.conversation_id,
+                message_id: command.message.id,
+                previous_grant_id: None,
+                model_id: annotagent_core::ModelProfileId::new(),
+                request_hash: "c".repeat(64),
+                grant: ConversationCallGrant {
+                    id: Uuid::new_v4(),
+                    task_id: human.task_id,
+                    scope_hash: "b".repeat(64),
+                    maximum_calls: 1,
+                    expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+                },
+            };
+            if previously_authorized {
+                store
+                    .authorize_queued_planning(&owner, &authorization)
+                    .unwrap();
+            }
+            store
+                .create_conversation_human_request(&owner, &human)
+                .unwrap();
+            let gate = store
+                .check_queued_call_admission(
+                    &owner,
+                    human.conversation_id,
+                    human.task_id,
+                    authorization.grant.id,
+                )
+                .unwrap_err();
+            assert!(matches!(
+                gate,
+                StorageError::ConversationContract {
+                    code: "human_input_pending",
+                    ..
+                }
+            ));
+            if previously_authorized {
+                // A persisted authorization is immutable, not silently revoked.
+                store
+                    .authorize_queued_planning(&owner, &authorization)
+                    .unwrap();
+                assert!(
+                    store
+                        .reserve_conversation_call(
+                            &owner,
+                            human.task_id,
+                            authorization.grant.id,
+                            &authorization.grant.scope_hash,
+                            &authorization.request_hash
+                        )
+                        .is_err()
+                );
+                assert_eq!(
+                    store
+                        .conversation_task_budget(&owner, human.task_id)
+                        .unwrap()
+                        .planning_reserved_calls,
+                    0
+                );
+            } else {
+                let error = store
+                    .authorize_queued_planning(&owner, &authorization)
+                    .unwrap_err();
+                assert!(
+                    matches!(
+                        error,
+                        StorageError::ConversationContract {
+                            code: "human_input_pending",
+                            ..
+                        }
+                    ),
+                    "{error:?}"
+                );
+                assert_eq!(
+                    store
+                        .conversation_task_budget(&owner, human.task_id)
+                        .unwrap()
+                        .planning_authorized_calls,
+                    0
+                );
+            }
+            assert_eq!(
+                store
+                    .queued_planning_authorization(
+                        &owner,
+                        human.conversation_id,
+                        human.task_id,
+                        authorization.grant.id
+                    )
+                    .unwrap(),
+                previously_authorized.then_some(authorization.clone())
+            );
+            assert!(
+                store
+                    .conversation_call(&owner, human.task_id, authorization.grant.id)
+                    .unwrap()
+                    .is_none()
+            );
+            store
+                .answer_conversation_human_request(&owner, human.id, &answer)
+                .unwrap();
+            drop(store);
+            let store = SqliteStore::open(&path).unwrap();
+            store
+                .check_queued_call_admission(
+                    &owner,
+                    human.conversation_id,
+                    human.task_id,
+                    authorization.grant.id,
+                )
+                .unwrap();
+            store
+                .authorize_queued_planning(&owner, &authorization)
+                .unwrap();
+            assert_eq!(
+                store
+                    .reserve_conversation_call(
+                        &owner,
+                        human.task_id,
+                        authorization.grant.id,
+                        &authorization.grant.scope_hash,
+                        &authorization.request_hash
+                    )
+                    .unwrap(),
+                ConversationCallAdmission::Admitted
+            );
+            assert!(matches!(
+                store
+                    .reserve_conversation_call(
+                        &owner,
+                        human.task_id,
+                        authorization.grant.id,
+                        &authorization.grant.scope_hash,
+                        &authorization.request_hash
+                    )
+                    .unwrap(),
+                ConversationCallAdmission::Existing(_)
+            ));
+            assert_eq!(
+                store
+                    .conversation_task_budget(&owner, human.task_id)
+                    .unwrap()
+                    .planning_reserved_calls,
+                1
+            );
+        }
+    }
+
+    #[test]
     fn waiting_blocks_new_spending_and_closed_requests_reject_late_answers() {
         for stale in [false, true] {
             let store = SqliteStore::open_in_memory().unwrap();

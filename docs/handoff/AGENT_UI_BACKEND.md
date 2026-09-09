@@ -101,3 +101,11 @@ Batch Trace：暂停后关掉应用再重开，继续相同 Batch checkpoint，�
 `http_stop_scene.py --enable-fixture --manifest <TEST manifest>` 可重复创建浏览器专用场景；加 --verify 才自动执行停止验证。仅 TEST 外部模型延迟30秒，保证可在途发Stop；本地取消可能立即结算，stopping只取真实POST回执，最终in_doubt/outcome_unknown稳定持久，不允许伪造响应或强行维持stopping。
 
 完整seed278条HTTP及同库重启通过，bbox保存/幂等/冲突、手动Stop实际状态链验证通过，详见 UIAPI-003_TRACE.json 与 INTEGRATION_ENVIRONMENT.md 的 UIAPI-003 字段/步骤。接口支持状态继续保持。
+
+## UIAPI-004 集成修复
+
+Queue preview/POST 现在对 pending human 返回 409 `human_input_pending`（Schema clarification 为 `schema_clarification_pending`），附 admitted=false 和 answer_human_then_retry_same_command。授权事务复查并回滚新 grant；已有冻结授权保留，回答后原 ID/Consent 可重试，仍须原 scope/有效期/FIFO/预算成立。已有 call 回执只回放，未知结果不重发。无迁移、无自动调度改造。
+
+真实 HTTP 验证 preview 拒绝、preview 后新增 human 导致 POST 拒绝且授权/预算不变、回答后原 Consent 成功、重复 POST 仅一个 call；存储测试验证旧冻结授权跨 SQLite 重开恢复。Storage/Application/Server 共 397 passed、0 failed、3 原有 ignored，相关 all-targets 严格 Clippy 通过。详见 HTTP_ADAPTER.md UIAPI-004 与 UIAPI-004_TRACE.json。最终 SHA 在 UIAPI-004 交付回复固定。
+
+复现：先按 INTEGRATION_ENVIRONMENT.md 启动全新 TEST seed，再执行 `python3 crates/annotagent-e2e-fixture/support/http_queue_human_check.py --enable-fixture --manifest <TEST workspace>/manifest.json`。脚本消费 bbox pending 问题，每次回归用新 seed。未读真实密钥、未付费、未碰 8787/前端 worktree；自有测试进程已正常停止，隔离数据保留。提交后继续接口支持状态，只响应具体集成问题。

@@ -149,6 +149,20 @@ pub(crate) fn require_queue_cancel_safe(
 }
 
 impl SqliteStore {
+    /// Passive preview gate. Authorization and reservation recheck atomically.
+    pub fn check_queued_call_admission(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        call: Uuid,
+    ) -> Result<(), StorageError> {
+        self.with_connection(|db| {
+            crate::conversation_message_queue::require_task(db, project, conversation, task)?;
+            crate::conversation_calls::require_call_admission_clear(db, task, call)
+        })
+    }
+
     /// Application must verify explicit model/data/cost consent before calling.
     /// Advancing the existing ledger and binding this message are atomic.
     pub fn authorize_queued_planning(
@@ -174,6 +188,13 @@ impl SqliteStore {
                 ));
             }
             validate_source(tx, project, input)?;
+            // Same gate as call reservation, inside the grant transaction. A
+            // pending input must not advance the grant or strand a new auth.
+            crate::conversation_calls::require_call_admission_clear(
+                tx,
+                input.grant.task_id,
+                input.grant.id,
+            )?;
             tx.execute("INSERT INTO conversation_queued_planning(call_id,conversation_id,task_id,message_id,record_json) VALUES(?1,?2,?3,?4,?5)",params![input.grant.id.to_string(),input.conversation_id.to_string(),input.grant.task_id.to_string(),input.message_id.to_string(),serde_json::to_string(input)?])?;
             Ok(())
         };

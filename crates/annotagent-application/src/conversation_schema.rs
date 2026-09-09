@@ -56,6 +56,22 @@ impl crate::LocalApplication {
             call,
         )?)
     }
+    /// Passive preflight; storage repeats the gate at authorization and reservation.
+    pub fn check_queued_schema_admission(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        call: Uuid,
+    ) -> Result<()> {
+        Ok(self.store.check_queued_call_admission(
+            &self.conversation_project_identity(project)?,
+            conversation,
+            task,
+            call,
+        )?)
+    }
+
     /// The HTTP boundary validates Registry, text scope and explicit cost consent.
     pub fn authorize_queued_schema(
         &self,

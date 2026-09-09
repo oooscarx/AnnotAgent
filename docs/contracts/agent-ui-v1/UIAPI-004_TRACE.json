@@ -1,0 +1,127 @@
+{
+  "ticket": "UIAPI-004",
+  "parent_commit": "26720fc30b71b3d3b39c93d43cce193d86d2a170",
+  "tested_source": "parent plus this commit changes; fixture manifest backend_sha was precommit HEAD",
+  "source_sha256": {
+    "crates/annotagent-storage/src/conversation_calls.rs": "1b56302536f2a057caa011402d1f1ccbc42964b2961bee7d0644c045a919e984",
+    "crates/annotagent-storage/src/conversation_queued_planning.rs": "dfdf28713dbcd9e1f2ed21887d19ea835c98da71a2b48aef88e3019396852e8d",
+    "crates/annotagent-application/src/conversation_schema.rs": "93d36f1a8102a2ddd4f1500f7c62924138d0f6258a5fedb4bbb83d373db1d499",
+    "crates/annotagent-server/src/conversation_queue.rs": "e75975c586425aa003d9bb783f2344841589cac43afb9cb4449d805882aca76d",
+    "crates/annotagent-e2e-fixture/support/http_queue_human_check.py": "ef90718bab88d72f875a2efe491eed2e9134614cae2eb4005f4f449b59e236a4"
+  },
+  "environment": {
+    "provider": "explicit loopback deterministic TEST fixture only",
+    "application": "real HTTP router, SQLite, CSRF, authorization and admission",
+    "base_url": "http://127.0.0.1:58129",
+    "full_trace_path": "/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-o1v5_ynm/UIAPI-004_HTTP.json",
+    "owned_processes": "stopped after verification; data retained"
+  },
+  "http_result": {
+    "send": {
+      "message": {
+        "conversation_id": "37824d73-331a-4611-8e53-20efeefca948",
+        "sequence": 2,
+        "input": {
+          "id": "87ca7b6d-0b2b-4a0b-98c0-1eac3277c54d",
+          "text": "TEST supplement: retain tight cup boundaries",
+          "image": null
+        }
+      },
+      "task_id": "0c7be422-ed18-4c02-a55f-0c40302b2f53",
+      "disposition": "task_message",
+      "agent_model": {
+        "revision": 1,
+        "model_profile_id": "3f762eef-06c7-48cc-bd56-9368baacbfdd"
+      },
+      "mode": "plan",
+      "resolved_agent_model_id": "3f762eef-06c7-48cc-bd56-9368baacbfdd"
+    },
+    "blocked_preview": {
+      "admitted": false,
+      "code": "human_input_pending",
+      "error": "invalid conversation operation: Task is waiting for human input; no model call was admitted",
+      "status": 409,
+      "suggested_action": "answer_human_then_retry_same_command"
+    },
+    "blocked_post": {
+      "admitted": false,
+      "code": "human_input_pending",
+      "error": "invalid conversation operation: Task is waiting for human input; no model call was admitted",
+      "status": 409,
+      "suggested_action": "answer_human_then_retry_same_command"
+    },
+    "same_consent_after_answer": {
+      "id": "075c34e3-1f29-471a-9fe1-1ea2481b1651",
+      "task_id": "0c7be422-ed18-4c02-a55f-0c40302b2f53",
+      "request_hash": "756b6c4ca7cf7bb93c6529afdb0bec5389d821f7e54160f276cd536013aa095e",
+      "status": "completed",
+      "evidence": {
+        "decision": {
+          "Ok": {
+            "attributes": {},
+            "boundary_rules": [
+              "TEST fixture rule"
+            ],
+            "decision": "draft",
+            "kind": "bounding_box",
+            "labels": [
+              "cup"
+            ],
+            "multi_label": false,
+            "rationale": "TEST scripted Schema proposal, not Live model quality evidence"
+          }
+        },
+        "response": {
+          "content": null,
+          "provider_metadata": {
+            "retry_count": "0"
+          },
+          "request_id": null,
+          "tool_calls": [
+            {
+              "arguments": {
+                "attributes": {},
+                "boundary_rules": [
+                  "TEST fixture rule"
+                ],
+                "decision": "draft",
+                "kind": "bounding_box",
+                "labels": [
+                  "cup"
+                ],
+                "multi_label": false,
+                "rationale": "TEST scripted Schema proposal, not Live model quality evidence"
+              },
+              "id": "test-schema-call",
+              "name": "propose_annotation_schema"
+            }
+          ],
+          "usage": {
+            "input_tokens": 40,
+            "output_tokens": 8,
+            "source": "actual",
+            "total_tokens": 48
+          }
+        }
+      }
+    },
+    "calls_added": 1,
+    "no_grant_or_usage_change_when_blocked": true
+  },
+  "regression": {
+    "command": "CARGO_TARGET_DIR=\"$PWD/target\" cargo test -p annotagent-storage -p annotagent-application -p annotagent-server --offline",
+    "passed": 397,
+    "failed": 0,
+    "ignored": 3,
+    "log": "/tmp/annotagent-uiapi004-tests.log",
+    "legacy_recovery_test": "conversation_human_requests::tests::queued_human_gate_rolls_back_new_grants_and_recovers_frozen_authorization",
+    "legacy_recovery": "new grant rollback and old exact authorization preservation; answer; close/reopen SQLite; same ID Admitted then Existing; one reserved call",
+    "clippy": "affected three crates --all-targets --offline -- -D warnings passed"
+  },
+  "migration": "none",
+  "limitations": [
+    "preview is a snapshot; reservation rechecks the gate",
+    "authorization-to-reservation race can preserve an authorized item with no call; same frozen consent may retry after answer subject to expiry, scope, FIFO and budget",
+    "existing in_doubt receipt is returned unchanged; no remote reissue"
+  ]
+}
