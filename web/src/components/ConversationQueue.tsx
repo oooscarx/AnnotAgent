@@ -1,13 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { SendCommand, SendReceipt } from "../conversation-send";
+import {QueuedPlanning} from "./QueuedPlanning";
 export type QueuedMessage = { input: SendCommand; receipt: SendReceipt; status: "waiting_for_dispatch" | "authorized" | "running" | "completed" | "failed" | "in_doubt" | "cancelled"; cancelled_at: string | null; planning_call_id: string | null };
 const labels: Record<QueuedMessage["status"], string> = { waiting_for_dispatch: "Queued · not executed", authorized: "Authorized · not started", running: "Running", completed: "Planning response saved", failed: "Planning failed", in_doubt: "Outcome unknown · do not resend", cancelled: "Cancelled · not resumed" };
-export function QueueRows({ rows, busy, onCancel }: { rows: QueuedMessage[]; busy: boolean; onCancel: (id: string) => void }) {
+export function QueueRows({ rows, busy, onCancel, onPlan }: { rows: QueuedMessage[]; busy: boolean; onCancel: (id: string) => void; onPlan?: (id:string)=>void }) {
   return <ol className="agent-queue-rows">{rows.map(row => <li key={row.input.message.id}>
     <p>{row.input.message.text}</p><small>{labels[row.status]} · {row.receipt.mode === "execute" ? "Execute requested" : "Plan requested"}</small>
     {row.input.message.image && <small>Saved image reference: {row.input.message.image.image_id}</small>}
     <small>Agent model: {row.receipt.agent_model?.model_profile_id ?? "Default selection at Send"}</small>
+    {onPlan&&(row.status!=="cancelled"||row.planning_call_id)&&<button type="button" onClick={()=>onPlan(row.input.message.id)}>{row.planning_call_id?"View text planning":"Plan supplement"}</button>}
     {row.status === "running" ? <small>Use the task stop control to interrupt this call.</small> : ["waiting_for_dispatch", "authorized", "in_doubt"].includes(row.status) && <button type="button" disabled={busy} onClick={() => onCancel(row.input.message.id)}>Cancel queued instruction</button>}
   </li>)}</ol>;
 }
@@ -15,6 +17,8 @@ export function QueueRows({ rows, busy, onCancel }: { rows: QueuedMessage[]; bus
 export function ConversationQueue({ project, conversation, task, journalRevision }: { project: string; conversation: string; task: string; journalRevision: number }) {
   const [rows, setRows] = useState<QueuedMessage[]>([]), [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
+  const [planning,setPlanning]=useState<string>();
+  const planningTrigger=useRef<HTMLElement|undefined>(undefined);
   const [busy, setBusy] = useState(false), [revision, setRevision] = useState(0);
   const [limit, setLimit] = useState(100), [more, setMore] = useState(false);
   useEffect(() => {
@@ -43,7 +47,8 @@ export function ConversationQueue({ project, conversation, task, journalRevision
   return <details className="agent-message-queue"><summary>Queued instructions and history · {rows.length}{more ? "+" : ""}</summary>
     <p>Saved supplements do not change an in-flight request. Queued instructions have not yet been applied.</p>
     {(error || actionError) && <div role="alert"><p>{actionError || error}</p><button type="button" onClick={() => { setActionError(""); setRevision(value => value + 1); }}>Refresh queue</button></div>}
-    <QueueRows rows={rows} busy={busy} onCancel={id => void cancel(id)} />
+    <QueueRows rows={rows} busy={busy} onCancel={id => void cancel(id)} onPlan={id=>{planningTrigger.current=document.activeElement instanceof HTMLElement?document.activeElement:undefined;setPlanning(id);}} />
+    {planning&&<QueuedPlanning key={planning} project={project} conversation={conversation} task={task} message={planning} cancelled={rows.some(row=>row.input.message.id===planning&&row.status==="cancelled")} onClose={()=>{setPlanning(undefined);planningTrigger.current?.focus();}}/>}
     {more && <button type="button" onClick={() => setLimit(value => value + 100)}>Load more queued history</button>}
   </details>;
 }

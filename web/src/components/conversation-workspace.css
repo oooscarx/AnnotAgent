@@ -5,6 +5,17 @@
 .agent-queue-rows li { min-width: 0; overflow-wrap: anywhere; }
 .agent-queue-rows small { display: block; margin-block: 6px; }
 .agent-queue-rows button { margin-block-start: 4px; }
+.agent-queue-rows button + button { margin-inline-start: 8px; }
+.agent-queued-planning { display: grid; gap: 12px; padding-block: 16px; margin-block-start: 16px; border-top: 1px solid var(--aa-border); min-width: 0; overflow-wrap: anywhere; }
+.agent-queued-planning header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.agent-queued-planning h3, .agent-queued-planning h4 { margin: 0; }
+.agent-queued-planning dl { display: grid; grid-template-columns: minmax(90px,1fr) minmax(0,3fr); gap: 8px 16px; margin: 0; }
+.agent-queued-planning dd { margin: 0; }
+.agent-queued-planning label { display: flex; align-items: start; gap: 10px; }
+.agent-queued-planning > button { justify-self: start; }
+.agent-queued-draft { display: grid; gap: 8px; padding-block-start: 12px; border-top: 1px solid var(--aa-border); }
+.agent-queued-draft ul { margin: 0; padding-inline-start: 20px; }
+@media(max-width:600px) { .agent-queued-planning dl { grid-template-columns: minmax(0,1fr); } .agent-queued-planning dd { margin-bottom: 8px; } }
 .agent-workspace-layout { display: flex; align-items: stretch; }
 .agent-workspace-main { flex: 1; min-width: 0; }
 .agent-conversation-navigation { flex: 0 0 var(--aa-sidebar-width); min-width: 0; padding: 16px 12px; background: var(--aa-sidebar); border-inline-end: 1px solid var(--aa-border); }

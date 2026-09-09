@@ -916,3 +916,37 @@ Remaining: connect this boundary to explicit queue consent UI and carry controll
 current-plan/Artifact context into Workflow continuation. This endpoint deliberately
 does not claim a semantic proposal completes a general queued instruction. No push,
 remote changes or production workspace mutation; overall goal remains incomplete.
+
+## M3 queue consent and saved result UI — 2026-09-09
+
+Queue entries now open one inline planning detail area. Preview describes actual
+model/destination, text-only data, one new request, already-used calls, cumulative
+ceiling and unknown cost. Explicit checkbox + authorization is required. Consent is
+frozen and stored before POST; server authorization and exact call reads restore it.
+GET/mount/poll never executes. Lost acknowledgments retain request identity, and
+completed/unknown receipts do not offer an automatic retry. Saved semantic Drafts
+are shown with their real labels/rules/revision, explicitly not Workflow completion.
+IDs and last transport errors are collapsed in details. Closing returns focus to the
+entry and does not cancel a background call. Cancelled entries cannot launch planning.
+
+During text execution, direct Stop controls use the existing call cancellation API.
+Stopping remains visible while the POST is pending, including intervening GET polls;
+unknown remote completion remains unknown, not a successful safe-stop or free call.
+This is a scoped call control, not independent Dataset Batch cancellation.
+
+Evidence: 245 Web unit tests / 51 files passed (79431; latest rerun 89092), including
+strict pending-consent recovery validation. Production build/typecheck passed with
+existing chunk warning. Browser/HTTP tests passed twice (31733,21560), then expanded
+queue + Registry regression 2/2 passed (39340, isolated
+`/tmp/annotagent-guided-e2e-78146`). They verify zero POST before consent, disabled
+unconfirmed approval, lost response recovery, refresh with one original POST, 390px
+no horizontal overflow, close/focus restoration, Stop pending across delayed POST
+and a GET, unknown-result settlement, and cumulative count retained at three calls.
+Actual partial component screenshot reviewed: `agent-queued-planning-390.png`.
+It contains explicit TEST fixture labels, not Live accuracy or final six-state evidence.
+
+Remaining: controlled Workflow continuation from current plan/checkpoint/evidence,
+general supplement semantics beyond this bounded Schema phase, full task continuation
+trace, final design cleanup and six required application states. No claim that this
+one semantic phase completes a queued instruction. Goal stays active; no push,
+remote modification or production workspace changes.
