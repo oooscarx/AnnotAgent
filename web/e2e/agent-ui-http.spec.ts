@@ -15,9 +15,9 @@ async function identity(request: import("@playwright/test").APIRequestContext) {
   return {p,root,tasks:tasks.items};
 }
 test("a: real owned thread/image reads, Back/refresh, no execution on GET",async({page,request})=>{
-  const {root,tasks}=await identity(request);
+  const {p,root,tasks}=await identity(request);
   const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});
-  await page.goto(`/?task=${tasks[0].task_id}`);
+  await page.goto(`/projects/${encodeURIComponent(p.project_id)}/work?task=${tasks[0].task_id}`);
   await expect(page.getByText("本地工作区")).toBeVisible();
   await expect(page.locator(".user-message").first()).toContainText(tasks[0].title);
   await page.getByRole("button",{name:"打开数据",exact:true}).click();

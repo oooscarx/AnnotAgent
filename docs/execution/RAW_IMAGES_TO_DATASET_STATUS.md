@@ -158,6 +158,12 @@ Remaining M1/M3: natural-language slot extraction and ambiguity handling, explic
 
 ## Not complete / not executed
 
+### Isolated real HTTP browser baseline started at `0454e95`
+
+Reused the existing TEST fixture launcher (synthetic external Provider only; real Rust Application/storage and current production `web/dist`). Live API `http://127.0.0.1:62783`, local TEST Provider `http://127.0.0.1:62784/openai/v1`. Owned launcher exec session `61660`; launcher PID 36202, Provider 36286, server 36287 at verification. Workspace and manifest: `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-53duzgf5/manifest.json`. Revalidate process/session before reuse; do not restart from this document alone.
+
+The fixture's existing HTTP seeding/checks completed. Health reports `x-annotagent-fixture: external-model-only`; served HTML references `/assets/index-DxjuaYWs.js`, matching this build. One real HttpAdapter Chromium baseline passed for owned conversation/images, Back, refresh and no execution on GET. Its initial failure was an obsolete `/?task=` test URL rendering the canonical Projects inventory. The test now enters `/projects/:owner/work?task=`; no production legacy route was restored. This only verifies the existing read/recovery path, not new dataset delivery. All mutations so far belong to the isolated TEST fixture; no user workspace/services or external paid Provider were touched.
+
 ### Pending admission recovery (after `7bf888a`)
 
 HttpAdapter persists the exact package admission body before sending, namespaced by server workspace ID, Project and Task. Storage errors block sending. Corrupt data is rejected, an unrelated command cannot replace a still-unresolved request, and only a matching successful POST receipt or owned GET receipt reconciles the browser record. Recreating the adapter restores the same command without sending it. The same-chat card shows the original revision/image count and offers read-only verification or an explicit original-scope retry; a newer edited intake is not substituted. Recovery data is not server authorization or evidence of success. Definitively abandoning a request for which no authoritative receipt can be obtained is still conservative/limited; no automatic replacement command is generated.
