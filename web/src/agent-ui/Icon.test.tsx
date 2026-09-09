@@ -4,6 +4,7 @@ import preview from "../../ui-preview/public/brand/core/ui-icons.svg?raw";
 import css from "./ui.css?raw";
 import workspaceSource from "./App.tsx?raw";
 import paneSource from "./ArtifactPane.tsx?raw";
+import browserSource from "./ImageBrowser.tsx?raw";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Icon, IconButton, iconNames, type IconName } from "./Icon";
 import { labelColor, annotationColor, annotationVisual } from "../annotationVisuals";
@@ -11,8 +12,9 @@ import type { Annotation } from "../types";
 it("bounds initial dataset previews and defers offscreen image requests",()=>{
   expect(workspaceSource).toContain("state.artifacts.slice(0, 3).map");
   expect(workspaceSource).toContain("打开数据查看全部");
-  expect(paneSource).toContain('loading="lazy"');
-  expect(paneSource).toContain("assets.map");
+  expect(paneSource).toContain("<ImageBrowser");
+  expect(browserSource).toContain('loading="lazy"');
+  expect(browserSource).toContain("assets.slice(start,start+pageSize)");
 });
 it("uses only existing original sprite symbols in both production and Preview",()=>{
   expect(preview).toBe(production);

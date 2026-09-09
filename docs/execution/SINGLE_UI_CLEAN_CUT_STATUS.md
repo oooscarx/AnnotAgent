@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Native image browsing parity
+
+Audited retired ConversationImages against the active ArtifactPane: native thumbnails had regressed to all-image DOM and full original resources. Added native ImageBrowser with24-item pages, selected-image page recovery, bounded thumbnail DOM, lazy loading and original-resource fallback. HttpAdapter preserves a separate controlled thumbnail URL; the canvas still receives the unchanged original URL, coordinates and transforms. Removed the unmounted legacy ConversationImages and replaced its two render tests with native render tests, including selection beyond the first page. No new data/prediction generated.
+
+Typecheck,299 unit tests across86 files and isolated production build passed. Initial suite correctly failed an obsolete source-shape test demanding assets.map and lazy loading directly inside ArtifactPane; updated it to assert delegation/bounded slicing and retained actual render tests. Actual isolated TEST HTTP browser verified server thumbnail on selected button, original href in canvas, maximum24 thumbnail elements, selected URL recovery across refresh and zero writes. One scenario passed. Multi-page interactive browser navigation on a large dataset remains for final wider browser acceptance; current rendered unit evidence covers the selected second-page bound. No user service/dist/workspace, Published records or remote changes; goal active.
+
 ## Native Batch controls parity and legacy card removal
 
 Audited old ConversationBatchStatus/BatchControls against native BatchDetail and actual DatasetCoordinator::resume. The old UI and server support explicit resume for pending as well as paused; native UI had accidentally omitted pending resume. Restored that action with existing fee confirmation and owned latest-state preflight. Added an abort check after preflight so leaving the page cannot send a later control request. Terminal/unknown/trash states do not acquire automatic resume. Server also has failed/partial retry behavior, but it was not exposed by the retired control and is not silently added as ordinary continuation. Existing native polling, real counters, filtered images, owner checks, source, Review/export/trash links remain.

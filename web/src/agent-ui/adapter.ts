@@ -115,6 +115,7 @@ export type Snapshot = {
     project?: string;
     name: string;
     src: string;
+    thumbnail?: string;
     width: number;
     height: number;
   }[];

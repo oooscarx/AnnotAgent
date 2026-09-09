@@ -1,6 +1,10 @@
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
+test("native image browser uses real previews while preserving original canvas and URL selection",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");const nav=await(await request.get("/api/navigation")).json();const p=nav.items.find((p:{title:string})=>p.title==="TEST Agent UI HTTP fixture");const root=`/api/projects/${p.project_id}/conversations/${p.conversation_id}`;const tasks=await(await request.get(`${root}/task-navigation`)).json();const task=tasks.items[0].task_id;const images=(await(await request.get(`/api/projects/${p.project_id}/images`)).json()).images;expect(images.length).toBeGreaterThan(0);const image=images[0];
+  const writes:string[]=[];page.on("request",r=>{if(r.method()!=="GET")writes.push(r.url());});await page.goto(`/projects/${p.project_id}/work?task=${task}&pane=image&image=${image.image_id}`);const browser=page.getByRole("region",{name:"图片浏览",exact:true});const selected=browser.getByRole("button",{name:`查看图片 ${image.image_id}`,exact:true});await expect(selected.locator("img")).toHaveAttribute("src",image.thumbnail_url||image.url);await expect(selected).toHaveAttribute("aria-pressed","true");expect(await browser.locator("img").count()).toBeLessThanOrEqual(24);await expect(page.locator(".artifact-pane svg image").first()).toHaveAttribute("href",image.url);await page.reload();await expect(selected).toHaveAttribute("aria-pressed","true");expect(writes).toEqual([]);
+});
 test("native task export history reads actual owned records and refreshes without mutation",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
   const nav=await(await request.get("/api/navigation")).json();const p=nav.items.find((p:{title:string})=>p.title==="TEST Agent UI HTTP fixture");const root=`/api/projects/${p.project_id}/conversations/${p.conversation_id}`;

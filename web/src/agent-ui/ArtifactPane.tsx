@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { Icon, IconButton } from "./Icon";
 import { Disclosure } from "./Disclosure";
+import { ImageBrowser } from "./ImageBrowser";
 import { labelColor } from "../annotationVisuals";
 import type { WorkspaceAdapter, Task, Box, Snapshot, ImageId } from "./adapter";
 import { command } from "./App";
@@ -231,18 +232,7 @@ export function ArtifactPane({
       </p>
       {!fixture && task.imageResults?.[image]?.labels.map((label,i)=><p className="artifact-toolbar" key={i}>分类结果：{label}</p>)}
       {!fixture && task.human?.kind==="classification" && task.human.image===image && <label className="artifact-toolbar">确认类别<select aria-label="确认类别" value={classification} onChange={e=>setClassification(e.target.value)}>{task.human.labels.map(label=><option key={label}>{label}</option>)}</select></label>}
-      <div className="thumbnails">
-        {assets.map((a) => (
-          <button
-            key={a.id}
-            aria-label={`查看图片 ${a.id}`}
-            aria-pressed={a.id === image}
-            onClick={() => pickImage(a.id)}
-          >
-            <img src={a.src} alt="" loading="lazy" decoding="async" />
-          </button>
-        ))}
-      </div>
+      <ImageBrowser assets={assets} image={image} onSelect={pickImage}/>
       <Disclosure className="annotation-list" title={`标注列表与精确编辑 · ${boxes.length} 个`}>
         {boxes.map((b) => (
           <div key={b.id}>

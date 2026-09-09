@@ -168,7 +168,8 @@ export class HttpAdapter implements WorkspaceAdapter {
       if (ws) this.workspaces.set(id, ws);
       const artifacts = images.images.map(image => {
         if (!image.url.startsWith("/api/") || image.url.startsWith("//")) throw new Error("图片地址不是受控站内资源");
-        return { id: image.image_id, project, name: image.name, src: image.url, width: 0, height: 0 };
+        if(image.thumbnail_url&&!image.thumbnail_url.startsWith("/api/"))throw new Error("缩略图地址不是受控站内资源");
+        return { id: image.image_id, project, name: image.name, src: image.url, thumbnail:image.thumbnail_url, width: 0, height: 0 };
       });
       const current = this.task(id);
       const pendingApproval=this.stored<{id:string;url:string;body:unknown;execution?:string;view?:Task["approval"]}|null>(`approval.${id}`,null);

@@ -41,6 +41,10 @@ function mockTransport(overrides: Record<string, unknown | (() => Promise<unknow
   return { transport, paths };
 }
 describe("HTTP UI read boundary (synthetic transport tests, not HTTP E2E)", () => {
+  it("keeps original canvas resources separate from controlled thumbnail resources",async()=>{
+    const {transport}=mockTransport({"/api/projects/TEST-alpha/images":{images:[{image_id:"i",name:"image",url:"/api/images/i/file",thumbnail_url:"/api/images/i/thumbnail"}]}});
+    const adapter=new HttpAdapter(transport);await adapter.refresh();await adapter.loadTask("TEST-alpha","t1");expect(adapter.snapshot().artifacts[0]).toMatchObject({src:"/api/images/i/file",thumbnail:"/api/images/i/thumbnail"});
+  });
   it("preserves server timing and safe errors without an old unknown call masking active work", async () => {
     const {transport}=mockTransport({[`${root}/t1/workspace`]:{
       project_id:project.project_id,project_owner_id:project.project_owner_id,conversation_id:project.conversation_id,
