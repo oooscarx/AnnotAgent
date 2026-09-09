@@ -27,6 +27,20 @@ pub struct ConversationBuilderExecution {
 
 pub use annotagent_storage::ConversationBuilderRepair;
 
+/// Exact editable-plan source for an ordinary queued supplement. Unlike human
+/// repair provenance, this does not claim a correction or quality measurement.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueuedWorkflowSource {
+    pub message_id: Uuid,
+    pub draft_id: String,
+    pub revision: u64,
+    pub content_hash: String,
+    pub schema_id: Uuid,
+    pub schema_revision: u64,
+    pub evidence_hash: Option<String>,
+}
+
 struct BuilderGuard<'a> {
     app: &'a LocalApplication,
     owner: String,
@@ -44,6 +58,97 @@ impl Drop for BuilderGuard<'_> {
     }
 }
 impl LocalApplication {
+    /// Passive source selection: no copy, call, draft edit or inferred active task.
+    pub fn queued_workflow_source(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        message: Uuid,
+        draft_id: &str,
+    ) -> Result<QueuedWorkflowSource> {
+        let queued = self.queued_conversation_message(project, conversation, task, message)?;
+        if queued.cancelled_at.is_some() {
+            bail!("Queued instruction is cancelled");
+        }
+        let draft = self
+            .store
+            .available_conversation_repair_draft(project, draft_id)?;
+        if draft.project_id != project
+            || matches!(
+                draft.status,
+                annotagent_core::WorkflowDraftStatus::Published
+                    | annotagent_core::WorkflowDraftStatus::Archived
+            )
+        {
+            bail!(
+                "Select this task's editable Workflow Draft; published versions require the existing explicit improvement flow"
+            );
+        }
+        let binding = draft
+            .annotation_schema
+            .as_ref()
+            .ok_or_else(|| anyhow!("The selected plan has no stable conversation Schema owner"))?;
+        let schema_id = Uuid::parse_str(&binding.schema_draft_id)?;
+        let schema = self.conversation_schema_draft(project, schema_id, Some(binding.revision))?;
+        if schema.task_id != task
+            || schema.definition.task != binding.task
+            || schema.definition.goal != binding.goal
+            || schema.definition.boundary_rules != binding.boundary_rules
+        {
+            bail!("Selected plan belongs to another task or its Schema binding changed");
+        }
+        let evidence = self.store.sample_plan_evidence(draft_id)?;
+        if evidence
+            .as_ref()
+            .is_some_and(|value| value["project_id"] != project)
+        {
+            bail!("Saved plan evidence belongs to another Project");
+        }
+        Ok(QueuedWorkflowSource {
+            message_id: message,
+            draft_id: draft.id,
+            revision: draft.revision,
+            content_hash: draft.content_hash,
+            schema_id,
+            schema_revision: binding.revision,
+            evidence_hash: evidence
+                .map(|value| {
+                    serde_json::to_vec(&value).map(|bytes| annotagent_image_tools::sha256(&bytes))
+                })
+                .transpose()?,
+        })
+    }
+
+    /// Revalidate after approval before using the preserved nodes, bindings and
+    /// policies. Never silently pick a newer Draft or strip its saved evidence.
+    pub fn load_queued_workflow_source(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        source: &QueuedWorkflowSource,
+    ) -> Result<annotagent_core::WorkflowDraft> {
+        let current = self.queued_workflow_source(
+            project,
+            conversation,
+            task,
+            source.message_id,
+            &source.draft_id,
+        )?;
+        if current != *source {
+            bail!(
+                "Selected Workflow or evidence changed; review a new authorization before planning"
+            );
+        }
+        let draft = self
+            .store
+            .available_conversation_repair_draft(project, &source.draft_id)?;
+        if draft.revision != source.revision || draft.content_hash != source.content_hash {
+            bail!("Selected Workflow changed while loading its approved revision");
+        }
+        Ok(draft)
+    }
     pub fn conversation_builder_operation(
         &self,
         project: &str,
@@ -613,6 +718,125 @@ fn conversation_composition(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn queued_workflow_source_preserves_manual_plan_and_rejects_retargeting() {
+        use annotagent_storage::{
+            ConversationMessageInput, ConversationSendInput, ConversationSendMode,
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let app = LocalApplication::new(temp.path()).unwrap();
+        let project = "TEST-queued-workflow-source";
+        app.create_project(project,"version: 1\nproject:\n  name: TEST source\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n").unwrap();
+        let conversation = app.create_project_conversation(project).unwrap();
+        let owner = app.conversation_project_identity(project).unwrap();
+        let mut message = ConversationSendInput {
+            message: ConversationMessageInput {
+                id: Uuid::new_v4(),
+                text: "TEST find cups".into(),
+                image: None,
+                reference: None,
+            },
+            task_id: None,
+            schema_revision: app.project_goal(project).unwrap()["revision"]
+                .as_str()
+                .unwrap()
+                .into(),
+            mode: Some(ConversationSendMode::Plan),
+            agent_model: None,
+        };
+        let root = app
+            .store
+            .send_conversation_message(&owner, conversation, &message)
+            .unwrap();
+        let task = root.task_id;
+        let decision = crate::ConversationSchemaDecision::Draft {
+            kind: crate::ConversationOutputKind::BoundingBox,
+            labels: vec!["cup".into()],
+            multi_label: false,
+            attributes: std::collections::BTreeMap::new(),
+            boundary_rules: vec!["TEST preserve exclusions".into()],
+            rationale: "TEST human definition".into(),
+        };
+        let schema = app
+            .save_human_conversation_schema_draft(
+                project,
+                conversation,
+                task,
+                Uuid::new_v4(),
+                &decision,
+            )
+            .unwrap();
+        message.task_id = Some(task);
+        message.message.id = Uuid::new_v4();
+        message.message.text = "TEST refine boundaries without replacing the plan".into();
+        app.store
+            .send_conversation_message(&owner, conversation, &message)
+            .unwrap();
+        let binding = WorkflowSchemaBinding {
+            schema_draft_id: schema.id.to_string(),
+            revision: schema.revision,
+            goal: schema.definition.goal,
+            task: schema.definition.task,
+            boundary_rules: schema.definition.boundary_rules,
+        };
+        let draft:annotagent_core::WorkflowDraft=serde_json::from_value(serde_json::json!({"id":"TEST-preserved-plan","project_id":project,"name":"TEST manual plan","status":"editing","annotation_schema":binding,"nodes":[{"id":"image","node_type":"core.image_input","kind":"image_input","parameters":{"TEST_manual_note":"keep"}}],"runtime_policies":{"TEST_manual_policy":{"keep":true}},"created_at":chrono::Utc::now(),"updated_at":chrono::Utc::now()})).unwrap();
+        app.store.save_workflow_draft(&draft).unwrap();
+        let original = app.store.get_workflow_draft(&draft.id).unwrap();
+        let source = app
+            .queued_workflow_source(project, conversation, task, message.message.id, &draft.id)
+            .unwrap();
+        assert_eq!(
+            app.load_queued_workflow_source(project, conversation, task, &source)
+                .unwrap(),
+            original
+        );
+        assert!(
+            app.queued_workflow_source(
+                project,
+                conversation,
+                Uuid::new_v4(),
+                message.message.id,
+                &draft.id
+            )
+            .is_err()
+        );
+        let mut invalid = source.clone();
+        invalid.evidence_hash = Some("a".repeat(64));
+        assert!(
+            app.load_queued_workflow_source(project, conversation, task, &invalid)
+                .is_err()
+        );
+        assert!(
+            app.optional_conversation_builder_budget(project, conversation, task)
+                .unwrap()
+                .is_none()
+        );
+        drop(app);
+        let app = LocalApplication::new(temp.path()).unwrap();
+        assert_eq!(
+            app.load_queued_workflow_source(project, conversation, task, &source)
+                .unwrap(),
+            original
+        );
+        let mut edited = original.clone();
+        edited.name = "TEST manually revised after approval".into();
+        app.store.save_workflow_draft(&edited).unwrap();
+        assert!(
+            app.load_queued_workflow_source(project, conversation, task, &source)
+                .is_err()
+        );
+        let updated = app
+            .queued_workflow_source(project, conversation, task, message.message.id, &draft.id)
+            .unwrap();
+        assert_ne!(updated.content_hash, source.content_hash);
+        app.cancel_project_queued_message(project, conversation, task, message.message.id)
+            .unwrap();
+        assert!(
+            app.load_queued_workflow_source(project, conversation, task, &updated)
+                .is_err()
+        );
+    }
+
     #[test]
     fn bounding_box_labels_share_one_detector_and_keep_each_geometry_review_route() {
         let project: annotagent_core::ProjectSchema = serde_yaml::from_str("version: 1\nproject:\n  name: TEST shared conversation detector\ndataset:\n  root: images\nruntime: {}\ntasks:\n  - id: objects\n    kind: bounding_box\n    labels: [cup, can, plate]\n    required: true\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n").unwrap();

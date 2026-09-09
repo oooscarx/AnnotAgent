@@ -8,7 +8,9 @@ mod conversation_processing;
 mod conversation_provider;
 pub use conversation_processing::ConversationProcessingContext;
 mod conversation_vision_calls;
-pub use conversation_builder::{ConversationBuilderExecution, ConversationBuilderRepair};
+pub use conversation_builder::{
+    ConversationBuilderExecution, ConversationBuilderRepair, QueuedWorkflowSource,
+};
 pub use conversation_vision_calls::ConversationVisionCalls;
 mod conversation_feedback;
 mod conversation_feedback_authorization;

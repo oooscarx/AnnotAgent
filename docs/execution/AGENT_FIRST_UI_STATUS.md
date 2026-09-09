@@ -950,3 +950,28 @@ general supplement semantics beyond this bounded Schema phase, full task continu
 trace, final design cleanup and six required application states. No claim that this
 one semantic phase completes a queued instruction. Goal stays active; no push,
 remote modification or production workspace changes.
+
+## M3 ordinary supplement Workflow source preflight — 2026-09-09
+
+Code inspection confirmed Conversation Builder preserves a plan only for existing
+human-request or image-class repair provenance; ordinary inputs otherwise compile
+from scratch. Reusing that path for queued instructions would lose manual topology
+and binding choices. Added a distinct `QueuedWorkflowSource` instead of pretending
+an ordinary instruction is verified human correction evidence.
+
+Passive selection binds the exact queue message, editable Draft identity/revision/
+content hash, conversation Schema identity/revision and optional saved sample-evidence
+digest. Server-owned Schema task identity proves ownership. Reload verifies the same
+source and returns its actual nodes, model bindings and runtime policies; it never
+substitutes the latest plan or an active Project guess. Cancelled messages and changed
+sources fail. Existing management availability checks protect archived/deleted plans.
+Published versions remain on the existing explicit improvement path.
+
+Validation: new isolated source test passed (92267); both Builder module tests passed.
+It checks full Draft equality, wrong-task rejection, fabricated evidence digest,
+restart, post-selection manual edit, and cancellation; no grant is created by reads.
+Strict Application all-target/all-feature Clippy passed (89005), after matching the
+repository's explicit collection initialization style. No model traffic or user data
+mutation. This is source preflight, not yet wired Workflow modification: admission,
+atomic working-copy creation and existing Builder dispatch still need integration.
+Full goal remains active; no push or remote change.
