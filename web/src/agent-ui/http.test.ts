@@ -5,6 +5,32 @@ const project = { project_id: "TEST-alpha", project_owner_id: "owner-a", title: 
 const settings = { revision: "revision-1", sections: { data_privacy: { workspace_id: "TEST-workspace" }, usage_budget: { future_run_budget: { max_requests: 10, max_cost: "2.50" } } } };
 const navTask = (id: string) => ({ task_id: id, title: `TEST ${id}`, schema_revision: "schema-1", project_owner_id: "owner-a", conversation_id: "conversation-a", state: "idle" });
 const root = "/api/projects/TEST-alpha/conversations/conversation-a/tasks";
+it("restores a completed schema decision and prevents repeating initial planning",async()=>{
+  const {transport,paths}=mockTransport({[`${root}/t1/workspace`]:{
+    project_id:project.project_id,project_owner_id:project.project_owner_id,conversation_id:project.conversation_id,
+    task:{input:{id:"t1",schema_revision:"schema-1"}},agent_model:{revision:0,model_profile_id:null},actions:{},queue:[],
+    calls:[{id:"completed",status:"completed",evidence:{decision:{Ok:{decision:"draft",rationale:"Saved target"}}}}],
+  }});
+  const adapter=new HttpAdapter(transport);await adapter.refresh();await adapter.loadTask(project.project_id,"t1");
+  expect(adapter.snapshot().tasks.find(t=>t.id==="t1")).toMatchObject({phase:"idle",schemaProposed:true});
+  await expect(adapter.prepareAction({id:"repeat",project:project.project_id,task:"t1",revision:"schema-1"},"plan")).rejects.toThrow("已保存的目标草稿");
+  expect(paths.some(p=>p.endsWith("schema-preview"))).toBe(false);
+});
+it("shows upstream HTTP failures and blocks replacement authorization without poisoning new tasks",async()=>{
+  const {transport,paths}=mockTransport({[`${root}/t1/workspace`]:{
+    project_id:project.project_id,project_owner_id:project.project_owner_id,conversation_id:project.conversation_id,
+    task:{input:{id:"t1",schema_revision:"schema-1"}},agent_model:{revision:0,model_profile_id:null},actions:{},queue:[],
+    calls:[{id:"unavailable",status:"in_doubt",failure:{category:"http_status",http_status:503,stage:"provider_request"}}],
+  }});
+  const adapter=new HttpAdapter(transport);await adapter.refresh();await adapter.loadTask(project.project_id,"t1");
+  expect(adapter.snapshot().tasks.find(t=>t.id==="t1")).toMatchObject({phase:"outcome_unknown",remoteFailure:{httpStatus:503}});
+  await expect(adapter.prepareAction({id:"replacement",project:project.project_id,task:"t1",revision:"schema-1"},"plan")).rejects.toThrow("不能重建初始授权");
+  expect(paths.some(p=>p.endsWith("schema-preview"))).toBe(false);
+  const id=await adapter.createTask(project.project_id);
+  adapter.saveDraft(id,"保留的目标");
+  expect(adapter.snapshot().tasks.find(t=>t.id===id)).toMatchObject({phase:"idle",draft:"保留的目标"});
+  expect(adapter.snapshot().tasks.find(t=>t.id===id)?.remoteFailure).toBeUndefined();
+});
 it("planning an existing task never overrides its frozen Send model with the next-request preference", async () => {
   const { transport, paths } = mockTransport({
     "/api/agent-model-bindings": {pipeline_builder:"new-preference"},

@@ -227,6 +227,8 @@ export class HttpAdapter implements WorkspaceAdapter {
         ...result, approval:pendingApproval?.view || t.approval, actions: {...ws?.actions || t.actions,answer:{available:!!result.human && ["classification","bounding_box"].includes(result.human.kind),reason:"仅保存当前人工作答的样例修正"}}, model: ws?.agent_model.model_profile_id || this.defaults.pipeline_builder || t.model,
         loaded:true, image: human?.input.image_id || artifacts[0]?.id || "", editBoxes: edits.revision===result.resultRevision ? edits.boxes || {} : {},
         phase, receipts, humanQuestion:human?.input.question,
+        schemaProposed: ws?.calls.some(c=>c.status==="completed" && c.evidence?.decision?.Ok?.decision==="draft") || false,
+        remoteFailure: (()=>{const failure=[...(ws?.calls||[])].reverse().find(c=>c.status==="in_doubt")?.failure;return failure?{httpStatus:failure.http_status ?? undefined,stage:failure.stage,category:failure.category}:undefined;})(),
         stopTargets:stop?.status==="needs_selection"?stop.targets.map(t=>({id:`${t.kind}:${t.id}`,label:`${t.kind} · ${t.state}`})):[],
         resumeTargets:ws?.resume_actions?.filter(a=>a.available).map(a=>({id:`${a.kind}:${a.id}`,label:a.kind,reason:a.reason})),
         queue: ws?.queue.filter(q => ["waiting_for_dispatch","authorized","running","in_doubt"].includes(q.status)).map(q => q.input.message.text) || [],
@@ -278,6 +280,8 @@ export class HttpAdapter implements WorkspaceAdapter {
   }
   async prepareAction(c: Command, kind: "plan" | "sample" | "process" | "export") {
     const task = this.checked(c); if(task.id.startsWith("new:")) throw new Error("请先保存目标");
+    if (kind === "plan" && task.schemaProposed) throw new Error("此任务已有已保存的目标草稿，请继续构建方案并测试样例，不要重新申请初始规划授权。");
+    if (["plan","sample"].includes(kind) && task.phase === "outcome_unknown") throw new Error("此任务已有结果未知的请求，不能重建初始授权。请保留原回执；如需重新尝试，明确创建独立请求并重新批准费用范围。");
     if(this.stored(`approval.${task.id}`,null)) throw new Error("上次批准的结果待核对；请读取原回执，不能自动发起新的付费操作");
     const root = this.taskRoot(task);
     if(kind === "process") {

@@ -512,20 +512,20 @@ export function AgentPreviewApp({
                           )}
                         </div>
                         {!fixture && !!task.receipts?.length && <ExecutionProgress receipts={task.receipts} />}
-                        {!fixture && !active && !task.approval && adapter.prepareAction && task.items.length > 0 && <div className="task-next-actions">
+                        {!fixture && !active && task.phase !== "outcome_unknown" && !task.approval && adapter.prepareAction && task.items.length > 0 && <div className="task-next-actions">
                           {(() => {
                             const choices = [{kind:"plan" as const,label:"查看规划授权",icon:"plan" as const},{kind:"sample" as const,label:"构建方案并测试样例…",icon:"image" as const},...(task.sample?[{kind:"process" as const,label:"确认方案并开始处理…",icon:"play" as const}]:[]),{kind:"export" as const,label:"导出…",icon:"download" as const}];
-                            const primary = task.sample ? "process" : task.plan ? "sample" : "plan";
+                            const primary = task.sample ? "process" : task.plan || task.schemaProposed ? "sample" : "plan";
                             const action = choices.find(c=>c.kind===primary)!;
                             const render = (c:typeof action,main=false) => <button key={c.kind} className={main ? "primary" : undefined} disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),c.kind))}><Icon name={c.icon} size={16} />{c.label}</button>;
-                            return <>{render(action,true)}<Disclosure className="secondary-task-actions" title="其他操作"><div>{choices.filter(c=>c!==action).map(c=>render(c))}</div></Disclosure></>;
+                            return <>{render(action,true)}<Disclosure className="secondary-task-actions" title="其他操作"><div>{choices.filter(c=>c!==action && !(c.kind==="plan" && task.schemaProposed)).map(c=>render(c))}</div></Disclosure></>;
                           })()}
                         </div>}
                         {!fixture && task.resumeTargets?.map(r=><p key={r.id}>{r.reason}<button onClick={()=>void act(()=>adapter.resumeOperation(command(task),r.id))}>继续 {r.label}</button></p>)}
                         {!fixture && !!task.stopTargets?.length && <div className="notice"><strong>请选择停止哪一项</strong>{task.stopTargets.map(t=><button key={t.id} onClick={()=>void act(()=>adapter.selectStop!(command(task),t.id))}>{t.label}</button>)}</div>}
                         {!fixture && task.processing?.map(p=><p key={p.id}>处理批次 · {p.status} <a href={p.url}>查看本次结果 →</a></p>)}
                         {!fixture && task.exports?.map(e=><p key={e.id}>导出 · {e.status} · {e.detail} {e.url && <a href={e.url} download>下载真实导出文件</a>}</p>)}
-                        {!fixture && task.approval && <section className="plan-block"><strong>{task.approval.title}</strong><ul>{task.approval.scope.map((s,i)=><li key={i}>{s}</li>)}</ul><p>费用：{task.approval.budget ?? "未知；可能产生费用"}</p><button className="primary" disabled={approvalBusy} onClick={()=>setApproval(command(task))}>查看并确认授权</button>{approvalBusy && <p role="status">请求已提交，正在读取服务器执行状态；离开不会取消。</p>}</section>}
+                        {!fixture && task.approval && <section className="plan-block"><strong>{task.approval.title}</strong><ul>{task.approval.scope.map((s,i)=><li key={i}>{s}</li>)}</ul><p>费用：{task.approval.budget ?? "未知；可能产生费用"}</p><button className="primary" disabled={approvalBusy || task.phase === "outcome_unknown"} onClick={()=>setApproval(command(task))}>查看并确认授权</button>{approvalBusy && <p role="status">请求已提交，正在读取服务器执行状态；离开不会取消。</p>}</section>}
                         {task.plan && (
                           <PlanBlock
                             plan={task.plan}
@@ -576,7 +576,10 @@ export function AgentPreviewApp({
                         )}
                         {task.phase === "outcome_unknown" && (
                           <div className="error">
-                            远端结果未知。不能直接重试收费请求；请查看执行记录并核实服务端状态。
+                            <strong>{task.remoteFailure?.httpStatus ? `模型服务返回 HTTP ${task.remoteFailure.httpStatus}` : "远端结果未知"}</strong>
+                            <p>{task.remoteFailure?.httpStatus === 503 ? "服务商当时不可用，当前请求没有取得有效结果；不是新建对话失败。" : task.remoteFailure?.httpStatus === 429 ? "服务商返回限流或额度错误；新建对话不能解决同一服务的限制。请检查账户限制或选择另一个可用模型。" : "本次请求没有取得可确认的完成结果。"}是否产生费用仍需以服务商记录为准。此任务不能重新生成初始授权。</p>
+                            <p>可以保留目标创建独立请求，重新查看并批准费用；不会自动发送，也不会清除旧回执。</p>
+                            {!fixture && <button onClick={()=>void act(async()=>{if(!canNavigate())return;const id=await adapter.createTask(task.project);adapter.saveDraft(id,task.items.filter(i=>i.role==="user").at(-1)?.text || "");navigate({task:id,settings:null,pane:null},true);})}>保留目标，新建独立请求</button>}
                           </div>
                         )}
                         {task.phase === "failed" && (

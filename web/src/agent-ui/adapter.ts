@@ -81,6 +81,8 @@ export type Task = {
   resumeTargets?: {id:string;label:string;reason:string}[];
   exports?: {id:string;status:string;url?:string;detail:string}[];
   error?: string;
+  remoteFailure?: { httpStatus?: number; stage: string; category: string };
+  schemaProposed?: boolean;
   plan?: {
     revision: string;
     steps: string[];
