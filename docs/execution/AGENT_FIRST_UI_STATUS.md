@@ -817,3 +817,27 @@ Verification:
 
 No user workspace cleanup, Published Version modification, remote change or push.
 Full Agent-first goal remains active and incomplete.
+
+## M3 follow-up planning admission — 2026-09-09
+
+Migration 0056 binds an inbox message to one exact planning call, frozen model and
+server request digest. Authorization advances the existing task ledger atomically;
+it does not create another task or reset consumed calls. Admission enforces FIFO,
+settled task work, unchanged request, and uncancelled source. A queued grant cannot
+authorize unrelated calls even when its cumulative ceiling has remaining capacity.
+Cancelled inbox entries cannot be resurrected by authorization retries or restart.
+Running entries require the existing explicit task stop, not queue cancellation.
+Queue reads now expose authorized/running/completed/failed/in-doubt states and the
+actual call identity from persisted records instead of calling every entry waiting.
+
+Evidence: Storage library 160/160 passed (25306); focused lifecycle test passed
+(75388; status assertions also passed in 30512). Strict Storage/Application/
+Server all-target/all-feature Clippy passed (34843). Tests exercise active-call
+blocking, FIFO, transactional rollback, exact-call admission, preserved spend,
+cancellation before reservation, restart, and completed receipt deduplication.
+All data is isolated TEST SQLite data; no paid Provider call or production data edit.
+
+Remaining: this is storage admission, not a connected queue consumer. Application
+preview/consent, existing planning-service dispatch and Composer queue controls
+still need integration and HTTP/browser evidence. Do not report the full queued
+conversation experience or the overall Agent-first goal complete.

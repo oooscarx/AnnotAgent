@@ -9,6 +9,11 @@ use uuid::Uuid;
 #[serde(rename_all = "snake_case")]
 pub enum ConversationQueuedMessageStatus {
     WaitingForDispatch,
+    Authorized,
+    Running,
+    Completed,
+    Failed,
+    InDoubt,
     Cancelled,
 }
 
@@ -18,13 +23,14 @@ pub struct ConversationQueuedMessage {
     pub receipt: ConversationSendReceipt,
     pub status: ConversationQueuedMessageStatus,
     pub cancelled_at: Option<String>,
+    pub planning_call_id: Option<Uuid>,
 }
 
 fn invalid(message: &str) -> StorageError {
     StorageError::InvalidConversation(message.into())
 }
 
-fn require_task(
+pub(crate) fn require_task(
     db: &Connection,
     project: &str,
     conversation: Uuid,
@@ -44,7 +50,7 @@ fn require_task(
     Ok(())
 }
 
-fn read(
+pub(crate) fn read(
     db: &Connection,
     conversation: Uuid,
     task: Uuid,
@@ -57,15 +63,35 @@ fn read(
     ).optional()?;
     let (input, receipt, cancelled_at) =
         row.ok_or_else(|| invalid("Queued message was not found in this task"))?;
+    let planning: Option<(String, Option<String>)> = db.query_row(
+        "SELECT p.call_id,c.status FROM conversation_queued_planning p LEFT JOIN conversation_model_calls c ON c.id=p.call_id WHERE p.conversation_id=?1 AND p.task_id=?2 AND p.message_id=?3",
+        params![conversation.to_string(), task.to_string(), message.to_string()],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    ).optional()?;
+    let planning_call_id = planning
+        .as_ref()
+        .map(|(id, _)| {
+            Uuid::parse_str(id).map_err(|_| invalid("Invalid queued planning call identity"))
+        })
+        .transpose()?;
     Ok(ConversationQueuedMessage {
         input: serde_json::from_str(&input)?,
         receipt: serde_json::from_str(&receipt)?,
         status: if cancelled_at.is_some() {
             ConversationQueuedMessageStatus::Cancelled
         } else {
-            ConversationQueuedMessageStatus::WaitingForDispatch
+            match planning.as_ref().map(|(_, status)| status.as_deref()) {
+                None => ConversationQueuedMessageStatus::WaitingForDispatch,
+                Some(None) => ConversationQueuedMessageStatus::Authorized,
+                Some(Some("reserved")) => ConversationQueuedMessageStatus::Running,
+                Some(Some("completed")) => ConversationQueuedMessageStatus::Completed,
+                Some(Some("failed")) => ConversationQueuedMessageStatus::Failed,
+                Some(Some("in_doubt")) => ConversationQueuedMessageStatus::InDoubt,
+                Some(Some(_)) => return Err(invalid("Unknown queued planning call status")),
+            }
         },
         cancelled_at,
+        planning_call_id,
     })
 }
 
@@ -102,6 +128,7 @@ impl SqliteStore {
             let tx=db.unchecked_transaction()?;
             require_task(&tx,project,conversation,task)?;
             read(&tx,conversation,task,message)?;
+            crate::conversation_queued_planning::require_queue_cancel_safe(&tx,task,message)?;
             tx.execute("UPDATE conversation_message_queue SET cancelled_at=?4 WHERE conversation_id=?1 AND task_id=?2 AND message_id=?3 AND cancelled_at IS NULL", params![conversation.to_string(),task.to_string(),message.to_string(),chrono::Utc::now().to_rfc3339()])?;
             let result=read(&tx,conversation,task,message)?;
             tx.commit()?;

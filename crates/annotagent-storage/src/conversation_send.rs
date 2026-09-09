@@ -399,6 +399,227 @@ mod tests {
         );
     }
 
+    #[test]
+    fn queued_planning_preserves_budget_and_requires_exact_fifo_call() {
+        use crate::{
+            ConversationCallAdmission, ConversationCallGrant, ConversationCallStatus,
+            QueuedPlanningAuthorization,
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("TEST-queued-planning.sqlite");
+        let store = SqliteStore::open(&path).unwrap();
+        let owner = Uuid::new_v4().to_string();
+        let conversation = store.create_conversation(&owner).unwrap();
+        let root = store
+            .send_conversation_message(&owner, conversation, &input())
+            .unwrap();
+        let task = root.task_id;
+        let mut first = input();
+        first.task_id = Some(task);
+        first.mode = Some(ConversationSendMode::Plan);
+        store
+            .send_conversation_message(&owner, conversation, &first)
+            .unwrap();
+        let mut second = first.clone();
+        second.message.id = Uuid::new_v4();
+        store
+            .send_conversation_message(&owner, conversation, &second)
+            .unwrap();
+        let initial = ConversationCallGrant {
+            id: Uuid::new_v4(),
+            task_id: task,
+            scope_hash: "b".repeat(64),
+            maximum_calls: 1,
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+        };
+        store
+            .authorize_conversation_calls(&owner, &initial)
+            .unwrap();
+        let initial_call = Uuid::new_v4();
+        store
+            .reserve_conversation_call(
+                &owner,
+                task,
+                initial_call,
+                &initial.scope_hash,
+                &"c".repeat(64),
+            )
+            .unwrap();
+        let mut approval = QueuedPlanningAuthorization {
+            conversation_id: conversation,
+            message_id: first.message.id,
+            previous_grant_id: Some(initial.id),
+            grant: ConversationCallGrant {
+                id: Uuid::new_v4(),
+                maximum_calls: 3,
+                ..initial.clone()
+            },
+            model_id: annotagent_core::ModelProfileId::new(),
+            request_hash: "d".repeat(64),
+        };
+        assert!(
+            store.authorize_queued_planning(&owner, &approval).is_err(),
+            "cannot override active request"
+        );
+        store
+            .finish_conversation_call(
+                &owner,
+                task,
+                initial_call,
+                ConversationCallStatus::Completed,
+                serde_json::json!({"TEST":true}),
+            )
+            .unwrap();
+        approval.message_id = second.message.id;
+        assert!(
+            store.authorize_queued_planning(&owner, &approval).is_err(),
+            "FIFO"
+        );
+        assert_eq!(
+            store
+                .conversation_call_budget(&owner, task)
+                .unwrap()
+                .unwrap()
+                .current_grant,
+            initial,
+            "failed binding rolls back grant"
+        );
+        approval.message_id = first.message.id;
+        store.authorize_queued_planning(&owner, &approval).unwrap();
+        let queue = store
+            .conversation_message_queue(&owner, conversation, task, 0)
+            .unwrap();
+        assert_eq!(
+            queue[0].status,
+            crate::ConversationQueuedMessageStatus::Authorized
+        );
+        assert_eq!(queue[0].planning_call_id, Some(approval.grant.id));
+        assert!(
+            store
+                .authorize_queued_planning("foreign", &approval)
+                .is_err()
+        );
+        assert_eq!(
+            store
+                .conversation_call_budget(&owner, task)
+                .unwrap()
+                .unwrap()
+                .used_calls,
+            1
+        );
+        assert!(
+            store
+                .reserve_conversation_call(
+                    &owner,
+                    task,
+                    Uuid::new_v4(),
+                    &approval.grant.scope_hash,
+                    &approval.request_hash
+                )
+                .is_err()
+        );
+        assert!(
+            store
+                .reserve_conversation_call(
+                    &owner,
+                    task,
+                    approval.grant.id,
+                    &approval.grant.scope_hash,
+                    &"e".repeat(64)
+                )
+                .is_err()
+        );
+        assert_eq!(
+            store
+                .reserve_conversation_call(
+                    &owner,
+                    task,
+                    approval.grant.id,
+                    &approval.grant.scope_hash,
+                    &approval.request_hash
+                )
+                .unwrap(),
+            ConversationCallAdmission::Admitted
+        );
+        assert!(
+            store
+                .cancel_queued_conversation_message(&owner, conversation, task, first.message.id)
+                .is_err(),
+            "running requires task stop"
+        );
+        assert_eq!(
+            store
+                .conversation_message_queue(&owner, conversation, task, 0)
+                .unwrap()[0]
+                .status,
+            crate::ConversationQueuedMessageStatus::Running
+        );
+        store
+            .finish_conversation_call(
+                &owner,
+                task,
+                approval.grant.id,
+                ConversationCallStatus::Completed,
+                serde_json::json!({"TEST":true}),
+            )
+            .unwrap();
+        let next = QueuedPlanningAuthorization {
+            message_id: second.message.id,
+            previous_grant_id: Some(approval.grant.id),
+            grant: ConversationCallGrant {
+                id: Uuid::new_v4(),
+                ..approval.grant.clone()
+            },
+            ..approval.clone()
+        };
+        store.authorize_queued_planning(&owner, &next).unwrap();
+        assert_eq!(
+            store
+                .conversation_message_queue(&owner, conversation, task, 0)
+                .unwrap()[0]
+                .status,
+            crate::ConversationQueuedMessageStatus::Completed
+        );
+        store
+            .cancel_queued_conversation_message(&owner, conversation, task, second.message.id)
+            .unwrap();
+        drop(store);
+        let store = SqliteStore::open(&path).unwrap();
+        store.authorize_queued_planning(&owner, &next).unwrap();
+        assert!(
+            store
+                .reserve_conversation_call(
+                    &owner,
+                    task,
+                    next.grant.id,
+                    &next.grant.scope_hash,
+                    &next.request_hash
+                )
+                .is_err(),
+            "restart cannot resurrect cancelled instruction"
+        );
+        assert_eq!(
+            store
+                .conversation_call_budget(&owner, task)
+                .unwrap()
+                .unwrap()
+                .used_calls,
+            2
+        );
+        assert!(matches!(
+            store
+                .reserve_conversation_call(
+                    &owner,
+                    task,
+                    approval.grant.id,
+                    &approval.grant.scope_hash,
+                    &approval.request_hash
+                )
+                .unwrap(),
+            ConversationCallAdmission::Existing(_)
+        ));
+    }
+
     fn input() -> ConversationSendInput {
         ConversationSendInput {
             message: ConversationMessageInput {

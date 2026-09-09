@@ -523,6 +523,7 @@ impl SqliteStore {
                 return Ok(ConversationCallAdmission::Existing(saved));
             }
             require_call_admission_clear(&tx, task, id)?;
+            crate::conversation_queued_planning::require_call(&tx,project,task,id,request_hash)?;
             crate::conversation_future_schema_proposal::require_current_source_for_call(&tx,project,task,id)?;
             crate::conversation_stop::require_admission_clear(&tx,task,&id.to_string(),true)?;
             let grant: Option<(String,u32,String,bool)> = tx.query_row("SELECT scope_hash,maximum_calls,expires_at,revoked FROM conversation_call_grants WHERE task_id=?1", [task.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).optional()?;

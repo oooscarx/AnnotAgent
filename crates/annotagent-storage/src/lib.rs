@@ -48,6 +48,8 @@ pub use conversation_journey::{
 };
 mod conversation_agent_model;
 mod conversation_message_queue;
+mod conversation_queued_planning;
+pub use conversation_queued_planning::QueuedPlanningAuthorization;
 mod conversation_schema;
 mod conversation_send;
 pub use conversation_agent_model::{ConversationAgentModel, SelectConversationAgentModel};
@@ -690,6 +692,8 @@ impl SqliteStore {
             transaction.execute_batch(include_str!("../../../migrations/0053_conversation_send_receipts.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0054_conversation_agent_model.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0055_conversation_message_queue.sql"))?;
+            transaction.execute_batch(include_str!("../../../migrations/0056_conversation_queued_planning.sql"))?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(56,'conversation_queued_planning',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(55,'conversation_message_queue',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(54,'conversation_agent_model',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(52,'conversation_answer_delivery',?1)",[Utc::now().to_rfc3339()])?;
