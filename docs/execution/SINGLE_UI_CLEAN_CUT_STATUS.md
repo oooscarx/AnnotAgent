@@ -1,5 +1,13 @@
 # Single UI Clean Cut
 
+## Native data removal and Label definition parity
+
+Audited actual BuildData/BuildLabels rather than assuming absent API capabilities. Migrated existing removeImage operation into native data management with filename confirmation, explicit irreversible-file deletion/history-image risk warning, exact project/hash preflight, pending guard, native focus-managed Dialog and no automatic retry. The API removes the actual project file, not a Trash entry; UI does not falsely promise restore. Real test created a new TEST project, uploaded a synthetic copy, cancelled with zero DELETE, confirmed exactly one hash-bound DELETE, and refreshed without repeating it. Only this temporary TEST copy was deleted; repository source and user datasets were untouched and the test copy can be reimported.
+
+Restored legacy label-definition choices polygon/keypoints and optional string/boolean/number/enum attributes. Schema creation does not claim model readiness. Enum choices can be supplied, invalid empty enum definitions are blocked. Typecheck caught a too-wide attribute type and was fixed with the exact existing union. A test initially incorrectly expected attributes in the summarized project object; switched to authoritative workflow-catalog ProjectSchema and verified the saved boolean attribute. Full management suite18 passed before the attribute addition (16 TEST HTTP, two controlled response fixtures); the updated project/import/labels case separately passed after it.313 unit tests and production build/typecheck passed; broad suite after latest attribute change and detailed enum tests remain pending.
+
+No backend changes, push, user service/dist changes or real workspace operations. Old root/styles and history isolation are still incomplete; goal remains active. Owned TEST service stopped after checks.
+
 ## Extracted native Mask rendering
 
 Moved `ArtifactMaskLayer` out of the old root into a reusable component; the old temporary caller and native Artifact preview now share it. Native preview supports valid COCO RLE only at exact original image dimensions and keeps source pixels separate from the overlay. Unsupported/invalid/mismatched masks are explicitly described rather than stretched or replaced with boxes. Polygon/transformed-region display and full replay remain missing, as do final history-scope and old-root removal.

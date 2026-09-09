@@ -1,6 +1,15 @@
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
+test("native image removal requires explicit filename and only deletes an isolated TEST copy",async({page,request})=>{
+  expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
+  await page.goto("/projects/new");await page.getByLabel("项目名称",{exact:true}).fill(`TEST removal ${randomUUID()}`);await page.getByRole("button",{name:"创建项目",exact:true}).click();await expect(page).toHaveURL(/\/manage\/data$/);
+  await page.getByLabel("选择图片",{exact:true}).setInputFiles(resolve("../examples/robocup/images/synthetic-robocup.png"));await page.getByRole("button",{name:"上传 1 张图片",exact:true}).click();await expect(page.getByRole("heading",{name:"已保存图片 · 1",exact:true})).toBeVisible();
+  const project=new URL(page.url()).pathname.split("/")[2];const image=(await(await request.get(`/api/projects/${project}/images`)).json()).images[0];
+  const deletes:string[]=[];page.on("request",r=>{if(r.method()==="DELETE")deletes.push(r.url());});
+  await page.getByRole("button",{name:`移除 ${image.name}…`,exact:true}).click();const dialog=page.getByRole("dialog",{name:"永久移除项目图片文件",exact:true});await expect(dialog.getByRole("button",{name:"永久移除文件",exact:true})).toBeDisabled();await dialog.getByRole("button",{name:"取消",exact:true}).click();expect(deletes).toEqual([]);
+  await page.getByRole("button",{name:`移除 ${image.name}…`,exact:true}).click();await dialog.getByRole("textbox",{name:"输入完整文件名确认",exact:true}).fill(image.name);await dialog.getByRole("button",{name:"永久移除文件",exact:true}).click();await expect(dialog).toHaveCount(0);await expect(page.getByRole("heading",{name:"已保存图片 · 0",exact:true})).toBeVisible();await page.reload();expect(deletes).toHaveLength(1);expect(deletes[0]).toContain(`expected_content_hash=${image.content_hash}`);
+});
 test("controlled mask response fixture renders exact RLE pixels and original toggle removes overlay",async({page,request})=>{
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
   const run="4d348027-ff6e-4241-a46c-1c2b6c7aaaef";const endpoint=`/api/runs/${run}/pipeline-artifacts`;
@@ -333,8 +342,10 @@ test("new UI creates a TEST project, uploads and defines labels through real HTT
   await page.getByRole("link",{name:"标签定义",exact:true}).click();
   await page.getByLabel("标签组名称",{exact:true}).fill("测试足球目标");
   await page.getByLabel("类别（逗号或换行分隔）",{exact:true}).fill("ball");
+  await page.locator("summary").filter({hasText:"可选属性"}).click();await page.getByLabel("属性名称",{exact:true}).fill("TEST_occluded");await page.getByRole("combobox",{name:"属性类型",exact:true}).selectOption("boolean");
   await page.getByRole("button",{name:"保存标签组",exact:true}).click();
   await expect(page.getByText("标签组已保存；没有自动生成或执行方案。",{exact:true})).toBeVisible();
+  const owner=new URL(page.url()).pathname.split("/")[2];const catalog=await(await page.request.get(`/api/projects/${owner}/workflow-catalog`)).json();expect(catalog.project_schema.tasks[0].attributes.TEST_occluded.type).toBe("boolean");
   await page.getByLabel("新增类别",{exact:true}).fill("test-ball");
   await page.getByRole("button",{name:"添加类别",exact:true}).click();
   await expect(page.getByText("ball · test-ball",{exact:true})).toBeVisible();
