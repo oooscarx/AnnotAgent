@@ -718,6 +718,7 @@ impl SqliteStore {
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(37,'conversation_schema_clarifications',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(36,'conversation_schema_authorizations',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(35,'conversation_project_budget',?1)",[Utc::now().to_rfc3339()])?;
+            transaction.execute_batch(include_str!("../../../migrations/conversation_task_display.sql"))?;
             transaction.commit()?;
             Ok(())
         })

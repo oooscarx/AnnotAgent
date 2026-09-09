@@ -42,7 +42,7 @@ impl SqliteStore {
         let limit = bounds(after, limit)?;
         self.with_connection(|db| {
             crate::conversations::require_owner(db, project, conversation)?;
-            let mut query = db.prepare("SELECT t.id,t.source_message_id,t.schema_revision,t.created_at,m.sequence,json_extract(m.input_json,'$.text'),
+            let mut query = db.prepare("SELECT t.id,t.source_message_id,t.schema_revision,t.created_at,m.sequence,COALESCE(d.title,json_extract(m.input_json,'$.text')),
                 CASE
                 WHEN EXISTS(SELECT 1 FROM conversation_model_calls c WHERE c.task_id=t.id AND c.status='in_doubt') THEN 'outcome_unknown'
                 WHEN EXISTS(SELECT 1 FROM conversation_call_cancellations x JOIN conversation_model_calls c ON c.id=x.call_id WHERE c.task_id=t.id AND c.status='reserved') THEN 'stopping'
@@ -51,7 +51,7 @@ impl SqliteStore {
                 WHEN EXISTS(SELECT 1 FROM conversation_human_requests h WHERE h.task_id=t.id AND h.status='pending') THEN 'waiting_for_human'
                 WHEN EXISTS(SELECT 1 FROM conversation_message_queue q LEFT JOIN conversation_queued_planning p USING(conversation_id,message_id) WHERE q.task_id=t.id AND q.cancelled_at IS NULL AND p.call_id IS NULL) THEN 'awaiting_approval'
                 ELSE 'idle' END
-                FROM conversation_tasks t JOIN conversation_messages m ON m.conversation_id=t.conversation_id AND m.message_id=t.source_message_id WHERE t.conversation_id=?1 AND m.sequence>?2 ORDER BY m.sequence LIMIT ?3")?;
+                FROM conversation_tasks t JOIN conversation_messages m ON m.conversation_id=t.conversation_id AND m.message_id=t.source_message_id LEFT JOIN conversation_task_display d ON d.task_id=t.id WHERE t.conversation_id=?1 AND m.sequence>?2 AND d.archived_at IS NULL ORDER BY m.sequence LIMIT ?3")?;
             let items = query.query_map(params![conversation.to_string(),after,i64::try_from(limit+1).expect("bounded page limit")], |r| Ok(json!({
                 "task_id":r.get::<_,String>(0)?,"source_message_id":r.get::<_,String>(1)?,"schema_revision":r.get::<_,String>(2)?,"created_at":r.get::<_,String>(3)?,"sequence":r.get::<_,i64>(4)?,"title":r.get::<_,String>(5)?.chars().take(160).collect::<String>(),"project_owner_id":project,"conversation_id":conversation,"state":r.get::<_,String>(6)?,"state_scope":"task_activity"
             })))?.collect::<Result<Vec<_>,_>>()?;
@@ -223,5 +223,50 @@ mod tests {
                 .agent_ui_tasks("00000000-0000-4000-8000-000000000010", conversation, -1, 2)
                 .is_err()
         );
+        store.with_connection(|db| {
+            db.execute("INSERT INTO conversation_task_display(task_id,title,archived_at,updated_at) VALUES(?1,NULL,'TEST','TEST')", [tasks[0].task_id.to_string()])?;
+            db.execute("INSERT INTO conversation_task_display(task_id,title,updated_at) VALUES(?1,'Short title','TEST')", [tasks[2].task_id.to_string()])?;
+            Ok(())
+        }).unwrap();
+        let visible = store
+            .agent_ui_tasks("00000000-0000-4000-8000-000000000010", conversation, 0, 1)
+            .unwrap();
+        assert_eq!(visible["items"][0]["task_id"], tasks[1].task_id.to_string());
+        let next = store
+            .agent_ui_tasks(
+                "00000000-0000-4000-8000-000000000010",
+                conversation,
+                visible["next_cursor"].as_i64().unwrap(),
+                1,
+            )
+            .unwrap();
+        assert_eq!(next["items"][0]["title"], "Short title");
+        assert!(next["next_cursor"].is_null());
+        for (index, task) in tasks.iter().enumerate() {
+            let thread = store
+                .agent_ui_thread(
+                    "00000000-0000-4000-8000-000000000010",
+                    conversation,
+                    task.task_id,
+                    0,
+                    10,
+                )
+                .unwrap();
+            assert_eq!(
+                thread["items"][0]["message"]["input"]["text"],
+                format!("TEST goal {index}")
+            );
+        }
+        store
+            .with_connection(|db| {
+                db.execute("DELETE FROM conversation_task_display", [])?;
+                Ok(())
+            })
+            .unwrap();
+        let restored = store
+            .agent_ui_tasks("00000000-0000-4000-8000-000000000010", conversation, 0, 10)
+            .unwrap();
+        assert_eq!(restored["items"].as_array().unwrap().len(), 3);
+        assert_eq!(restored["items"][2]["title"], "TEST goal 2");
     }
 }
