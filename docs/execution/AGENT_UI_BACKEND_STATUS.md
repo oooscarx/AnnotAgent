@@ -28,3 +28,9 @@ BASE：c41b281b49252d520117029d39611865133798af。
 检查：server lib 57 passed、0 failed、2 ignored（前台 fixture 与既有 checkpoint 子进程）；严格 Clippy、fmt、diff check 通过。全 workspace B3 的 741 passed 记录仍保留，本轮没有将旧全量结果冒充重跑。
 
 未改 web/CSS/types/design/package；未碰前端集成 worktree；无 merge、push、remote 修改或真实数据操作。无真实钥匙/付费模型/大权重/8787 服务操作。详细启动、测试、DB/port、残留边界与消息来源见最新 handoff。
+
+## UIAPI-001 测试交付
+
+已在独立后端提交补齐 support：真实 interrupted Stop、3 图 paused Batch（实际 resume 复用第 1 个 child Run，再暂停于 2 completed / 1 pending）、明确 available resume、saved_plan JSON 路径。原有种子的 Plan-only Send 与已存 Builder proposal 分开标记。HTTP_ADAPTER 补充 assistant/Plan 字段与首次真实 Send 创建任务流程。
+
+验证：244 条真实 HTTP 请求通过；同库重启预算/checkpoint/动作一致；占用端口拒绝检查通过。证据 UIAPI-001_TRACE.json。此轮未改 Rust 业务、web、包或设计；仅 Python 测试支持及文档。没有重跑无改动的全量 Rust 测试，也没有以旧结果声称本轮重跑。未 push/merge。

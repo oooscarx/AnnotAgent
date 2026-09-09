@@ -77,3 +77,11 @@ Batch Trace：暂停后关掉应用再重开，继续相同 Batch checkpoint，�
 ## cross_boundary_requests
 
 仅 A 在用户确认视觉并授权后集成。本分支没有 merge/cherry-pick 前端，没有 push/remote 修改，没有 reset/rebase/amend，没有修改 web、设计、前端 types/package 或用户原工作区文件。请 A 在 Adapter 中处理真实 ID、字段来源、scope、上述错误/分页/事件差异；不得用演示状态弥补真实缺口。
+
+## UIAPI-001 增量交付
+
+在完整 dd98168 交付之上增加独立测试支持提交（SHA 在 UIAPI-001 回复中固定）；Rust 代码版本不变。frontend 若仅集成 ce46c6f，需要先取得 b8955ca/dd98168 的 HTTP Server fixture，再取得本增量；不要复制未提交文件。
+
+启动命令不变。manifest 新增 `saved_plan`、`controls.interrupted`、`controls.resumable`。后者为真实 paused Batch，已验证一次 resume 不重复已完成图，保留 2 completed / 1 pending 和 available action 给前端 E2E。stop 字段仍为 outcome_unknown 场景；stopping 是实时短暂状态，initial Trace 是实际响应，不能静态伪造。
+
+244 条真实 HTTP 请求及同库重启检查通过；UIAPI-001_TRACE.json 提供完整 trace 路径、脚本 hash、Plan 身份、Stop 回执、resume URL 与预算。新增 `HTTP_ADAPTER` 末节明确 `builder_operations.items[].session.builder_proposal`、工具记录与空任务首次 Send 的创建语义。没有通用助手文本；页面 mount 不得写虚构 journal。

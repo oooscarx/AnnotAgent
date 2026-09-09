@@ -24,6 +24,9 @@ def free_port(value):
     if value == 8787:
         raise ValueError("8787 is forbidden")
     with socket.socket() as sock:
+        # Match the server bind: allow an owned prior socket in TIME_WAIT,
+        # but never share an active listener (SO_REUSEPORT is not enabled).
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind(("127.0.0.1", value))
         port = sock.getsockname()[1]
     if port == 8787:

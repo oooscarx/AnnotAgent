@@ -21,8 +21,8 @@ class Client:
         self.trace = []
         self.csrf = self.request("GET", "/api/session")["csrf_token"]
 
-    def request(self, method, path, data=None, expected=None, raw=False):
-        headers = {}
+    def request(self, method, path, data=None, expected=None, raw=False, extra_headers=None, _retry_deadline=None):
+        headers = dict(extra_headers or {})
         if method != "GET":
             headers["x-annotagent-csrf"] = self.csrf
             clean = path.split("?")[0]
@@ -53,6 +53,11 @@ class Client:
                     result = payload.decode(errors="replace")
         if path != "/api/session" and "privileged-confirmation" not in path and "/credential" not in path:
             self.trace.append({"method": method, "path": path, "status": status, "request": data if not isinstance(data, bytes) else {"binary_bytes": len(data)}, "response": result})
+        if method != "GET" and status == 429 and isinstance(result, dict) and result.get("code") == "mutation_rate_limited":
+            deadline = _retry_deadline or time.monotonic() + 65
+            if time.monotonic() < deadline:
+                time.sleep(1)
+                return self.request(method, path, data, expected, raw, extra_headers, deadline)
         assert status in (expected or range(200, 300)), (method, path, status, result)
         return result
 
@@ -175,7 +180,7 @@ def verify(c, manifest, root):
     c.get(tr + "/calls")
     c.get(tr + "/workspace")
     c.get(p + "/export-readiness")
-    # Empty accepted dataset is still a real native export, not fabricated output.
+    # Export the actual accepted annotation produced by Processing.
     export = c.post(p + "/export", {"format": "native", "conversation": {"id": uid(), "conversation_id": conversation, "task_id": task}, "background": True})
     export = c.poll(tr + "/exports/" + export["job"]["id"], lambda value: not value["active"])
     assert export["job"]["error"] is None, export
@@ -187,11 +192,16 @@ def verify(c, manifest, root):
     pending = {**human, "id": uid(), "expected_feedback_sequence": 1, "question": "TEST pending answer for frontend adapter"}
     c.post(tr + "/human-requests", pending)
     plan = c.post(cr + "/send", {"message": {"id": uid(), "text": "TEST Plan only: awaiting explicit approval", "image": None}, "schema_revision": schema_revision, "mode": "plan"})
+    builder_item = c.get(tr + "/workspace")["builder_operations"]["items"][0]
+    assert builder_item["session"]["builder_proposal"]["draft"]["id"]
+    saved_plan = {"task_id": task, "workspace_url": tr + "/workspace", "object_path": "builder_operations.items[0].session.builder_proposal", "operation_id": builder_item["operation"]["id"], "draft_id": builder_item["operation"]["evidence"]["draft_id"], "session_id": builder_item["session"]["id"]}
+    from http_control_scenes import seed_controls
+    controls = seed_controls(c, root, provider)
     first_page = c.get(cr + "/task-navigation?limit=1")
     assert first_page["next_cursor"] is not None
     second_page = c.get(cr + "/task-navigation?limit=1&cursor=" + str(first_page["next_cursor"]))
     assert first_page["items"][0]["task_id"] != second_page["items"][0]["task_id"]
-    return {"project": project, "conversation_id": conversation, "task_id": task, "task_root": tr, "model_profile_id": model["id"], "provider_id": provider["id"], "execution_url": execution, "export": export, "run_id": run_id, "stop": stop, "answered_request_id": human["id"], "pending_request_id": pending["id"], "plan_task_id": plan["task_id"], "trace": str(Path(manifest["workspace"]) / "HTTP_TRACE.json")}
+    return {"project": project, "conversation_id": conversation, "task_id": task, "task_root": tr, "model_profile_id": model["id"], "provider_id": provider["id"], "execution_url": execution, "export": export, "run_id": run_id, "stop": stop, "answered_request_id": human["id"], "pending_request_id": pending["id"], "plan_task_id": plan["task_id"], "controls": controls, "saved_plan": saved_plan, "trace": str(Path(manifest["workspace"]) / "HTTP_TRACE.json")}
 
 
 def verify_stop(c, cr, schema_revision, provider, normal_model):
@@ -252,4 +262,6 @@ def restart_snapshot(c, manifest):
     snapshot = {suffix: c.get(tr + suffix) for suffix in ["/calls", "/budget", "/message-queue", "/human-requests", "/thread"]}
     snapshot["stop"] = c.get(manifest["stop"]["request_url"])
     snapshot["run_events"] = c.get("/api/runs/" + manifest["run_id"] + "/events")
+    for kind, scene in manifest.get("controls", {}).items():
+        snapshot[kind] = {"budget": c.get(scene["task_root"] + "/budget"), "batch": c.get(scene["batch_url"]), "actions": c.get(scene["task_root"] + "/workspace")["resume_actions"]}
     return snapshot
