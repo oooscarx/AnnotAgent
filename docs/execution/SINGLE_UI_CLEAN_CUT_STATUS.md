@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Future-rule Draft to exact Builder boundary
+
+Code/API and original future-schema tests clarify the actual continuation: a saved future semantic Draft is used by a fresh bounded Builder authorization on its owning task, then independently authorized samples. There is no discovered dedicated adopt-overwrite-Project/new-task endpoint to invent. Native FutureRules now offers the existing SchemaBuilder on demand for its actual saved Schema ID/revision, sharing the same authorization/recovery/stop implementation as normal task semantic drafts. It does not duplicate execution or auto-adopt rules.
+
+314 unit tests, typecheck and isolated build passed. Extended real TEST HTTP scope/future-rule/recovery/history case passed with new Builder preview: selected exact future Schema ID/revision, displayed unknown cost, launch disabled without confirmation, cancelled with no additional POST. Browser still issued only explicit scope-answer and future-rule save. Positive Builder generation and sample execution for this future-rule entry remain to verify; original existing Builder regression is not substituted. Build /tmp/annotagent-native-future-builder-dist; source49fc0d7 plus this slice. No real workspace/Provider/Published/user services/remotes changed. Model-assisted rule proposals, remaining repair/Replay and final acceptance continue; goal active.
+
 ## Native future-rule actual HTTP recovery and old diff removal
 
 Extended real feedback scope browser case through future-schema editing: change boundary rules, inspect native actual diff, forward real save then drop response, refresh and verify the same owned future Schema ID/command/definition. Original Sample Test record stayed byte-equivalent as parsed JSON; browser only sent scope-answer and future-schema POSTs. Full extended scenario including older-history navigation passed. Removed the now-unreferenced old FutureSchemaDiff after checking native rendering uses the shared semantic diff and displays tested/new rules; shared domain code remains.
