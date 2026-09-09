@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Native task clarification answer/cancellation entry
+
+Added SchemaClarifications inside the existing on-demand task semantics area. It reads completed clarify calls and validates returned call/task/conversation ownership, revision and pending/applied/cancelled state. Actual question text is rendered; explicit cancellation rechecks the exact revision and reads the durable result. Unknown response is not presented as successful cancellation. Existing CreateTaskSchema form now also supports a strictly bound clarification reference with distinct workspace/project/conversation/task/call/revision recovery key. Its parser rejects changed references and any journey_consent_id or additional execution authority. Saving answers therefore does not automatically resume inference. Existing manual creation remains separate and still rejects clarification fields.
+
+Editing, pending save or invalid recovery blocks cancellation/state refresh; form remains mounted during reads rather than losing input. Server remains authoritative for cancellation/answer races and atomic answer binding. Read server handler, application and storage contracts; added the actual ownership fields to the API response type. No Rust changes.312 unit tests across92 files, typecheck and isolated production build passed. Positive actual HTTP/browser answer, cancellation and lost-response recovery are still required; parser tests do not establish those. Existing authorized Journey continuation after an answer is not yet migrated and must not be described as unsupported or complete. Baseline f2fc31a plus this slice; /tmp/annotagent-native-clarification-dist. No user service/workspace/Published/remote changes. Goal remains active.
+
 ## Actual proposal execution and inventory evidence correction
 
 Actual loopback TEST schema-proposal execution showed that the current application normally materializes the Draft automatically (execute_conversation_schema invokes save_conversation_schema_draft after a valid draft decision). The previous inventory omission is a recovery-state gap, not proof that ordinary current model calls leave unsaved proposals. Keep that distinction: the new fallback is not a mandatory extra user step.
