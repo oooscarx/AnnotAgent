@@ -1,5 +1,11 @@
 # Single UI Clean Cut
 
+## Native compatible-bundle installer (verification incomplete)
+
+Added `BundleInstaller` under each native installed-plugin row. Reuses compatible catalog, license digest acceptance and server installation operation APIs. Confirmation includes exact publisher/source/hash, download/install sizes, platform requirements, license restrictions and real execution scope. Server blockers disable installation. Catalog and active operations are rechecked before POST; a lost POST response does not automatically start another download. Operation polling shows actual stage/bytes/errors/instance IDs, not fake percentages or Ready claims. No whole legacy page imported.
+
+Typecheck, 298 unit tests plus one final-cutover TODO, and isolated build passed. Render/source guard tests are **not** browser or real installation evidence. Actual HTTP installation, license rejection, unavailable plugin, refresh during download, lost-response recovery across refresh, visual inspection and browser E2E remain to verify before calling this migrated capability complete. Current unknown-response guard is in-memory; durable operation recovery needs completion. Local bundle upload/import and weight setup also remain. No models downloaded or installed, no paid API, no real workspace edits, no user service restart, no push. Old root/styles still emitted; goal active.
+
 ## Native Batch detail and conversation links
 
 Added actual Batch detail at `/projects/:project/manage/batches/:batch`, using existing batch reads/control APIs and the Agent shell. Conversation processing result links now use this native route. Lists actual per-image statuses/counts/failures and owned native Run links; status query survives refresh. Pending/active/review/failed/cancelled counts remain distinct, prices unknown when not established. Pause/resume/cancel follow supported server states with explicit confirmation, latest-state preflight, duplicate-submit guard, read-only polling and no automatic control retry. Foreign ownership fails closed. Frozen source display is whitelisted rather than dumping the entire server settings snapshot.
