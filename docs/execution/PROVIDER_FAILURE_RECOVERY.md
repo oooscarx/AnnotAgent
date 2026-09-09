@@ -26,3 +26,7 @@ Show actual HTTP status and actionable 429/503 descriptions while preserving unk
 ## Coordination
 
 UIAPI-010 sent only to confirmed backend thread `01a0855e-9c39-7c33-9f18-93e084d14816`, describing upstream 503/429 and schema types, then providing successful paid evidence. No parallel edits requested for `output_tool`. No push.
+
+## Deployment verification
+
+Implementation commit: `6e8863e`. Merged the concurrently completed main commit `8b19acc` into this isolated recovery branch without conflicts (`7cbdee2`); did not change main or its uncommitted work. Post-integration Web checks: 286 passed / 1 existing todo, typecheck and production build passed. Only verified PID 49202 (8788) was stopped, with zero reserved model calls; 8787 remained untouched. Patched 8788 now serves this worktree's build and the original absolute workspace path. Chromium verified byte-for-byte served index identity, successful task refresh and real HTTP 429 display on 8788. Verification 8796 service was stopped afterward. No further paid calls occurred on refresh or deployment.
