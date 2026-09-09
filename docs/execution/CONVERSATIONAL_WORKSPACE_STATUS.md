@@ -36,15 +36,23 @@ The earlier statement that these features were absent was stale and is supersede
 
 Formal processing and export now link saved task receipts to real immutable archive deliveries;
 background export workers, transactional events, keyset history and URL restoration are implemented.
-Thumbnail rendering is bounded to 24 images. A bounded browse-preview endpoint is now implemented
-(fresh browser integration still pending); the dataset metadata API still returns a full index.
+Thumbnail rendering is bounded to 24 images. A bounded browse-preview endpoint is implemented;
+the dataset metadata API still returns a full index. The current full browser sweep includes
+`conversation-previews.spec.ts`; do not infer that sweep's result from implementation alone.
 
-Still open: requirement-by-requirement completion audit, all visual/setup request-kind coverage,
-remaining metadata/thumbnail transfer and long-history performance, assistive-technology/native IME/
-actual 200-percent browser zoom, and final full-browser regression results. Schema repair can still
-require explicit intermediate actions. Live model quality and real-human novice usability are not
-proven. The latest full Rust commands pass; the current 170-test browser run remains in progress. Tests and
-their actual scope, failures/fixes and limitations are recorded chronologically below.
+Pending correction cards now allow an explicit bounded continuation grant before the answer.
+Saving the real canvas answer atomically saves its delivery intent; the existing Builder and
+sample services continue under that grant. A real SIGKILL/restart test verifies the original
+operation resumes once, without another feedback revision or budget reset (027b8ea). An expired,
+revoked or changed binding still blocks inference without discarding the saved correction.
+
+Still open: requirement-by-requirement completion audit, visual/setup request-kind coverage,
+remaining metadata transfer and long-history performance, assistive-technology/native IME/
+actual 200-percent browser zoom, and final full-browser regression results. Live model quality
+and real-human novice usability are not proven. The current browser sweep contains 178 tests,
+not the obsolete 170 count. Its terminal result is pending. The prior Rust process handle was
+no longer available without a captured terminal result; fresh logged run 53088 has now exited
+successfully for all four required Rust commands. Actual evidence and limitations follow.
 
 ## Direction and baseline (M0, 2026-09-08)
 
@@ -5338,3 +5346,46 @@ Workspace `TEST-answer-restart-n7rAvm`, task `2e8c27cb-33f3-4f4c-9e1b-8346621344
 recovery evidence, not Live inference or annotation quality evidence. Next: combined
 full regression and current requirement-by-requirement acceptance audit; no completion
 claim is made from these targeted tests alone.
+
+### 2026-09-09 — Combined regression in progress (after 027b8ea)
+
+Started full workspace fmt/clippy/tests/build in process **77115** and Web
+typecheck/unit/build/full Playwright in **34639**. Both were confirmed live at the last
+poll. Web typecheck, 228 unit tests and production build have passed; Playwright startup
+was waiting on the shared Cargo build lock. Rust workspace fmt/clippy passed and the
+full test build was still running. Evidence destination is
+`/tmp/annotagent-conversation-full-final`. Do not rebuild served Web assets or restart
+either test process based only on an observation timeout. Final results are not known yet.
+
+### 2026-09-09 — Current regression recovery and evidence audit
+
+The former 77115 handle could no longer be read; process disappearance was not treated as
+success. Re-ran the exact fmt/clippy/test/build chain with all workspace features, logging
+to `/tmp/annotagent-rust-final-20260909.log`. **53088 exited 0**, including the final build.
+Ignored real-weight/inference fixtures remain conditional; the ignored answer checkpoint
+helper is exercised explicitly in its isolated browser subprocess, not by ordinary Cargo.
+Web 34639 remains alive: its typecheck, 228 unit tests and build passed earlier; browser
+cases 1–44 have now been observed passing. No final 178-test result is claimed. No production
+source/build assets were changed while this browser run was live.
+
+Current requirement-to-evidence index (test sources were re-read; the full sweep is pending):
+
+| Requirement group | Concrete test or service evidence | Remaining qualification |
+| --- | --- | --- |
+| Project entry, persistent split canvas, frozen image selection | `conversation-entry`, `conversation-workspace`, `conversation-goals` browser specs | Narrow-screen/reduced-motion automation is not a novice study. |
+| Goal to Schema and sample, bbox and classification | `conversation-initial-journey`, `conversation-human-schema`, `conversation-clarification` | Explicit TEST transport, not Live semantic accuracy. |
+| Missing model and return from setup | Existing `journey-model` checks the retained legacy setup route | Exact conversation/task/request return needs its own browser evidence; legacy coverage cannot prove it. |
+| Frozen candidate, ambiguous scope, future rules | `conversation-feedback`, `conversation-image-class`, `conversation-future-schema(-proposal)` | One local repair does not establish dataset-wide calibration. |
+| Canvas answer and same-grant continuation | `conversation-joint-repair` five targeted cases passed; `conversation-answer-restart` passed | Actual process death is at the Application commit/pre-dispatch boundary. |
+| Duplicate answer, failed admission, restart budgets | Same targeted specs and storage receipt/outbox tests | A forced local Draft-preparation failure is still a distinct integration gap. |
+| Formal confirmation, publication, actual review/export | `conversation-samples` checks exact revisions, receipts, downloaded archives, failed-save preservation | Some control display tests use explicit browser fixtures; actual cancellation is separately tested. |
+| Real executor cancellation | `conversation-stop-executors` checks Builder, standalone sample and dataset Batch | No provider physical exactly-once claim. |
+| Pagination and faithful preview pixels | `conversation-history`, `conversation-previews`, large-index workspace case | Default goal discovery can still scan reference-only history; full dataset metadata is still loaded. |
+| Keyboard and layout | Workspace separator keyboard tests, 390/1024/1280/1440 reflow, synthetic composition in `conversation-stop` | Native OS IME, assistive technology and actual 200% browser zoom not verified. |
+
+The optional suggested point-only / generic CompareCandidates Human Request protocols are
+not established by the implemented reference-box/category and correction/comparison UI.
+They must not be reported as implemented generic request kinds. The priority acceptance is
+generic bbox and whole-image classification. No Live Provider test or real-human novice
+usability test was executed in this round. Historical screenshot changes and `test-results/`
+remain untouched and unstaged. Branch remains main; no push or remote modification.
