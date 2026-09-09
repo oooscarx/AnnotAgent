@@ -235,6 +235,8 @@ button.primary:hover:not(:disabled) {
 .mobile-menu {
   display: none;
 }
+.mobile-stop { display: none; }
+@media (max-width: 760px) { .mobile-stop { display: inline-flex; } }
 .work-columns {
   display: grid;
   grid-template-columns: minmax(0, 1fr);

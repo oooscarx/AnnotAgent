@@ -22,6 +22,7 @@ export function ArtifactPane({
 }) {
   const asset = assets.find((a) => a.id === image);
   const fixture = adapter.kind === "fixture";
+  const editable = fixture || (task.actions?.answer?.available === true && task.human?.image === image);
   const [natural, setNatural] = useState({width: 960, height: 760});
   useEffect(() => { if (!asset) return; const img = new Image(); let current = true; img.onload = () => { if (current) setNatural({width: img.naturalWidth, height: img.naturalHeight}); }; img.src = asset.src; return () => { current = false; }; }, [asset?.src]);
   const width = asset?.width || natural.width,
@@ -176,6 +177,8 @@ export function ArtifactPane({
               <g
                 key={b.id}
                 onPointerDown={(e) => {
+                  setSelected(b.id);
+                  if(!editable)return;
                   e.currentTarget.ownerSVGElement?.setPointerCapture(
                     e.pointerId,
                   );
@@ -261,6 +264,7 @@ export function ArtifactPane({
               标签
               <input
                 value={b.label}
+                disabled={!editable}
                 onChange={(e) => update(b.id, { label: e.target.value })}
               />
             </label>
@@ -270,6 +274,7 @@ export function ArtifactPane({
                 <input
                   aria-label={`${b.id} ${k}`}
                   type="number"
+                  disabled={!editable}
                   value={Math.round(b[k])}
                   onChange={(e) =>
                     update(b.id, { [k]: Math.max(0, Number(e.target.value)) })
@@ -301,7 +306,7 @@ export function ArtifactPane({
       </details>
       <div className="artifact-footer">
         <small>
-          {dirty ? "浏览器编辑草稿 · 尚未提交" : fixture ? "演示候选 · 非正式标注" : "样例终端候选 · 非正式标注"}
+          {!fixture && !editable ? "只读样例；当前没有待回答的人工问题" : dirty ? "浏览器编辑草稿 · 尚未提交" : fixture ? "演示候选 · 非正式标注" : "样例终端候选 · 非正式标注"}
         </small>
         <button
           className="primary"

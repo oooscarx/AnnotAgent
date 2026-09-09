@@ -80,6 +80,9 @@ export function AgentPreviewApp({
   const task = state.tasks.find(t => (!owner || t.project === owner) &&
     (!url.searchParams.get("conversation") || t.conversationId === url.searchParams.get("conversation")) &&
     (selectedId ? t.id === selectedId : owner ? t.id === `new:${owner}` : true));
+  useEffect(()=>{
+    if(task && !state.settings.collapsed)setExpanded(ids=>ids.includes(task.project)?ids:[...ids,task.project]);
+  },[task?.project]);
   const allowed = (action: "send" | "stop" | "resume" | "approve" | "answer") => fixture || task?.actions?.[action]?.available === true;
   useEffect(() => {
     if (task && adapter.loadTask) void adapter.loadTask(task.project, task.id).catch(e => setError(e.message));
@@ -354,6 +357,7 @@ export function AgentPreviewApp({
               )}
             </div>
             <div className="header-actions">
+              {!fixture && active && pane && <button className="mobile-stop" aria-label="停止当前执行" disabled={task.phase==="stopping" || !allowed("stop")} onClick={()=>void act(()=>adapter.interruptOperation(command(task)))}>{task.phase==="stopping"?"停止中…":"停止"}</button>}
               {!section && task && (
                 <>
                   <button
@@ -375,7 +379,7 @@ export function AgentPreviewApp({
                   </details>
                 </>
               )}
-              <span className="preview-chip">{fixture ? "UI Preview" : state.testOnly ? "TEST · 真实 HTTP / 测试模型" : "服务器工作区"}</span>
+              <span className="preview-chip" title={state.testOnly ? "隔离 TEST 数据库；真实 HTTP；外部模型是测试后端，不是真实模型准确率验证" : undefined}>{fixture ? "UI Preview" : state.testOnly ? "TEST · HTTP" : "服务器工作区"}</span>
             </div>
           </header>
           {(error || state.error) && (
@@ -888,7 +892,7 @@ export function AgentPreviewApp({
                     image={fixture ? Math.max(1, Math.min(3, Number(url.searchParams.get("image")) || 1)) : url.searchParams.get("image") || task.image}
                     onImage={(n) => navigate({ image: String(n) })}
                     onReference={(candidate, image) =>
-                      setReference({
+                      fixture && setReference({
                         task: task.id,
                         image: String(image),
                         candidate,

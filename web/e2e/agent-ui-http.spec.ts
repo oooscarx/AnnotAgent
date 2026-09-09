@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 
 test.beforeEach(async ({request})=>{
   const health=await request.get("/api/health");
@@ -305,18 +306,31 @@ test("e: bbox edit saves source-normalized geometry through the real HumanReques
   await expect(page.getByLabel(`${human.input.outcome_id} x`,{exact:true})).toHaveValue("80");
 });
 
-test("d: actual stop POST is observed as stopping and settles to unknown without fake resume",async({page,request,baseURL})=>{
+test("d: actual stop POST is observed as stopping and settles to unknown without fake resume",async({page,request,baseURL},testInfo)=>{
   test.skip(!process.env.AGENT_UI_TEST_MANIFEST,"Requires the marked UIAPI-003 fixture manifest; no synthetic HTTP response substitution");
   const m=JSON.parse(readFileSync(process.env.AGENT_UI_TEST_MANIFEST!,"utf8"));expect(m.base_url).toBe(baseURL);expect(m.fixture).toBe("external-model-only");
-  const scene=process.env.AGENT_UI_STOP_SCENE ? JSON.parse(readFileSync(process.env.AGENT_UI_STOP_SCENE,"utf8")).scene : m.manual_stop;
+  // Settings tests may legitimately advance Provider revisions; do not reuse
+  // the seed's now-stale authorization or weaken the server's scope check.
+  const prepared=process.env.AGENT_UI_STOP_SCENE ? null : execFileSync("python3",["../crates/annotagent-e2e-fixture/support/http_stop_scene.py","--enable-fixture","--manifest",process.env.AGENT_UI_TEST_MANIFEST!],{encoding:"utf8"});
+  const scene=process.env.AGENT_UI_STOP_SCENE ? JSON.parse(readFileSync(process.env.AGENT_UI_STOP_SCENE,"utf8")).scene : JSON.parse(prepared!.split("\nScene and real HTTP trace:")[0]);
+  await testInfo.attach("real-test-scene",{body:JSON.stringify(scene,null,2),contentType:"application/json"});
   const session=await(await request.get("/api/session")).json();
   const started=await request.post(scene.start.url,{headers:{"x-annotagent-csrf":session.csrf_token},data:scene.start.body});expect(started.ok()).toBe(true);
   await expect.poll(async()=>{const calls=await(await request.get(scene.wait_for_reserved_url)).json();return calls.some((c:{status:string})=>c.status==="reserved");}).toBe(true);
   await page.goto(`/projects/${m.project}/work?task=${scene.task_id}`);
   await expect(page.getByRole("button",{name:"■ 停止",exact:true})).toBeEnabled();
+  await page.getByRole("textbox",{name:"给 AnnotAgent 的需求"}).fill("TEST queued while the model request is active");
+  await page.getByRole("button",{name:"排队",exact:true}).click();
+  await expect(page.getByText(/1 条排队输入/)).toBeVisible();
+  await page.screenshot({path:testInfo.outputPath("running-queue.png")});
+  await page.getByRole("button",{name:"打开数据",exact:true}).click();
+  await page.setViewportSize({width:390,height:844});
+  await expect(page.getByRole("button",{name:"停止当前执行",exact:true})).toBeVisible();
   const response=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/stop-requests"));
-  await page.getByRole("button",{name:"■ 停止",exact:true}).click();
+  await page.getByRole("button",{name:"停止当前执行",exact:true}).click();
   const initial=await(await response).json();expect(initial.normalized_state).toBe("stopping");
+  await testInfo.attach("actual-initial-stop-receipt",{body:JSON.stringify(initial,null,2),contentType:"application/json"});
+  await page.getByRole("button",{name:"收起数据",exact:true}).click();
   await expect(page.getByText(/远端结果未知/)).toBeVisible();
   await page.reload();await expect(page.getByText(/远端结果未知/)).toBeVisible();
   const final=await(await request.get(scene.workspace_url)).json();expect(final.calls.some((c:{status:string})=>c.status==="in_doubt")).toBe(true);
