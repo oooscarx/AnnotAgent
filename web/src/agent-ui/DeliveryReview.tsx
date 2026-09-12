@@ -7,7 +7,8 @@ import {
   sampleVisualSelection,
   type DeliveryFormalResult,
   type DeliverySampleResult,
-  type VisualSelection,
+  type FormalReviewSelection,
+  type SampleVisualSelection,
 } from "./deliveryVisualSelection";
 
 type Image = { id: string; name: string; src?: string };
@@ -24,8 +25,9 @@ export type DeliveryReviewProps = {
   formalResult?: DeliveryFormalResult | null;
   locked?: boolean;
   onEditingState?: (active: boolean) => void;
-  onVisualSelection?: (selection: VisualSelection) => void;
-  onSampleIssue?: (selection: VisualSelection) => void;
+  onVisualSelection?: (selection: SampleVisualSelection) => void;
+  onSampleIssue?: (selection: SampleVisualSelection) => void;
+  onFormalSelection?: (selection: FormalReviewSelection) => void;
 };
 
 const fromUrl = (images: Image[], hasSample: boolean): Selection => {
@@ -40,7 +42,7 @@ const fromUrl = (images: Image[], hasSample: boolean): Selection => {
 export function DeliveryReview({
   service, project, task, images, labels = [], sampleResult = null,
   formalResult: formalResultProp, locked = false, onEditingState,
-  onVisualSelection, onSampleIssue,
+  onVisualSelection, onSampleIssue, onFormalSelection,
 }: DeliveryReviewProps) {
   const [formalResult, setFormalResult] = useState<DeliveryFormalResult | null | undefined>(
     formalResultProp !== undefined ? formalResultProp : service.formalResult ? undefined : null,
@@ -199,17 +201,26 @@ export function DeliveryReview({
     history.pushState(history.state, "", url);
   };
 
-  const emit = (annotation?: Annotation, imageDecision = false) => {
+  const emitSample = (annotation: Annotation) => {
     try {
-      const next = selection.mode === "sample"
-        ? sampleResult && sampleVisualSelection(sampleResult, selection.image, annotation)
-        : formalResult && view && formalVisualSelection(formalResult, selection.image, {
+      const next = sampleResult && sampleVisualSelection(sampleResult, selection.image, annotation);
+      if (next) onVisualSelection?.(next);
+      return next || undefined;
+    } catch (cause) {
+      setError((cause as Error).message);
+      return undefined;
+    }
+  };
+
+  const emitFormal = (annotation?: Annotation, imageDecision = false) => {
+    try {
+      const next = formalResult && view && formalVisualSelection(formalResult, selection.image, {
           sha256: view.snapshot.sha256,
           intent_revision: view.intent_revision,
           intent_sha256: view.intent_sha256,
           review_revision: view.review?.revision ?? null,
         }, imageDecision ? undefined : annotation);
-      if (next) onVisualSelection?.(next);
+      if (next) onFormalSelection?.(next);
       return next || undefined;
     } catch (cause) {
       setError((cause as Error).message);
@@ -221,7 +232,10 @@ export function DeliveryReview({
     if (id === selected || busy || (dirty && !window.confirm("放弃当前对象的未保存修改？"))) return;
     setDraft(undefined); setSelected(id);
     const annotation = activeAnnotations.find((item) => item.id === id);
-    if (annotation) emit(annotation);
+    if (annotation) {
+      if (selection.mode === "sample") emitSample(annotation);
+      else emitFormal(annotation);
+    }
   };
 
   const nextImage = () => {
@@ -253,7 +267,7 @@ export function DeliveryReview({
     let saved = false;
     try {
       await service.confirmImage(project, task, confirmRetry.current.input);
-      confirmRetry.current = undefined; emit(undefined, true);
+      confirmRetry.current = undefined; emitFormal(undefined, true);
       setMessage("整图决定已保存。对象审核、样例反馈与整图决定保持独立记录。");
       setReload((value) => value + 1); saved = true;
     } catch (cause) { setError((cause as Error).message); }
@@ -277,7 +291,7 @@ export function DeliveryReview({
     pending.current = true; setBusy(true); setError("");
     try {
       await service.editObject(project, task, image.id, editRetry.current.input);
-      emit(object); editRetry.current = undefined; setDraft(undefined);
+      emitFormal(object); editRetry.current = undefined; setDraft(undefined);
       setMessage("对象修改已保存；这不等于整张图已经检查完整。");
       setReload((value) => value + 1);
     } catch (cause) { setError((cause as Error).message); }
@@ -363,7 +377,7 @@ export function DeliveryReview({
     {selection.mode === "sample" && sampleResult && <div className="actions">
       <button type="button" disabled={!selected} onClick={() => {
         const annotation = sampleImage?.annotations.find((item) => item.id === selected);
-        const next = annotation && emit(annotation);
+        const next = annotation && emitSample(annotation);
         if (next) onSampleIssue?.(next);
       }}>这个样例框有问题</button>
       <p>仅创建带 Draft、Sample Test、Artifact 和 feedback revision 的反馈引用，不写正式标注。</p>

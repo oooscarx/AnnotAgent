@@ -4,7 +4,7 @@ import { DeliveryReview } from "./DeliveryReview";
 import type { DeliveryService } from "./deliveryService";
 import { Disclosure } from "./Disclosure";
 import { DeliveryPackage } from "./DeliveryPackage";
-import type { DeliveryFormalResult, DeliverySampleResult, VisualSelection } from "./deliveryVisualSelection";
+import type { DeliveryFormalResult, DeliverySampleResult, FormalReviewSelection, SampleVisualSelection } from "./deliveryVisualSelection";
 
 export type DeliveryLabel = { stable_id: string; display_name: string; aliases: string[]; include: string; exclude: string };
 type Target = { annotation_kind: string; framework: string; export_profile: string; profile_revision: number };
@@ -39,7 +39,7 @@ export function visibleIntakeSlots(missing:string[],missingOnly:boolean){return 
 
 export function DeliveryIntake({
   service, delivery, project, task, images, sampleResult, formalResult,
-  locked = false, onVisualSelection, onSampleIssue,
+  locked = false, onVisualSelection, onSampleIssue, onFormalSelection,
 }: {
   service: DeliveryIntakeService;
   delivery?: DeliveryService;
@@ -49,8 +49,9 @@ export function DeliveryIntake({
   sampleResult?: DeliverySampleResult | null;
   formalResult?: DeliveryFormalResult | null;
   locked?: boolean;
-  onVisualSelection?: (selection: VisualSelection) => void;
-  onSampleIssue?: (selection: VisualSelection) => void;
+  onVisualSelection?: (selection: SampleVisualSelection) => void;
+  onSampleIssue?: (selection: SampleVisualSelection) => void;
+  onFormalSelection?: (selection: FormalReviewSelection) => void;
 }) {
   const [view, setView] = useState<IntakeView>();
   const [ids, setIds] = useState<string[]>([]);
@@ -163,7 +164,7 @@ export function DeliveryIntake({
       </fieldset>
     </form>}
     {delivery && view?.saved && <>
-      {!view.missing_slots.length && !view.blockers.length && <Disclosure title="检查当前任务图片（样例与正式审核）" open={reviewOpen} onToggle={e=>{setReviewOpen(e.currentTarget.open);if(e.currentTarget.open)setReviewVisited(true);}}>{(reviewVisited||reviewOpen)&&<DeliveryReview key={`${task}:${view.saved.revision}`} service={delivery} project={project} task={task} labels={view.saved.intent.label_spec||[]} sampleResult={sampleResult} formalResult={formalResult} onVisualSelection={onVisualSelection} onSampleIssue={onSampleIssue} locked={locked||dirty} onEditingState={setObjectEditing} images={(view.saved.intent.dataset_scope || []).flatMap(i=>{const image=images.find(a=>a.id===i.image_id);return image?[image]:[{id:i.image_id,name:"原图不可用"}];})}/>}</Disclosure>}
+      {!view.missing_slots.length && !view.blockers.length && <Disclosure title="检查当前任务图片（样例与正式审核）" open={reviewOpen} onToggle={e=>{setReviewOpen(e.currentTarget.open);if(e.currentTarget.open)setReviewVisited(true);}}>{(reviewVisited||reviewOpen)&&<DeliveryReview key={`${task}:${view.saved.revision}`} service={delivery} project={project} task={task} labels={view.saved.intent.label_spec||[]} sampleResult={sampleResult} formalResult={formalResult} onVisualSelection={onVisualSelection} onSampleIssue={onSampleIssue} onFormalSelection={onFormalSelection} locked={locked||dirty} onEditingState={setObjectEditing} images={(view.saved.intent.dataset_scope || []).flatMap(i=>{const image=images.find(a=>a.id===i.image_id);return image?[image]:[{id:i.image_id,name:"原图不可用"}];})}/>}</Disclosure>}
       <DeliveryPackage key={`${task}:${view.saved.revision}`} service={delivery} project={project} task={task} locked={locked||dirty||!!view.missing_slots.length||!!view.blockers.length} scope={{revision:view.saved.revision,content_sha256:view.saved.content_sha256,image_ids:(view.saved.intent.dataset_scope||[]).map(i=>i.image_id)}} onInspect={id=>{const url=new URL(location.href);url.searchParams.set("delivery_view","formal");url.searchParams.set("delivery_image",id);url.searchParams.delete("delivery_run");history.pushState(history.state,"",url);window.dispatchEvent(new PopStateEvent("popstate"));setReviewOpen(true);}}/>
     </>}
   </section>;
