@@ -248,5 +248,8 @@ test("preset Demo reaches a real ZIP only after every image is human reviewed",a
   const usage=await (await page.request.get(`${taskRoot}/model-usage`)).json();
   expect(usage.state).toBe("no_model_requests");
   expect(usage.attempts.items).toEqual([]);
+  await page.reload();
+  await expect(page.getByRole("region",{name:"当前任务状态",exact:true})).toContainText("训练数据包已准备好");
+  await expect(page.getByRole("link",{name:"下载数据集 ZIP",exact:true})).toBeVisible();
   await page.screenshot({path:testInfo.outputPath("preset-demo-package-ready.png"),fullPage:true});
 });
