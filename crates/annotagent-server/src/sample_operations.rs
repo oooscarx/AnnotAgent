@@ -192,14 +192,55 @@ pub(super) fn validate_scope(
         .application
         .get_project(&draft.project_id)
         .map_err(ApiError::bad_request)?
-        .image_count
-        .min(3);
-    if count == 0 || input.image_indices != (0..count).collect::<Vec<_>>() {
+        .image_count;
+    let unique = input
+        .image_indices
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    if input.image_indices.is_empty()
+        || input.image_indices.len() > 3
+        || unique.len() != input.image_indices.len()
+        || input.image_indices.iter().any(|index| *index >= count)
+    {
         return Err(ApiError::bad_request(
             "Guided sampling requires an explicit selection of 1–3 images.",
         ));
     }
     Ok(())
+}
+
+pub(super) fn journey_image_indices(
+    state: &ServerState,
+    project: &str,
+    expected: &[annotagent_storage::JourneyImageScope],
+) -> ApiResult<Vec<usize>> {
+    if expected.is_empty() || expected.len() > 3 {
+        return Err(ApiError::bad_request(
+            "Journey sampling requires 1–3 exact image identities",
+        ));
+    }
+    let current = state
+        .application
+        .list_project_image_summaries(project)
+        .map_err(ApiError::bad_request)?;
+    expected
+        .iter()
+        .map(|selected| {
+            current
+                .iter()
+                .find(|image| {
+                    image.image_id.to_string() == selected.image_id.to_string()
+                        && image.content_hash == selected.content_hash
+                })
+                .map(|image| image.index)
+                .ok_or_else(|| {
+                    ApiError::bad_request(
+                        "A Journey image is missing or changed; no Sample was started",
+                    )
+                })
+        })
+        .collect()
 }
 
 fn owned(state: &ServerState, project_id: &str, id: &str) -> ApiResult<SampleOperation> {
@@ -326,6 +367,13 @@ pub(super) async fn start_operation(
                     "Sample request differs from its original joint authorization",
                 ));
             }
+            if journey_image_indices(&state, &project_id, &saved.effective_consent().images)?
+                != execution.image_indices
+            {
+                return Err(ApiError::bad_request(
+                    "Sample image selection differs from its original joint authorization",
+                ));
+            }
             state
                 .application
                 .seal_conversation_journey_draft(
@@ -448,7 +496,7 @@ pub(super) async fn start_operation(
                 conversation_calls,
                 check_scope: Some(Arc::new(move || {
                     if let Some((conversation, task, journey)) = journey {
-                        scope_state
+                        let saved = scope_state
                             .application
                             .require_active_conversation_journey(
                                 &baseline.project_id,
@@ -456,6 +504,24 @@ pub(super) async fn start_operation(
                                 task,
                                 journey,
                             )?;
+                        if journey_image_indices(
+                            &scope_state,
+                            &baseline.project_id,
+                            &saved.effective_consent().images,
+                        )
+                        .map_err(|error| {
+                            anyhow!(
+                                error.body["error"]
+                                    .as_str()
+                                    .unwrap_or("Journey image scope validation failed")
+                                    .to_owned()
+                            )
+                        })? != scope_input.image_indices
+                        {
+                            return Err(anyhow!(
+                                "Sample image selection differs from its original joint authorization"
+                            ));
+                        }
                     }
                     let (draft, models) = scope_state
                         .application

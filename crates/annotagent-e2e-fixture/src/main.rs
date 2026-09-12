@@ -571,7 +571,7 @@ async fn openai_completion(
         let mut arguments = if request["model"] == "e2e-conversation-invalid-schema" {
             json!({"decision":"draft","kind":"classification","labels":[],"multi_label":false,"attributes":{},"boundary_rules":[],"rationale":"TEST invalid empty label set"})
         } else if request["model"] == "e2e-conversation-clarify" {
-            json!({"decision":"clarify","question":"TEST: Which output type and labels should this task use?","rationale":"TEST ambiguous goal; human semantics required"})
+            json!({"decision":"clarify","question":"需要框出目标、描出轮廓，还是做整图分类？","rationale":"TEST: YOLO alone does not determine the annotation output; one human semantic answer is required","delivery":{"labels":[{"existing_id":null,"display_name":"杯子","aliases":["cup"],"include":"真实杯子","exclude":"杯子图案"}],"training_target":null}})
         } else if request["model"] == "e2e-conversation-bbox-feedback-image-class" {
             json!({"decision":"draft","kind":"bounding_box","labels":["cup","cupcake","bottle"],"multi_label":false,"attributes":{},"boundary_rules":["TEST independent cup, cupcake and bottle targets"],"rationale":"TEST multi-object baseline, not observed accuracy"})
         } else if request["model"] == "e2e-conversation-bbox-feedback-future-base-clarify" {

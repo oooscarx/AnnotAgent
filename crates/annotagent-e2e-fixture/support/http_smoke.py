@@ -243,6 +243,7 @@ def verify(c, manifest, root):
     from http_stop_scene import prepare_stop
     manual_stop = prepare_stop(c, cr, schema_revision, provider["id"], model["id"])
     describe_before_upload = verify_describe_before_upload(c, p, schema_revision, png)
+    ambiguous_goal = verify_ambiguous_goal(c, p, schema_revision, provider, model, task_images[:3])
     first_page = c.get(cr + "/task-navigation?limit=1")
     assert first_page["next_cursor"] is not None
     second_page = c.get(cr + "/task-navigation?limit=1&cursor=" + str(first_page["next_cursor"]))
@@ -251,7 +252,7 @@ def verify(c, manifest, root):
     execution_posts = [entry for entry in c.trace if entry["method"] == "POST" and entry["path"] == execution]
     assert len(consent_posts) == 1, consent_posts
     assert execution_posts == [], execution_posts
-    return {"project": project, "conversation_id": conversation, "task_id": task, "task_root": tr, "model_profile_id": model["id"], "provider_id": provider["id"], "execution_url": execution, "p0_autonomy": {"task_images": task_images, "task_image_count": len(task_images), "sample_image_count": len(record["inputs"]), "unavoidable_user_decisions": 1, "technical_relay_clicks": 0, "consent_post_count": len(consent_posts), "execution_post_count": len(execution_posts), "consent_response_ms": consent_response_ms, "journey_duration_ms": journey_duration_ms, "first_observation": first_observation, "consent_id": consent["id"], "schema_call_id": consent["schema_proposal"]["call_id"], "builder_operation_id": consent["builder_operation_id"], "sample_operation_id": consent["sample_operation_id"], "draft_id": record["draft_id"], "sample_status": record["status"], "delivery_schema_id": delivery_schema["schema"]["id"], "review_work_item_id": review_workspace["review_work_item_id"], "review_action": review_workspace["available_actions"][0], "automatic_review_request_ids": [item["input"]["id"] for item in automatic_reviews], "execution_dispatch": finished["dispatch"]}, "describe_before_upload": describe_before_upload, "export": export, "run_id": run_id, "stop": stop, "answered_request_id": human["id"], "pending_request_id": pending["id"], "plan_task_id": plan["task_id"], "controls": controls, "saved_plan": saved_plan, "bbox": bbox, "manual_stop": manual_stop, "trace": str(Path(manifest["workspace"]) / "HTTP_TRACE.json")}
+    return {"project": project, "conversation_id": conversation, "task_id": task, "task_root": tr, "model_profile_id": model["id"], "provider_id": provider["id"], "execution_url": execution, "p0_autonomy": {"task_images": task_images, "task_image_count": len(task_images), "sample_image_count": len(record["inputs"]), "unavoidable_user_decisions": 1, "technical_relay_clicks": 0, "consent_post_count": len(consent_posts), "execution_post_count": len(execution_posts), "consent_response_ms": consent_response_ms, "journey_duration_ms": journey_duration_ms, "first_observation": first_observation, "consent_id": consent["id"], "schema_call_id": consent["schema_proposal"]["call_id"], "builder_operation_id": consent["builder_operation_id"], "sample_operation_id": consent["sample_operation_id"], "draft_id": record["draft_id"], "sample_status": record["status"], "delivery_schema_id": delivery_schema["schema"]["id"], "review_work_item_id": review_workspace["review_work_item_id"], "review_action": review_workspace["available_actions"][0], "automatic_review_request_ids": [item["input"]["id"] for item in automatic_reviews], "execution_dispatch": finished["dispatch"]}, "describe_before_upload": describe_before_upload, "ambiguous_goal": ambiguous_goal, "export": export, "run_id": run_id, "stop": stop, "answered_request_id": human["id"], "pending_request_id": pending["id"], "plan_task_id": plan["task_id"], "controls": controls, "saved_plan": saved_plan, "bbox": bbox, "manual_stop": manual_stop, "trace": str(Path(manifest["workspace"]) / "HTTP_TRACE.json")}
 
 
 def verify_describe_before_upload(c, project_root, schema_revision, png):
@@ -281,6 +282,67 @@ def verify_describe_before_upload(c, project_root, schema_revision, png):
     assert [(image["image_id"], image["content_hash"]) for image in preview["consent"]["images"]] == [(image["image_id"], image["sha256"]) for image in receipts]
     assert c.get(tr + "/thread?limit=10")["items"][0]["message"]["input"]["text"] == "标注杯子和瓶子，用于 Ultralytics YOLO 目标检测；图片稍后上传。"
     return {"conversation_id": conversation, "task_id": task, "task_root": tr, "delivery_revision": saved["saved"]["revision"], "delivery_sha256": saved["saved"]["content_sha256"], "task_images": receipts, "preview_consent_id": preview["consent"]["id"], "model_calls": 0, "execution_started": False}
+
+
+def verify_ambiguous_goal(c, project_root, schema_revision, provider, visual_model, task_images):
+    planner = c.post("/api/model-profiles", {"provider_id": provider["id"], "display_name": "TEST one-question Schema planner", "remote_model_id": "e2e-conversation-clarify", "input_modalities": ["text"], "task_capabilities": ["text_generation"], "protocol_features": {"tool_calls": True, "structured_output": True}})
+    c.post(f"/api/providers/{provider['id']}/active-probe", {"model_profile_id": planner["id"], "confirmed_billable": True})
+    conversation = c.post(project_root + "/conversations")["conversation_id"]
+    cr = project_root + "/conversations/" + conversation
+    preference = c.get(cr + "/agent-model")
+    c.post(cr + "/agent-model", {"request_id": uid(), "expected_revision": preference["revision"], "model_profile_id": planner["id"]})
+    command = {"message": {"id": uid(), "text": "标注这些图片中的杯子，训练 YOLO。先给我看三张样例。", "image": None}, "task_images": task_images, "schema_revision": schema_revision, "mode": "plan"}
+    receipt = c.post(cr + "/send", command)
+    task = receipt["task_id"]
+    tr = cr + "/tasks/" + task
+    consent = c.get(tr + "/journey-preview")["consent"]
+    assert consent["builder_model_id"] == planner["id"]
+    assert [image["image_id"] for image in consent["images"]] == [image["image_id"] for image in task_images]
+    consent["allow_unknown_cost"] = True
+    consent["schema_proposal"]["allow_unknown_cost"] = True
+    c.post(tr + "/journey-consents", consent)
+    execution = tr + "/journey-consents/" + consent["id"] + "/execution"
+    waiting = c.poll(execution, lambda value: (value.get("clarification") or {}).get("status") == "pending")
+    clarification = waiting["clarification"]
+    assert clarification["id"] == consent["schema_proposal"]["call_id"]
+    assert all(word in clarification["question"] for word in ["框", "轮廓", "分类"])
+    assert waiting["builder"] is None and waiting["sample"] is None
+    first_calls = c.get(tr + "/calls")
+    assert len(first_calls) == 1 and first_calls[0]["id"] == clarification["id"], first_calls
+    for _ in range(3):
+        observed = c.get(execution)
+        assert observed["clarification"] == clarification
+    assert c.post(tr + "/journey-consents", consent)["consent"]["id"] == consent["id"]
+    c.post(execution)
+    assert c.get(execution)["clarification"] == clarification
+    assert c.get(tr + "/calls") == first_calls
+    answer = {
+        "request_id": uid(),
+        "decision": {
+            "decision": "draft", "kind": "bounding_box", "labels": ["cup"],
+            "multi_label": False, "attributes": {},
+            "boundary_rules": ["框住完整可见杯子；排除杯子图案"],
+            "rationale": "用户明确选择目标框；不把轮廓或分类转换为框。",
+            "delivery": {
+                "labels": [{"existing_id": None, "display_name": "杯子", "aliases": ["cup"], "include": "真实杯子", "exclude": "杯子图案"}],
+                "training_target": {"annotation_kind": "bounding_box", "framework": "ultralytics", "export_profile": "ultralytics_yolo_detection", "profile_revision": 1}
+            }
+        },
+        "clarification": {"call_id": clarification["id"], "expected_schema_revision": clarification["expected_schema_revision"]},
+        "journey_consent_id": consent["id"]
+    }
+    saved = c.post(tr + "/human-schema-drafts", answer)
+    assert saved["task_id"] == task
+    completed = c.poll(execution, lambda value: value.get("sample") is not None or ((value.get("dispatch") or {}).get("status") == "settled" and (value.get("dispatch") or {}).get("error")))
+    assert completed.get("sample") and completed["sample"]["id"] == consent["sample_operation_id"], completed
+    sample = c.get(f"/api/workflow-drafts/{completed['sample']['draft_id']}/sample-test?test_id={consent['sample_operation_id']}")["sample_test"]
+    assert [(image["image_id"], image["content_hash"]) for image in sample["inputs"]] == [(image["image_id"], image["sha256"]) for image in task_images]
+    delivery = c.get(tr + "/delivery-intent")
+    assert delivery["missing_slots"] == []
+    assert delivery["saved"]["intent"]["training_target"]["annotation_kind"] == "bounding_box"
+    final_clarification = c.get(tr + "/calls/" + clarification["id"] + "/clarification")
+    assert final_clarification["status"] == "applied" and final_clarification["schema_draft_id"] == saved["id"]
+    return {"conversation_id": conversation, "task_id": task, "task_root": tr, "consent_id": consent["id"], "schema_call_id": clarification["id"], "question": clarification["question"], "question_count": 1, "calls_before_answer": len(first_calls), "sample_before_answer": False, "answered_schema_id": saved["id"], "delivery_revision": delivery["saved"]["revision"], "sample_operation_id": completed["sample"]["id"], "sample_image_ids": [image["image_id"] for image in sample["inputs"]], "visual_model_id": visual_model["id"]}
 
 
 def verify_stop(c, cr, schema_revision, provider, normal_model):

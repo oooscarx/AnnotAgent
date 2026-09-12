@@ -791,33 +791,37 @@ async fn advance(
                 .application
                 .validate_conversation_journey_data(&project, conversation, &saved.consent)
                 .map_err(ApiError::bad_request)?;
-            let (_, preview) = conversation_schema::preview_scope(
-                &state,
-                &project,
-                conversation,
-                task,
-                Some(proposal.model_id),
-            )?;
-            if preview["scope_hash"] != proposal.scope_hash {
-                return Err(ApiError::bad_request(
-                    "Initial goal or planning model changed",
-                ));
-            }
-            let receipt = match state
+            let receipt = if let Some(receipt) = state
                 .application
                 .conversation_call_receipt(&project, conversation, task, proposal.call_id)
                 .map_err(ApiError::bad_request)?
             {
-                Some(receipt) => receipt,
-                None => {
-                    Box::pin(conversation_schema::propose_in_journey(
-                        State(state.clone()),
-                        AxumPath((project.clone(), conversation, task)),
-                        Json(proposal.clone()),
-                    ))
-                    .await?
-                    .0
+                receipt
+            } else {
+                // Recheck the text request scope at first admission. Once
+                // this exact call has a durable receipt, never treat the
+                // later clarification answer/delivery revision as a reason
+                // to resend it. Builder and Sample retain their own exact
+                // image/model/budget validation below.
+                let (_, preview) = conversation_schema::preview_scope(
+                    &state,
+                    &project,
+                    conversation,
+                    task,
+                    Some(proposal.model_id),
+                )?;
+                if preview["scope_hash"] != proposal.scope_hash {
+                    return Err(ApiError::bad_request(
+                        "Initial goal or planning model changed",
+                    ));
                 }
+                Box::pin(conversation_schema::propose_in_journey(
+                    State(state.clone()),
+                    AxumPath((project.clone(), conversation, task)),
+                    Json(proposal.clone()),
+                ))
+                .await?
+                .0
             };
             if receipt.status != annotagent_storage::ConversationCallStatus::Completed {
                 return status(State(state), AxumPath((project, conversation, task, id))).await;
@@ -985,7 +989,7 @@ async fn advance(
         .map_err(ApiError::bad_request)?;
     let fingerprint = guided_sample_fingerprint(&state, &draft, &models)?;
     let execution = DryRunWorkflowRequest {
-        image_indices: (0..consent.images.len()).collect(),
+        image_indices: sample_operations::journey_image_indices(&state, &project, &consent.images)?,
         expected_revision: Some(draft.revision),
         authorization_fingerprint: Some(fingerprint.clone()),
     };

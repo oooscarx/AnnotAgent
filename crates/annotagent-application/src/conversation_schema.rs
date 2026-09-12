@@ -5,7 +5,7 @@ use annotagent_core::{
     AttributeDefinition, AttributeKind, ModelMessage, ModelRequest, ModelResponse, ModelRole,
     TaskConfig, TaskKind, ToolDefinition, VisionModelProvider,
 };
-use anyhow::{Result, bail};
+use anyhow::{Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -387,17 +387,45 @@ impl crate::LocalApplication {
             .store
             .conversation_message(&owner, conversation, record.input.source_message_id)?
             .ok_or_else(|| anyhow::anyhow!("Saved task goal not found"))?;
-        Ok(self.store.create_human_schema_with_clarification(
+        let completed_delivery = if let Some(reference) = clarification {
+            let question =
+                self.schema_clarification(project, conversation, task, reference.call_id)?;
+            ensure!(
+                question.expected_schema_revision == reference.expected_schema_revision,
+                "Clarification Schema revision changed"
+            );
+            ensure!(
+                question.status != "cancelled",
+                "This clarification was cancelled; no answer or Schema Draft was saved"
+            );
+            self.complete_delivery_from_schema_proposal(
+                project,
+                conversation,
+                task,
+                reference.call_id,
+                decision,
+            )?
+        } else {
+            None
+        };
+        let goal = completed_delivery.as_ref().map_or_else(
+            || Ok(source.input.text.clone()),
+            |delivery| {
+                crate::task_delivery::frozen_delivery_schema_goal(delivery, &source.input.text)
+            },
+        )?;
+        let saved = self.store.create_human_schema_with_clarification(
             &owner,
             task,
             request,
             &annotagent_storage::ConversationSchemaDefinition {
-                goal: source.input.text,
+                goal,
                 task: config,
                 boundary_rules: boundary_rules.clone(),
             },
             clarification,
-        )?)
+        )?;
+        Ok(saved)
     }
 
     pub fn conversation_schema_draft(
