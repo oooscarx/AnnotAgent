@@ -1,8 +1,9 @@
 //! Thin orchestration of the existing Builder; no model calls or publishing on read.
 use crate::{LocalApplication, PipelineBuilderModelRuntime, Settings};
 use annotagent_core::{
-    PipelineBuildMode, PipelineBuilderConstraints, RegistryWorkflowAdvisor, VisionModelProvider,
-    WorkflowAdvisor, WorkflowConstraints, WorkflowSchemaBinding,
+    ModelBinding as PipelineModelBinding, ModelCapability, PipelineBuildMode,
+    PipelineBuilderConstraints, ProviderAdapterKind, RegistryWorkflowAdvisor, VisionCapability,
+    VisionModelProvider, WorkflowAdvisor, WorkflowConstraints, WorkflowSchemaBinding,
 };
 use annotagent_storage::ConversationBuilderOperation;
 use anyhow::{Result, anyhow, bail};
@@ -638,8 +639,9 @@ impl LocalApplication {
             seed.alternatives.clear();
             mode
         } else {
-            let composition =
+            let mut composition =
                 conversation_composition(&input.project_schema, &binding, &constraints, &models)?;
+            prefer_registered_vlm_detection(&mut composition, &input);
             seed.draft = composition.compile_draft(
                 project,
                 "Conversation annotation plan",
@@ -773,6 +775,65 @@ fn conversation_composition(
         result.label_pipelines.extend(route.label_pipelines);
     }
     Ok(result)
+}
+
+/// Select the registered structured VLM detection operation when an exact ready
+/// VLM Profile is available but no exact ready object-detector Profile exists.
+/// The annotation kind determines the output Artifact, not a hard-coded model
+/// family; the existing Registry declarations determine the executable route.
+fn prefer_registered_vlm_detection(
+    composition: &mut annotagent_core::LabelWorkflowComposition,
+    input: &annotagent_core::WorkflowAdvisorInput,
+) -> bool {
+    let non_fixture = |profile: &&annotagent_core::ModelProfile| {
+        input
+            .provider_profiles
+            .iter()
+            .find(|provider| provider.id == profile.provider_id)
+            .is_some_and(|provider| provider.adapter != ProviderAdapterKind::Mock)
+    };
+    if crate::compatible_builder_models(input, Some(ModelCapability::ObjectDetection))
+        .iter()
+        .any(non_fixture)
+    {
+        return false;
+    }
+    let mut profiles =
+        crate::compatible_builder_models(input, Some(ModelCapability::VisionLanguage))
+            .into_iter()
+            .filter(non_fixture)
+            .collect::<Vec<_>>();
+    profiles.sort_by_key(|profile| profile.id.to_string());
+    let Some(profile) = profiles.first() else {
+        return false;
+    };
+    let mut changed = false;
+    for step in composition
+        .shared_stages
+        .iter_mut()
+        .flat_map(|stage| &mut stage.steps)
+    {
+        if step.node_type != annotagent_skill_object_detection::OBJECT_DETECTION_OPERATION
+            && step.node_type != "capability.detect"
+        {
+            continue;
+        }
+        annotagent_skill_vlm_detection::VLM_DETECTION_OPERATION.clone_into(&mut step.node_type);
+        step.kind = annotagent_core::WorkflowNodeKind::VisionLanguageModel;
+        step.model_binding = Some(PipelineModelBinding {
+            model_id: profile.remote_model_id.clone(),
+            capability: VisionCapability::VisionLanguage,
+            configuration: std::collections::BTreeMap::new(),
+        });
+        let labels = step
+            .parameters
+            .get("target_labels")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        step.parameters.insert("labels".to_owned(), labels);
+        changed = true;
+    }
+    changed
 }
 
 #[cfg(test)]
@@ -1236,5 +1297,99 @@ mod tests {
                 .count(),
             3
         );
+    }
+
+    #[test]
+    fn bounding_box_conversation_uses_ready_vlm_when_no_detector_profile_exists() {
+        let temporary = tempfile::tempdir().unwrap();
+        let app = LocalApplication::new(temporary.path()).unwrap();
+        let project_id = "TEST-conversation-vlm-route";
+        let project: annotagent_core::ProjectSchema = serde_yaml::from_str("version: 1\nproject:\n  name: TEST conversation VLM route\ndataset:\n  root: images\nruntime: {}\ntasks:\n  - id: objects\n    kind: bounding_box\n    labels: [cup]\n    required: true\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n").unwrap();
+        app.create_project(project_id, &serde_yaml::to_string(&project).unwrap())
+            .unwrap();
+        let selected = crate::tests::register_pipeline_builder_model(&app, "TEST shared VLM");
+        let mut provider = app
+            .store
+            .get_provider_profile(selected.provider.id)
+            .unwrap();
+        provider.adapter = ProviderAdapterKind::OpenAiCompatible;
+        provider.credential_ref = Some(annotagent_core::CredentialReference {
+            provider_id: provider.id,
+            source: annotagent_core::CredentialSource::EnvironmentVariable,
+            locator: "TEST_CONVERSATION_VLM_KEY".into(),
+        });
+        provider.health.status = annotagent_core::ProviderHealthStatus::Available;
+        app.store.save_provider_profile(&provider).unwrap();
+        let mut model = selected.model.clone();
+        model.id = annotagent_core::ModelProfileId::new();
+        model.display_name = "TEST ready visual route".into();
+        model.remote_model_id = "TEST-ready-vlm-route".into();
+        model
+            .input_modalities
+            .insert(annotagent_core::InputModality::Image);
+        model
+            .task_capabilities
+            .insert(ModelCapability::VisionLanguage);
+        app.store.save_model_profile(&model).unwrap();
+        let settings = crate::load_settings(None).unwrap();
+        let input = app
+            .workflow_advisor_input_for_label(
+                project_id,
+                &settings,
+                WorkflowConstraints::default(),
+                None,
+                None,
+            )
+            .unwrap();
+        let binding = WorkflowSchemaBinding {
+            schema_draft_id: Uuid::new_v4().to_string(),
+            revision: 1,
+            goal: "Find cups using the registered visual capability".into(),
+            task: project.tasks[0].clone(),
+            boundary_rules: vec!["Exclude logos".into()],
+        };
+        let (_, runtime_models) = app.workflow_catalog(&settings).unwrap();
+        let mut composition = conversation_composition(
+            &project,
+            &binding,
+            &WorkflowConstraints::default(),
+            &runtime_models,
+        )
+        .unwrap();
+        assert!(prefer_registered_vlm_detection(&mut composition, &input));
+        let shared_id = composition.shared_stages[0].steps[0].id.clone();
+        let shared = &composition.shared_stages[0].steps[0];
+        assert_eq!(
+            shared.node_type,
+            annotagent_skill_vlm_detection::VLM_DETECTION_OPERATION
+        );
+        assert_eq!(
+            shared.kind,
+            annotagent_core::WorkflowNodeKind::VisionLanguageModel
+        );
+        assert_eq!(
+            shared.model_binding.as_ref().unwrap().capability,
+            VisionCapability::VisionLanguage
+        );
+        let mut draft = composition.compile_draft(
+            project_id,
+            "TEST VLM route",
+            std::collections::BTreeMap::new(),
+            chrono::Utc::now(),
+        );
+        crate::bind_available_registry_models(&mut draft, &input);
+        let detector = draft
+            .nodes
+            .iter()
+            .find(|node| node.id == shared_id)
+            .unwrap();
+        assert_eq!(
+            detector
+                .model_profile_binding
+                .as_ref()
+                .map(|binding| binding.model_profile_id),
+            Some(model.id)
+        );
+        assert!(!prefer_registered_vlm_detection(&mut composition, &input));
     }
 }

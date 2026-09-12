@@ -91,6 +91,10 @@ impl LocalApplication {
             let record: ConversationJourneyRecord =
                 serde_json::from_value(journey["record"].clone())?;
             let consent = record.effective_consent();
+            let dispatch_error = journey
+                .get("dispatch")
+                .and_then(|dispatch| dispatch.get("error"))
+                .and_then(Value::as_str);
             let draft_id = evidence["draft_id"].as_str().unwrap_or_default();
             let exact_draft = self.store.get_workflow_draft(draft_id).is_ok_and(|draft| {
                 draft.project_id == project
@@ -100,6 +104,7 @@ impl LocalApplication {
             let active = !record.revoked
                 && consent.expires_at > chrono::Utc::now()
                 && exact_draft
+                && dispatch_error.is_none()
                 && self
                     .validate_conversation_journey_data(project, conversation, consent)
                     .is_ok();
@@ -113,7 +118,8 @@ impl LocalApplication {
                 "method":"GET","url":root.clone(),
                 "execution_method":"POST","execution_url":format!("{root}/execution"),
                 "requires_confirmation":true,
-                "reason":if active{"exact_saved_journey_sample_requires_confirmation"}else{"saved_journey_sample_scope_stale"},
+                "reason":if active{"exact_saved_journey_sample_requires_confirmation"}else if dispatch_error.is_some(){"saved_journey_sample_execution_failed"}else{"saved_journey_sample_scope_stale"},
+                "failure":dispatch_error.map(|message|json!({"stage":"sample_admission","category":"validation","message":message})),
                 "scope":{
                     "journey_consent_id":record.consent.id,
                     "sample_operation_id":consent.sample_operation_id,

@@ -767,6 +767,39 @@ mod tests {
             consent.sample_operation_id.to_string()
         );
         assert_eq!(pending["scope"]["draft_id"], draft.id);
+        let failed_attempt = Uuid::new_v4();
+        app.store
+            .claim_conversation_journey_dispatch(
+                &owner,
+                conversation,
+                task,
+                consent.id,
+                failed_attempt,
+            )
+            .unwrap();
+        app.store
+            .finish_conversation_journey_dispatch(
+                consent.id,
+                failed_attempt,
+                Some("TEST exact Sample admission failed"),
+            )
+            .unwrap();
+        let blocked = app
+            .pending_journey_sample_action(
+                project,
+                conversation,
+                task,
+                &app.conversation_journey_history(project, conversation, task)
+                    .unwrap(),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(blocked["state"], "blocked");
+        assert_eq!(blocked["reason"], "saved_journey_sample_execution_failed");
+        assert_eq!(
+            blocked["failure"]["message"],
+            "TEST exact Sample admission failed"
+        );
         let sealed = app
             .seal_conversation_journey_draft(
                 project,

@@ -468,6 +468,42 @@
       "request": {},
       "response": "ConversationJourneyExecutionStatus"
     },
-    "idempotency": "The saved consent, Builder operation and Sample operation IDs are reused. A running dispatch or existing Sample operation is returned without a second dispatch."
+    "idempotency": "The saved consent, Builder operation and Sample operation IDs are reused. A running dispatch or existing Sample operation is returned without a second dispatch.",
+    "failed_workspace_action": {
+      "id": "test_pipeline_samples",
+      "state": "blocked",
+      "method": "GET",
+      "url": "/api/projects/P/conversations/10000000-0000-4000-8000-000000000001/tasks/30000000-0000-4000-8000-000000000001/journey-consents/50000000-0000-4000-8000-000000000001",
+      "execution_method": "POST",
+      "execution_url": "/api/projects/P/conversations/10000000-0000-4000-8000-000000000001/tasks/30000000-0000-4000-8000-000000000001/journey-consents/50000000-0000-4000-8000-000000000001/execution",
+      "requires_confirmation": true,
+      "reason": "saved_journey_sample_execution_failed",
+      "failure": {
+        "stage": "sample_admission",
+        "category": "validation",
+        "message": "Registry Model Profile required for model node"
+      },
+      "scope": {
+        "journey_consent_id": "50000000-0000-4000-8000-000000000001",
+        "sample_operation_id": "60000000-0000-4000-8000-000000000001",
+        "draft_id": "70000000-0000-4000-8000-000000000001",
+        "draft_revision": 4,
+        "draft_content_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "images": [
+          {
+            "image_id": "20000000-0000-4000-8000-000000000001",
+            "content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          }
+        ],
+        "allowed_models": [
+          {
+            "model_id": "model-profile:40000000-0000-4000-8000-000000000001",
+            "binding_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "maximum_sample_calls": 12,
+        "expires_at": "2030-01-01T00:00:00Z"
+      }
+    }
   }
 }

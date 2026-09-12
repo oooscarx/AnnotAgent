@@ -308,3 +308,35 @@ review screen is needed, then POST the returned `execution_url`. They must not
 construct new Journey, Builder, or Sample UUIDs for this transition. Repeating GET
 is passive. Repeating the exact POST while dispatch is active or after the Sample
 record exists returns current receipts and cannot create another Builder or Sample.
+
+### ML-021 executable visual route and failed admission projection
+
+For a bounding-box conversation, Builder materialization now selects the existing
+`vlm_detection.detect` operation when the frozen Registry has no eligible
+`object_detection` Profile but does have an eligible `vision_language` Profile.
+Selection is capability-based and deterministic; it does not infer a model brand,
+label, or capability. An eligible object detector remains preferred when present.
+The chosen Profile revision is retained on the Draft and the existing Sample
+preview/execution checks remain authoritative.
+
+If an exact Journey execution settles before reserving its Sample, the Task action
+is no longer re-presented as approvable. It returns:
+
+```json
+{
+  "id": "test_pipeline_samples",
+  "state": "blocked",
+  "reason": "saved_journey_sample_execution_failed",
+  "failure": {
+    "stage": "sample_admission",
+    "category": "validation",
+    "message": "safe persisted dispatch error"
+  }
+}
+```
+
+No Sample receipt is invented. A Draft saved before this change with an unresolved
+placeholder remains immutable evidence and is not silently rewritten; it needs a
+new explicitly authorized Builder/Journey. Fresh Builders can materialize the
+capability-compatible VLM route and the second exact execution POST reserves the
+original `sample_operation_id`.
