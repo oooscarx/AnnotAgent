@@ -139,6 +139,10 @@ export type Command = {
   selection?: { image: string; candidate: string; revision: string };
 };
 export interface WorkspaceAdapter {
+  /** Mainline read model. Absent means the server contract is unavailable; UI must not simulate it. */
+  readonly mainlineTask?: import("./mainline").MainlineTaskService;
+  /** Frontend 2/3 provide these domain slots; Frontend 1 owns composition in App. */
+  readonly mainlineSeams?: import("./mainline").MainlineDomainSeams;
   readonly deliveryIntake?: import("./DeliveryIntake").DeliveryIntakeService;
   readonly delivery?: import("./deliveryService").DeliveryService;
   readonly taskFeedback?: import("./TaskFeedback").TaskFeedbackService;
