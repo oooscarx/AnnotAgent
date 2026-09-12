@@ -125,9 +125,10 @@ test("sample issue emits a complete sample VisualSelection and never writes form
     createRoot(host).render(React.createElement(DeliveryReview, {
       service, project: "TEST", task: "TEST-task",
       sampleResult: {
-        project_id: "TEST", task_id: "TEST-task", draft_id: "draft-one", draft_revision: 7,
+        project_id: "TEST", conversation_id: "conversation-one", task_id: "TEST-task", project_schema_revision: "schema-one",
+        draft_id: "draft-one", draft_revision: 7,
         sample_test_id: "sample-one",
-        images: [{ image_id: "image-one", snapshot_sha256: "sample-snapshot", source_artifact_id: "artifact-one", feedback_revision: 3, annotations: [annotation] }],
+        images: [{ image_id: "image-one", image_sha256: "image-pixels", result_revision: "sample:feedback:3", source_artifacts: { "sample-object": "artifact-one" }, annotations: [annotation] }],
       },
       images: [{ id: "image-one", name: "TEST original", src: imageUrl }],
       onSampleIssue: (selection: unknown) => state.selections.push(selection),
@@ -140,9 +141,11 @@ test("sample issue emits a complete sample VisualSelection and never writes form
   const state = await page.evaluate(() => (window as unknown as { sampleSelectionTest: { selections: unknown[]; writes: number } }).sampleSelectionTest);
   expect(state.writes).toBe(0);
   expect(state.selections).toEqual([expect.objectContaining({
-    project_id: "TEST", task_id: "TEST-task", image_id: "image-one",
-    annotation_id: "sample-object", annotation_kind: "bounding_box", save_target: "sample_feedback",
-    source: expect.objectContaining({ kind: "sample", draft_id: "draft-one", sample_test_id: "sample-one", source_artifact_id: "artifact-one" }),
-    revision: expect.objectContaining({ snapshot_sha256: "sample-snapshot", feedback_revision: 3, intent_revision: null }),
+    project_id: "TEST", conversation_id: "conversation-one", task_id: "TEST-task", project_schema_revision: "schema-one",
+    image: { image_id: "image-one", sha256: "image-pixels" },
+    sample: { draft_id: "draft-one", draft_revision: 7, sample_test_id: "sample-one" },
+    candidate: { candidate_id: "sample-object", source_artifact_id: "artifact-one" },
+    annotation: { kind: "bounding_box", label: "ball" },
+    result_revision: "sample:feedback:3",
   })]);
 });
