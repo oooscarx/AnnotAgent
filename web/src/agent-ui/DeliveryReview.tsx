@@ -166,15 +166,17 @@ export function DeliveryReview({
 
   useEffect(() => {
     const restore = () => {
-      if (pending.current) return;
       const next = fromUrl(images, !!sampleResult, preferredMode, fixedMode);
       if (next.image !== selection.image || next.mode !== selection.mode) {
+        if(pending.current||(dirty&&!window.confirm("当前对象修改尚未保存。放弃修改并切换结果？"))){
+          const current=new URL(location.href);current.searchParams.set("delivery_view",selection.mode);current.searchParams.set("delivery_image",selection.image);history.replaceState(history.state,"",current);return;
+        }
         setDraft(undefined); setSelected(undefined); setSelection(next);
       }
     };
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
-  }, [fixedMode, images, preferredMode, sampleResult, selection]);
+  }, [dirty, fixedMode, images, preferredMode, sampleResult, selection]);
 
   useEffect(()=>{
     if(!focus||dirty||busy||pending.current)return;
