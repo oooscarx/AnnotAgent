@@ -3,9 +3,10 @@ import type { ProviderProfile, RegistryModelProfile } from "../types";
 import type { api } from "../api";
 import { Dialog } from "./Dialog";
 import {GlobalModelDefaults,type GlobalDefaultsService} from "./GlobalModelDefaults";
-import { ModelProfileEditor, type EditableModel } from "./ModelProfileEditor";
+import { ModelProfileEditor, type EditableModel, type ModelRuntimeOptions } from "./ModelProfileEditor";
 import { ModelProfileActions, type ModelActionService } from "./ModelProfileActions";
-export type ModelProfileService = Pick<typeof api, "modelProfiles" | "providers" | "createModelProfile" | "updateModelProfile"> & ModelActionService & GlobalDefaultsService;
+import { ModelRequestEvidence, type ModelRuntimeEvidenceService } from "./ModelRequestEvidence";
+export type ModelProfileService = Pick<typeof api, "modelProfiles" | "providers" | "createModelProfile" | "updateModelProfile"> & ModelActionService & GlobalDefaultsService & ModelRuntimeEvidenceService;
 export type ModelProfileScope = "agent" | "vision";
 export function modelMatchesScope(model:RegistryModelProfile,scope:ModelProfileScope){
   return scope==="agent"
@@ -16,6 +17,7 @@ export function ModelProfiles({service,scope}:{service:ModelProfileService;scope
   const [models,setModels]=useState<RegistryModelProfile[]>();
   const [providers,setProviders]=useState<ProviderProfile[]>([]);
   const [edit,setEdit]=useState<RegistryModelProfile | "new">();
+  const [runtimeOptions,setRuntimeOptions]=useState<ModelRuntimeOptions>();
   const [query,setQuery]=useState("");
   const [error,setError]=useState(""); const [message,setMessage]=useState("");
   const [busy,setBusy]=useState(false);
@@ -52,14 +54,15 @@ export function ModelProfiles({service,scope}:{service:ModelProfileService;scope
     <GlobalModelDefaults service={service} scope={scope}/>
     {error&&!edit&&<p role="alert" className="error">{error}</p>}{message&&<p role="status">{message}</p>}
     {!models&&!error&&<p role="status">读取模型配置…</p>}
-    <div className="actions"><button disabled={busy} onClick={()=>void reload().catch(e=>setError(e.message))}>重新读取</button><button disabled={!providers.length||busy} onClick={()=>{setError("");setEdit("new");}}>添加模型配置</button></div>
+    <div className="actions"><button disabled={busy} onClick={()=>void reload().catch(e=>setError(e.message))}>重新读取</button><button disabled={!providers.length||busy} onClick={()=>{setError("");setRuntimeOptions(undefined);setEdit("new");}}>添加模型配置</button></div>
     {!providers.length&&models&&<p>先在 Providers 中保存连接；添加模型不需要收费探测。</p>}
     <label>搜索模型<input value={query} onChange={e=>setQuery(e.target.value)} placeholder="名称、模型 ID 或能力"/></label>
-    {scopedModels?.filter(m=>[m.display_name,m.remote_model_id,...m.task_capabilities].join(" ").toLowerCase().includes(query.toLowerCase())).map(m=><div className="settings-row" key={m.id}><div><strong>{m.display_name}</strong><p>{providers.find(p=>p.id===m.provider_id)?.display_name||"Provider 不存在"} · {m.status}</p><p>{m.remote_model_id}</p><p>{m.input_modalities.join(" · ")} · {m.task_capabilities.join(" · ")}</p><ModelProfileActions key={`${m.id}:${m.revision}:${m.locked}`} model={m} provider={providers.find(p=>p.id===m.provider_id)} service={service} reload={reload}/></div><button disabled={m.locked||busy} onClick={()=>{setError("");setEdit(structuredClone(m));}}>{m.locked?"已锁定":"编辑配置"}</button></div>)}
+    {scopedModels?.filter(m=>[m.display_name,m.remote_model_id,...m.task_capabilities].join(" ").toLowerCase().includes(query.toLowerCase())).map(m=><div className="settings-row" key={m.id}><div><strong>{m.display_name}</strong><p>{providers.find(p=>p.id===m.provider_id)?.display_name||"Provider 不存在"} · {m.status}</p><p>{m.remote_model_id}</p><p>{m.input_modalities.join(" · ")} · {m.task_capabilities.join(" · ")}</p><ModelProfileActions key={`${m.id}:${m.revision}:${m.locked}`} model={m} provider={providers.find(p=>p.id===m.provider_id)} service={service} reload={reload}/></div><button disabled={m.locked||busy} onClick={()=>{setError("");setRuntimeOptions(undefined);setEdit(structuredClone(m));}}>{m.locked?"已锁定":"编辑配置"}</button></div>)}
     {scopedModels?.length===0&&<p>{scope==="agent"?"没有具备文字生成能力的 Agent 模型配置。":"没有具备图像输入和视觉任务能力的远程模型配置。"}</p>}
     {edit&&<Dialog title={edit==="new"?"添加模型配置":"编辑模型配置"} onClose={()=>{if(!busy&&window.confirm("放弃编辑？"))setEdit(undefined);}}>
       {error&&<p role="alert">{error}</p>}
-      <ModelProfileEditor model={edit==="new"?undefined:edit} providers={providers} busy={busy} cancel={()=>setEdit(undefined)} save={value=>void save(value)}/>
+      {edit!=="new"&&<ModelRequestEvidence model={edit} service={service} onRuntimeOptions={setRuntimeOptions}/>}
+      <ModelProfileEditor model={edit==="new"?undefined:edit} providers={providers} busy={busy} runtimeOptions={runtimeOptions} cancel={()=>setEdit(undefined)} save={value=>void save(value)}/>
     </Dialog>}
   </section>;
 }
