@@ -378,6 +378,12 @@ button.primary:hover:not(:disabled) {
 .assistant-message p {
   white-space: pre-wrap;
 }
+.system-message {
+  border-left: 2px solid var(--aa-border-strong);
+  color: var(--aa-text-muted);
+  margin: 16px 0;
+  padding: 4px 12px;
+}
 .operation {
   display: flex;
   flex-wrap: wrap;

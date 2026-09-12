@@ -45,9 +45,12 @@ export type Provider = {
 };
 export type ThreadItem = {
   id: string;
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "tool";
+  kind?: "input" | "reply" | "clarification" | "receipt";
   text: string;
   model?: string;
+  details?: string[];
+  source?: {kind:"message"|"model_call"|"operation";id:string;status?:string};
   reference?: Command["selection"];
 };
 export type Task = {

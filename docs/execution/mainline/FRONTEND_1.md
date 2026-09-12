@@ -20,3 +20,16 @@ Communication:
 - `ML-003` resolved exact Frontend 3 UUID `01a094ad-337c-7bc0-99ea-b3d18acb7d2f` and was queued successfully.
 
 No Provider call, true workspace write, push or main merge.
+
+### F1-0 delivery
+
+- `7fd1439`: stable composition seam and ownership/status records; 336 unit tests passed.
+- Backend B0 contract `99d16f9` integrated as `5a732c5`; all planned routes remain disabled/unreferenced.
+
+### F1-1 current slice
+
+The existing server-backed delivery-intent editor now names the missing slots and initially renders only those fields. Full editing stays explicitly available. Saved dataset scope, label rules and YOLO training target remain one Task-owned revision; no model call occurs when saving them.
+
+Persisted structured model decisions are projected as Agent replies or clarification messages with the actual call identity/status. Failed, empty or invalid receipts remain operation records and are not converted into assistant prose. The generic completed phase now says “current operation completed”; overall completion remains reserved for Package Ready.
+
+Backend reports the exact processing subset, automatic package consent HTTP and the unified task read model as planned, not implemented at B0. Frontend does not call those routes yet. Candidate feedback still needs the full selection supplied by Frontend 2; the old bare-ID path remains fail-closed until integration.

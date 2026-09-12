@@ -15,6 +15,7 @@ import {taskFeedbackService} from "./TaskFeedback";
 import {stopTargetMatches} from "../conversation-control";
 import type { WorkspaceAdapter, Snapshot, Task, Command, Settings, ImageId, Box, Phase, Action } from "./adapter";
 import {readPendingDelivery,rememberPendingDelivery,clearPendingDelivery} from "./pendingDelivery";
+import {projectCallMessages} from "./messageProjection";
 
 type Page<T> = { items: T[]; next_cursor: string | number | null };
 type Project = { project_id: string; project_owner_id: string; title: string; conversation_id: string | null };
@@ -300,7 +301,7 @@ export class HttpAdapter implements WorkspaceAdapter {
       const phase: Phase = stop?.normalized_state || (active ? "running" : ws?.calls.some(c=>c.status==="in_doubt") ? "outcome_unknown" : human ? "waiting_for_human" : "idle");
       const edits=this.stored<{revision?:string;boxes?:Record<ImageId,Box[]>}>(`edits.${id}`,{});
       this.emit({ error: undefined, artifacts, tasks: this.state.tasks.map(t => t.id !== id ? t : { ...t,
-        items: thread.map(t => ({ id: t.id, role: "user", text: t.message.input.text })),
+        items: [...thread.map(t => ({ id: t.id, role: "user" as const, kind:"input" as const, text: t.message.input.text,source:{kind:"message" as const,id:t.id} })),...projectCallMessages(ws?.calls||[])],
         ...result, approval:pendingApproval?.view || t.approval, actions: {...ws?.actions || t.actions,answer:{available:!!result.human && ["classification","bounding_box"].includes(result.human.kind),reason:"仅保存当前人工作答的样例修正"}}, model: ws?.agent_model.model_profile_id || this.defaults.pipeline_builder || t.model,
         loaded:true, image: human?.input.image_id || artifacts[0]?.id || "", editBoxes: edits.revision===result.resultRevision ? edits.boxes || {} : {},
         phase, receipts, humanQuestion:human?.input.question,

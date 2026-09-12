@@ -197,7 +197,7 @@ describe("HTTP UI read boundary (synthetic transport tests, not HTTP E2E)", () =
   it("reads actual identity, thread and UUID images without POST, assistant fabrication or resume inference", async () => {
     const { transport, paths } = mockTransport(); const adapter = new HttpAdapter(transport);
     await adapter.refresh(); await adapter.loadTask("TEST-alpha", "t1");
-    expect(adapter.snapshot().tasks.find(t => t.id === "t1")?.items).toEqual([{ id: "message-t1", role: "user", text: "真实已存 t1" }]);
+    expect(adapter.snapshot().tasks.find(t => t.id === "t1")?.items).toEqual([{ id: "message-t1", role: "user", kind:"input", text: "真实已存 t1",source:{kind:"message",id:"message-t1"} }]);
     expect(adapter.snapshot().artifacts[0].id).toBe("image-uuid");
     expect(adapter.snapshot().settings.budget).toBe("2.50");
     expect(adapter.snapshot().usage).toEqual([]);

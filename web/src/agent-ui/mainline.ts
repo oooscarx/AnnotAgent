@@ -1,6 +1,6 @@
 import type {ConversationMessageInput} from "../types";
 
-export type IntakeSlot="dataset_scope"|"label_rules"|"training_target";
+export type IntakeSlot="dataset_scope"|"label_spec"|"training_target";
 export type MainlineMessageKind="assistant_reply"|"clarification"|"operation"|"system_receipt";
 export type MainlineMessage={
   id:string; task_id:string; sequence:number; kind:MainlineMessageKind;

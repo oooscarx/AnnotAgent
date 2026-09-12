@@ -34,6 +34,7 @@ export function mergeDeliveryProposal(previous:DeliveryLabel[],proposal:Delivery
   }
   return next;
 }
+export function visibleIntakeSlots(missing:string[],missingOnly:boolean){return missingOnly?missing:["dataset_scope","label_spec","training_target"];}
 
 export function DeliveryIntake({ service, delivery, project, task, images, locked = false }: { service: DeliveryIntakeService; delivery?:DeliveryService; project: string; task: string; images: { id: string; name: string; src?:string }[]; locked?: boolean }) {
   const [view, setView] = useState<IntakeView>();
@@ -47,6 +48,7 @@ export function DeliveryIntake({ service, delivery, project, task, images, locke
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(false);
+  const [missingOnly,setMissingOnly]=useState(true);
   const [reviewOpen,setReviewOpen]=useState(()=>new URL(location.href).searchParams.has("delivery_image"));
   const [reviewVisited,setReviewVisited]=useState(reviewOpen);
   const [objectEditing,setObjectEditing]=useState(false);
@@ -61,7 +63,7 @@ export function DeliveryIntake({ service, delivery, project, task, images, locke
     setLabels(value.saved?.intent.label_spec || []);setNewLabels("");
     setSplitPolicy(value.saved?.intent.split_policy || split);
     setImageMetadata(Object.fromEntries((value.saved?.intent.dataset_scope||[]).map(image=>[image.image_id,{existing_split:image.existing_split??null,group_ids:image.group_ids||[]}])));
-    setTarget(value.saved?.intent.training_target || null); setDirty(false);
+    setTarget(value.saved?.intent.training_target || null); setDirty(false);setMissingOnly(value.missing_slots.length>0);
   };
   useEffect(() => {
     const ctrl = new AbortController();
@@ -91,14 +93,16 @@ export function DeliveryIntake({ service, delivery, project, task, images, locke
     try {await service.prepare(project,task,preparation.current);setPrepared("目标规范已准备。接下来查看方案生成授权；本操作未调用模型、发布或处理图片。");}
     catch(e){setError((e as Error).message);}finally{inFlight.current=false;setBusy(false);}
   };
+  const showSlot=(slot:"dataset_scope"|"label_spec"|"training_target")=>visibleIntakeSlots(view?.missing_slots||[],missingOnly).includes(slot);
+  const slotLabels:Record<string,string>={dataset_scope:"使用哪些图片",label_spec:"标注类别和规则",training_target:"训练用途与格式"};
   return <section className="delivery-intake" aria-label="训练数据交付信息">
-    <div className="delivery-intake-heading"><strong>训练数据包</strong><button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "收起信息" : view?.saved ? "查看交付信息" : "定义交付目标"}</button></div>
+    <div className="delivery-intake-heading"><strong>训练数据包</strong><button type="button" aria-expanded={expanded} onClick={() => {setExpanded(!expanded);if(!expanded)setMissingOnly(!!view?.missing_slots.length);}}>{expanded ? "收起信息" : view?.missing_slots.length ? "补充缺失信息" : view?.saved ? "查看交付信息" : "定义交付目标"}</button></div>
     {error && <p role="alert" className="error">{error}</p>}
     {!view && !error && <p role="status">读取已保存信息…</p>}
-    {view?.saved && !expanded && <p>{view.saved.intent.dataset_scope?.length || 0} 张图片 · {view.saved.intent.label_spec?.map(l => l.display_name).join("、") || "类别待确定"} · {view.missing_slots.length ? "仍有信息待补齐" : "交付目标已保存；执行状态见任务记录"}</p>}
+    {view?.saved && !expanded && <p>{view.saved.intent.dataset_scope?.length || 0} 张图片 · {view.saved.intent.label_spec?.map(l => l.display_name).join("、") || "类别待确定"} · {view.missing_slots.length ? `还需要：${view.missing_slots.map(slot=>slotLabels[slot]||slot).join("、")}` : "交付目标已保存；执行状态见任务记录"}</p>}
     {view?.saved && !view.missing_slots.length && !view.blockers.length && service.prepare && <div className="delivery-intake-actions"><button type="button" disabled={busy||locked||dirty} onClick={()=>void prepare()}>{busy?"保存中…":"确认目标并准备方案"}</button><small>复用已填写的类别和任务类型，不再要求填写内部 ID。模型执行仍需授权。</small></div>}
     {prepared && <p role="status">{prepared}</p>}
-    {view&&<Disclosure title="从已保存的 Agent 提议填写交付目标">
+    {view&&expanded&&<Disclosure title="从已保存的 Agent 提议填写交付目标">
       <p>这里只读取本任务的历史提议；选择后先检查和保存，不批准推理，也不改变图片范围。历史提议可能早于当前目标。</p>
       <button type="button" disabled={busy||dirty||objectEditing} onClick={()=>{setBusy(true);void service.read(project,task).then(apply).catch(e=>setError(e.message)).finally(()=>setBusy(false));}}>读取已保存的提议</button>
       {!view.proposals?.length&&<p>目前没有可采用的结构化交付提议。可以继续填写目标；此按钮不会调用模型。</p>}
@@ -109,14 +113,15 @@ export function DeliveryIntake({ service, delivery, project, task, images, locke
       </div>)}
     </Disclosure>}
     {expanded && view && <form aria-disabled={locked} onSubmit={e => { e.preventDefault(); void save(); }}>
+      {view.missing_slots.length>0&&<div className="notice"><strong>只补充当前缺失内容</strong><p>{view.missing_slots.map(slot=>slotLabels[slot]||slot).join("、")}</p>{missingOnly&&view.saved&&<button type="button" onClick={()=>setMissingOnly(false)}>编辑全部交付信息</button>}</div>}
       {objectEditing&&<p role="status">请先保存或撤销对象修改，再调整交付范围；收起审核面板不会丢失编辑。</p>}
       <fieldset disabled={objectEditing}>
       {locked && <p role="status">任务执行中，暂时不能保存交付信息；已有输入保留。</p>}
-      <fieldset disabled={busy}><legend>用哪些图片？</legend><div className="delivery-intake-selection"><button type="button" onClick={() => { setIds(images.map(i => i.id)); setDirty(true); }}>选择当前 {images.length} 张图片</button><span>已选 {ids.length} 张</span></div>
+      {showSlot("dataset_scope")&&<fieldset disabled={busy}><legend>用哪些图片？</legend><div className="delivery-intake-selection"><button type="button" onClick={() => { setIds(images.map(i => i.id)); setDirty(true); }}>选择当前 {images.length} 张图片</button><span>已选 {ids.length} 张</span></div>
         {!images.length && <p>先使用输入框的图片按钮上传图片。未上传的文件不属于已保存范围。</p>}
         <div className="delivery-intake-images">{images.map(image => <label key={image.id}><input type="checkbox" checked={ids.includes(image.id)} onChange={e => { setIds(e.target.checked ? [...ids, image.id] : ids.filter(id => id !== image.id)); setDirty(true); }} /><span>{image.name}</span></label>)}</div>
-      </fieldset>
-      <fieldset disabled={busy}><legend>标注哪些类别？</legend>
+      </fieldset>}
+      {showSlot("label_spec")&&<fieldset disabled={busy}><legend>标注哪些类别？</legend>
         {labels.map((label,index)=><div className="delivery-label-edit" key={label.stable_id}>
           <label>类别 {index+1} 名称<input required value={label.display_name} onChange={e=>{setLabels(current=>current.map(l=>l.stable_id===label.stable_id?{...l,display_name:e.target.value}:l));setDirty(true);}}/></label>
           <Disclosure title={`类别 ${index+1} 规则与排序`}>
@@ -126,17 +131,17 @@ export function DeliveryIntake({ service, delivery, project, task, images, locke
         </div>)}
         <label>{labels.length?"添加类别（每行一个）":"类别名称（每行一个）"}<textarea rows={3} value={newLabels} placeholder={"杯子\n瓶子"} onChange={e=>{setNewLabels(e.target.value);setDirty(true);}}/></label>
         <small>改名称和规则保留类别身份；排序决定新包的 class_id。保存后产生新交付版本，不更改旧 Run 或旧数据包。</small>
-      </fieldset>
-      <label>训练什么任务？<select aria-label="训练什么任务？" disabled={busy} value={selectedTarget ? supportedTarget ? target.export_profile : "unsupported" : ""} onChange={e => { setTarget(e.target.value ? target : null); setDirty(true); }}><option value="">请选择任务和训练格式</option><option value="ultralytics_yolo_detection">框出目标 · Ultralytics YOLO Object Detection</option>{selectedTarget && !supportedTarget && <option disabled value="unsupported">{selectedTarget.annotation_kind} · {selectedTarget.export_profile}（尚无完整交付预设）</option>}</select></label>
-      <Disclosure title="已有数据划分与来源组">
+      </fieldset>}
+      {showSlot("training_target")&&<label>训练什么任务？<select aria-label="训练什么任务？" disabled={busy} value={selectedTarget ? supportedTarget ? target.export_profile : "unsupported" : ""} onChange={e => { setTarget(e.target.value ? target : null); setDirty(true); }}><option value="">请选择任务和训练格式</option><option value="ultralytics_yolo_detection">框出目标 · Ultralytics YOLO Object Detection</option>{selectedTarget && !supportedTarget && <option disabled value="unsupported">{selectedTarget.annotation_kind} · {selectedTarget.export_profile}（尚无完整交付预设）</option>}</select></label>}
+      {!missingOnly&&<Disclosure title="已有数据划分与来源组">
         <p>仅填写已知信息，不从文件名推断真值。相同内容和同一来源组不能跨 split；冲突会阻止打包。</p>
         {ids.map((id,index)=>{const metadata=imageMetadata[id]||{existing_split:null,group_ids:[]};const change=(value:ImageMetadata)=>{setImageMetadata(current=>({...current,[id]:value}));setDirty(true);};return <fieldset key={id} disabled={busy} className="delivery-label-edit"><legend>{index+1} · {images.find(image=>image.id===id)?.name||id}</legend>
           <label>已有划分 {index+1}<select aria-label={`已有划分 ${index+1}`} value={metadata.existing_split||""} onChange={e=>change({...metadata,existing_split:(e.target.value||null) as ImageMetadata["existing_split"]})}><option value="">无预设，由打包器分组划分</option><option value="train">train</option><option value="val">val</option><option value="test">test</option></select></label>
           <label>已知来源组 {index+1}<textarea value={metadata.group_ids.join("\n")} placeholder="每行一个拍摄组或原图来源标识；未知可留空" onChange={e=>change({...metadata,group_ids:e.target.value.split("\n")})}/></label>
         </fieldset>;})}
-      </Disclosure>
+      </Disclosure>}
       <p>本预设交付目标框，不会把分类或分割需求自动改成检测。建议按图片组划分训练/验证 {splitPolicy.train_percent}/{100-splitPolicy.train_percent}；整图需人工确认，模型未检出不等于确认负样本。</p>
-      <Disclosure title="调整数据划分"><label>训练集比例（百分比）<input disabled={busy} type="number" min={1} max={99} step={1} required value={splitPolicy.train_percent} onChange={e=>{setSplitPolicy(current=>({...current,train_percent:Number(e.target.value)}));setDirty(true);}}/></label><p>保留已有划分和已知来源组，不拆组凑比例；实际数量在打包检查报告中展示。仅修改比例，保留当前 seed 与其他约束。</p></Disclosure>
+      {!missingOnly&&<Disclosure title="调整数据划分"><label>训练集比例（百分比）<input disabled={busy} type="number" min={1} max={99} step={1} required value={splitPolicy.train_percent} onChange={e=>{setSplitPolicy(current=>({...current,train_percent:Number(e.target.value)}));setDirty(true);}}/></label><p>保留已有划分和已知来源组，不拆组凑比例；实际数量在打包检查报告中展示。仅修改比例，保留当前 seed 与其他约束。</p></Disclosure>}
       {view.blockers.map((b, i) => <p role="alert" key={i}>{b}</p>)}
       <div className="delivery-intake-actions"><button type="button" disabled={busy || !dirty} onClick={() => { apply(view); setError(""); retry.current = null; }}>取消修改</button><button type="submit" disabled={busy || locked || !dirty}>{busy ? "保存中…" : "保存交付信息"}</button><span role="status">{dirty ? "尚未保存" : view.saved ? "已保存到服务器" : "等待填写"}</span></div>
       <small>保存不会调用模型或开始处理。样例最多 {view.maximum_sample_images} 张，执行前需要确认模型、数据目的地和费用范围。</small>

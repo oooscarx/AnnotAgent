@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { intakeLabels,mergeDeliveryProposal } from "./DeliveryIntake";
+import { intakeLabels,mergeDeliveryProposal,visibleIntakeSlots } from "./DeliveryIntake";
 
 describe("delivery label intent", () => {
   it("preserves existing IDs, aliases and boundaries while preserving user order", () => {
@@ -16,5 +16,9 @@ describe("delivery label intent", () => {
     expect(merged.map(l=>l.stable_id)).toEqual(["a","new-id"]);expect(merged[0].display_name).toBe("水杯");expect(previous[0].display_name).toBe("杯子");
     expect(proposal.semantics.training_target).toBeNull();
     expect(()=>mergeDeliveryProposal([],{...proposal,semantics:{...proposal.semantics,labels:[proposal.semantics.labels[0]]}})).toThrow("不在当前交付版本");
+  });
+  it("asks only for missing task information until the user opens full editing",()=>{
+    expect(visibleIntakeSlots(["training_target"],true)).toEqual(["training_target"]);
+    expect(visibleIntakeSlots(["training_target"],false)).toEqual(["dataset_scope","label_spec","training_target"]);
   });
 });
