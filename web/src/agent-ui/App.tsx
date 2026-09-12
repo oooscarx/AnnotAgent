@@ -34,6 +34,7 @@ import { setupContextFromReadiness, type CapabilityReadiness } from "./modelPrep
 import { routeProject, taskLocation, settingsTaskReturn, taskHistoryPath } from "./routes";
 import { parseAgentRoute } from "./navigationContract";
 import { DemoOnboarding } from "./DemoOnboarding";
+import { TaskUsage } from "./TaskUsage";
 export const phaseNames: Record<Phase, string> = {
   idle: "准备任务",
   planning: "正在模拟规划",
@@ -569,6 +570,7 @@ export function AgentPreviewApp({
                           )}
                         </div>
                         {!fixture && !!task.receipts?.length && <ExecutionProgress receipts={task.receipts} />}
+                        {!fixture && adapter.taskUsage && !task.id.startsWith("new:") && <TaskUsage projectId={task.project} taskId={task.id} service={adapter.taskUsage} compact/>}
                         {setupContextError&&<p role="alert" className="error">模型准备范围无效：{setupContextError}</p>}
                         {!fixture && setupContext && adapter.modelPreparation && (
                           <SetupRequest

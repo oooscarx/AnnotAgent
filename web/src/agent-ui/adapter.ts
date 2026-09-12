@@ -182,6 +182,9 @@ export interface WorkspaceAdapter {
   readonly visionWorkerManagement?: import("./VisionWorkers").VisionWorkerService;
   /** Production Demo catalog/bootstrap. Optional until the server contract is available; never backed by Fixture in the formal app. */
   readonly demoOnboarding?: import("./demoOnboardingService").DemoOnboardingService;
+  readonly taskUsage?: import("./TaskUsage").TaskUsageService;
+  readonly demoReview?: import("./deliveryService").DemoReviewPanelService;
+  readonly demoDelivery?: import("./deliveryService").DemoDeliveryPanelService;
   readonly kind: "fixture" | "http";
   snapshot(): Snapshot;
   subscribe(listener: () => void): () => void;

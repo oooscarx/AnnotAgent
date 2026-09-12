@@ -46,6 +46,13 @@ Frontend 1 owns `App.tsx`, `http.ts`, `adapter.ts`, public routes and shared API
 - `DEMO-SEAM-F3-001` fixed the model-readiness and task-usage component boundary.
 - Product P0 identity fixed to `object-detection-review@1.0.0`; P1 is intentionally
   deferred until a second licensed pack actually exists.
+- Backend contract commit `0c6ceb6` was integrated as `1794b7e`; exact Rust endpoints
+  remain delivery contracts until the Backend implementation commit is verified.
+- Frontend 2 component commit `551a942` was integrated as `72f8630`. Its older
+  formal-selection type conflicted with the current canonical `FormalVisualSelection`;
+  the integration keeps the current selection type and adds only the Demo origin map.
+- Frontend 3 TaskUsage commit `9cf06ed` was integrated as `a774bf2`. The component is
+  mounted only when a real adapter service is registered.
 
 ## Verification status
 
