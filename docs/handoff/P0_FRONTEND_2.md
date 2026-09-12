@@ -44,7 +44,9 @@ Backend still needs to deliver the persistent automatic Journey wake-up and auth
 Focused verification on the F2 branch:
 
 - `npm run typecheck`
-- `npx vitest run src/agent-ui/deliveryVisualSelection.test.ts src/agent-ui/P0ResultPanel.test.tsx` — 7 passed
+- `npx vitest run src/agent-ui/deliveryVisualSelection.test.ts src/agent-ui/P0ResultPanel.test.tsx` — 8 passed
 - `npx playwright test --config playwright.ui-preview.config.ts e2e/ui-preview/p0-result-panel.spec.ts` — 5 passed
+- `npm test` — 349 passed
+- `npm run build`
 
 This is component/preview evidence only. A1/A2 actual HTTP autonomy, server-issued P0 projection wiring, and real ZIP evidence remain joint Frontend 1/Backend integration work and must not be reported as passed from these tests.
