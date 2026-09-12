@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Disclosure } from "./Disclosure";
+import { formalReviewCountsComplete } from "./deliveryReviewState";
 import type {
   DeliveryPackageConsent,
   DeliveryPackageRead,
@@ -169,6 +170,7 @@ export function DeliveryPackage({ service, project, task, scope, locked = false,
     && readiness.intent_revision === scope.revision
     && readiness.intent_sha256 === scope.content_sha256;
   const armed = currentScope && readiness.consent?.state === "armed";
+  const reviewsComplete = !!readiness && formalReviewCountsComplete(readiness.counts);
 
   return <section className="delivery-package" aria-label="训练数据包交付">
     <h3>交付训练数据包</h3>
@@ -178,8 +180,15 @@ export function DeliveryPackage({ service, project, task, scope, locked = false,
     {service.packageReadiness && !readiness && !error && <p role="status">读取服务端审核摘要与打包 readiness…</p>}
 
     {readiness && <div className="delivery-package-readiness">
-      <strong>{readiness.ready ? "正式审核齐全" : "尚未满足打包条件"}</strong>
+      <strong>{reviewsComplete ? "正式审核齐全" : "正式审核未齐全"}</strong>
       <p>已完成 {readiness.counts.complete}/{readiness.counts.total} · 待处理 {readiness.counts.unresolved} · 失败 {readiness.counts.failed}</p>
+      <p>{readiness.ready
+        ? "服务端打包条件已满足。"
+        : reviewsComplete
+          ? armed
+            ? "已授权，等待服务端创建或恢复数据包。"
+            : "审核已完成，等待你授权本正式范围。"
+          : "完成剩余审核后，服务端会重新计算打包条件。"}</p>
       {readiness.blockers.map((blocker) => <div key={blocker.code} className="notice">
         <p>{blocker.message}</p>
         {!!blocker.image_ids.length && <Disclosure title={`检查相关图片 · ${blocker.image_ids.length}`}>
