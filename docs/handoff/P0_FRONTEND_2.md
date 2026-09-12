@@ -17,11 +17,12 @@ The component emits no progression command. Journey continuation remains Rust-ow
 ## Safety behavior
 
 - A server focus can select an exact image/candidate once per `result_revision`. It does not repeatedly override later user selection.
+- The Sample review layer intersects rendered annotations with the canonical terminal-candidate identities. Legacy aggregate/coarse outcomes and stale references are hidden; an all-invalid projection becomes a read-only `projection_failed` diagnostic instead of an empty review.
 - Formal editing and image decisions are enabled only by explicit server actions in the P0 projection.
 - Viewing a candidate never marks it accepted.
 - A legal empty result explicitly says it is not a human negative confirmation and offers no synthetic candidate.
 - Sample feedback and formal review continue to use separate identities and endpoints.
-- Existing dirty guards, stable command retry IDs, stale snapshot checks, and child Run ownership remain in `DeliveryReview`.
+- Existing dirty guards, stable command retry IDs, stale snapshot checks, and child Run ownership remain in `DeliveryReview`. A stale object save retains the edit and reuses the exact command payload on retry.
 
 ## Integration requirements
 
@@ -32,8 +33,17 @@ Backend still needs to deliver the persistent automatic Journey wake-up and auth
 ## Verification
 
 - Three Sample images with multi-class/multi-object/empty terminal results render in one surface.
+- A legacy intermediate coarse box cannot enter the terminal Sample annotation list; valid terminal candidates remain visible when mixed input is rejected.
 - Exact risky candidate is selected once; rerender does not steal a subsequent manual selection.
 - Missing actions keep edit/create/object/image decisions disabled.
 - Preparation does not mount the review form.
 - Legal empty result is not presented as an accepted negative.
 - Existing Delivery review/package regression suite remains green.
+
+Focused verification on the F2 branch:
+
+- `npm run typecheck`
+- `npx vitest run src/agent-ui/deliveryVisualSelection.test.ts src/agent-ui/P0ResultPanel.test.tsx` — 7 passed
+- `npx playwright test --config playwright.ui-preview.config.ts e2e/ui-preview/p0-result-panel.spec.ts` — 5 passed
+
+This is component/preview evidence only. A1/A2 actual HTTP autonomy, server-issued P0 projection wiring, and real ZIP evidence remain joint Frontend 1/Backend integration work and must not be reported as passed from these tests.
