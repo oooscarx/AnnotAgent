@@ -2,6 +2,23 @@
 
 This contract describes the existing Journey endpoint after the P0 continuation repair. It does not add another executor or grant. Schema, Builder and Sample remain the existing child services and keep their own receipts, limits, cancellation and geometry gates.
 
+## Durable trigger map
+
+| Edge | Trigger and durable input | Authorization | Stable child identity | Next wake / terminal rule |
+|---|---|---|---|---|
+| upload → Send scope | User `POST image-upload`, then `POST send` with exact returned IDs/hashes | none; metadata only | message ID and new Task ID | Send commits the partial DeliveryIntake; no model starts |
+| Send → bounded approval | passive Task workspace and Journey preview | none; preview only | Task-derived consent, Schema call, Builder and Sample UUIDv5 IDs | user approves the one exact consent |
+| consent → Schema | consent transaction saves the dispatch before returning | exact text-planning model, call count, expiry and goal scope | `schema_proposal.call_id` | worker rereads the call receipt until it commits |
+| Schema draft → Builder | the same Journey worker saves the draft and resolves the consent | original Builder model/scope/call budget | `builder_operation_id` | `reserved/running` keeps the dispatch heartbeat alive |
+| Builder → Sample | the same worker observes `draft_ready_for_human_review`, validates and seals the Draft | original image hashes, model binding digests, maximum Sample calls and expiry | original `sample_operation_id` | Sample write is idempotent; duplicate observations cannot create another ID |
+| Sample → review | existing Sample runtime saves terminal reports/candidates | no annotation acceptance is inferred | Sample/image/candidate/source Artifact IDs | real candidate review or a typed blocker is the next human boundary |
+
+The worker is server-owned. Browser polling only reads these receipts. Synchronous child
+completion is consumed in the current loop; asynchronous completion is observed from persisted
+receipts on the next loop. The queue uses one claim/attempt lease, and restart returns routed
+`running` work to `queued`. Revoked/expired scope, cancelled children and unknown remote outcomes
+end the dispatch without a new call.
+
 ## One exact approval and passive reads
 
 For a newly uploaded Task, `POST /api/projects/{project_id}/conversations/{conversation_id}/send`
@@ -120,14 +137,10 @@ HumanRequest. A Schema that omits valid delivery semantics or a Provider result 
 stops before image inference and is never automatically retried. Formal processing and package
 admission retain their separate dataset-sized scopes.
 
-Fixed-SHA acceptance at `d48ab89bf0d26d83b96b6a0fa92a1af8262c93da` used the
-external TEST HTTP Provider with the same multi-label bbox identity used by the packaged UI.
-It uploaded four distinct images, sent their exact IDs/hashes, read the parameterless preview,
-POSTed the consent once, and only polled passive GETs until the three-image Sample was `passed`.
-The retained manifest and request trace are under
-`/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-tqi6wd3n`.
-Starting the service again against that same marked workspace produced
-`seed_snapshot_unchanged:true` and `restart_verified:true`; the consent, call, Builder, Draft,
-Sample, Run and review identities did not change. Formal processing covered all four delivery
-images under its own approval. Package export then correctly stopped on outstanding whole-image
-review instead of treating the TEST model candidates as accepted annotations.
+The opt-in HTTP smoke uploads six byte-distinct PNGs and sends the fixed Chinese acceptance
+request from `07_ACCEPTANCE.md`. Its explicit TEST Provider delays the first Builder HTTP response
+for four seconds. The consent POST must return in under three seconds with a queued/running
+dispatch and no Sample; passive reads must later observe the original Sample ID as `passed` for
+exactly three inputs. The manifest records decision/click counts, timings and POST counts. The
+same smoke continues through formal processing and verifies that package export refuses while
+whole-image reviews remain, so TEST candidates never become accepted annotations.

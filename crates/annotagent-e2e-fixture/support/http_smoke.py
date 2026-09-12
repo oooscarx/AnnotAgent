@@ -109,7 +109,7 @@ def verify(c, manifest, root):
     c.request("PUT", p + "/model-bindings", {"bindings": [{"capability": "vision_language", "role": "primary_inference", "match_kind": "role", "model_profile_id": model["id"], "locked": True}]})
     png = (root / "examples/robocup/images/synthetic-robocup.png").read_bytes()
     task_images = []
-    for index in range(4):
+    for index in range(6):
         chunk = b"tEXt" + f"TEST\x00p0-autonomy-{index}".encode()
         image = png[:-12] + struct.pack(">I", len(chunk) - 4) + chunk + struct.pack(">I", zlib.crc32(chunk)) + png[-12:]
         imported = c.request("POST", p + f"/image-upload?name=TEST-p0-{index}.png", image)
@@ -120,7 +120,7 @@ def verify(c, manifest, root):
     preference = c.get(cr + "/agent-model")
     c.post(cr + "/agent-model", {"request_id": uid(), "expected_revision": preference["revision"], "model_profile_id": model["id"]})
     schema_revision = c.get(p + "/goal")["revision"]
-    command = {"message": {"id": uid(), "text": "框出这四张图片里的杯子和瓶子并交付 YOLO Detection 数据集", "image": None}, "task_images": task_images, "schema_revision": schema_revision, "mode": "plan"}
+    command = {"message": {"id": uid(), "text": "标注这些图片中的杯子和瓶子，框住完整可见物体，用于 Ultralytics YOLO 目标检测。先给我看三张样例。", "image": None}, "task_images": task_images, "schema_revision": schema_revision, "mode": "plan"}
     receipt = c.post(cr + "/send", command)
     assert c.post(cr + "/send", command) == receipt
     task = receipt["task_id"]
@@ -134,7 +134,7 @@ def verify(c, manifest, root):
     actions = workspace["mainline"]["available_actions"]
     assert len(actions) == 1 and actions[0]["id"] == "build_and_test_pipeline", actions
     assert actions[0]["url"] == tr + "/journey-preview"
-    assert len(actions[0]["scope"]["images"]) == 4
+    assert len(actions[0]["scope"]["images"]) == 6
     assert actions[0]["scope"]["maximum_sample_images"] == 3
     c.request("GET", cr + "/tasks/" + uid() + "/workspace", expected=[400, 404])
     c.get(tr + "/message-queue")
@@ -148,13 +148,22 @@ def verify(c, manifest, root):
     assert len(consent["images"]) == 3
     consent["allow_unknown_cost"] = True
     consent["schema_proposal"]["allow_unknown_cost"] = True
-    c.post(tr + "/journey-consents", consent)
+    consent_started = time.monotonic()
+    admitted = c.post(tr + "/journey-consents", consent)
+    consent_response_ms = round((time.monotonic() - consent_started) * 1000)
+    assert consent_response_ms < 3000, admitted
     execution = tr + "/journey-consents/" + consent["id"] + "/execution"
+    first_observation = c.get(execution)
+    assert first_observation["dispatch"]["status"] in ["queued", "running"], first_observation
+    assert first_observation.get("sample") is None, first_observation
     finished = c.poll(execution, lambda v: (v.get("sample") or {}).get("assistance", {}).get("status") == "completed" or ((v.get("dispatch") or {}).get("status") == "settled" and (v.get("dispatch") or {}).get("error")))
+    journey_duration_ms = round((time.monotonic() - consent_started) * 1000)
+    assert journey_duration_ms >= 3000, finished
     assert finished.get("sample") and finished["sample"]["status"] == "succeeded", finished
+    assert finished["sample"]["id"] == consent["sample_operation_id"], finished
     record = c.get(f"/api/workflow-drafts/{finished['sample']['draft_id']}/sample-test?test_id={consent['sample_operation_id']}")["sample_test"]
     assert 0 < len(record["inputs"]) <= 3
-    # Delivery processing owns the complete four-image Task scope. The prior
+    # Delivery processing owns the complete six-image Task scope. The prior
     # Journey consent covered only the three-image sample and cannot be reused
     # as a hidden limit on formal processing.
     selection = {"draft_id": record["draft_id"], "sample_test_id": record["id"]}
@@ -225,7 +234,11 @@ def verify(c, manifest, root):
     assert first_page["next_cursor"] is not None
     second_page = c.get(cr + "/task-navigation?limit=1&cursor=" + str(first_page["next_cursor"]))
     assert first_page["items"][0]["task_id"] != second_page["items"][0]["task_id"]
-    return {"project": project, "conversation_id": conversation, "task_id": task, "task_root": tr, "model_profile_id": model["id"], "provider_id": provider["id"], "execution_url": execution, "p0_autonomy": {"task_images": task_images, "task_image_count": len(task_images), "sample_image_count": len(record["inputs"]), "consent_id": consent["id"], "schema_call_id": consent["schema_proposal"]["call_id"], "builder_operation_id": consent["builder_operation_id"], "sample_operation_id": consent["sample_operation_id"], "draft_id": record["draft_id"], "sample_status": record["status"], "execution_dispatch": finished["dispatch"]}, "export": export, "run_id": run_id, "stop": stop, "answered_request_id": human["id"], "pending_request_id": pending["id"], "plan_task_id": plan["task_id"], "controls": controls, "saved_plan": saved_plan, "bbox": bbox, "manual_stop": manual_stop, "trace": str(Path(manifest["workspace"]) / "HTTP_TRACE.json")}
+    consent_posts = [entry for entry in c.trace if entry["method"] == "POST" and entry["path"] == tr + "/journey-consents"]
+    execution_posts = [entry for entry in c.trace if entry["method"] == "POST" and entry["path"] == execution]
+    assert len(consent_posts) == 1, consent_posts
+    assert execution_posts == [], execution_posts
+    return {"project": project, "conversation_id": conversation, "task_id": task, "task_root": tr, "model_profile_id": model["id"], "provider_id": provider["id"], "execution_url": execution, "p0_autonomy": {"task_images": task_images, "task_image_count": len(task_images), "sample_image_count": len(record["inputs"]), "unavoidable_user_decisions": 1, "technical_relay_clicks": 0, "consent_post_count": len(consent_posts), "execution_post_count": len(execution_posts), "consent_response_ms": consent_response_ms, "journey_duration_ms": journey_duration_ms, "first_observation": first_observation, "consent_id": consent["id"], "schema_call_id": consent["schema_proposal"]["call_id"], "builder_operation_id": consent["builder_operation_id"], "sample_operation_id": consent["sample_operation_id"], "draft_id": record["draft_id"], "sample_status": record["status"], "execution_dispatch": finished["dispatch"]}, "export": export, "run_id": run_id, "stop": stop, "answered_request_id": human["id"], "pending_request_id": pending["id"], "plan_task_id": plan["task_id"], "controls": controls, "saved_plan": saved_plan, "bbox": bbox, "manual_stop": manual_stop, "trace": str(Path(manifest["workspace"]) / "HTTP_TRACE.json")}
 
 
 def verify_stop(c, cr, schema_revision, provider, normal_model):
