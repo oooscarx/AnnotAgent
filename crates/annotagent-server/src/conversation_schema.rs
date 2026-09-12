@@ -27,6 +27,15 @@ pub(super) struct HumanSchemaInput {
     journey_consent_id: Option<uuid::Uuid>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct OutputClarificationAnswer {
+    command_id: uuid::Uuid,
+    expected_schema_revision: String,
+    journey_consent_id: uuid::Uuid,
+    choice: annotagent_application::SchemaOutputChoice,
+}
+
 pub(super) async fn clarification(
     State(state): State<ServerState>,
     AxumPath((project, conversation, task, call)): AxumPath<(
@@ -35,12 +44,153 @@ pub(super) async fn clarification(
         uuid::Uuid,
         uuid::Uuid,
     )>,
-) -> ApiResult<Json<annotagent_storage::SchemaClarification>> {
-    state
+) -> ApiResult<Json<Value>> {
+    let clarification = state
         .application
         .schema_clarification(&project, conversation, task, call)
-        .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::bad_request)?;
+    let choices = state
+        .application
+        .schema_clarification_choices(&project, conversation, task, call)
+        .map_err(ApiError::bad_request)?;
+    let answer = (!choices.is_empty() && clarification.status == "pending").then(|| {
+        json!({
+            "method":"POST",
+            "url":format!("/api/projects/{project}/conversations/{conversation}/tasks/{task}/calls/{call}/clarification/answer"),
+            "required_fields":["command_id","expected_schema_revision","journey_consent_id","choice"]
+        })
+    });
+    let mut view = serde_json::to_value(clarification).map_err(ApiError::internal)?;
+    view["choices"] = serde_json::to_value(choices).map_err(ApiError::internal)?;
+    view["answer"] = json!(answer);
+    Ok(Json(view))
+}
+
+pub(super) async fn answer_clarification(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task, call)): AxumPath<(
+        String,
+        uuid::Uuid,
+        uuid::Uuid,
+        uuid::Uuid,
+    )>,
+    Json(input): Json<OutputClarificationAnswer>,
+) -> ApiResult<Json<Value>> {
+    let clarification = state
+        .application
+        .schema_clarification(&project, conversation, task, call)
+        .map_err(ApiError::bad_request)?;
+    if clarification.expected_schema_revision != input.expected_schema_revision {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            body: json!({
+                "status":409,
+                "code":"schema_clarification_revision_conflict",
+                "error":"Clarification Schema revision changed; reload before answering",
+                "expected_schema_revision":input.expected_schema_revision,
+                "current_schema_revision":clarification.expected_schema_revision,
+                "admitted":false,
+                "suggested_action":"reload_clarification"
+            }),
+        });
+    }
+    let choices = state
+        .application
+        .schema_clarification_choices(&project, conversation, task, call)
+        .map_err(ApiError::bad_request)?;
+    let selected = choices
+        .iter()
+        .find(|choice| choice.value == input.choice)
+        .ok_or_else(|| ApiError::bad_request("Unknown clarification choice"))?;
+    if !selected.supported {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            body: json!({
+                "status":409,
+                "code":selected.unsupported_reason_code,
+                "error":selected.unsupported_reason,
+                "choice":input.choice,
+                "admitted":false,
+                "suggested_action":"choose_supported_output_or_edit_schema"
+            }),
+        });
+    }
+    let journey = state
+        .application
+        .conversation_journey_consent(&project, conversation, task, input.journey_consent_id)
+        .map_err(ApiError::bad_request)?
+        .ok_or_else(|| ApiError::bad_request("Journey authorization not found"))?;
+    if !journey.consent.continue_after_clarification
+        || journey
+            .consent
+            .schema_proposal
+            .as_ref()
+            .map(|proposal| proposal.call_id)
+            != Some(call)
+    {
+        return Err(ApiError::bad_request(
+            "This answer is not linked to the authorized journey clarification",
+        ));
+    }
+    let saved = state
+        .application
+        .answer_schema_output_clarification(
+            &project,
+            conversation,
+            task,
+            call,
+            input.command_id,
+            &input.expected_schema_revision,
+            input.choice,
+        )
+        .map_err(|error| ApiError {
+            status: StatusCode::CONFLICT,
+            body: json!({
+                "status":409,
+                "code":"schema_clarification_answer_conflict",
+                "error":error.to_string(),
+                "admitted":false,
+                "suggested_action":"reload_clarification"
+            }),
+        })?;
+    let schema_id = saved.id;
+    let mut resume = json!({"consent_id":input.journey_consent_id});
+    match state.application.queue_conversation_journey_answer(
+        &project,
+        conversation,
+        task,
+        input.journey_consent_id,
+        schema_id,
+    ) {
+        Err(error) => resume["error"] = json!(error.to_string()),
+        Ok(()) => {
+            resume["status"] = match conversation_journey::execute(
+                State(state.clone()),
+                AxumPath((
+                    project.clone(),
+                    conversation,
+                    task,
+                    input.journey_consent_id,
+                )),
+                Json(conversation_journey::ExecuteJourney {}),
+            )
+            .await
+            {
+                Ok(value) => value.0,
+                Err(error) => json!({"error":error.body["error"]}),
+            };
+        }
+    }
+    let updated = state
+        .application
+        .schema_clarification(&project, conversation, task, call)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({
+        "clarification":updated,
+        "schema":saved,
+        "selected_choice":input.choice,
+        "journey_resume":resume
+    })))
 }
 
 pub(super) async fn cancel_clarification(

@@ -303,36 +303,41 @@ def verify_ambiguous_goal(c, project_root, schema_revision, provider, visual_mod
     c.post(tr + "/journey-consents", consent)
     execution = tr + "/journey-consents/" + consent["id"] + "/execution"
     waiting = c.poll(execution, lambda value: (value.get("clarification") or {}).get("status") == "pending")
-    clarification = waiting["clarification"]
+    clarification = c.get(tr + "/calls/" + consent["schema_proposal"]["call_id"] + "/clarification")
     assert clarification["id"] == consent["schema_proposal"]["call_id"]
     assert all(word in clarification["question"] for word in ["框", "轮廓", "分类"])
+    assert [(choice["value"], choice["supported"]) for choice in clarification["choices"]] == [("bounding_box", True), ("segmentation", False), ("classification", False)]
+    assert clarification["answer"]["method"] == "POST"
     assert waiting["builder"] is None and waiting["sample"] is None
     first_calls = c.get(tr + "/calls")
     assert len(first_calls) == 1 and first_calls[0]["id"] == clarification["id"], first_calls
+    clarification_receipt = {key: value for key, value in clarification.items() if key not in ["choices", "answer"]}
     for _ in range(3):
         observed = c.get(execution)
-        assert observed["clarification"] == clarification
+        assert observed["clarification"] == clarification_receipt
     assert c.post(tr + "/journey-consents", consent)["consent"]["id"] == consent["id"]
     c.post(execution)
-    assert c.get(execution)["clarification"] == clarification
+    assert c.get(execution)["clarification"] == clarification_receipt
     assert c.get(tr + "/calls") == first_calls
-    answer = {
-        "request_id": uid(),
-        "decision": {
-            "decision": "draft", "kind": "bounding_box", "labels": ["cup"],
-            "multi_label": False, "attributes": {},
-            "boundary_rules": ["框住完整可见杯子；排除杯子图案"],
-            "rationale": "用户明确选择目标框；不把轮廓或分类转换为框。",
-            "delivery": {
-                "labels": [{"existing_id": None, "display_name": "杯子", "aliases": ["cup"], "include": "真实杯子", "exclude": "杯子图案"}],
-                "training_target": {"annotation_kind": "bounding_box", "framework": "ultralytics", "export_profile": "ultralytics_yolo_detection", "profile_revision": 1}
-            }
-        },
-        "clarification": {"call_id": clarification["id"], "expected_schema_revision": clarification["expected_schema_revision"]},
-        "journey_consent_id": consent["id"]
-    }
-    saved = c.post(tr + "/human-schema-drafts", answer)
-    assert saved["task_id"] == task
+    answer_url = clarification["answer"]["url"]
+    answer = {"command_id": uid(), "expected_schema_revision": clarification["expected_schema_revision"], "journey_consent_id": consent["id"], "choice": "bounding_box"}
+    calls_before_answer = c.get(tr + "/calls")
+    stale = c.request("POST", answer_url, {**answer, "command_id": uid(), "expected_schema_revision": "f" * 64}, expected=[409])
+    assert stale["code"] == "schema_clarification_revision_conflict" and stale["admitted"] is False
+    unsupported = c.request("POST", answer_url, {**answer, "command_id": uid(), "choice": "segmentation"}, expected=[409])
+    assert unsupported["code"] == "segmentation_delivery_not_implemented" and unsupported["admitted"] is False
+    assert c.get(tr + "/calls") == calls_before_answer
+    assert c.get(tr + "/human-schema-drafts") == []
+    answer_receipt = c.post(answer_url, answer)
+    saved = answer_receipt["schema"]
+    assert saved["task_id"] == task and answer_receipt["selected_choice"] == "bounding_box"
+    replayed_answer = c.post(answer_url, answer)
+    assert replayed_answer["schema"] == saved
+    conflicting_answer = c.request("POST", answer_url, {**answer, "command_id": uid()}, expected=[409])
+    assert conflicting_answer["code"] == "schema_clarification_answer_conflict" and conflicting_answer["admitted"] is False
+    assert len(c.get(tr + "/human-schema-drafts")) == 1
+    calls_after_answer_replay = c.get(tr + "/calls")
+    assert sum(call["id"] == clarification["id"] for call in calls_after_answer_replay) == 1
     # This TEST provider has no artificial delay. Do not register an HTTP observer
     # while the child work completes: the server-owned worker must consume durable
     # Builder/Sample receipts even when completion wins that race.
@@ -365,7 +370,7 @@ def verify_ambiguous_goal(c, project_root, schema_revision, provider, visual_mod
     assert delivery["saved"]["intent"]["training_target"]["annotation_kind"] == "bounding_box"
     final_clarification = c.get(tr + "/calls/" + clarification["id"] + "/clarification")
     assert final_clarification["status"] == "applied" and final_clarification["schema_draft_id"] == saved["id"]
-    return {"conversation_id": conversation, "task_id": task, "task_root": tr, "consent_id": consent["id"], "schema_call_id": clarification["id"], "question": clarification["question"], "question_count": 1, "calls_before_answer": len(first_calls), "sample_before_answer": False, "answered_schema_id": saved["id"], "delivery_revision": delivery["saved"]["revision"], "sample_operation_id": completed["sample"]["id"], "sample_image_ids": [image["image_id"] for image in sample["inputs"]], "visual_model_id": visual_model["id"], "immediate_provider_delay_ms": 0, "observer_registered_after_terminal": True, "duplicate_completion_observations": 3, "sample_operation_count_after_replays": len(samples_before_replays["items"]), "builder_operation_count_after_replays": len(builders_after_replays), "budget_unchanged_after_replays": True, "formal_run_created": False}
+    return {"conversation_id": conversation, "task_id": task, "task_root": tr, "consent_id": consent["id"], "schema_call_id": clarification["id"], "question": clarification["question"], "question_count": 1, "calls_before_answer": len(first_calls), "sample_before_answer": False, "clarification_choices": clarification["choices"], "stale_choice_code": stale["code"], "unsupported_choice_code": unsupported["code"], "conflicting_answer_code": conflicting_answer["code"], "answer_url": answer_url, "answered_schema_id": saved["id"], "delivery_revision": delivery["saved"]["revision"], "sample_operation_id": completed["sample"]["id"], "sample_image_ids": [image["image_id"] for image in sample["inputs"]], "visual_model_id": visual_model["id"], "immediate_provider_delay_ms": 0, "observer_registered_after_terminal": True, "duplicate_completion_observations": 3, "sample_operation_count_after_replays": len(samples_before_replays["items"]), "builder_operation_count_after_replays": len(builders_after_replays), "budget_unchanged_after_replays": True, "formal_run_created": False}
 
 
 def verify_stop(c, cr, schema_revision, provider, normal_model):

@@ -26,6 +26,14 @@ to replay. It does not mark the Schema human accepted, publish a Workflow, or ad
 The technical `prepare_delivery_schema` action therefore does not reappear after an automatically
 prepared Sample.
 
+If the proposal instead preserves complete labels but asks which annotation output to use,
+the clarification GET exposes stable server choices. The compact answer command supplies only
+the selected value, command ID, goal revision and original Journey consent. Bounding-box delivery
+is currently supported. Segmentation and whole-image classification remain visible but disabled
+with stable reasons because the bounded training-package path has no matching implemented preset.
+The server rebuilds the complete Schema from saved semantics and never translates a contour
+selection into a box. Exact replay restores the original Schema; unsupported/stale answers write nothing.
+
 ## One exact approval and passive reads
 
 For a newly uploaded Task, `POST /api/projects/{project_id}/conversations/{conversation_id}/send`
