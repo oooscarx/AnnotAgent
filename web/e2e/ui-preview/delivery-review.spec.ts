@@ -54,6 +54,56 @@ test("formal review is bound to the Task Batch child Run and preserves failed co
   expect(commands[0]).toMatchObject({ source_run_id: "child-one", image_id: "image-one" });
 });
 
+test("continuous review advances only after the formal image receipt is saved", async ({ page }) => {
+  await page.goto("/ui-preview?task=new");
+  await page.evaluate(async ([path, imageUrl]) => {
+    const { React, createRoot, DeliveryReview } = await import(path);
+    const host = document.createElement("main");
+    document.body.replaceChildren(host);
+    const state = { saved: false, reads: [] as (string | null)[] };
+    Object.assign(window, { continuousReviewTest: state });
+    const service = {
+      image: async (_p: string, _t: string, id: string, run: string | null) => {
+        state.reads.push(run);
+        return {
+          intent_revision: 1, intent_sha256: "intent",
+          snapshot: { image_id: id, source_run_id: run, sha256: `snapshot-${id}`, content_sha256: id, annotations: [] },
+          sources: [], review: null, confirmation_current: false,
+          accepted_objects: 1, unresolved_objects: 0, notice: "TEST",
+        };
+      },
+      confirmImage: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        state.saved = true;
+        return {};
+      },
+    };
+    createRoot(host).render(React.createElement(DeliveryReview, {
+      service, project: "TEST", task: "TEST-task",
+      formalResult: {
+        project_id: "TEST", task_id: "TEST-task", processing_operation_id: "operation-one",
+        batch_id: "batch-one", workflow_version: "workflow@1", status: "completed",
+        images: [
+          { image_id: "image-one", child_run_id: "child-one" },
+          { image_id: "image-two", child_run_id: "child-two" },
+        ],
+      },
+      images: [
+        { id: "image-one", name: "one", src: imageUrl },
+        { id: "image-two", name: "two", src: imageUrl },
+      ],
+    }));
+  }, [`/@fs/${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`, pixel]);
+
+  const confirm = page.getByRole("button", { name: "确认整张图标注完整并继续", exact: true });
+  await expect(confirm).toBeEnabled();
+  await confirm.click({ noWaitAfter: true });
+  await expect(page).not.toHaveURL(/delivery_image=image-two/);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { continuousReviewTest: { saved: boolean } }).continuousReviewTest.saved)).toBe(true);
+  await expect(page).toHaveURL(/delivery_image=image-two/);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { continuousReviewTest: { reads: (string | null)[] } }).continuousReviewTest.reads)).toContain("child-two");
+});
+
 test("sample issue emits a complete sample VisualSelection and never writes formal review", async ({ page }) => {
   await page.goto("/ui-preview?task=new&delivery_view=sample");
   await page.evaluate(async ([path, imageUrl]) => {
