@@ -97,27 +97,57 @@
       "project_id": "P",
       "conversation_id": "10000000-0000-4000-8000-000000000001",
       "task_id": "20000000-0000-4000-8000-000000000001",
-      "items": [{
-        "project_schema_revision": "sha256",
-        "draft_id": "draft-id",
-        "draft_revision": 3,
-        "sample_test_id": "sample-id",
-        "sample_status": "passed",
-        "operation_status": "succeeded",
-        "result_available": true,
-        "images": [{
-          "image_id": "image-id",
-          "image_sha256": "sha256",
-          "result_revision": "sha256",
-          "candidates": [{
-            "candidate_id": "candidate-id",
-            "annotation_kind": "bounding_box",
-            "label": "cup",
-            "source_artifact_id": "artifact-uuid",
-            "feedback_available": true
-          }]
-        }]
-      }],
+      "items": [
+        {
+          "project_schema_revision": "sha256",
+          "draft_id": "draft-id",
+          "draft_revision": 3,
+          "sample_test_id": "sample-id",
+          "sample_status": "passed",
+          "operation_status": "succeeded",
+          "result_available": true,
+          "images": [
+            {
+              "image_id": "image-id",
+              "image_sha256": "sha256",
+              "result_revision": "sha256",
+              "candidates": [
+                {
+                  "candidate_id": "candidate-id",
+                  "annotation_kind": "bounding_box",
+                  "label": "cup",
+                  "source_artifact_id": "artifact-uuid",
+                  "feedback_available": true,
+                  "selection": {
+                    "project_id": "P",
+                    "conversation_id": "10000000-0000-4000-8000-000000000001",
+                    "task_id": "20000000-0000-4000-8000-000000000001",
+                    "project_schema_revision": "sha256",
+                    "image": {
+                      "image_id": "image-id",
+                      "sha256": "sha256"
+                    },
+                    "sample": {
+                      "draft_id": "draft-id",
+                      "draft_revision": 3,
+                      "sample_test_id": "sample-id"
+                    },
+                    "candidate": {
+                      "candidate_id": "candidate-id",
+                      "source_artifact_id": "artifact-uuid"
+                    },
+                    "annotation": {
+                      "kind": "bounding_box",
+                      "label": "cup"
+                    },
+                    "result_revision": "sha256"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
       "next_cursor": null
     }
   },
@@ -138,7 +168,9 @@
         "selected_images": 3,
         "confirmed_images": 2,
         "blocked_images": 1,
-        "reasons": ["whole_image_review_missing"]
+        "reasons": [
+          "whole_image_review_missing"
+        ]
       },
       "job": null
     }
@@ -155,7 +187,17 @@
       "workflow_id": "workflow-id",
       "workflow_version": 1,
       "status": "completed",
-      "images": [{"image_id":"image-id","child_run_id":"run-id","status":"completed","run_status":"completed","error":null,"annotation_count":1,"review_count":0}]
+      "images": [
+        {
+          "image_id": "image-id",
+          "child_run_id": "run-id",
+          "status": "completed",
+          "run_status": "completed",
+          "error": null,
+          "annotation_count": 1,
+          "review_count": 0
+        }
+      ]
     }
   },
   "task_workspace_additions": {
@@ -190,7 +232,40 @@
       "model_request_completed": true,
       "processing_completed": true,
       "package_ready": false,
-      "task_completed": false
+      "task_completed": false,
+      "status": "incomplete"
+    },
+    "revision": "same value as read_model_revision",
+    "intake": {
+      "missing_slots": [],
+      "dataset_scope": "saved exact image scope",
+      "label_rules": "saved label_spec",
+      "training_target": "saved target"
+    },
+    "messages": [],
+    "actions": [
+      {
+        "id": "review_delivery_images",
+        "kind": "review_delivery_images",
+        "available": true,
+        "reason": "whole_image_review_pending",
+        "requires_approval": false,
+        "scope_revision": "same value as read_model_revision",
+        "method": "GET",
+        "url": "/api/projects/P/conversations/C/tasks/T/delivery-review-items"
+      }
+    ],
+    "active_operation_ids": [],
+    "review_work_item_id": "Task UUID when an owned formal review collection is pending",
+    "package_id": "latest package UUID when a package receipt exists",
+    "links": {
+      "self": "/api/projects/P/conversations/C/tasks/T/workspace",
+      "thread": "/api/projects/P/conversations/C/tasks/T/thread",
+      "visual_selections": "/api/projects/P/conversations/C/tasks/T/visual-selections",
+      "capability_readiness": "/api/projects/P/conversations/C/tasks/T/capability-readiness",
+      "review_work_items": "/api/projects/P/conversations/C/tasks/T/delivery-review-items",
+      "package_consents": "/api/projects/P/conversations/C/tasks/T/delivery-package-consents",
+      "advance": "/api/projects/P/conversations/C/tasks/T/advance"
     }
   },
   "advance": {
@@ -219,8 +294,19 @@
     "scope": {
       "delivery_revision": 1,
       "delivery_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "images": [{"image_id":"image-1","content_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],
-      "draft": {"draft_id":"draft-1","draft_revision":2,"draft_content_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","sample_test_id":"sample-1","sample_status":"passed"},
+      "images": [
+        {
+          "image_id": "image-1",
+          "content_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ],
+      "draft": {
+        "draft_id": "draft-1",
+        "draft_revision": 2,
+        "draft_content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "sample_test_id": "sample-1",
+        "sample_status": "passed"
+      },
       "preview_freezes_model_bindings_destination_and_cost": true
     }
   },
@@ -234,26 +320,91 @@
       "conversation_id": "20000000-0000-4000-8000-000000000001",
       "task_id": "30000000-0000-4000-8000-000000000001",
       "task_schema_revision": "sha256",
-      "draft": {"id":"draft-1","revision":2,"content_hash":"sha256","status":"editing"},
+      "draft": {
+        "id": "draft-1",
+        "revision": 2,
+        "content_hash": "sha256",
+        "status": "editing"
+      },
       "registry_revision": "sha256",
       "registry_revision_kind": "snapshot_sha256",
-      "candidates": [{
-        "id":"model-profile:40000000-0000-4000-8000-000000000001",
-        "candidate_type":"model_profile","model_profile_id":"40000000-0000-4000-8000-000000000001",
-        "revision":3,"digest":"sha256","roles":["agent","vision_language"],
-        "capabilities":["text_generation","vision_language"],"quality_contracts":[],
-        "readiness":"unknown","production_eligible":false,"test_fixture":false,
-        "blocker":{"code":"not_verified","message":"Configuration exists, but readiness is not proven by a current saved check."},
-        "project_bindings":[],"allowed_by_current_scope":false,
-        "selected_for_next_agent_request":false,
-        "setup":{"kind":"model_profile","api_url":"/api/model-profiles/40000000-0000-4000-8000-000000000001"}
-      }],
-      "agent_model_preference":{"revision":0,"model_profile_id":null},
-      "authorization":{"source":null,"consent_id":null,"expires_at":null,"permission_digest":null,"allowed_models":[],"active":false,"can_resume_without_authorization":false},
-      "budget":"ConversationTaskBudget",
-      "task_cost":{"scope":"conversation_task_model_calls","receipt_count":0,"known":true,"amount":"0","currency":null,"reason":null},
-      "passive":true,"setup_recheck_only":true,"auto_expands_allowed_models":false,
-      "consistency":"server_composed_versioned_snapshot"
+      "candidates": [
+        {
+          "id": "model-profile:40000000-0000-4000-8000-000000000001",
+          "candidate_type": "model_profile",
+          "model_profile_id": "40000000-0000-4000-8000-000000000001",
+          "revision": 3,
+          "digest": "sha256",
+          "roles": [
+            "agent",
+            "vision_language"
+          ],
+          "capabilities": [
+            "text_generation",
+            "vision_language"
+          ],
+          "quality_contracts": [],
+          "readiness": "unknown",
+          "production_eligible": false,
+          "test_fixture": false,
+          "blocker": {
+            "code": "not_verified",
+            "message": "Configuration exists, but readiness is not proven by a current saved check."
+          },
+          "project_bindings": [],
+          "allowed_by_current_scope": false,
+          "selected_for_next_agent_request": false,
+          "setup": {
+            "kind": "model_profile",
+            "api_url": "/api/model-profiles/40000000-0000-4000-8000-000000000001"
+          }
+        }
+      ],
+      "agent_model_preference": {
+        "revision": 0,
+        "model_profile_id": null
+      },
+      "authorization": {
+        "source": null,
+        "consent_id": null,
+        "expires_at": null,
+        "permission_digest": null,
+        "allowed_models": [],
+        "active": false,
+        "can_resume_without_authorization": false
+      },
+      "budget": "ConversationTaskBudget",
+      "task_cost": {
+        "scope": "conversation_task_model_calls",
+        "receipt_count": 0,
+        "known": true,
+        "amount": "0",
+        "currency": null,
+        "reason": null
+      },
+      "passive": true,
+      "setup_recheck_only": true,
+      "auto_expands_allowed_models": false,
+      "consistency": "server_composed_versioned_snapshot",
+      "setup_requests": [
+        {
+          "id": "sha256",
+          "project_id": "P",
+          "task_id": "30000000-0000-4000-8000-000000000001",
+          "task_revision": "sha256",
+          "registry_revision": "sha256",
+          "role": "task_planning_and_vision",
+          "required_capabilities": [
+            "text_generation",
+            "object_detection"
+          ],
+          "compatible_model_ids": [
+            "model-profile:40000000-0000-4000-8000-000000000001"
+          ],
+          "status": "required",
+          "return_path": "/projects/P/work?task=30000000-0000-4000-8000-000000000001&draft=draft-1"
+        }
+      ]
     }
   },
   "model_profile_stale_writer": {

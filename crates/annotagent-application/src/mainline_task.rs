@@ -76,6 +76,31 @@ impl LocalApplication {
                     | ConversationCallStatus::InDoubt
             )
         });
+        let messages = calls
+            .iter()
+            .enumerate()
+            .filter_map(|(index, call)| {
+                let created_at = call.started_at.as_ref()?;
+                let status = serde_json::to_value(call.status).ok()?;
+                let text = match call.status {
+                    ConversationCallStatus::Reserved => "Model request is in progress.",
+                    ConversationCallStatus::Completed => "Model request completed.",
+                    ConversationCallStatus::Failed => {
+                        "Model request failed; inspect the safe receipt stage and category."
+                    }
+                    ConversationCallStatus::InDoubt => {
+                        "Model request outcome is unknown; it will not be retried automatically."
+                    }
+                };
+                Some(json!({
+                    "id":call.id,"task_id":task,"sequence":index + 1,
+                    "kind":"system_receipt","text":text,"created_at":created_at,
+                    "source":{"kind":"model_call","id":call.id},
+                    "receipt":{"status":status,"stage":call.stage,"completed_at":call.completed_at,
+                        "duration_ms":call.duration_ms,"failure":call.failure}
+                }))
+            })
+            .collect::<Vec<_>>();
         let processing = self.conversation_processing_history(project, conversation, task)?;
         let journeys = self.conversation_journey_history(project, conversation, task)?;
         let processing_candidate = latest_processing_candidate(&journeys);
@@ -153,8 +178,15 @@ impl LocalApplication {
             };
 
         let root = format!("/api/projects/{project}/conversations/{conversation}/tasks/{task}");
+        let active_operations =
+            self.store
+                .agent_ui_active_operations(&owner, project, conversation, task)?;
         let mut actions = Vec::new();
-        let mut blockers = delivery.blockers.clone();
+        let mut blockers = delivery
+            .blockers
+            .iter()
+            .map(|message| json!({"code":"delivery_intent_blocked","message":message}))
+            .collect::<Vec<_>>();
         if delivery.saved.is_none() || !delivery.missing_slots.is_empty() {
             actions.push(json!({
                 "id":"save_delivery_intake","state":"available","method":"POST",
@@ -166,7 +198,10 @@ impl LocalApplication {
                 "url":format!("{root}/schema-preview"),"requires_confirmation":true,
                 "reason":"text_only_schema_call_can_propose_missing_delivery_semantics"
             }));
-            blockers.push("delivery_intake_incomplete".into());
+            blockers.push(json!({
+                "code":"delivery_intake_incomplete",
+                "message":"Complete the Task delivery intake before planning or execution."
+            }));
         } else if !delivery.blockers.is_empty() {
             actions.push(json!({
                 "id":"prepare_delivery_schema","state":"blocked","method":"POST",
@@ -227,11 +262,12 @@ impl LocalApplication {
                 "current_reviews":current_reviews,"pending_reviews":pending_reviews
             },
             "formal_source":formal_result,
+            "messages":messages,
             "steps":[
-                {"kind":"schema","state":if schema.is_some(){"completed"}else{"waiting"},"request_completed":schema.is_some(),"task_completed":false},
-                {"kind":"processing","state":if processing_completed{"completed"}else if processing.is_empty(){"waiting"}else{"running"},"request_completed":processing_completed,"task_completed":false},
-                {"kind":"whole_image_review","state":if selected_images>0&&pending_reviews==0{"completed"}else{"waiting"},"request_completed":selected_images>0&&pending_reviews==0,"task_completed":false},
-                {"kind":"training_package","state":package_state,"request_completed":package_ready,"task_completed":package_ready}
+                {"id":"schema","kind":"schema","title":"Task Schema","state":if schema.is_some(){"completed"}else{"waiting"},"status":if schema.is_some(){"completed"}else if delivery.saved.is_none()||!delivery.missing_slots.is_empty(){"blocked"}else{"ready"},"request_completed":schema.is_some(),"task_completed":false},
+                {"id":"processing","kind":"processing","title":"Dataset processing","state":if processing_completed{"completed"}else if processing.is_empty(){"waiting"}else{"running"},"status":if processing_completed{"completed"}else if processing.is_empty(){"awaiting_approval"}else{"running"},"request_completed":processing_completed,"task_completed":false},
+                {"id":"whole_image_review","kind":"whole_image_review","title":"Whole-image review","state":if selected_images>0&&pending_reviews==0{"completed"}else{"waiting"},"status":if selected_images>0&&pending_reviews==0{"completed"}else if processing_completed{"ready"}else{"blocked"},"request_completed":selected_images>0&&pending_reviews==0,"task_completed":false},
+                {"id":"training_package","kind":"training_package","title":"Training package","state":package_state,"status":if package_ready{"completed"}else if package_state=="failed"{"failed"}else if package_state=="running"{"running"}else if selected_images>0&&pending_reviews==0{"awaiting_approval"}else{"blocked"},"request_completed":package_ready,"task_completed":package_ready}
             ],
             "package":{
                 "consents":consents,
@@ -241,16 +277,82 @@ impl LocalApplication {
                 })).collect::<Vec<_>>()
             },
             "available_actions":actions,
+            "active_operation_ids":active_operations.iter().map(|operation| operation.id.clone()).collect::<Vec<_>>(),
             "blockers":blockers,
             "completion":{
                 "model_request_completed":model_request_completed,
                 "processing_completed":processing_completed,
                 "package_ready":package_ready,
-                "task_completed":package_ready
+                "task_completed":package_ready,
+                "status":if package_ready{"package_ready"}else{"incomplete"}
+            },
+            "links":{
+                "self":format!("{root}/workspace"),
+                "thread":format!("{root}/thread"),
+                "visual_selections":format!("{root}/visual-selections"),
+                "capability_readiness":format!("{root}/capability-readiness"),
+                "review_work_items":format!("{root}/delivery-review-items"),
+                "package_consents":format!("{root}/delivery-package-consents"),
+                "advance":format!("{root}/advance")
             }
         });
         let revision = annotagent_image_tools::sha256(&serde_json::to_vec(&projection)?);
         projection["read_model_revision"] = json!(revision);
+        projection["revision"] = json!(revision);
+
+        // G0 domain aliases are derived entirely from the authoritative fields above.
+        // They let the UI consume one server-owned Task view without reconstructing
+        // identity, action availability or routes from unrelated responses.
+        let saved_intent = delivery.saved.as_ref().map(|saved| &saved.intent);
+        projection["intake"] = json!({
+            "missing_slots":delivery.missing_slots.iter().map(|slot| match slot {
+                annotagent_core::dataset_delivery::DeliverySlot::DatasetScope => "dataset_scope",
+                annotagent_core::dataset_delivery::DeliverySlot::LabelSpec => "label_rules",
+                annotagent_core::dataset_delivery::DeliverySlot::TrainingTarget => "training_target",
+            }).collect::<Vec<_>>(),
+            "dataset_scope":saved_intent.and_then(|intent|intent.dataset_scope.clone()),
+            "label_rules":saved_intent.and_then(|intent|intent.label_spec.clone()),
+            "training_target":saved_intent.and_then(|intent|intent.training_target.clone())
+        });
+        projection["message_projection"] = json!({
+            "url":format!("{root}/thread"),
+            "embedded_kinds":["system_receipt"],
+            "note":"The Task view embeds safe model-call receipts. The Thread endpoint contains persisted user messages only; no assistant reply is fabricated."
+        });
+        projection["actions"] = Value::Array(
+            projection["available_actions"]
+                .as_array()
+                .expect("mainline actions are an array")
+                .iter()
+                .map(|action| {
+                    let state = action["state"].as_str().unwrap_or("blocked");
+                    json!({
+                        "id":action["id"],
+                        "kind":action["id"],
+                        "available":state != "blocked",
+                        "reason":action["reason"].as_str().unwrap_or_default(),
+                        "requires_approval":action["requires_confirmation"],
+                        "scope_revision":revision,
+                        "method":action["method"],
+                        "url":action["url"]
+                    })
+                })
+                .collect(),
+        );
+        if formal_result.is_object() {
+            projection["review_work_item_id"] = json!(task);
+        }
+        if let Some(job) = packages.first() {
+            projection["package_id"] = json!(job.id);
+        }
+        if let Some(job) = packages
+            .iter()
+            .find(|job| job.phase == DeliveryPackagePhase::Ready)
+        {
+            projection["completion"]["package_id"] = json!(job.id);
+            projection["completion"]["download_url"] =
+                json!(format!("{root}/delivery-packages/{}/download", job.id));
+        }
         Ok(projection)
     }
 

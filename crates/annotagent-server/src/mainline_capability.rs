@@ -377,6 +377,69 @@ pub(super) fn snapshot(
         &serde_json::to_vec(&json!({"candidates":candidates,"project_bindings":bindings}))
             .map_err(ApiError::internal)?,
     );
+    let delivery = state
+        .application
+        .task_delivery_intent(project, conversation, task)
+        .map_err(ApiError::conversation)?;
+    let mut required_capabilities = vec!["text_generation"];
+    if delivery
+        .saved
+        .as_ref()
+        .and_then(|saved| saved.intent.training_target.as_ref())
+        .is_some_and(annotagent_core::dataset_delivery::TrainingTarget::is_detection_preset)
+    {
+        required_capabilities.push("object_detection");
+    }
+    let compatible_model_ids = candidates
+        .iter()
+        .filter(|candidate| {
+            candidate["capabilities"]
+                .as_array()
+                .is_some_and(|capabilities| {
+                    capabilities.iter().any(|capability| {
+                        required_capabilities
+                            .iter()
+                            .any(|required| capability == required)
+                    })
+                })
+                && !candidate["test_fixture"].as_bool().unwrap_or(false)
+                && (candidate["production_eligible"].as_bool().unwrap_or(false)
+                    || candidate["readiness"] == "unknown")
+        })
+        .filter_map(|candidate| candidate["id"].as_str().map(str::to_owned))
+        .collect::<Vec<_>>();
+    let setup_ready = required_capabilities.iter().all(|required| {
+        candidates.iter().any(|candidate| {
+            candidate["readiness"] == "ready"
+                && candidate["production_eligible"].as_bool().unwrap_or(false)
+                && candidate["capabilities"]
+                    .as_array()
+                    .is_some_and(|capabilities| capabilities.iter().any(|value| value == required))
+        })
+    });
+    let setup_id = annotagent_image_tools::sha256(
+        &serde_json::to_vec(&json!({
+            "project_id":project,"conversation_id":conversation,"task_id":task,
+            "task_revision":task_record.input.schema_revision,
+            "registry_revision":registry_digest,
+            "role":"task_planning_and_vision",
+            "required_capabilities":required_capabilities,
+            "compatible_model_ids":compatible_model_ids
+        }))
+        .map_err(ApiError::internal)?,
+    );
+    let draft = current_draft(state, project, &journeys, &builders)?;
+    let mut return_url =
+        url::Url::parse("http://annotagent.local").expect("fixed internal return URL is valid");
+    return_url.set_path(&format!("/projects/{project}/work"));
+    {
+        let mut query = return_url.query_pairs_mut();
+        query.append_pair("task", &task.to_string());
+        if let Some(draft_id) = draft["id"].as_str() {
+            query.append_pair("draft", draft_id);
+        }
+    }
+    let return_path = return_url[url::Position::BeforePath..].to_owned();
     let budget = state
         .application
         .conversation_task_budget(project, conversation, task)
@@ -384,13 +447,22 @@ pub(super) fn snapshot(
     let calls = store
         .conversation_call_history(&owner.to_string(), task)
         .map_err(ApiError::internal)?;
-    let draft = current_draft(state, project, &journeys, &builders)?;
     let no_calls = calls.is_empty();
     Ok(json!({
         "contract_version":"mainline-capability-v1","project_id":project,"project_owner_id":owner,
         "conversation_id":conversation,"task_id":task,"task_schema_revision":task_record.input.schema_revision,
         "draft":draft,"registry_revision":registry_digest,"registry_revision_kind":"snapshot_sha256",
         "candidates":candidates,"agent_model_preference":agent_model,
+        "setup_requests":[{
+            "id":setup_id,"project_id":project,"task_id":task,
+            "task_revision":task_record.input.schema_revision,
+            "registry_revision":registry_digest,
+            "role":"task_planning_and_vision",
+            "required_capabilities":required_capabilities,
+            "compatible_model_ids":compatible_model_ids,
+            "status":if setup_ready{"ready"}else{"required"},
+            "return_path":return_path
+        }],
         "authorization":authorization,"budget":budget,
         "task_cost":{"scope":"conversation_task_model_calls","receipt_count":calls.len(),
             "known":no_calls,"amount":if no_calls {json!("0")} else {Value::Null},"currency":null,
@@ -498,6 +570,18 @@ mod tests {
         assert_eq!(candidate["test_fixture"], true);
         assert_eq!(first["task_cost"]["known"], true);
         assert_eq!(first["task_cost"]["amount"], "0");
+        let setup = &first["setup_requests"][0];
+        assert_eq!(setup["project_id"], "TEST-capability");
+        assert_eq!(setup["task_id"], sent.task_id.to_string());
+        assert_eq!(setup["task_revision"], first["task_schema_revision"]);
+        assert_eq!(setup["registry_revision"], first["registry_revision"]);
+        assert_eq!(setup["role"], "task_planning_and_vision");
+        assert_eq!(setup["required_capabilities"], json!(["text_generation"]));
+        assert_eq!(setup["status"], "required");
+        assert_eq!(
+            setup["return_path"],
+            format!("/projects/TEST-capability/work?task={}", sent.task_id)
+        );
         assert!(
             app.store()
                 .conversation_call_history(&owner.to_string(), sent.task_id)

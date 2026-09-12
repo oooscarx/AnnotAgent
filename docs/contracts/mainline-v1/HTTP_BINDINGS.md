@@ -219,3 +219,44 @@ states return the existing preview/confirmation URL and cannot be invoked throug
 
 Actual and planned DTO examples are in `EXAMPLES.json`; planned entries carry
 `contract_status:"planned"` and must not be called until their delivery commit.
+
+## ML-004 G0 semantic alignment (implemented)
+
+`GET D/workspace` remains the single Task read route. No parallel Task API was
+added. `workspace.mainline` now carries the G0 fields directly, alongside the
+richer wire receipts retained for existing clients:
+
+- `revision` is exactly `read_model_revision`. `intake.missing_slots` uses
+  `dataset_scope|label_rules|training_target`; `label_rules` is the saved
+  server `label_spec`, not a client reconstruction.
+- `steps[]` includes stable `id`, `kind`, `title`, and G0 `status`, while the
+  existing `state/request_completed/task_completed` evidence remains present.
+- `actions[]` is the G0 projection of `available_actions[]`. Every action carries
+  `scope_revision` plus the authoritative `method` and `url` (additive to the G0
+  public type); clients never infer a route from `kind`. The richer
+  `available_actions[]` is retained for compatibility.
+- `active_operation_ids`, optional `review_work_item_id` (the Task UUID identifying
+  its owned formal-review collection), optional latest `package_id`, and
+  `completion {status,package_id?,download_url?}` are server-derived. Only a
+  Ready package has `status:package_ready` and a download URL.
+- `messages[]` contains only safe observable model-call `system_receipt`
+  projections when such receipts exist. It includes stage/timing/typed failure,
+  not raw Provider data or hidden reasoning. Persisted user text remains paged at
+  the returned `links.thread`; the server still does not manufacture assistant
+  replies.
+- `links` is authoritative for self, thread, visual selections, capability
+  readiness, formal review items, package consents and local advance.
+
+`GET D/visual-selections` now places a complete G0 `selection` on every candidate
+that has its own non-nil source Artifact. It repeats Project/Conversation/Task and
+Schema identity, image ID/hash, Draft revision, Sample Test, candidate/Artifact,
+annotation kind/label and that image result revision. A candidate without an
+Artifact keeps `feedback_available:false` and `selection:null`.
+
+`GET D/capability-readiness` now returns `setup_requests[]`. Each request is a
+stable digest over Task Schema revision, Registry snapshot revision, role,
+required capabilities and compatible candidate IDs. The server returns the exact
+same-Project/Task `return_path`; `ready` requires current production-eligible
+Ready evidence for every required capability. Unknown and TEST/Mock candidates
+never make a production request Ready. Refreshing either GET only re-reads state
+and cannot probe, install, grant, resume, plan, or call a Provider.

@@ -49,33 +49,62 @@ impl LocalApplication {
                 .iter()
                 .zip(&sample.report.samples)
                 .map(|(input, result)| {
-                    let candidates = result
-                        .projection
-                        .final_candidates
-                        .iter()
-                        .chain(
-                            result
-                                .projection
-                                .review_candidates
-                                .iter()
-                                .map(|review| &review.candidate),
-                        )
-                        .map(|candidate| {
-                            let artifact = (!candidate.source_artifact_id.0.is_nil())
-                                .then_some(candidate.source_artifact_id.0);
-                            let value = serde_json::to_value(&candidate.outcome.value)?;
-                            Ok(json!({
-                                "candidate_id":candidate.outcome.id,
-                                "annotation_kind":value.get("kind").and_then(Value::as_str),
-                                "label":candidate.outcome.label,
-                                "source_artifact_id":artifact,
-                                "feedback_available":artifact.is_some()
-                            }))
-                        })
-                        .collect::<Result<Vec<_>>>()?;
+                    let mut candidates =
+                        result
+                            .projection
+                            .final_candidates
+                            .iter()
+                            .chain(
+                                result
+                                    .projection
+                                    .review_candidates
+                                    .iter()
+                                    .map(|review| &review.candidate),
+                            )
+                            .map(|candidate| {
+                                let artifact = (!candidate.source_artifact_id.0.is_nil())
+                                    .then_some(candidate.source_artifact_id.0);
+                                let value = serde_json::to_value(&candidate.outcome.value)?;
+                                let selection = artifact.map(|source_artifact_id| json!({
+                                "project_id":project,
+                                "conversation_id":conversation,
+                                "task_id":task,
+                                "project_schema_revision":task_record.input.schema_revision,
+                                "image":{"image_id":input.image_id,"sha256":input.content_hash},
+                                "sample":{
+                                    "draft_id":sample.draft_id,
+                                    "draft_revision":sample.draft_revision,
+                                    "sample_test_id":sample.id
+                                },
+                                "candidate":{
+                                    "candidate_id":candidate.outcome.id,
+                                    "source_artifact_id":source_artifact_id
+                                },
+                                "annotation":{
+                                    "kind":value.get("kind").and_then(Value::as_str),
+                                    "label":candidate.outcome.label
+                                }
+                            }));
+                                Ok(json!({
+                                    "candidate_id":candidate.outcome.id,
+                                    "annotation_kind":value.get("kind").and_then(Value::as_str),
+                                    "label":candidate.outcome.label,
+                                    "source_artifact_id":artifact,
+                                    "feedback_available":artifact.is_some(),
+                                    "selection":selection
+                                }))
+                            })
+                            .collect::<Result<Vec<_>>>()?;
                     let result_revision = annotagent_image_tools::sha256(&serde_json::to_vec(
                         &json!({"input":input,"result":result}),
                     )?);
+                    for candidate in &mut candidates {
+                        if let Some(selection) =
+                            candidate.get_mut("selection").filter(|v| !v.is_null())
+                        {
+                            selection["result_revision"] = json!(result_revision);
+                        }
+                    }
                     Ok(json!({
                         "image_id":input.image_id,"image_sha256":input.content_hash,
                         "result_revision":result_revision,"candidates":candidates

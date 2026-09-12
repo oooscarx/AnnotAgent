@@ -216,6 +216,28 @@ fn canonical_visual_selection_preserves_per_candidate_artifact_lineage() {
             expected.source_artifact_id.0.to_string()
         );
         assert_eq!(actual["feedback_available"], true);
+        assert_eq!(actual["selection"]["project_id"], PROJECT);
+        assert_eq!(
+            actual["selection"]["conversation_id"],
+            fixture.conversation.to_string()
+        );
+        assert_eq!(actual["selection"]["task_id"], fixture.task.id.to_string());
+        assert_eq!(
+            actual["selection"]["project_schema_revision"],
+            fixture.task.schema_revision
+        );
+        assert_eq!(
+            actual["selection"]["image"]["sha256"],
+            projection["items"][0]["images"][0]["image_sha256"]
+        );
+        assert_eq!(
+            actual["selection"]["candidate"]["source_artifact_id"],
+            expected.source_artifact_id.0.to_string()
+        );
+        assert_eq!(
+            actual["selection"]["result_revision"],
+            projection["items"][0]["images"][0]["result_revision"]
+        );
     }
     assert_ne!(
         candidates[1]["source_artifact_id"],

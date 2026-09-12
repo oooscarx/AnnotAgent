@@ -218,6 +218,22 @@ mod tests {
             before["mainline"]["available_actions"][0]["state"],
             "authorized"
         );
+        assert_eq!(
+            before["mainline"]["revision"],
+            before["read_model_revision"]
+        );
+        assert_eq!(before["mainline"]["intake"]["missing_slots"], json!([]));
+        assert_eq!(
+            before["mainline"]["actions"][0]["scope_revision"],
+            before["read_model_revision"]
+        );
+        assert_eq!(before["mainline"]["actions"][0]["available"], true);
+        assert_eq!(
+            before["mainline"]["links"]["visual_selections"],
+            format!("{root}/visual-selections")
+        );
+        assert_eq!(before["mainline"]["messages"], json!([]));
+        assert_eq!(before["mainline"]["completion"]["status"], "incomplete");
         assert_eq!(before["mainline"]["completion"]["task_completed"], false);
         let command = uuid::Uuid::new_v4();
         let body = json!({
