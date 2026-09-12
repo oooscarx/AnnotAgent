@@ -5,7 +5,8 @@ export type DeliverySampleResult = {
   draft_id:string;draft_revision:number;sample_test_id:string;
   images:{
     image_id:string;image_sha256:string;result_revision:string;
-    source_artifacts:Record<string,string>;annotations:Annotation[];
+    candidates:{candidate_id:string;selection:SampleVisualSelection|null}[];
+    annotations:Annotation[];
   }[];
 };
 export type DeliveryFormalResult = {
@@ -44,16 +45,20 @@ const sampleAnnotationKind=(annotation:Annotation):SampleVisualSelection["annota
 export function sampleVisualSelection(result:DeliverySampleResult,imageId:string,annotation:Annotation):SampleVisualSelection {
   const image=result.images.find(item=>item.image_id===imageId);if(!image)throw new Error("样例图片不属于当前任务结果");
   if(!image.annotations.some(item=>item.id===annotation.id))throw new Error("样例对象不属于当前图片");
-  const sourceArtifactId=image.source_artifacts[annotation.id];if(!sourceArtifactId)throw new Error("样例候选缺少自己的来源 Artifact，不能创建可追溯对象引用");
-  return {
-    project_id:result.project_id,conversation_id:result.conversation_id,task_id:result.task_id,
-    project_schema_revision:result.project_schema_revision,
-    image:{image_id:imageId,sha256:image.image_sha256},
-    sample:{draft_id:result.draft_id,draft_revision:result.draft_revision,sample_test_id:result.sample_test_id},
-    candidate:{candidate_id:annotation.id,source_artifact_id:sourceArtifactId},
-    annotation:{kind:sampleAnnotationKind(annotation),...(annotation.label?{label:annotation.label}:{})},
-    result_revision:image.result_revision,
-  };
+  const candidate=image.candidates.find(item=>item.candidate_id===annotation.id);
+  const selection=candidate?.selection;
+  if(!selection)throw new Error("样例候选没有服务端签发的完整选择引用");
+  const expectedKind=sampleAnnotationKind(annotation);
+  const valid=
+    selection.project_id===result.project_id&&selection.conversation_id===result.conversation_id&&
+    selection.task_id===result.task_id&&selection.project_schema_revision===result.project_schema_revision&&
+    selection.image.image_id===image.image_id&&selection.image.sha256===image.image_sha256&&
+    selection.sample.draft_id===result.draft_id&&selection.sample.draft_revision===result.draft_revision&&
+    selection.sample.sample_test_id===result.sample_test_id&&selection.candidate.candidate_id===annotation.id&&
+    selection.candidate.source_artifact_id.length>0&&selection.annotation.kind===expectedKind&&
+    (selection.annotation.label??null)===(annotation.label??null)&&selection.result_revision===image.result_revision;
+  if(!valid)throw new Error("服务端选择引用与当前样例候选不一致");
+  return structuredClone(selection);
 }
 export function formalVisualSelection(result:DeliveryFormalResult,imageId:string,snapshot:{sha256:string;intent_revision:number;intent_sha256:string;review_revision:number|null},annotation?:Annotation):FormalReviewSelection {
   const image=result.images.find(item=>item.image_id===imageId);if(!image)throw new Error("此图片不属于本任务绑定的 Batch");if(annotation&&!image.child_run_id)throw new Error("没有 child Run 的图片不能引用正式对象");
