@@ -1,6 +1,19 @@
 import {test,expect} from "@playwright/test";
 import {readFileSync} from "node:fs";
 
+const REVIEW_DISCLOSURE="检查当前任务图片（样例与正式审核）";
+const openFormalReview=async(page:import("@playwright/test").Page)=>{
+  const intake=page.getByRole("region",{name:"训练数据交付信息",exact:true});
+  const summary=intake.locator("summary").filter({hasText:REVIEW_DISCLOSURE});
+  const disclosure=summary.locator("..");
+  await expect(summary).toHaveText(REVIEW_DISCLOSURE);
+  if(await disclosure.getAttribute("open")===null)await summary.click();
+  const review=intake.getByRole("region",{name:"当前任务图片结果",exact:true});
+  await expect(review).toBeVisible();
+  await expect(review.getByRole("tab",{name:"正式 Batch",exact:true})).toHaveAttribute("aria-selected","true");
+  return review;
+};
+
 test("delivery intake and formal review restore through real HttpAdapter without model or package writes",async({page,request},info)=>{
   test.skip(!process.env.DELIVERY_SCENE_MANIFEST,"Requires an explicitly seeded isolated delivery scene");
   const health=await request.get("/api/health");expect(health.headers()["x-annotagent-fixture"]).toBe("external-model-only");
@@ -15,21 +28,23 @@ test("delivery intake and formal review restore through real HttpAdapter without
   const writes:string[]=[];page.on("request",r=>{if(!["GET","HEAD"].includes(r.method()))writes.push(`${r.method()} ${new URL(r.url()).pathname}`);});
   await page.goto(`/projects/${encodeURIComponent(scene.project)}/work?task=${scene.task_id}`);
   await expect(page.getByRole("region",{name:"训练数据交付信息",exact:true})).toContainText("12 张图片");
-  await page.getByText("检查正式训练图片（整图审核）",{exact:true}).click();
-  const review=page.getByRole("region",{name:"训练图片整图审核",exact:true});
+  let review=await openFormalReview(page);
   await review.getByLabel("图片",{exact:true}).selectOption(image.image_id);
-  await review.getByLabel("正式标注来源",{exact:true}).selectOption(source);
+  await expect(review).toContainText(`child Run ${source.slice(0,8)}`);
+  await expect(review.getByLabel("正式标注来源",{exact:true})).toHaveCount(0);
   await expect(review).toContainText(`未解决对象 ${state.unresolved_objects}`);
   await review.locator("svg").scrollIntoViewIfNeeded();
   await page.screenshot({path:info.outputPath("delivery-formal-review-TEST.png")});
-  if(state.unresolved_objects)await expect(review.getByRole("button",{name:"确认整张图标注完整",exact:true})).toBeDisabled();
-  await expect(review.getByRole("button",{name:"确认整张图没有目标",exact:true})).toBeDisabled();
+  if(state.unresolved_objects)await expect(review.getByRole("button",{name:"确认整张图标注完整并继续",exact:true})).toBeDisabled();
+  await expect(review.getByRole("button",{name:"确认整张图没有目标并继续",exact:true})).toBeDisabled();
   await expect(review.locator("svg image")).toHaveAttribute("href",image.url);
   await page.reload();
-  await expect(review.getByLabel("正式标注来源",{exact:true})).toHaveValue(source);
+  review=await openFormalReview(page);
+  await expect(review).toContainText(`child Run ${source.slice(0,8)}`);
   await expect(review).toContainText(`未解决对象 ${state.unresolved_objects}`);
-  await page.getByRole("button",{name:"检查当前打包范围",exact:true}).click();
-  await expect(page.getByRole("region",{name:"训练数据包交付",exact:true})).toContainText(missing?`还有 ${missing} 张未完成当前整图确认`:"整图决定齐全");
+  const delivery=page.getByRole("region",{name:"训练数据包交付",exact:true});
+  await delivery.getByRole("button",{name:"刷新审核与打包状态",exact:true}).click();
+  await expect(delivery).toContainText(missing?`待处理 ${missing}`:"正式审核齐全");
   await expect(page.getByRole("link",{name:"下载数据集 ZIP",exact:true})).toHaveCount(0);
   expect(writes).toEqual([]);
   await page.screenshot({path:info.outputPath("delivery-unresolved-package-TEST.png")});
@@ -44,8 +59,7 @@ test("explicit TEST classroom review delivers a real ZIP through the conversatio
   const writes:string[]=[];
   page.on("request",r=>{if(!["GET","HEAD"].includes(r.method()))writes.push(new URL(r.url()).pathname);});
   await page.goto(`/projects/${scene.project}/work?task=${scene.task_id}`);
-  await page.getByText("检查正式训练图片（整图审核）",{exact:true}).click();
-  const review=page.getByRole("region",{name:"训练图片整图审核",exact:true});
+  const review=await openFormalReview(page);
   for(let i=0;i<scene.images.length;i++){
     const image=scene.images[i];
     await review.getByLabel("图片",{exact:true}).selectOption(image.image_id);
@@ -54,11 +68,12 @@ test("explicit TEST classroom review delivers a real ZIP through the conversatio
     if(state.confirmation_current)continue;
     if(!source){
       await review.getByLabel("检查备注／排除原因").fill("TEST explicit exclusion: formal request budget exhausted before this image; no completeness claim");
-      await review.getByRole("button",{name:"明确排除此图",exact:true}).click();
-      await expect(review).toContainText("此快照已有整图决定：excluded");
+      const saved=page.waitForResponse(r=>r.url().includes("/delivery-images")&&r.request().method()==="POST");
+      await review.getByRole("button",{name:"明确排除此图并继续",exact:true}).click();
+      expect((await saved).ok()).toBeTruthy();
       continue;
     }
-    await review.getByLabel("正式标注来源",{exact:true}).selectOption(source);
+    await expect(review).toContainText(`child Run ${source.slice(0,8)}`);
     await expect(review.locator("rect.aa-annotation-shape")).toHaveCount(state.snapshot.annotations.filter((a:{review_status:string})=>a.review_status!=="rejected").length);
     // Synthetic scene: image 10 is blank; its scripted false positives are explicitly rejected.
     const blank=i===10;
@@ -71,18 +86,20 @@ test("explicit TEST classroom review delivers a real ZIP through the conversatio
         unresolved--;await expect(review).toContainText(`未解决对象 ${unresolved}`);
       }
     }
-    await review.getByRole("button",{name:blank?"确认整张图没有目标":"确认整张图标注完整",exact:true}).click();
-    await expect(review).toContainText(`此快照已有整图决定：${blank?"negative_confirmed":"positive_complete"}`);
+    const saved=page.waitForResponse(r=>r.url().includes("/delivery-images")&&r.request().method()==="POST");
+    await review.getByRole("button",{name:blank?"确认整张图没有目标并继续":"确认整张图标注完整并继续",exact:true}).click();
+    expect((await saved).ok()).toBeTruthy();
   }
   const delivery=page.getByRole("region",{name:"训练数据包交付",exact:true});
-  await delivery.getByRole("button",{name:"检查当前打包范围",exact:true}).click();
-  await expect(delivery).toContainText("整图决定齐全");
-  await delivery.getByRole("button",{name:"确认并生成训练数据包",exact:true}).click();
+  await delivery.getByRole("button",{name:"刷新审核与打包状态",exact:true}).click();
+  await expect(delivery).toContainText("正式审核齐全");
+  await delivery.getByRole("button",{name:"允许审核齐全后自动打包",exact:true}).click();
   await expect(delivery.getByRole("link",{name:"下载数据集 ZIP",exact:true})).toBeVisible({timeout:30_000});
   await expect(delivery).toContainText("已纳入 11 张原图、30 个正式对象");
   await expect(delivery).toContainText("确认负样本 1 · 排除 1");
   const url=page.url();
-  const admissions=writes.filter(p=>p.endsWith("/delivery-packages"));expect(admissions).toHaveLength(1);
+  const consents=writes.filter(p=>p.endsWith("/delivery-package-consents"));expect(consents).toHaveLength(1);
+  expect(writes.filter(p=>p.endsWith("/delivery-packages"))).toHaveLength(0);
   const before=writes.length;
   await page.reload();
   await expect(delivery.getByRole("link",{name:"下载数据集 ZIP",exact:true})).toBeVisible();
@@ -109,20 +126,21 @@ test("formal object correction survives HTTP save and refresh without confirming
   const writes:string[]=[];
   page.on("request",r=>{if(!["GET","HEAD"].includes(r.method()))writes.push(new URL(r.url()).pathname);});
   await page.goto(`/projects/${scene.project}/work?task=${scene.task_id}&delivery_image=${image.image_id}&delivery_run=${source}`);
-  const review=page.getByRole("region",{name:"训练图片整图审核",exact:true});
+  const review=page.getByRole("region",{name:"当前任务图片结果",exact:true});
+  await expect(review.getByRole("tab",{name:"正式 Batch",exact:true})).toHaveAttribute("aria-selected","true");
   await expect(review).toContainText(`未解决对象 ${beforeState.unresolved_objects}`);
   await review.locator("rect.aa-annotation-shape").first().click();
   const move=review.getByRole("button",{name:/Move box with arrow keys|方向键移动/});
   await move.focus();await move.press("ArrowRight");
   await expect(review).toContainText("尚未保存");
-  await page.getByText("检查正式训练图片（整图审核）",{exact:true}).click();
-  await page.getByText("检查正式训练图片（整图审核）",{exact:true}).click();
+  await page.getByRole("region",{name:"训练数据交付信息",exact:true}).getByText(REVIEW_DISCLOSURE,{exact:true}).click();
+  await page.getByRole("region",{name:"训练数据交付信息",exact:true}).getByText(REVIEW_DISCLOSURE,{exact:true}).click();
   await expect(review).toContainText("尚未保存");
   const responsePromise=page.waitForResponse(r=>r.url().includes("/objects")&&r.request().method()==="POST");
   await review.getByRole("button",{name:"保存对象修改",exact:true}).click();
   const response=await responsePromise;expect(response.ok()).toBeTruthy();
   const revision=await response.json();
-  await expect(review).toContainText("对象决定已保存");
+  await expect(review).toContainText("对象修改已保存");
   const afterState=await (await request.get(`${endpoint}?source_run_id=${source}`)).json();
   await expect(review).toContainText(`未解决对象 ${afterState.unresolved_objects}`);
   await page.reload();
