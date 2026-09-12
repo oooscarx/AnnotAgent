@@ -18,9 +18,13 @@ Only Frontend 1 changes this branch and file.
 | Backend B4 | passive capability readiness and Task cost | `5a827d5` | integrated; no probe/install/write on read |
 | Frontend 1 F1-2 | formal Composer reference, exact processing preview, task model setup | `2401e27`, `361c402` | integrated; full Web suite/build passed |
 | Backend ML-020 | exact saved-Journey Sample continuation action | `28e62b2` (source `e705e63`) | integrated; Frontend exact read/approval wiring complete |
+| Task history UI | multi-turn/task trace and context archive controls | `44ef0c7`–`9437bc5` | integrated; real read-only history verified |
+| Backend UIAPI-018 | inert versioned context archive/import | `474cad6` (source `eaeae4c`) | integrated; targeted Rust tests pass, browser import blocked by ML-022 |
 
 The earlier context-history branch and backend archive delivery remain separate committed work. They are not silently copied into this branch and will be integrated only by fixed commit after compatibility verification.
 
 G3 structural delivery evidence is complete: an isolated real-HTTP TEST-provider run crossed formal review and explicit package authorization, produced a downloadable ZIP with SHA-256 `a2a0242282c3e2d112ba1b11009dcfe161e0a175631ac858c1606227adc6b89d`, and passed independent pairing/row/hash checks. Real Provider accuracy remains outside this engineering acceptance and has not been invoked.
 
-Current gate is ML-021: after the newly separated, explicit Sample approval, the server returns a running dispatch but does not reserve the saved Sample operation. Frontend keeps the action incomplete and never retries automatically. Task-history/context-archive commits remain isolated until this F1 slice is committed and compatibility-audited.
+Current journey gate is ML-021: after the newly separated, explicit Sample approval, the server returns a running dispatch but does not reserve the saved Sample operation. Frontend keeps the action incomplete and never retries automatically.
+
+Task-history/context-archive is now compatibility-audited and integrated. Real HTTP confirms complete task trace reads and refresh are passive. Archive export works, but browser round-trip import currently exposes ML-022: semantically equivalent `0.0` → `0` JSON serialization changes the server hash. Integrity is not bypassed; import remains visibly blocked pending the backend fix.

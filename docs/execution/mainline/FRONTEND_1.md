@@ -84,4 +84,10 @@ Backend ML-020 (`e705e63`, integrated `28e62b2`) now exposes an exact `test_pipe
 
 Actual HTTP exposed ML-021: the second POST returns `dispatch:running` but never reserves the Sample. The UI remains incomplete and does not retry a chargeable request. The existing Backend task has the exact trace and reproduction. Package Ready remains the only overall Task completion condition.
 
+### Task history and portable context
+
+Fixed frontend commits `d3b35ad` through `b77f8fe` and backend UIAPI-018 `eaeae4c` are integrated through `474cad6`. The project menu now opens one Agent task-history page with persisted multi-turn messages, model-call receipts, Builder/tool steps, Sample/processing/HumanRequest/queue groups and the complete read-only task snapshot. It explicitly describes observable evidence rather than hidden chain-of-thought.
+
+The same page downloads a versioned JSON context archive and supports previewed, explicit `archive_only` import. Imported state is untrusted, inert history: it does not create a live Task, restore grants or dispatch inference. Targeted Rust tests pass (7 storage + 2 server); focused Web tests pass (28). Real HTTP task-history refresh passed with zero writes, and invalid/oversized files were rejected with zero writes. Save → import is currently blocked by ML-022's cross-runtime numeric hash defect; the UI shows the real 409 and does not weaken integrity validation.
+
 No push, main merge, real workspace cleanup or unapproved external model call has occurred.

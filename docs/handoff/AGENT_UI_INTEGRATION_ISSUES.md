@@ -1,5 +1,13 @@
 # Agent UI integration — decisions and interface issues
 
+## ML-022 — context archive hash is not browser JSON round-trip stable (blocking import)
+
+Integration `474cad6`, isolated TEST workspace `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-26x7r9l9`. Export and task trace reads succeed, but a freshly downloaded archive sent through the standard browser `JSON.parse` / `JSON.stringify` path fails preview with 409 `archive_hash_mismatch`.
+
+The exported payload contains JSON numbers such as `0.0` and `1.0`. Rust's current canonical serializer hashes those floating representations, while browser JSON serialization writes their equivalent semantic values as `0` and `1`. The payload is otherwise unchanged. This means UIAPI-018's own Save → Load path cannot currently complete; frontend does not bypass the integrity check.
+
+Backend UUID `01a0855e-9c39-7c33-9f18-93e084d14816` received ML-022 with the retained trace and a request for cross-runtime numeric canonicalization plus browser-roundtrip regression. Task history viewing and JSON download remain usable; import is blocked until that fixed commit is integrated.
+
 ## ML-021 — exact Sample continuation remains `running` without reserving Sample (blocking)
 
 Integration `28e62b2` plus Frontend 1's exact-action wiring, isolated TEST task `cfd19b12-f4c3-4632-a39f-b5a7f040ef39`. The browser reads `test_pipeline_samples`, GETs the exact saved Journey and confirms its ordered images, model bindings, Sample ID, expiry and Draft scope. It then POSTs `{}` once to the server-provided `execution_url`; no new Journey, Builder or UUID is created.
