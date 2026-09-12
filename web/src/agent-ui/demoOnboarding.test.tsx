@@ -10,15 +10,15 @@ import {
 } from "./demoOnboardingService";
 
 const entry: DemoCatalogEntry = {
-  id: "tabletop-cup-bottle",
+  id: "object-detection-review",
   version: "1.0.0",
   catalog_digest: "digest",
-  title: "桌面杯子与瓶子",
-  description: "检查六张图片中的杯子和瓶子。",
+  title: "标注桌面物品",
+  description: "检查六张原创合成图片中的杯子和瓶子。",
   image_count: 6,
   labels: ["cup", "bottle"],
   delivery_format: "yolo_detection",
-  thumbnail_url: "/api/demo-packs/tabletop-cup-bottle/1.0.0/thumbnail/01",
+  thumbnail_url: "/api/demo-catalog/object-detection-review/versions/1.0.0/assets/thumbnail",
   thumbnail_alt: "桌面上的杯子和瓶子",
   license_summary: "原创合成示例，可随项目分发",
   modes: [
@@ -41,7 +41,7 @@ function memoryStorage(): Storage {
 
 it("renders a truthful preset primary action and a separate model setup path", () => {
   const html = renderToStaticMarkup(<DemoCard item={entry} busy={false} onStart={() => {}}/>);
-  expect(html).toContain("免配置体验（预置候选）");
+  expect(html).toContain("免配置体验：预置候选");
   expect(html).toContain("预置候选，无本次模型推理");
   expect(html).toContain("本次不调用模型，不产生模型 Token");
   expect(html).toContain("配置模型并试跑");
@@ -50,7 +50,7 @@ it("renders a truthful preset primary action and a separate model setup path", (
 
 it("shows no more than two server catalog entries", () => {
   const catalog = { contract_version: "demo-catalog-v1" as const, items: [entry, {...entry, id:"two"}, {...entry, id:"three"}] };
-  expect(visibleDemoEntries(catalog).map((item) => item.id)).toEqual(["tabletop-cup-bottle", "two"]);
+  expect(visibleDemoEntries(catalog).map((item) => item.id)).toEqual(["object-detection-review", "two"]);
 });
 
 it("reuses the exact pending command and changes it only for a changed explicit scope", () => {

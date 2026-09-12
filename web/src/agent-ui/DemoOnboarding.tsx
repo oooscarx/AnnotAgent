@@ -40,7 +40,7 @@ export function DemoCard({
   const primary = liveReady ? live : preset?.status === "ready" ? preset : live;
   const secondary = primary?.mode === "live_model" ? preset : live;
   const actionLabel = (mode: DemoModeAvailability) => mode.mode === "preset_candidates"
-    ? "免配置体验（预置候选）"
+    ? "免配置体验：预置候选"
     : mode.status === "setup_required" ? "配置模型并试跑" : "用我的模型试跑";
   return <article className="demo-card">
     <img src={item.thumbnail_url} alt={item.thumbnail_alt} />
