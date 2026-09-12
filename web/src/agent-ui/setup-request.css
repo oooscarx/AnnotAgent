@@ -33,17 +33,66 @@
   min-width: 0;
 }
 
-.ui-app .setup-requirements {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
-  gap: 12px;
-}
-
 .ui-app .setup-technical-details > :not(summary) {
   margin-top: 12px;
 }
 
-.ui-app .setup-requirements article,
+.ui-app .setup-current-blocker {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--aa-border);
+  border-radius: 10px;
+}
+
+.ui-app .setup-current-heading,
+.ui-app .setup-capability-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.ui-app .setup-current-heading p,
+.ui-app .setup-capability-heading p,
+.ui-app .setup-scope-summary p {
+  margin: 4px 0 0;
+  color: var(--aa-text-muted);
+}
+
+.ui-app .setup-current-heading > [data-state],
+.ui-app .setup-capability-heading > [data-state] {
+  flex: none;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.ui-app .setup-capability-list {
+  display: grid;
+  gap: 14px;
+}
+
+.ui-app .setup-capability-list > section {
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--aa-border);
+}
+
+.ui-app .setup-scope-summary {
+  padding-top: 12px;
+  border-top: 1px solid var(--aa-border);
+}
+
+.ui-app .setup-context-change {
+  padding: 12px 14px;
+  border-inline-start: 3px solid var(--aa-warning, currentColor);
+}
+
+.ui-app .setup-return-actions {
+  justify-content: flex-end;
+}
+
 .ui-app .setup-cost-note,
 .ui-app .setup-visual-boundary,
 .ui-app .setup-installer {
@@ -123,7 +172,9 @@
   .ui-app .setup-request > header,
   .ui-app .setup-candidate,
   .ui-app .setup-settings-return,
-  .ui-app .setup-alternative {
+  .ui-app .setup-alternative,
+  .ui-app .setup-current-heading,
+  .ui-app .setup-capability-heading {
     flex-direction: column;
   }
 }

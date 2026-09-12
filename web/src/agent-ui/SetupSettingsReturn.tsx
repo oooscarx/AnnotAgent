@@ -34,17 +34,13 @@ export function SetupSettingsReturn({ search = location.search }: { search?: str
   return (
     <aside className="setup-settings-return" aria-label="模型准备返回任务">
       <div>
-        <strong>正在为原任务准备模型</strong>
-        <p>
-          Task {context.task_id.slice(0, 8)}
-          {context.draft_id ? ` · Draft ${context.draft_id.slice(0, 8)}` : ""}。
-          {` ${context.role}`}。返回后重新检查版本、兼容能力和授权；不会自动继续收费操作。
-        </p>
-        {candidate && <p>当前选择的准备方案：{candidate}</p>}
+        <strong>完成这里的必要配置后返回原任务</strong>
+        <p>图片、需求和任务状态都已保留。返回时由服务器重新检查模型版本和原授权，不会重复创建任务。</p>
+        {candidate && <p>已从任务带入一个兼容候选；详细身份可在当前编辑区查看。</p>}
       </div>
       <div className="actions">
-        <a href={setupReturnPath(context, "cancelled")}>取消设置并返回</a>
-        <a className="primary" href={setupReturnPath(context, "configured")}>配置完成，返回检查</a>
+        <a href={setupReturnPath(context, "cancelled")}>取消并返回</a>
+        <a className="primary" href={setupReturnPath(context, "configured")}>保存完成，返回任务</a>
       </div>
     </aside>
   );
