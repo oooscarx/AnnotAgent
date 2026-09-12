@@ -227,6 +227,7 @@ export type PreparationSnapshot = {
     uncertain_candidate_ids: string[];
     alternatives: {
       id: string;
+      display_name: string;
       target: SetupTarget;
       state: PreparationState;
       setup_api_url: string;
@@ -767,6 +768,11 @@ export function createModelPreparationService(
           .filter((candidate) => context.compatible_model_ids.includes(candidate.id))
           .map((candidate) => ({
             id: candidate.id,
+            display_name:
+              profiles.models.find((model) => model.id === candidate.model_profile_id)?.display_name
+              ?? plugins.models.find((model) => model.selection_id === candidate.id)?.display_name
+              ?? instanceResult.model_profiles.find((model) => model.selection_id === candidate.id)?.display_name
+              ?? "兼容模型",
             target: candidateTarget(candidate, requirement),
             ...authoritativeCandidateState(candidate),
             setup_api_url: candidate.setup.api_url,
