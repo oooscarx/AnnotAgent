@@ -36,6 +36,8 @@ Read-only evidence from `127.0.0.1:8788` also confirms that the existing task re
 - A server-issued combined Builder + Sample action may resolve the still-unconfirmed label and output target in its visible proposal when the image snapshot is already frozen. Missing images still block approval, so the UI never grants an empty or inferred dataset scope.
 - The Http Adapter now consumes that action's exact task-owned `journey-preview` URL and server-frozen image/model/call scope. One explicit POST saves the approved Journey and lets the durable server worker continue; the browser no longer sends a second `/execution` relay for this path.
 - New-task uploads now retain only the stable image ID + content hash returned for that upload request and include that exact list in the persisted Send command. They never infer “latest images” from Project ordering; unknown Send retries keep the original list and reject scope changes.
+- Existing described Tasks now use the same exact upload identities through the delivery-intent CAS. The adapter preserves an existing saved label/target/split, persists the command before sending, replays the identical command only after another explicit upload action when the response was lost, and rebuilds only after the server returns `delivery_revision_conflict`.
+- Frontend 2's result-fit correction is integrated. The P0 result surface imports the domain canvas CSS, hides its dimension probe from layout and resets Fit only when the image identity changes; polling the same image keeps the user's zoom/pan.
 
 ### G0 verification
 
@@ -51,24 +53,26 @@ Read-only evidence from `127.0.0.1:8788` also confirms that the existing task re
 
 ### G1 real packaged HTTP evidence
 
-- Integration/backend source SHA: `7055bb9e367c2e98a9d4b45c2593678c21e277b0`.
-- Isolated external-model-only manifest: `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-6puer3ep/manifest.json`; service `127.0.0.1:8884`, scripted provider `127.0.0.1:8885`. The user service on `8788` was not restarted or mutated.
-- Permanent production-route test: `web/e2e/p0-autonomous-sample.spec.ts` — 1 passed in 8.5s against the built React application and real Rust HTTP/SQLite service. Its request explicitly asks for cup + bottle bounding boxes for an Ultralytics YOLO target, matching the deterministic provider's saved delivery semantics.
+- Current integration/backend source SHA: `2f4457f7b20d5e736f7e1d61af7f0c86a1bb1845` (includes Backend exact later-upload SHA `69d8ef1` and Frontend 2 Fit SHA `5dae4db`).
+- Current isolated external-model-only manifest: `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-verslz90/manifest.json`; service `127.0.0.1:8886`, scripted provider `127.0.0.1:8887`. The user service on `8788` was not restarted or mutated.
+- Permanent production-route test: `web/e2e/p0-autonomous-sample.spec.ts` — both tests passed (8.5s + 3.8s) against the built React application and real Rust HTTP/SQLite service. The main request explicitly asks for cup + bottle bounding boxes for an Ultralytics YOLO target, matching the deterministic provider's saved delivery semantics.
 - The browser uploaded 6 real demo-pack images. The exact 6 `{image_id, sha256}` receipts were frozen into Send; the server selected exactly 3 Sample inputs.
 - The browser made one `POST .../journey-consents` and zero `POST .../execution` calls. After the page closed, the durable worker completed Schema → Builder → Sample and created exactly 3 pending HumanRequests bound to the same task and Sample operation.
 - Reopening the exact task showed `检查样例结果 · 3 张` and `3 个结果需要人工判断`; reloading retained the same task/result without a mutation.
-- The first Builder transport deliberately waited four seconds. Consent admission returned in 12ms; the first passive status read was `dispatch=running` with `sample=null`; the original authorized Sample reached review after 4.45s. No second POST or replacement Sample was created.
+- The first Builder transport deliberately waited four seconds. Current seed consent admission returned in 13ms; the first passive status read was `dispatch=running` with `sample=null`; the original authorized Sample reached review after 4.73s. No second POST or replacement Sample was created.
 - After Sample completion, the sole server action is the read-only `review_sample_results` action with the exact Sample ID and three pending HumanRequest IDs. Formal processing is not offered before those decisions.
-- The continuous TEST browser recording and four current-application screenshots are under `web/test-results/p0-autonomous-sample-one-b-38fa8-o-three-real-Sample-reviews/` (`01-ready-to-start`, `02-bounded-approval`, `03-server-running`, `04-sample-review`, and `video.webm`).
+- A second production route sends the complete requirement before uploading anything, records the missing-image state, uploads six files into that same Task through one exact delivery-intent CAS, and reaches the same single combined action without Sample execution. It issues no Journey consent or `/execution` write before approval. The adapter unit regression also proves exact replay after a lost delivery response and reload.
+- The continuous TEST browser recording and six current-application screenshots are under `web/test-results/p0-autonomous-sample-one-b-38fa8-o-three-real-Sample-reviews/` (`01-ready-to-start` through `06-sample-review-mobile`, plus `video.webm`). Missing-information and recovered ready-state evidence plus a second recording are under `web/test-results/p0-autonomous-sample-descr-9cb76-k-and-exact-six-image-scope/`.
+- Visual inspection confirms the whole source image and all three terminal boxes are visible on initial desktop review after the Fit correction. The same real result is readable in system dark theme and at a 390×844 viewport. The 720-CSS-pixel layout-pressure check from Frontend 2 is not relabeled as native browser 200% zoom.
 - The TEST provider proves orchestration and recovery, not commercial-model accuracy. Formal processing, dataset review and package export remain separately authorized scopes.
 
 ### Acceptance status after the first G1 slice
 
 - A1: passed. One unavoidable bounded-scope decision; zero technical relay clicks after approval.
 - A2: delayed Builder path passed through real HTTP. Synchronous completion and duplicate-wakeup unit coverage are retained in Backend tests; the race-specific HTTP permutations remain to be recorded explicitly.
-- A3: complete upload-then-description input passes without repeated label/output forms. Description-before-later-upload and ambiguous `YOLO` wording are still open and are not claimed.
-- A5: passed at the contract boundary: three terminal candidates create three Sample-bound HumanRequests and automatically open the result area. Visual inspection found that the result canvas does not initially fit the whole image; Frontend 2 owns the pending fix.
-- A9 sample portion: ready, approval, running and review states have current-application screenshots and one continuous recording. Missing-information, delivered, mobile, dark-theme and native 200% evidence remain open; G1 is therefore not yet declared complete.
+- A3: complete upload-then-description and description-before-later-upload both preserve one Task and avoid repeated technical forms. The ambiguous `YOLO` wording case is still open and is not claimed.
+- A5: passed: three terminal candidates create three Sample-bound HumanRequests, automatically open the result area and initially fit the full image. Polling does not reset same-image zoom/pan.
+- A9 sample portion: missing information, ready, approval, running and review states have current-application screenshots/recordings; review also has dark-theme and 390×844 evidence. Delivered belongs to the later formal/package slice. Native browser 200% zoom remains unverified, and the A2 race/A3 ambiguous-language cases still prevent declaring G1 complete.
 
 ## Safety boundary
 

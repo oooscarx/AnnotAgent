@@ -138,6 +138,11 @@ export:
   await expect(result.getByRole("heading", { name: "检查样例结果 · 3 张", exact: true })).toBeVisible();
   await expect(reopened.getByRole("region", { name: "当前任务状态", exact: true })).toContainText("3 个结果需要人工判断");
   await reopened.screenshot({ path: testInfo.outputPath("04-sample-review.png"), fullPage: true, animations: "disabled" });
+  await reopened.emulateMedia({colorScheme:"dark"});
+  await reopened.screenshot({path:testInfo.outputPath("05-sample-review-dark.png"),fullPage:true,animations:"disabled"});
+  await reopened.setViewportSize({width:390,height:844});
+  await expect(reopened.getByRole("region",{name:"当前任务图片结果",exact:true})).toBeVisible();
+  await reopened.screenshot({path:testInfo.outputPath("06-sample-review-mobile.png"),fullPage:true,animations:"disabled"});
   await reopened.reload();
   await expect(reopened).toHaveURL(new RegExp(`task=${task}`));
   await expect(reopened.getByRole("region", { name: "当前任务图片结果", exact: true })).toBeVisible();
