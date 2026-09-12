@@ -230,10 +230,21 @@ export class HttpAdapter implements WorkspaceAdapter {
     },
   };
   readonly taskUsage: import("./TaskUsage").TaskUsageService = {
-    getTaskUsage: async(project,id,cursor,signal) => this.transport<import("./TaskUsage").TaskUsagePage>(
-      `${this.deliveryRoot(project,id)}/model-usage?limit=50${cursor == null ? "" : `&cursor=${esc(cursor)}`}`,
-      {signal},
-    ),
+    getTaskUsage: async(project,id,cursor,signal) => {
+      const task=this.task(id);
+      if(task.project!==project||!task.conversationId)throw new Error("任务不属于此项目");
+      const owner=this.projects.get(project);
+      if(!owner)throw new Error("项目身份尚未读取");
+      const value=await this.transport<import("./TaskUsage").TaskUsagePage>(
+        `${this.deliveryRoot(project,id)}/model-usage?limit=50${cursor == null ? "" : `&cursor=${esc(cursor)}`}`,
+        {signal},
+      );
+      if(value.scope.project_id!==owner.project_owner_id||value.scope.conversation_id!==task.conversationId||value.scope.task_id!==id)
+        throw new Error("用量记录不属于当前 Project、Conversation 与 Task");
+      // Storage is keyed by the immutable Project owner UUID. The UI service is
+      // route-scoped, so expose the already-validated route ID to its consumer.
+      return {...value,scope:{...value.scope,project_id:project}};
+    },
     subscribeTaskUsage: (_project,_id,onChange) => {
       const timer=setInterval(onChange,2000);
       return()=>clearInterval(timer);
