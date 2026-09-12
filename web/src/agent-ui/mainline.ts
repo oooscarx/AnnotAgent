@@ -1,4 +1,5 @@
-import type {ConversationMessageInput} from "../types";
+import type {Annotation,ConversationMessageInput} from "../types";
+import type {DeliverySampleResult} from "./deliveryVisualSelection";
 
 export type IntakeSlot="dataset_scope"|"label_spec"|"training_target";
 export type MainlineMessageKind="assistant_reply"|"clarification"|"operation"|"system_receipt";
@@ -35,6 +36,12 @@ export type CapabilitySetupRequest={
   role:string;required_capabilities:string[];compatible_model_ids:string[];
   status:"required"|"ready"|"cancelled"|"stale";return_path:string;
 };
+export type CanonicalVisualSelectionItem={
+  project_id:string;conversation_id:string;task_id:string;project_schema_revision:string;
+  draft_id:string;draft_revision:number;sample_test_id:string;sample_status:string;operation_status:string;result_available:boolean;
+  images:{image_id:string;image_sha256:string;result_revision:string;candidates:{candidate_id:string;annotation_kind:string|null;label:string;source_artifact_id:string|null;feedback_available:boolean}[]}[];
+};
+export type CanonicalVisualSelectionPage={project_id:string;conversation_id:string;task_id:string;items:CanonicalVisualSelectionItem[];next_cursor:string|null};
 export type MainlineDomainSeams={
   review?:{open:(workItemId:string)=>void;currentSelection:()=>VisualSelection|undefined};
   package?:{open:(packageId:string)=>void};
@@ -55,3 +62,22 @@ export function selectedMessage(id:string,text:string,value:VisualSelection):Con
   return {id,text,image:{image_id:frozen.image.image_id,sha256:frozen.image.sha256},reference:{scope:"sample_candidate",task_id:frozen.task_id,project_schema_revision:frozen.project_schema_revision,draft_id:frozen.sample.draft_id,draft_revision:frozen.sample.draft_revision,sample_test_id:frozen.sample.sample_test_id,candidate_id:frozen.candidate.candidate_id,source_artifact_id:frozen.candidate.source_artifact_id}};
 }
 export function taskIsComplete(view:MainlineTaskView){return view.completion.task_completed&&view.completion.package_ready&&view.package.jobs.some(job=>job.phase==="ready");}
+
+/** Geometry remains in Sample Test results; all reference identities come from this canonical read model. */
+export function deliverySampleResultFromCanonical(
+  item:CanonicalVisualSelectionItem,
+  annotationsByImage:Record<string,Annotation[]>,
+):DeliverySampleResult{
+  const supported=new Set(["bounding_box","classification","semantic_mask","instance_mask"]);
+  const images=item.images.map(image=>{
+    const seen=new Set<string>();
+    const source_artifacts:Record<string,string>={};
+    for(const candidate of image.candidates){
+      if(seen.has(candidate.candidate_id))throw new Error("Canonical SampleCandidate identity is duplicated; no reference was created");
+      seen.add(candidate.candidate_id);
+      if(candidate.feedback_available&&candidate.source_artifact_id&&candidate.annotation_kind&&supported.has(candidate.annotation_kind))source_artifacts[candidate.candidate_id]=candidate.source_artifact_id;
+    }
+    return {image_id:image.image_id,image_sha256:image.image_sha256,result_revision:image.result_revision,source_artifacts,annotations:annotationsByImage[image.image_id]||[]};
+  });
+  return {project_id:item.project_id,conversation_id:item.conversation_id,task_id:item.task_id,project_schema_revision:item.project_schema_revision,draft_id:item.draft_id,draft_revision:item.draft_revision,sample_test_id:item.sample_test_id,images};
+}

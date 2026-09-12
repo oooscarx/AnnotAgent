@@ -16,7 +16,7 @@ import {stopTargetMatches} from "../conversation-control";
 import type { WorkspaceAdapter, Snapshot, Task, Command, Settings, ImageId, Box, Phase, Action } from "./adapter";
 import {readPendingDelivery,rememberPendingDelivery,clearPendingDelivery} from "./pendingDelivery";
 import {projectCallMessages} from "./messageProjection";
-import {assertVisualSelection,selectedMessage,type MainlineAdvanceReceipt,type MainlineTaskView,type VisualSelection} from "./mainline";
+import {assertVisualSelection,deliverySampleResultFromCanonical,selectedMessage,type CanonicalVisualSelectionItem,type CanonicalVisualSelectionPage,type MainlineAdvanceReceipt,type MainlineTaskView,type VisualSelection} from "./mainline";
 
 type Page<T> = { items: T[]; next_cursor: string | number | null };
 type Project = { project_id: string; project_owner_id: string; title: string; conversation_id: string | null };
@@ -273,6 +273,23 @@ export class HttpAdapter implements WorkspaceAdapter {
     } while (cursor !== null && cursor !== undefined);
     return items;
   }
+  private async canonicalSampleSelection(task:Task,sampleTestId:string,signal?:AbortSignal):Promise<CanonicalVisualSelectionItem>{
+    let cursor:string|null=null;
+    const seen=new Set<string>();
+    do{
+      const page:CanonicalVisualSelectionPage=await this.transport<CanonicalVisualSelectionPage>(`${this.taskRoot(task)}/visual-selections?cursor=${esc(cursor||"0")}&limit=20`,{signal});
+      if(page.project_id!==task.project||page.conversation_id!==task.conversationId||page.task_id!==task.id)throw new Error("Canonical candidate list does not belong to the current task");
+      const found=page.items.find(item=>item.sample_test_id===sampleTestId);
+      if(found){
+        if(found.project_id!==task.project||found.conversation_id!==task.conversationId||found.task_id!==task.id||!found.result_available)throw new Error("Canonical Sample result identity is incomplete");
+        return found;
+      }
+      cursor=page.next_cursor;
+      if(cursor&&seen.has(cursor))throw new Error("Canonical candidate pagination did not advance");
+      if(cursor)seen.add(cursor);
+    }while(cursor);
+    throw new Error("Current Sample Test is missing from the canonical candidate list");
+  }
   private root(project: string) { const p = this.projects.get(project); if (!p) throw new Error("项目不存在"); return `/api/projects/${esc(project)}`; }
   private conversation(project: string) { const p = this.projects.get(project); if (!p?.conversation_id) throw new Error("项目尚无会话"); return `${this.root(project)}/conversations/${esc(p.conversation_id)}`; }
   private taskRoot(task: Task) { return `${this.conversation(task.project)}/tasks/${esc(task.id)}`; }
@@ -375,7 +392,9 @@ export class HttpAdapter implements WorkspaceAdapter {
         const value=await this.transport<{sample_test:WorkflowSampleTestRecord;annotation_schema?:{task:{kind:string;labels:string[]}}}>(`/api/workflow-drafts/${esc(draftId)}/sample-test?test_id=${esc(sampleId)}`,{signal:ctrl.signal});
         const record=value.sample_test;
         if(!record || record.id!==sampleId || record.draft_id!==draftId || record.project_id!==project) throw new Error("样例不属于当前项目和任务");
-        const boxesByImage:Record<ImageId,Box[]>={}, imageResults:NonNullable<Task["imageResults"]>={}, sampleImages:import("./deliveryVisualSelection").DeliverySampleResult["images"]=[];
+        const canonical=await this.canonicalSampleSelection(task,sampleId,ctrl.signal);
+        if(canonical.draft_id!==draftId||canonical.draft_revision!==record.draft_revision)throw new Error("Canonical candidate Draft does not match the saved Sample Test");
+        const boxesByImage:Record<ImageId,Box[]>={}, imageResults:NonNullable<Task["imageResults"]>={}, annotationsByImage:Record<string,import("../types").Annotation[]>={};
         let requestedLabel="", requestedKind="", feedbackVersion="";
         for(const [index,input] of record.inputs.entries()) {
           const image=images.images.find(i=>i.image_id===input.image_id), asset=artifacts.find(a=>a.id===input.image_id);
@@ -387,9 +406,7 @@ export class HttpAdapter implements WorkspaceAdapter {
           const original=terminalSampleAnnotations(sample,input.image_id,sampleId);
           const overlay=sampleFeedbackOverlay(original,feedback.revisions);
           const annotations=overlay.annotations;result.excludedCandidates![input.image_id]=overlay.excluded;
-          const projected=[...(sample.projection?.final_candidates||[]),...(sample.projection?.review_candidates||[]).map(item=>item.candidate)];
-          const sourceArtifacts=Object.fromEntries(projected.map(candidate=>[candidate.outcome.id,candidate.source_artifact_id]));
-          sampleImages.push({image_id:input.image_id,image_sha256:input.content_hash,result_revision:`${sampleId}:${input.image_id}:${feedback.revisions.at(-1)?.sequence||0}`,source_artifacts:sourceArtifacts,annotations});
+          annotationsByImage[input.image_id]=annotations;
           const dims=await this.measure(asset.src);asset.width=dims.width;asset.height=dims.height;
           boxesByImage[input.image_id]=annotations.flatMap(a=>a.value.kind==="bounding_box"?[{id:a.id,label:a.label || "",x:a.value.rect[0]*dims.width,y:a.value.rect[1]*dims.height,w:a.value.rect[2]*dims.width,h:a.value.rect[3]*dims.height}]:[]);
           imageResults[input.image_id]={labels:annotations.flatMap(a=>a.value.kind==="classification"?a.value.labels:[]),risks:sample.projection?.review_candidates.map(r=>r.explanation.summary) || (sample.projection?[]:["旧样例没有终端投影，未显示中间框"])};
@@ -402,7 +419,7 @@ export class HttpAdapter implements WorkspaceAdapter {
         }
         result.boxesByImage=boxesByImage;result.imageResults=imageResults;result.resultRevision=`${sampleId}:${feedbackVersion}`;
         result.sample={id:sampleId,draft:draftId,revision:record.draft_revision};
-        if(task.conversationId)result.sampleResult={project_id:project,conversation_id:task.conversationId,task_id:id,project_schema_revision:current.revision,draft_id:draftId,draft_revision:record.draft_revision,sample_test_id:sampleId,images:sampleImages};
+        result.sampleResult=deliverySampleResultFromCanonical(canonical,annotationsByImage);
         if(human) result.human={id:human.input.id,image:human.input.image_id,kind:requestedKind || "unsupported",labels:value.annotation_schema?.task.labels || (requestedLabel?[requestedLabel]:[]),label:requestedLabel,candidate:human.input.outcome_id || ""};
       }
       const persistedStop = this.stored<{id:string}|null>(`stop.${id}`, null) || [...thread].reverse().find(t=>t.message.input.reference?.scope==="stop_request");
