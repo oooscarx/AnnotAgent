@@ -8,7 +8,7 @@ export type MainlineMessage={
   text:string; created_at:string; source:{kind:string;id:string};
 };
 export type MainlineStep={id:string;kind:string;title:string;status:"blocked"|"ready"|"awaiting_approval"|"running"|"waiting_for_human"|"completed"|"failed"|"outcome_unknown";detail?:string};
-export type MainlineAction={id:string;state:"authorized"|"available"|"requires_confirmation"|"blocked";method:"GET"|"POST";url:string;execution_method?:"POST";execution_url?:string;requires_confirmation:boolean;reason:string|null;scope?:unknown};
+export type MainlineAction={id:string;state:"authorized"|"available"|"requires_confirmation"|"blocked";method:"GET"|"POST";url:string;execution_method?:"POST";execution_url?:string;requires_confirmation:boolean;reason:string|null;scope?:unknown;failure?:{stage?:string;category?:string;message?:string}|null};
 export type MainlinePublicAction={id:string;kind:string;available:boolean;reason:string;requires_approval:boolean;scope_revision:string;method:"GET"|"POST";url:string};
 export type MainlineTaskView={
   contract_version:"mainline-task-v1";project_id:string;project_owner_id:string;conversation_id:string;task_id:string;read_model_revision:string;

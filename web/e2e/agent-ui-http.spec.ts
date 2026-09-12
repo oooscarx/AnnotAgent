@@ -72,7 +72,7 @@ test("a: complete delivery intake advances only the server-authorized local Sche
   const workspace=await(await request.get(`${root}/tasks/${task}/workspace`)).json();
   expect(workspace.mainline.schema).toBeTruthy();
   expect(workspace.mainline.available_actions).toContainEqual(expect.objectContaining({id:"build_and_test_pipeline",state:"requires_confirmation"}));
-  await expect(page.getByRole("button",{name:"构建方案…",exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"生成方案并测试样例…",exact:true})).toBeVisible();
   await page.reload();expect(advances).toHaveLength(1);
   await testInfo.attach("authorized-local-advance",{body:JSON.stringify({task,read_model_revision:workspace.mainline.read_model_revision,action:workspace.mainline.available_actions[0]},null,2),contentType:"application/json"});
 });
@@ -142,7 +142,7 @@ test("e: current HumanRequest reads final classification and saves exact sandbox
   await expect.poll(async()=>{const v=await(await request.get(`/api/workflow-sample-tests/${prior.input.sample_test_id}/images/${prior.input.image_id}/feedback`)).json();return v.revisions.at(-1)?.corrected_label;}).toBe("室外");
   await page.reload();await expect(page.getByText("分类结果：室外",{exact:true})).toBeVisible();
 });
-test("c: a separately approved Sample Journey produces saved terminal results",async({page,request})=>{
+test("c: one exact Journey approval builds the Plan and produces saved Sample results",async({page,request})=>{
   const {p,root}=await identity(request);
   await page.goto(`/projects/${p.project_id}/work?task=${encodeURIComponent(`new:${p.project_id}`)}`);
   await page.getByRole("textbox",{name:"给 AnnotAgent 的需求"}).fill("按室内和室外给图片分类 TEST UI sample");
@@ -155,20 +155,16 @@ test("c: a separately approved Sample Journey produces saved terminal results",a
   await page.getByLabel("训练什么任务？",{exact:true}).selectOption("ultralytics_yolo_detection");
   await page.getByRole("button",{name:"保存交付信息",exact:true}).click();
   await page.getByRole("button",{name:"确认目标并准备方案",exact:true}).click();
-  await page.getByRole("button",{name:"构建方案…",exact:true}).click();
+  await page.getByRole("button",{name:"生成方案并测试样例…",exact:true}).click();
   await expect(page.locator(".plan-block")).toContainText("不写正式标注");
-  await page.getByRole("button",{name:"查看并确认授权"}).click();
-  await page.getByRole("button",{name:"接受未知费用并执行此范围"}).click();
-  await expect(page.getByRole("button",{name:"测试当前方案样例…",exact:true})).toBeVisible({timeout:30_000});
-  await page.getByRole("button",{name:"测试当前方案样例…",exact:true}).click();
-  await expect(page.locator(".plan-block").filter({hasText:"测试当前方案样例"})).toContainText("不重建、不发布、不批量处理");
   await page.getByRole("button",{name:"查看并确认授权"}).click();
   await page.getByRole("button",{name:"接受未知费用并执行此范围"}).click();
   await expect.poll(async()=>{const ws=await(await request.get(`${root}/tasks/${task}/workspace`)).json();return ws.sample_operations[0]?.status;},{timeout:30_000}).toBe("succeeded");
   await page.reload();await page.getByRole("button",{name:"打开数据",exact:true}).click();
-  await expect(page.getByText(/分类结果：/).first()).toBeVisible();
+  await page.getByText("标注列表与精确编辑 · 1 个",{exact:true}).click();
+  await expect(page.getByRole("button",{name:"cup",exact:true})).toBeVisible();
   // The product's one confirmation still crosses real publication/start boundaries.
-  await page.getByRole("button",{name:"确认方案并开始处理…",exact:true}).click();
+  await page.getByRole("button",{name:"确认范围并开始全量处理…",exact:true}).click();
   await expect(page.locator(".plan-block").filter({hasText:"确认方案并开始处理"})).toContainText("发布不可变版本");
   await page.getByRole("button",{name:"查看并确认授权"}).click();
   const starts:string[]=[];page.on("request",r=>{if(r.method()==="POST"&&r.url().endsWith("/processing-operations"))starts.push(r.url());});
