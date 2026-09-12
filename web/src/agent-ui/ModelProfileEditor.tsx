@@ -40,7 +40,7 @@ const prices = [
 export type ModelRuntimeOptions = {
   model_profile_id: string;
   model_profile_revision: number;
-  status: "verified" | "unknown";
+  status: "declared" | "verified" | "unknown";
   supported_reasoning_modes: string[];
   source: string;
   maximum_output_tokens?: number | null;
@@ -162,10 +162,11 @@ export function validateModelEditor(
   const reasoningMode = value.generation_defaults.reasoning_mode;
   if (
     reasoningMode &&
-    runtimeOptions?.status === "verified" &&
+    runtimeOptions &&
+    runtimeOptions.status !== "unknown" &&
     !runtimeOptions.supported_reasoning_modes.includes(String(reasoningMode))
   )
-    throw new Error("所选思考模式不在 Provider 已验证支持的模式中。");
+    throw new Error("所选思考模式不在当前 revision 的可选模式清单中。");
 
   return {
     ...value,
@@ -206,10 +207,10 @@ export function ModelProfileEditor({
     items.includes(item) ? items.filter((candidate) => candidate !== item) : [...items, item];
   const reasoningMode = String(value.generation_defaults.reasoning_mode ?? "");
   const currentRuntimeOptions = runtimeOptionsForModel(model, runtimeOptions);
-  const verifiedModes = currentRuntimeOptions?.status === "verified"
+  const availableModes = currentRuntimeOptions && currentRuntimeOptions.status !== "unknown"
     ? currentRuntimeOptions.supported_reasoning_modes
     : [];
-  const unsupportedSavedMode = reasoningMode && !verifiedModes.includes(reasoningMode);
+  const unsupportedSavedMode = reasoningMode && !availableModes.includes(reasoningMode);
 
   return (
     <form
@@ -261,17 +262,19 @@ export function ModelProfileEditor({
         <label>
           思考模式
           <select
-            disabled={busy || currentRuntimeOptions?.status !== "verified" || verifiedModes.length === 0}
+            disabled={busy || currentRuntimeOptions?.status === "unknown" || availableModes.length === 0}
             value={reasoningMode}
             onChange={(event) => setValue({ ...value, generation_defaults: { ...value.generation_defaults, reasoning_mode: event.target.value || undefined } })}
           >
             <option value="">使用 Provider 默认</option>
             {unsupportedSavedMode && <option value={reasoningMode}>当前保存值（未在已验证清单）</option>}
-            {verifiedModes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}
+            {availableModes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}
           </select>
         </label>
         {currentRuntimeOptions?.status === "verified"
-          ? <p>Provider 已报告：{verifiedModes.length ? verifiedModes.join("、") : "不提供可选思考模式"} · 来源 {currentRuntimeOptions.source}</p>
+          ? <p>已由实际测试回执确认：{availableModes.length ? availableModes.join("、") : "不提供可选思考模式"} · 来源 {currentRuntimeOptions.source}</p>
+          : currentRuntimeOptions?.status === "declared"
+            ? <p>Model Profile 已配置：{availableModes.join("、")}。保存后仍需显式测试请求确认 Provider 实际接受。</p>
           : <p>实际支持的思考模式尚未验证，因此不能凭 <code>reasoning_controls</code> 猜测选项；现有值会保持不变。</p>}
       </fieldset>
 
