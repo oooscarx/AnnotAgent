@@ -709,6 +709,8 @@ impl SqliteStore {
             transaction.execute_batch(include_str!("../../../migrations/0040_conversation_journey_consents.sql"))?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(40,'conversation_journey_consents',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute_batch(include_str!("../../../migrations/0041_conversation_journey_dispatch.sql"))?;
+            crate::conversation_journey::migrate_dispatch_queue(&transaction)?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(70,'conversation_journey_queue',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute_batch(include_str!("../../../migrations/0042_conversation_journey_schema_resolution.sql"))?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(42,'conversation_journey_schema_resolution',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute_batch(include_str!("../../../migrations/0043_conversation_journey_answer_continuations.sql"))?;
