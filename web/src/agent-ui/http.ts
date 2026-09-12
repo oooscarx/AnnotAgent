@@ -204,6 +204,16 @@ export class HttpAdapter implements WorkspaceAdapter {
       return {id:result.id,revision:result.revision};
     },
   };
+  readonly taskUsage: import("./TaskUsage").TaskUsageService = {
+    getTaskUsage: async(project,id,cursor,signal) => this.transport<import("./TaskUsage").TaskUsagePage>(
+      `${this.deliveryRoot(project,id)}/model-usage?limit=50${cursor?`&cursor=${esc(cursor)}`:""}`,
+      {signal},
+    ),
+    subscribeTaskUsage: (_project,_id,onChange) => {
+      const timer=setInterval(onChange,2000);
+      return()=>clearInterval(timer);
+    },
+  };
   readonly kind = "http" as const;
   private rememberLabelNames(project:string,id:string,view:import("./DeliveryIntake").IntakeView) {
     const revision=view.saved?.revision||0;

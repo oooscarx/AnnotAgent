@@ -90,6 +90,19 @@ it("formal delivery reads never dispatch and commands retain frozen scope across
   await expect(adapter.delivery.startPackage("TEST-alpha","t1",input)).rejects.toThrow("stale whole-image snapshot");
   await expect(adapter.delivery.confirmImage("TEST-alpha","t1",confirmation)).rejects.toThrow("stale whole-image snapshot");
 });
+it("reads only task-owned physical usage attempts and preserves the server Decimal strings",async()=>{
+  const page={scope:{project_id:"TEST-alpha",conversation_id:"conversation-a",task_id:"t1"},state:"complete" as const,summary:{attempt_count:1,known_cost:"0.007",currency:"USD",input_tokens:1500,cached_input_tokens:0,output_tokens:500,unknown_attempt_count:0},attempts:{items:[],next_cursor:"next/attempt"}};
+  const second={...page,attempts:{items:[],next_cursor:null}};
+  const reads=mockTransport({
+    [`${root}/t1/model-usage?limit=50`]:page,
+    [`${root}/t1/model-usage?limit=50&cursor=next%2Fattempt`]:second,
+  });
+  const adapter=new HttpAdapter(reads.transport,memoryStorage());await adapter.refresh();await adapter.loadTask("TEST-alpha","t1");reads.paths.length=0;
+  expect(await adapter.taskUsage.getTaskUsage("TEST-alpha","t1")).toEqual(page);
+  expect(await adapter.taskUsage.getTaskUsage("TEST-alpha","t1","next/attempt")).toEqual(second);
+  expect(reads.paths).toEqual([`${root}/t1/model-usage?limit=50`,`${root}/t1/model-usage?limit=50&cursor=next%2Fattempt`]);
+  await expect(adapter.taskUsage.getTaskUsage("OTHER","t1")).rejects.toThrow("任务不属于此项目");
+});
 it("adapts exact task formal review and package consent reads without starting work",async()=>{
   const formal={project_id:"TEST-alpha",task_id:"t1",processing_operation_id:"process",batch_id:"batch",workflow_version:"7",status:"partial",images:[{image_id:"image-uuid",child_run_id:"run",run_status:"completed_with_review",status:"awaiting_review",error:"3 Artifact(s) require human review"},{image_id:"other",child_run_id:null,run_status:"failed",status:"failed",error:"TEST child failed"}]};
   const reference={scope:"formal_annotation",task_id:"t1",project_schema_revision:"schema-1",intent_revision:3,intent_sha256:"frozen-delivery",processing_operation_id:"process",batch_id:"batch",source_run_id:"run",annotation_id:"annotation",annotation_revision_id:"annotation-revision",expected_snapshot_sha256:"snapshot"};
