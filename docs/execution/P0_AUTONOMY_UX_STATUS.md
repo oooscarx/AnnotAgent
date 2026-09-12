@@ -78,7 +78,36 @@ Read-only evidence from `127.0.0.1:8788` also confirms that the existing task re
 - A5: passed: three terminal candidates create three Sample-bound HumanRequests, automatically open the result area and initially fit the full image. Polling does not reset same-image zoom/pan.
 - A9 sample portion: missing information, ready, approval, running, clarification and review states have current-application screenshots/recordings; review also has dark-theme and 390×844 evidence. Delivered belongs to the later formal/package slice. Native browser 200% zoom remains unverified and is not claimed.
 
-G1 is complete under the isolated TEST-provider boundary. This proves orchestration, persistence, UI scope and review hand-off; it does not prove commercial-model accuracy. G2 remains blocked until the server rejects direct formal-processing preview/confirmation while any exact Sample HumanRequest is still pending, then the formal review and real ZIP path must be exercised separately.
+G1 is complete under the isolated TEST-provider boundary. This proves orchestration, persistence, UI scope and review hand-off; it does not prove commercial-model accuracy.
+
+## G2 — review-gated formal processing and delivery
+
+- Integrated Backend review gating as local commit `5ee188f` (source `7831ecf641c5a8320fee852239e7e206db97181b`) and restart-safe package delivery as local commit `c29abff` (source `6e8f336f2e9e4d6ddf7c39650d6f79d4a50f0d05`). Frontend completion is `7b6d405`.
+- Current isolated manifest: `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-6r5kxfpa/manifest.json`; backend SHA `c29abff23b2160511749954e8491624584deb51c`; application `127.0.0.1:8898`; scripted provider `127.0.0.1:8899`. It uses an isolated TEST database and does not touch `8788` or the real workspace.
+- Before all three exact Sample HumanRequests were applied, both passive formal preview and a deliberately malformed direct confirmation returned structured `409 sample_reviews_pending`. The processing-operation list remained empty: no publication, Batch or provider call was admitted.
+- The Sample canvas now offers both “这个样例结果正确” and the existing correction path. A positive answer saves the exact server-issued Sample candidate reference with `reason=correct`; it remains Sandbox feedback and never writes a formal annotation.
+- After all three answers, the passive preview returned `sample_review.ready=true` with the exact applied request IDs. One formal processing confirmation created one Batch for the frozen six-image scope. Refresh did not create another processing operation.
+- The production-route browser test then accepted 18 task-owned formal objects and saved six explicit whole-image completeness receipts. Only then did the server expose the single `authorize_training_package` action. Persistent Sample lineage no longer overrides that newer server-owned action in the UI selector.
+- One package consent let the server create one package job. The frontend did not POST directly to `/delivery-packages`; it polled the existing server job and downloaded a real ZIP. Reload retained the same download without another mutation. The downloaded test artifact SHA-256 is `56d20aff3e582c4e650bce90c1ef8dd525811f48a57ff70e13a64ba637b50069`.
+- Current application evidence is in `web/test-results/p0-autonomous-sample-one-b-38fa8-o-three-real-Sample-reviews/`: screenshots `01-ready-to-start.png` through `09-package-ready.png`, plus `p0-autonomous-delivery-TEST.zip`. These are TEST-provider evidence, not commercial-model output or a claim of model accuracy.
+
+### G2 verification
+
+- `npm run typecheck` — passed.
+- `npm test` — 119 files / 428 tests passed.
+- `npm run build` — passed; 143 modules transformed.
+- `AGENT_UI_TEST_URL=http://127.0.0.1:8898 AGENT_UI_TEST_MANIFEST=... npx playwright test --config playwright.integration.config.ts p0-autonomous-sample.spec.ts` — 3/3 passed. The complete Sample → formal processing → formal review → ZIP case completed in 25.6s.
+- `cargo fmt --all --check` — passed.
+- `cargo test -p annotagent-export -p annotagent-storage -p annotagent-application -p annotagent-server --lib` — Export 2/2; Storage 202/202; Application 167 passed / 1 ignored; Server 79 passed / 2 ignored.
+- `cargo clippy -p annotagent-export -p annotagent-storage -p annotagent-application -p annotagent-server --all-targets --all-features -- -D warnings` — passed.
+
+### Acceptance status after G2
+
+- A6: passed. Formal processing is impossible until every exact Sample decision is applied; no UI hiding is used as the gate.
+- A7: passed. Exactly one processing operation covers the six frozen images, and reopening uses the same receipt.
+- A8: passed under TEST. Six formal image decisions lead to one server-owned package authorization, one restart-safe package job and a real downloadable ZIP.
+- A9: current-application evidence now includes ready, approval, running, Sample review, Sample-confirmed, formal review and package-ready states. Dark theme and 390×844 are covered at Sample review. Native browser 200% remains unverified and is not claimed.
+- Commercial-provider accuracy and real-person novice usability remain unverified. The deterministic external TEST provider proves state progression, ownership, persistence and delivery semantics only.
 
 ## Safety boundary
 
