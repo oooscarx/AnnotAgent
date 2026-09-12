@@ -19,12 +19,15 @@ Only Frontend 1 changes this branch and file.
 | Frontend 1 F1-2 | formal Composer reference, exact processing preview, task model setup | `2401e27`, `361c402` | integrated; full Web suite/build passed |
 | Backend ML-020 | exact saved-Journey Sample continuation action | `28e62b2` (source `e705e63`) | integrated; Frontend exact read/approval wiring complete |
 | Task history UI | multi-turn/task trace and context archive controls | `44ef0c7`–`9437bc5` | integrated; real read-only history verified |
-| Backend UIAPI-018 | inert versioned context archive/import | `474cad6` (source `eaeae4c`) | integrated; targeted Rust tests pass, browser import blocked by ML-022 |
+| Backend UIAPI-018 | inert versioned context archive/import | `474cad6` (source `eaeae4c`) | integrated; browser round trip completed by ML-022 |
+| Backend ML-021 | executable Registry VLM Sample and failed-admission projection | `cf85c0b` (source `e9626ae`) | integrated; fresh bounded Journey Sample succeeds |
+| Frontend 1 truthful Journey UI | combined fresh Plan/Sample scope plus saved-Draft recovery | `f871952` | integrated; exact HTTP/browser regression passes |
+| Backend ML-022 | browser-stable context archive hash | `4e2191d` (source `9f91faa`) | integrated; save/load and lost-response browser round trip pass |
 
-The earlier context-history branch and backend archive delivery remain separate committed work. They are not silently copied into this branch and will be integrated only by fixed commit after compatibility verification.
+The context-history frontend series and backend archive delivery were integrated only by their fixed commits after compatibility review; their source branches remain separate and unchanged.
 
 G3 structural delivery evidence is complete: an isolated real-HTTP TEST-provider run crossed formal review and explicit package authorization, produced a downloadable ZIP with SHA-256 `a2a0242282c3e2d112ba1b11009dcfe161e0a175631ac858c1606227adc6b89d`, and passed independent pairing/row/hash checks. Real Provider accuracy remains outside this engineering acceptance and has not been invoked.
 
-Current journey gate is ML-021: after the newly separated, explicit Sample approval, the server returns a running dispatch but does not reserve the saved Sample operation. Frontend keeps the action incomplete and never retries automatically.
+ML-021 and ML-022 are resolved on this branch. Fresh Plan/Sample work executes only inside its one explicitly displayed bounded Journey authorization; formal processing remains a separate confirmation. A persisted failed admission is blocked instead of re-offered. Task-history/context-archive is compatibility-audited and integrated: task trace reads remain passive, browser JSON round trips retain integrity, and loaded archives remain inert evidence with no grants or dispatch.
 
-Task-history/context-archive is now compatibility-audited and integrated. Real HTTP confirms complete task trace reads and refresh are passive. Archive export works, but browser round-trip import currently exposes ML-022: semantically equivalent `0.0` → `0` JSON serialization changes the server hash. Integrity is not bypassed; import remains visibly blocked pending the backend fix.
+Latest isolated TEST evidence passed 8/8 relevant browser cases, 112 Web files / 376 unit tests, Web typecheck/build, all library tests for Application/Server/Storage, strict Clippy for those crates and fmt. No main merge, push, real workspace write or paid/Live Provider call occurred.

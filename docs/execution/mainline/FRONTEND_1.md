@@ -76,18 +76,22 @@ The HTTP send boundary now accepts only a frozen `VisualSelection`, converts it 
 - Focused model setup, capability recheck and HTTP adapter suite: 34 tests passed.
 - Earlier isolated HTTP browser evidence on the generated TEST workspace verified canonical Sample selection and passive formal/package reads. No paid or real Provider was called.
 
-## F1-3 delivery and current Sample continuation gate
+## F1-3 delivery and completed Sample continuation
 
 The formal review, package readiness/consent, exact processing action and Package Ready completion semantics are composed in the production UI. A separate G3 TEST-provider run saved all whole-image decisions and downloaded a real YOLO ZIP; its SHA-256 is `a2a0242282c3e2d112ba1b11009dcfe161e0a175631ac858c1606227adc6b89d`, with 11 image/label pairs, 30 valid YOLO rows and 27 verified manifest hashes. This is structural TEST evidence, not Live model accuracy.
 
 Backend ML-020 (`e705e63`, integrated `28e62b2`) now exposes an exact `test_pipeline_samples` action after Builder completion. Frontend reads the original consent, compares ordered image hashes and model binding digests, displays a second Sample-only confirmation and POSTs only the supplied execution URL. Focused unit tests pass and the first Browser approval produces no duplicate Journey/Builder.
 
-Actual HTTP exposed ML-021: the second POST returns `dispatch:running` but never reserves the Sample. The UI remains incomplete and does not retry a chargeable request. The existing Backend task has the exact trace and reproduction. Package Ready remains the only overall Task completion condition.
+ML-021 is resolved by backend source `e9626ae`, integrated as `cf85c0b`. The earlier dispatch had actually settled with a missing `object_detection` Profile; the old projection then incorrectly offered the failed action again. Fresh bounding-box Builders now retain a ready Registry VLM through the existing `vlm_detection.detect` operation when no eligible specialist detector exists. A specialist detector still wins when present. Failed historical admissions are projected as blocked with their persisted safe failure; old Drafts are not rewritten and no paid action is retried automatically.
+
+Frontend commit `f871952` makes the visible scope match the server contract. A fresh Journey confirmation explicitly covers both bounded Builder and bounded Sample work, while `test_pipeline_samples` remains the separately confirmed recovery action for an already-saved Draft with no Sample. The failure view shows the actual persisted error. Isolated TEST HTTP verified that one fresh Journey created one Draft and one succeeded Sample, rendered one terminal `cup` box, then exposed a separate full-processing confirmation. The incomplete-intake path created no call.
 
 ### Task history and portable context
 
 Fixed frontend commits `d3b35ad` through `b77f8fe` and backend UIAPI-018 `eaeae4c` are integrated through `474cad6`. The project menu now opens one Agent task-history page with persisted multi-turn messages, model-call receipts, Builder/tool steps, Sample/processing/HumanRequest/queue groups and the complete read-only task snapshot. It explicitly describes observable evidence rather than hidden chain-of-thought.
 
-The same page downloads a versioned JSON context archive and supports previewed, explicit `archive_only` import. Imported state is untrusted, inert history: it does not create a live Task, restore grants or dispatch inference. Targeted Rust tests pass (7 storage + 2 server); focused Web tests pass (28). Real HTTP task-history refresh passed with zero writes, and invalid/oversized files were rejected with zero writes. Save → import is currently blocked by ML-022's cross-runtime numeric hash defect; the UI shows the real 409 and does not weaken integrity validation.
+The same page downloads a versioned JSON context archive and supports previewed, explicit `archive_only` import. Imported state is untrusted, inert history: it does not create a live Task, restore grants or dispatch inference. ML-022 is resolved by backend source `9f91faa`, integrated as `4e2191d`: v1 hashing now canonicalizes JavaScript-safe exactly-integral floats while accepting exact legacy hashes, so browser JSON parse/stringify is stable without weakening tamper detection. Isolated HTTP passed download → preview → one import → refresh, lost-response receipt recovery without a second POST, invalid/oversized rejection without mutation, and passive multi-turn trace reload.
+
+Final focused evidence on `4e2191d` + `f871952`: 8/8 browser checks passed (four context/history, two Plan/Sample, two canonical Sample/Formal selection). Full Web passed 112 files / 376 tests, typecheck and production build. Rust passed Application 164/1 ignored, Server 74/2 ignored and Storage 200; strict Clippy for those three crates and fmt check passed. The service used a fresh isolated TEST workspace and deterministic external test Provider, not Live model accuracy.
 
 No push, main merge, real workspace cleanup or unapproved external model call has occurred.

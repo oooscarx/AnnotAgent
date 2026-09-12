@@ -1,20 +1,20 @@
 # Agent UI integration — decisions and interface issues
 
-## ML-022 — context archive hash is not browser JSON round-trip stable (blocking import)
+## ML-022 — resolved: browser-stable context archive hash
 
 Integration `474cad6`, isolated TEST workspace `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-26x7r9l9`. Export and task trace reads succeed, but a freshly downloaded archive sent through the standard browser `JSON.parse` / `JSON.stringify` path fails preview with 409 `archive_hash_mismatch`.
 
-The exported payload contains JSON numbers such as `0.0` and `1.0`. Rust's current canonical serializer hashes those floating representations, while browser JSON serialization writes their equivalent semantic values as `0` and `1`. The payload is otherwise unchanged. This means UIAPI-018's own Save → Load path cannot currently complete; frontend does not bypass the integrity check.
+Before the fix, the exported payload contained JSON numbers such as `0.0` and `1.0`. Rust hashed those floating representations while browser JSON serialization wrote their equivalent semantic values as `0` and `1`, so the initial UIAPI-018 Save → Load path correctly stopped on integrity validation. Frontend never bypassed that check.
 
-Backend UUID `01a0855e-9c39-7c33-9f18-93e084d14816` received ML-022 with the retained trace and a request for cross-runtime numeric canonicalization plus browser-roundtrip regression. Task history viewing and JSON download remain usable; import is blocked until that fixed commit is integrated.
+Backend source `9f91faaf9d8c518fae3b5fec2608ea0d1d59b9a6`, integrated as `4e2191d`, canonicalizes JavaScript-safe exactly-integral floats and keeps exact legacy v1 hashes valid. Semantic modification still fails integrity validation. Fresh isolated HTTP now passes native download → browser parse/stringify → preview → one import → reload, plus lost-response recovery without repeating the POST. `archive_only` still cannot restore grants or dispatch work.
 
-## ML-021 — exact Sample continuation remains `running` without reserving Sample (blocking)
+## ML-021 — resolved: executable VLM Sample and truthful failed-admission state
 
 Integration `28e62b2` plus Frontend 1's exact-action wiring, isolated TEST task `cfd19b12-f4c3-4632-a39f-b5a7f040ef39`. The browser reads `test_pipeline_samples`, GETs the exact saved Journey and confirms its ordered images, model bindings, Sample ID, expiry and Draft scope. It then POSTs `{}` once to the server-provided `execution_url`; no new Journey, Builder or UUID is created.
 
 The POST returns 200 with `dispatch.status=running`, `sample=null`. More than 30 seconds later `workspace.sample_operations=[]` and the same `test_pipeline_samples` action remains available. The full network trace is `web/test-results/agent-ui-http-c-a-separate-3f345-uces-saved-terminal-results/trace.zip`; the retained TEST workspace is `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-55g0rga7`. Frontend keeps the task incomplete and does not retry automatically.
 
-`codex queue` failed locally because its packaged child binary is missing (ENOENT); the same numbered request was successfully sent through the existing Codex task API to Backend UUID `01a0855e-9c39-7c33-9f18-93e084d14816`. Requested delivery: one backend commit that reserves/runs the original Sample ID after the second confirmation, plus idempotent replay and persisted-refresh tests.
+Backend source `e9626aef6de38fa254a66b3f618de7b0832fdc48`, integrated as `cf85c0b`, established that the old dispatch had settled on an invalid detector binding. Fresh bbox Builders now materialize the registered VLM detection operation when no eligible specialist detector exists; failed historical admission is projected as blocked with its persisted error and is not retried. Frontend `f871952` displays the actual bounded Plan+Sample scope and failure. Fresh isolated HTTP creates one Draft and one succeeded Sample; processing still requires its own confirmation.
 
 ## ML-020 — resolved: exact saved-Journey Sample action delivered
 
