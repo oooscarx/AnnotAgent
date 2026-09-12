@@ -166,7 +166,11 @@ impl VisionModelProvider for ConversationTaskProvider<'_> {
         }
         let sent = !cancellation.is_cancelled();
         let result = if sent {
-            self.inner.complete(request, cancellation.clone()).await
+            annotagent_provider::within_model_call(
+                id.to_string(),
+                self.inner.complete(request, cancellation.clone()),
+            )
+            .await
         } else {
             Err(CoreError::Provider(
                 "Cancelled before sending model request".into(),

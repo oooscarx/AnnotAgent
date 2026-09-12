@@ -310,11 +310,16 @@ pub(super) async fn execute(
         .map_err(ApiError::bad_request)?;
     config.max_retries = 0;
     config.max_output_tokens = config.max_output_tokens.min(2048);
+    let attempt_observer = state
+        .application
+        .task_model_attempt_observer(&project, conversation, task, &selected)
+        .map_err(ApiError::bad_request)?;
     let provider = OpenAiCompatibleProvider::new_with_api_key(
         config,
         Some(credential.expose_secret().to_owned()),
     )
-    .map_err(ApiError::bad_request)?;
+    .map_err(ApiError::bad_request)?
+    .with_attempt_observer(attempt_observer);
     let permit=state.journey_workers.clone().try_acquire_owned().map_err(|_|ApiError{status:StatusCode::TOO_MANY_REQUESTS,body:json!({"error":"Background planning capacity is full. Future rule authorization remains saved; no call was admitted.","code":"journey_capacity_exhausted"})})?;
     let (_, rechecked, _) = scope(
         &state,

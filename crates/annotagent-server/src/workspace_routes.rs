@@ -52,6 +52,8 @@ pub(super) fn routes() -> Router<ServerState> {
         .route("/api/projects/{project_id}/conversations/{conversation_id}/task-navigation", get(super::agent_ui::tasks))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/workspace", get(super::agent_ui::snapshot))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/capability-readiness", get(super::mainline_capability::get))
+        .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/model-usage", get(super::task_model_usage::list))
+        .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/model-usage/attempts/{attempt_id}", get(super::task_model_usage::get))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/advance", post(super::agent_ui::advance))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/thread", get(super::agent_ui::thread))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/send", post(super::conversations::send))

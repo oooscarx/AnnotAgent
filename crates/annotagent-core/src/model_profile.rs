@@ -100,8 +100,17 @@ pub struct GenerationDefaults {
     pub maximum_output_tokens: Option<u64>,
     pub structured_output_mode: Option<String>,
     pub reasoning_mode: Option<String>,
+    pub reasoning_wire_parameter: Option<ReasoningWireParameter>,
+    pub supported_reasoning_modes: BTreeSet<String>,
     pub image_detail: Option<String>,
     pub system_prompt_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningWireParameter {
+    ReasoningEffort,
+    EnableThinking,
 }
 
 impl GenerationDefaults {
@@ -140,6 +149,34 @@ impl GenerationDefaults {
                     format!("{name} must be non-empty, single-line and at most 120 bytes"),
                 ));
             }
+        }
+        for mode in &self.supported_reasoning_modes {
+            if mode.trim().is_empty() || mode.len() > 120 || mode.contains(['\r', '\n']) {
+                return Err(ModelProfileValidationError::InvalidGenerationDefaults(
+                    "supported_reasoning_modes must contain non-empty single-line values of at most 120 bytes"
+                        .to_owned(),
+                ));
+            }
+        }
+        if let Some(mode) = &self.reasoning_mode {
+            if !self.supported_reasoning_modes.is_empty()
+                && !self.supported_reasoning_modes.contains(mode)
+            {
+                return Err(ModelProfileValidationError::InvalidGenerationDefaults(
+                    "reasoning_mode is not present in supported_reasoning_modes".to_owned(),
+                ));
+            }
+            if self.reasoning_wire_parameter == Some(ReasoningWireParameter::EnableThinking)
+                && !matches!(mode.as_str(), "enabled" | "disabled")
+            {
+                return Err(ModelProfileValidationError::InvalidGenerationDefaults(
+                    "enable_thinking reasoning mode must be enabled or disabled".to_owned(),
+                ));
+            }
+        } else if self.reasoning_wire_parameter.is_some() {
+            return Err(ModelProfileValidationError::InvalidGenerationDefaults(
+                "reasoning_wire_parameter requires reasoning_mode".to_owned(),
+            ));
         }
         Ok(())
     }
@@ -306,6 +343,13 @@ impl ModelProfile {
         }
         self.limits.validate()?;
         self.generation_defaults.validate()?;
+        if self.generation_defaults.reasoning_mode.is_some()
+            && !self.protocol_features.reasoning_controls
+        {
+            return Err(ModelProfileValidationError::InvalidGenerationDefaults(
+                "reasoning_mode requires protocol_features.reasoning_controls".to_owned(),
+            ));
+        }
         self.pricing.validate()?;
         let mut contract_keys = BTreeSet::new();
         for contract in &self.quality_contracts {

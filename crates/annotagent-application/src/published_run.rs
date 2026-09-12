@@ -207,16 +207,33 @@ impl PublishedWorkflowRuntime {
                     config.max_output_tokens = profile
                         .generation_defaults
                         .maximum_output_tokens
-                        .or(profile.limits.maximum_output_tokens)
                         .unwrap_or(u64::from(config.max_output_tokens))
+                        .min(profile.limits.maximum_output_tokens.unwrap_or(u64::MAX))
                         .min(u64::from(u32::MAX))
                         as u32;
                     if let Some(temperature) = profile.generation_defaults.temperature {
                         config.temperature = temperature.to_string().parse().unwrap_or(0.0);
                     }
-                    config
-                        .reasoning_mode
-                        .clone_from(&profile.generation_defaults.reasoning_mode);
+                    if let Some(top_p) = profile.generation_defaults.top_p {
+                        config
+                            .extra_request_fields
+                            .insert("top_p".to_owned(), serde_json::json!(top_p));
+                    }
+                    match profile.generation_defaults.reasoning_wire_parameter {
+                        Some(annotagent_core::ReasoningWireParameter::EnableThinking) => {
+                            config.reasoning_mode = None;
+                            config.extra_request_fields.insert(
+                                "enable_thinking".to_owned(),
+                                serde_json::json!(
+                                    profile.generation_defaults.reasoning_mode.as_deref()
+                                        == Some("enabled")
+                                ),
+                            );
+                        }
+                        _ => config
+                            .reasoning_mode
+                            .clone_from(&profile.generation_defaults.reasoning_mode),
+                    }
                     config.supports_tool_calls = profile.protocol_features.tool_calls;
                     config.supports_json_schema = profile.protocol_features.structured_output
                         || profile.protocol_features.json_schema;

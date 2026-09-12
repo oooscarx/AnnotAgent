@@ -88,10 +88,10 @@ use annotagent_core::{
     LocalizationFailureClass, ModelAvailability, ModelAvailabilityEvidence,
     ModelAvailabilityStatus, ModelBinding as PipelineModelBinding, ModelBindingId,
     ModelBindingMatch, ModelBindingRole, ModelBindingSource, ModelCapability, ModelConnection,
-    ModelInputContract, ModelLimits, ModelMessage, ModelOutputContract, ModelPricing, ModelProfile,
-    ModelProfileId, ModelProfileSnapshot, ModelProfileStatus, ModelRegistry, ModelRequest,
-    ModelRole, ModelVersionMetadata, NodeCardinality, NodeCategory, NodeDefinition, NodePort,
-    NodeRegistry, NodeSideEffect, NormalizedRect, ObjectSizeBucket,
+    ModelInputContract, ModelLimits, ModelMessage, ModelOutputContract, ModelPricing,
+    ModelPricingSnapshot, ModelProfile, ModelProfileId, ModelProfileSnapshot, ModelProfileStatus,
+    ModelRegistry, ModelRequest, ModelRole, ModelVersionMetadata, NodeCardinality, NodeCategory,
+    NodeDefinition, NodePort, NodeRegistry, NodeSideEffect, NormalizedRect, ObjectSizeBucket,
     PIPELINE_IMPROVEMENT_SCHEMA_VERSION, PipelineArtifact, PipelineBuilderConstraints,
     PipelineBuilderProviderProfile, PipelineBuilderTool, PipelineBuilderToolRegistry,
     PipelineDraftDiff, PipelineDraftHistory, PipelineDraftTools, PipelineGeometryMetrics,
@@ -130,7 +130,8 @@ use annotagent_model_catalog::{
 use annotagent_plugin_registry::{PluginReference, PluginRegistry, plugin_model_selection_id};
 use annotagent_provider::{
     HttpJsonVisionBackend, HttpJsonVisionBackendConfig, HttpVisionWorkerConfig, MockResponseSpec,
-    MockScript, MockStep, MockUsage, MockVisionBackend, MockVisionProvider, OpenAiCompatibleConfig,
+    MockScript, MockStep, MockUsage, MockVisionBackend, MockVisionProvider, ModelAttemptObserver,
+    ModelAttemptOutcome, ModelAttemptOutcomeStatus, OpenAiCompatibleConfig,
     OpenAiCompatibleProvider, OpenAiProtocol, OpenAiVisionBackend,
 };
 use annotagent_runtime::{
@@ -142,8 +143,9 @@ use annotagent_skill_robocup::{
     RoboCupBallRecoveryRequest, RoboCupBallSkill, RoboCupPackSkill, RoboCupSkill,
 };
 use annotagent_storage::{
-    BatchClaimResult, HistoryRun, LegacyRegistryImport, LegacyRegistryImportReport,
-    RunStartReservation, SqliteStore, WorkflowSampleTest, WorkflowSampleTestInput,
+    BatchClaimResult, BeginTaskModelAttempt, FinishTaskModelAttempt, HistoryRun,
+    LegacyRegistryImport, LegacyRegistryImportReport, RunStartReservation, SqliteStore,
+    TaskModelAttemptKind, TaskModelAttemptStatus, WorkflowSampleTest, WorkflowSampleTestInput,
     WorkflowSampleTestStatus,
 };
 use anyhow::{Context, Result, anyhow, bail};
@@ -199,6 +201,178 @@ pub struct PipelineBuilderModelRuntime {
     pub locked: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct EffectiveReasoningRequest {
+    pub requested_mode: Option<String>,
+    pub supported_modes: Vec<String>,
+    pub support_known: bool,
+    pub wire_parameter: Option<annotagent_core::ReasoningWireParameter>,
+    pub wire_value: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct EffectiveModelRequest {
+    pub model_profile_id: ModelProfileId,
+    pub model_profile_revision: u64,
+    pub provider_id: ProviderId,
+    pub provider_adapter: ProviderAdapterKind,
+    pub endpoint_summary: String,
+    pub remote_model_id: String,
+    pub context_tokens: Option<u64>,
+    pub requested_maximum_output_tokens: Option<u64>,
+    pub effective_maximum_output_tokens: u32,
+    pub maximum_input_context_tokens: Option<u64>,
+    pub temperature: f32,
+    pub top_p: Option<rust_decimal::Decimal>,
+    pub structured_output_mode: Option<String>,
+    pub image_detail: Option<String>,
+    pub system_prompt_version: Option<String>,
+    pub reasoning: EffectiveReasoningRequest,
+    pub pricing_snapshot: ModelPricingSnapshot,
+    pub snapshot_sha256: String,
+}
+
+pub struct ConversationTaskAttemptObserver {
+    store: Arc<SqliteStore>,
+    project_id: String,
+    conversation_id: uuid::Uuid,
+    task_id: uuid::Uuid,
+    model: ModelProfile,
+    provider: ProviderProfile,
+    effective_request: serde_json::Value,
+}
+
+impl ModelAttemptObserver for ConversationTaskAttemptObserver {
+    fn begin(
+        &self,
+        call_id: Option<&str>,
+        request: &ModelRequest,
+        attempt_number: u32,
+        started_at: chrono::DateTime<chrono::Utc>,
+    ) -> annotagent_core::CoreResult<String> {
+        let call_id = call_id
+            .and_then(|value| uuid::Uuid::parse_str(value).ok())
+            .ok_or_else(|| {
+                annotagent_core::CoreError::Provider(
+                    "Provider attempt has no admitted logical call identity".to_owned(),
+                )
+            })?;
+        let attempt_id = uuid::Uuid::new_v4();
+        let mut effective = self.effective_request.clone();
+        effective["runtime_request"] = json!({
+            "task_identity":request.task_id,
+            "model":request.model,
+            "maximum_output_tokens":request.max_output_tokens,
+            "temperature":request.temperature,
+            "image_count":request.images.len(),
+            "tool_count":request.tools.len(),
+            "top_p":request.extra.get("top_p"),
+            "enable_thinking":request.extra.get("enable_thinking"),
+            "parallel_tool_calls":request.extra.get("parallel_tool_calls"),
+        });
+        self.store
+            .begin_task_model_attempt(
+                &self.project_id,
+                self.conversation_id,
+                self.task_id,
+                &BeginTaskModelAttempt {
+                    attempt_id,
+                    call_id,
+                    attempt_number,
+                    kind: TaskModelAttemptKind::Task,
+                    model: &self.model,
+                    provider: &self.provider,
+                    effective_request: &effective,
+                    image_count: request.images.len() as u64,
+                    started_at,
+                },
+            )
+            .map_err(|_| {
+                annotagent_core::CoreError::Provider(
+                    "could not persist Provider attempt before request".to_owned(),
+                )
+            })?;
+        Ok(attempt_id.to_string())
+    }
+
+    fn finish(
+        &self,
+        attempt_id: &str,
+        outcome: &ModelAttemptOutcome,
+    ) -> annotagent_core::CoreResult<()> {
+        let attempt_id = uuid::Uuid::parse_str(attempt_id).map_err(|_| {
+            annotagent_core::CoreError::Provider("invalid persisted attempt identity".to_owned())
+        })?;
+        let status = match outcome.status {
+            ModelAttemptOutcomeStatus::Succeeded => TaskModelAttemptStatus::Succeeded,
+            ModelAttemptOutcomeStatus::Failed => TaskModelAttemptStatus::Failed,
+            ModelAttemptOutcomeStatus::InDoubt => TaskModelAttemptStatus::InDoubt,
+        };
+        self.store
+            .finish_task_model_attempt(
+                &self.project_id,
+                self.conversation_id,
+                self.task_id,
+                attempt_id,
+                &FinishTaskModelAttempt {
+                    status,
+                    request_id: outcome.request_id.clone(),
+                    usage: outcome.usage.clone(),
+                    cached_input_tokens: outcome.cached_input_tokens,
+                    completed_at: outcome.completed_at,
+                    failure: outcome.failure.clone(),
+                },
+            )
+            .map_err(|_| {
+                annotagent_core::CoreError::Provider(
+                    "could not persist terminal Provider attempt evidence".to_owned(),
+                )
+            })?;
+        Ok(())
+    }
+}
+
+fn effective_maximum_output_tokens(model: &ModelProfile, fallback: u32) -> u32 {
+    let requested = model
+        .generation_defaults
+        .maximum_output_tokens
+        .unwrap_or(u64::from(fallback));
+    requested
+        .min(model.limits.maximum_output_tokens.unwrap_or(u64::MAX))
+        .min(u64::from(u32::MAX)) as u32
+}
+
+fn effective_reasoning(model: &ModelProfile) -> EffectiveReasoningRequest {
+    let requested_mode = model.generation_defaults.reasoning_mode.clone();
+    let wire_parameter = requested_mode.as_ref().map(|_| {
+        model
+            .generation_defaults
+            .reasoning_wire_parameter
+            .unwrap_or(annotagent_core::ReasoningWireParameter::ReasoningEffort)
+    });
+    let wire_value = requested_mode.as_ref().map(|mode| match wire_parameter {
+        Some(annotagent_core::ReasoningWireParameter::EnableThinking) => {
+            serde_json::Value::Bool(mode == "enabled")
+        }
+        _ => serde_json::Value::String(mode.clone()),
+    });
+    EffectiveReasoningRequest {
+        requested_mode,
+        supported_modes: model
+            .generation_defaults
+            .supported_reasoning_modes
+            .iter()
+            .cloned()
+            .collect(),
+        support_known: !model
+            .generation_defaults
+            .supported_reasoning_modes
+            .is_empty(),
+        wire_parameter,
+        wire_value,
+    }
+}
+
 impl PipelineBuilderModelRuntime {
     #[must_use]
     pub fn safe_selection(&self) -> AgentModelSelection {
@@ -220,18 +394,27 @@ impl PipelineBuilderModelRuntime {
         if self.provider.adapter != ProviderAdapterKind::OpenAiCompatible {
             bail!("selected Pipeline Builder Provider is not OpenAI-compatible");
         }
-        let maximum_output_tokens = self
-            .model
-            .generation_defaults
-            .maximum_output_tokens
-            .or(self.model.limits.maximum_output_tokens)
-            .unwrap_or(4_096)
-            .min(u64::from(u32::MAX)) as u32;
+        let maximum_output_tokens = effective_maximum_output_tokens(&self.model, 4_096);
         let temperature = self
             .model
             .generation_defaults
             .temperature
             .map_or(0.0, |value| value.to_string().parse().unwrap_or(0.0));
+        let reasoning = effective_reasoning(&self.model);
+        let mut extra_request_fields = BTreeMap::new();
+        if let Some(top_p) = self.model.generation_defaults.top_p {
+            extra_request_fields.insert("top_p".to_owned(), json!(top_p));
+        }
+        if reasoning.wire_parameter == Some(annotagent_core::ReasoningWireParameter::EnableThinking)
+        {
+            extra_request_fields.insert(
+                "enable_thinking".to_owned(),
+                reasoning
+                    .wire_value
+                    .clone()
+                    .unwrap_or(serde_json::Value::Null),
+            );
+        }
         Ok(OpenAiCompatibleConfig {
             endpoint: self.provider.base_url.to_string(),
             api_key_env: "ANNOTAGENT_PIPELINE_BUILDER_API_KEY".to_owned(),
@@ -240,15 +423,77 @@ impl PipelineBuilderModelRuntime {
             request_timeout_seconds: self.provider.connection_policy.request_timeout_seconds,
             max_output_tokens: maximum_output_tokens,
             temperature,
-            reasoning_mode: self.model.generation_defaults.reasoning_mode.clone(),
+            reasoning_mode: (reasoning.wire_parameter
+                == Some(annotagent_core::ReasoningWireParameter::ReasoningEffort))
+            .then_some(reasoning.requested_mode)
+            .flatten(),
             supports_tool_calls: self.model.protocol_features.tool_calls,
             supports_json_schema: self.model.protocol_features.structured_output
                 || self.model.protocol_features.json_schema,
             custom_headers: self.provider.safe_headers.clone(),
-            extra_request_fields: BTreeMap::new(),
+            extra_request_fields,
             max_retries: self.provider.connection_policy.maximum_retries,
             minimum_retry_delay_ms: self.provider.connection_policy.minimum_retry_delay_ms,
             maximum_retry_delay_ms: self.provider.connection_policy.maximum_retry_delay_ms,
+        })
+    }
+
+    pub fn effective_request(&self) -> Result<EffectiveModelRequest> {
+        let output = effective_maximum_output_tokens(&self.model, 4_096);
+        let maximum_input_context_tokens = self
+            .model
+            .limits
+            .context_tokens
+            .map(|context| context.saturating_sub(u64::from(output)));
+        let temperature = self
+            .model
+            .generation_defaults
+            .temperature
+            .map_or(0.0, |value| value.to_string().parse().unwrap_or(0.0));
+        let reasoning = effective_reasoning(&self.model);
+        let pricing_snapshot = ModelPricingSnapshot::capture(&self.model, chrono::Utc::now());
+        let snapshot = json!({
+            "model_profile_id":self.model.id,
+            "model_profile_revision":self.model.revision,
+            "provider_id":self.provider.id,
+            "provider_adapter":self.provider.adapter,
+            "provider_base_url":self.provider.base_url,
+            "remote_model_id":self.model.remote_model_id,
+            "context_tokens":self.model.limits.context_tokens,
+            "requested_maximum_output_tokens":self.model.generation_defaults.maximum_output_tokens,
+            "effective_maximum_output_tokens":output,
+            "maximum_input_context_tokens":maximum_input_context_tokens,
+            "temperature":temperature,
+            "top_p":self.model.generation_defaults.top_p,
+            "structured_output_mode":self.model.generation_defaults.structured_output_mode,
+            "image_detail":self.model.generation_defaults.image_detail,
+            "system_prompt_version":self.model.generation_defaults.system_prompt_version,
+            "reasoning":reasoning,
+            "pricing":self.model.pricing,
+        });
+        Ok(EffectiveModelRequest {
+            model_profile_id: self.model.id,
+            model_profile_revision: self.model.revision,
+            provider_id: self.provider.id,
+            provider_adapter: self.provider.adapter,
+            endpoint_summary: self.provider.endpoint_summary(),
+            remote_model_id: self.model.remote_model_id.clone(),
+            context_tokens: self.model.limits.context_tokens,
+            requested_maximum_output_tokens: self.model.generation_defaults.maximum_output_tokens,
+            effective_maximum_output_tokens: output,
+            maximum_input_context_tokens,
+            temperature,
+            top_p: self.model.generation_defaults.top_p,
+            structured_output_mode: self
+                .model
+                .generation_defaults
+                .structured_output_mode
+                .clone(),
+            image_detail: self.model.generation_defaults.image_detail.clone(),
+            system_prompt_version: self.model.generation_defaults.system_prompt_version.clone(),
+            reasoning,
+            pricing_snapshot,
+            snapshot_sha256: annotagent_image_tools::sha256(&serde_json::to_vec(&snapshot)?),
         })
     }
 }
@@ -7788,6 +8033,7 @@ impl LocalApplication {
                 structured_output: settings.provider.supports_json_schema,
                 json_schema: settings.provider.supports_json_schema,
                 usage_reporting: true,
+                reasoning_controls: settings.provider.reasoning_mode.is_some(),
                 ..ProtocolFeatures::default()
             },
             task_capabilities: BTreeSet::from([
@@ -7966,6 +8212,62 @@ impl LocalApplication {
             binding_source: resolved.source,
             locked: resolved.locked,
         })
+    }
+
+    pub fn task_model_attempt_observer(
+        &self,
+        project_id: &str,
+        conversation_id: uuid::Uuid,
+        task_id: uuid::Uuid,
+        selected: &PipelineBuilderModelRuntime,
+    ) -> Result<Arc<dyn ModelAttemptObserver>> {
+        let owner = self.conversation_project_identity(project_id)?;
+        // Ownership is rechecked by the storage transaction before every physical attempt.
+        if !self
+            .store
+            .conversation_tasks(&owner, conversation_id)?
+            .iter()
+            .any(|task| task.input.id == task_id)
+        {
+            bail!("Task does not belong to this Project and conversation");
+        }
+        let effective_request = serde_json::to_value(selected.effective_request()?)?;
+        Ok(Arc::new(ConversationTaskAttemptObserver {
+            store: self.store.clone(),
+            project_id: owner,
+            conversation_id,
+            task_id,
+            model: selected.model.clone(),
+            provider: selected.provider.clone(),
+            effective_request,
+        }))
+    }
+
+    pub fn task_model_usage(
+        &self,
+        project_id: &str,
+        conversation_id: uuid::Uuid,
+        task_id: uuid::Uuid,
+        cursor: i64,
+        limit: u32,
+    ) -> Result<serde_json::Value> {
+        let owner = self.conversation_project_identity(project_id)?;
+        Ok(self
+            .store
+            .task_model_usage(&owner, conversation_id, task_id, cursor, limit)?)
+    }
+
+    pub fn task_model_attempt(
+        &self,
+        project_id: &str,
+        conversation_id: uuid::Uuid,
+        task_id: uuid::Uuid,
+        attempt_id: uuid::Uuid,
+    ) -> Result<annotagent_storage::TaskModelAttempt> {
+        let owner = self.conversation_project_identity(project_id)?;
+        Ok(self
+            .store
+            .task_model_attempt(&owner, conversation_id, task_id, attempt_id)?)
     }
 
     /// Runs bounded domain recovery for one risky candidate. Correction records are selected only
@@ -13180,24 +13482,23 @@ impl LocalApplication {
                 );
                 break;
             }
+            let maximum_output_tokens =
+                selected_model.map_or(settings.provider.max_output_tokens, |selected| {
+                    effective_maximum_output_tokens(
+                        &selected.model,
+                        settings.provider.max_output_tokens,
+                    )
+                });
             compact_pipeline_builder_messages(
                 &mut messages,
-                selected_model.and_then(|selected| selected.model.limits.context_tokens),
+                selected_model
+                    .and_then(|selected| selected.model.limits.context_tokens)
+                    .map(|context| context.saturating_sub(u64::from(maximum_output_tokens))),
             );
             let remote_model_id = selected_model.map_or_else(
                 || settings.provider.model.clone(),
                 |selected| selected.model.remote_model_id.clone(),
             );
-            let maximum_output_tokens =
-                selected_model.map_or(settings.provider.max_output_tokens, |selected| {
-                    selected
-                        .model
-                        .generation_defaults
-                        .maximum_output_tokens
-                        .or(selected.model.limits.maximum_output_tokens)
-                        .unwrap_or(u64::from(settings.provider.max_output_tokens))
-                        .min(u64::from(u32::MAX)) as u32
-                });
             let temperature = selected_model.map_or(0.0, |selected| {
                 selected
                     .model
@@ -21530,6 +21831,33 @@ export:
             binding_source: ModelBindingSource::GlobalDefault,
             locked: false,
         }
+    }
+
+    #[test]
+    fn effective_model_request_maps_reasoning_and_reserves_output_context() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        let mut selected = register_pipeline_builder_model(&application, "TEST-reasoning-model");
+        selected.provider.adapter = ProviderAdapterKind::OpenAiCompatible;
+        selected.model.limits.context_tokens = Some(32_768);
+        selected.model.limits.maximum_output_tokens = Some(2_048);
+        selected.model.generation_defaults.maximum_output_tokens = Some(4_096);
+        selected.model.generation_defaults.top_p = Some(rust_decimal::Decimal::new(9, 1));
+        selected.model.generation_defaults.reasoning_mode = Some("enabled".to_owned());
+        selected.model.generation_defaults.reasoning_wire_parameter =
+            Some(annotagent_core::ReasoningWireParameter::EnableThinking);
+        selected.model.generation_defaults.supported_reasoning_modes =
+            BTreeSet::from(["disabled".to_owned(), "enabled".to_owned()]);
+        selected.model.protocol_features.reasoning_controls = true;
+
+        let effective = selected.effective_request().expect("effective request");
+        assert_eq!(effective.effective_maximum_output_tokens, 2_048);
+        assert_eq!(effective.maximum_input_context_tokens, Some(30_720));
+        assert_eq!(effective.reasoning.wire_value, Some(json!(true)));
+        let config = selected.openai_compatible_config().expect("wire config");
+        assert_eq!(config.reasoning_mode, None);
+        assert_eq!(config.extra_request_fields["enable_thinking"], true);
+        assert_eq!(config.extra_request_fields["top_p"], "0.9");
     }
 
     fn register_available_vision_model(

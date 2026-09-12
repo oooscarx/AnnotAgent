@@ -91,6 +91,9 @@ pub(crate) struct VisionCallReceipt {
     id: Uuid,
 }
 impl VisionCallReceipt {
+    pub(crate) fn id(&self) -> Uuid {
+        self.id
+    }
     pub(crate) fn finish(self, succeeded: bool) -> CoreResult<()> {
         self.calls.store.finish_conversation_call(&self.calls.project, self.calls.task, self.id,
             if succeeded { ConversationCallStatus::Completed } else { ConversationCallStatus::InDoubt },
