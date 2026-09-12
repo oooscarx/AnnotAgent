@@ -147,6 +147,23 @@ it("delivery preparation posts the exact owned revision and never falls back to 
   expect(posts).toHaveLength(2);
   expect(posts[1]).toEqual(posts[0]);
 });
+it("replays the exact server-authorized advance after a lost response and reload",async()=>{
+  const storage=memoryStorage(),reads=mockTransport();const posts:unknown[]=[];let lost=true;
+  const transport:Transport=async<T>(path:string,init?:RequestInit)=>{
+    if(path===`${root}/t1/advance`&&init?.method==="POST"){
+      const body=JSON.parse(String(init.body));posts.push(body);
+      if(lost){lost=false;throw new Error("TEST response lost");}
+      return {command_id:body.command_id,action_id:body.action_id,replayed:true,result:{id:"schema-delivery",revision:1},workspace:mainline("t1")} as T;
+    }
+    return reads.transport<T>(path,init);
+  };
+  const scope={expected_revision:3,expected_sha256:"frozen-delivery"};
+  const first=new HttpAdapter(transport,storage);await first.refresh();await first.loadTask("TEST-alpha","t1");
+  await expect(first.deliveryIntake.prepare!("TEST-alpha","t1",{command_id:"original-command",...scope})).rejects.toThrow("response lost");
+  const restored=new HttpAdapter(transport,storage);await restored.refresh();await restored.loadTask("TEST-alpha","t1");
+  expect(await restored.deliveryIntake.prepare!("TEST-alpha","t1",{command_id:"replacement-must-not-win",...scope})).toEqual({id:"schema-delivery",revision:1});
+  expect(posts).toHaveLength(2);expect(posts[1]).toEqual(posts[0]);
+});
 it("sample consent uses the saved delivery Schema instead of another Schema model call",async()=>{
   const reads=mockTransport({
     "/api/projects/TEST-alpha/model-bindings":{bindings:[{model_profile_id:"vision"}]},

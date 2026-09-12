@@ -53,6 +53,7 @@ The HTTP send boundary now accepts only a frozen `VisualSelection`, converts it 
 - Deterministic delivery-Schema preparation now posts `advance` only when the exact read model exposes `prepare_delivery_schema · authorized`. The command and read-model revision are persisted for lost-response replay; other actions continue through their explicit approval flows.
 - Rust B1 targeted test passed; Web typecheck and 25 focused unit tests passed.
 - A freshly seeded TEST service on `http://127.0.0.1:8843` proved the visible journey: create a real Task, save the three delivery slots, execute exactly one server-authorized local `advance`, restore the matching Schema and expose the separately approved Sample action. Refresh emitted no second advance.
+- A reload/lost-response unit regression creates a second Adapter and proves it resends the original persisted command/read-model tuple rather than a replacement command.
 
 ### Domain deliveries received
 
