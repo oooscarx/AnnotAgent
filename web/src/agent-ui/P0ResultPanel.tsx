@@ -73,6 +73,9 @@ export function P0ResultPanel({service,projectId,taskId,view,onSelection,onSampl
     <strong>{view.stage}</strong><p role="status">{view.message}</p>{view.elapsed_ms!==null&&<small>已用时 {Math.max(0,Math.round(view.elapsed_ms/1000))} 秒</small>}
   </section>;
   if(view.kind==="sample_feedback"){
+    if(view.sample_result.project_id!==projectId||view.sample_result.task_id!==taskId){
+      return <DiagnosticPanel view={{kind:"diagnostic",category:"invalid_structure",message:"样例结果不属于当前 Project/Task，未显示其中的图片或候选。",image:null,annotations:[],focus_candidate_id:null}}/>;
+    }
     const projection=terminalSampleProjection(view.sample_result);
     const terminalCount=projection.result.images.reduce((sum,image)=>sum+image.annotations.length,0);
     const sourceCount=view.sample_result.images.reduce((sum,image)=>sum+image.annotations.length,0);

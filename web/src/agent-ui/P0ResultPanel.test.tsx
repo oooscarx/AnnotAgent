@@ -29,3 +29,12 @@ it("moves a non-terminal coarse outcome to read-only projection diagnostics",()=
   expect(html).toContain("中间粗框不会进入样例审核");
   expect(html).not.toContain("样例反馈");
 });
+
+it("never renders a Sample result owned by another task",()=>{
+  const candidate={id:"candidate",image_id:"image",task_id:"objects",label:"cup",value:{kind:"bounding_box" as const,rect:[0.1,0.1,0.2,0.2] as [number,number,number,number]},attributes:{},source:"model",review_status:"needs_review" as const,provenance:{},created_at:"TEST"};
+  const view:P0ResultPanelView={kind:"sample_feedback",images:[{id:"image",name:"foreign"}],labels:[],sample_result:{project_id:"other-project",conversation_id:"conversation",task_id:"other-task",project_schema_revision:"schema",draft_id:"draft",draft_revision:2,sample_test_id:"sample",images:[{image_id:"image",image_sha256:"pixels",result_revision:"result",candidates:[{candidate_id:"candidate",selection:null}],annotations:[candidate]}]},focus:null,actions:[]};
+  const html=renderToStaticMarkup(<P0ResultPanel service={service} projectId="project" taskId="task" view={view}/>);
+  expect(html).toContain("不属于当前 Project/Task");
+  expect(html).not.toContain("检查样例结果");
+  expect(html).not.toContain("foreign");
+});
