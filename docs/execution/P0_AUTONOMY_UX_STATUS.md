@@ -127,6 +127,7 @@ G1 is complete under the isolated TEST-provider boundary. This proves orchestrat
 - `npm run build` — passed; 143 modules transformed.
 - Focused current-state/diagnostic/adapter unit suite — 3 files / 59 tests passed.
 - `p0-autonomous-sample.spec.ts` — 4/4 production-route tests passed against the built React application and real Rust HTTP/SQLite service. This includes the complete Sample → formal review → real ZIP path and the ten-Project-images / three-current-task-images scope case.
+- Final retained browser evidence is under `web/test-results/p0-final/`: 15 current-application PNGs cover missing images, bounded approval, server progress, desktop/dark/mobile Sample review, formal review, package Ready, ambiguous-output clarification and exact three-of-ten scope. The retained real TEST ZIP SHA-256 is `57cb5fdbd4a800c480ead18ead31c3bef1a4dea0087639f48322f109c57f3371`.
 - Actual stop browser case — passed: POST first returned `stopping`, the UI and refresh settled to `远端结果未知`, the underlying receipt remained `in_doubt`, and no resume action appeared.
 - Paused Batch browser case — passed on a fresh isolated fixture after seed completion: the exact server checkpoint resumed, retained prior child IDs and completed with three children. The non-resumable control exposed no continue action.
 - `cargo fmt --all --check` — passed.
