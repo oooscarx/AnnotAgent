@@ -46,6 +46,7 @@ Read-only evidence from `127.0.0.1:8788` also confirms that the existing task re
 - Review focus is now keyed to the stable server work item, human request or Sample instead of the changing read-model revision. Polling no longer repeatedly steals focus, and the visible review action is only a secondary recovery control because the result opens automatically.
 - Real HTTP G1 remains unverified until the isolated upload-to-review trace passes; no production success is claimed from the UI selector or Backend unit tests.
 - The remaining A1 blocker is earlier than Builder: uploaded image identities are not yet frozen into the natural-language Send, and the Backend has not yet delivered automatic DeliveryIntake materialization from a complete request.
+- A fresh isolated HTTP baseline attempt at integration `ee7a6cd` did not pass: the TEST provider-backed Schema request settled `in_doubt` (`provider_request/provider_error`) and the fixture seed timed out before Builder. The preserved trace is under `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-20zqo0g9`; this is tracked as `P0-F1-HTTP-001` and is not reported as a successful run.
 
 ## Safety boundary
 
