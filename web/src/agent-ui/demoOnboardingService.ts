@@ -83,6 +83,14 @@ export interface DemoOnboardingService {
   receipt(commandId: string, signal?: AbortSignal): Promise<StartDemoReceipt | null>;
 }
 
+/** A server-confirmed rejection: no Demo task was created and recovery is unnecessary. */
+export class DemoStartRejectedError extends Error {
+  constructor(message: string, readonly code: string | null = null) {
+    super(message);
+    this.name = "DemoStartRejectedError";
+  }
+}
+
 export type PendingDemoStart = StartDemoInput & {
   catalog_revision: string;
   manifest_sha256: string;

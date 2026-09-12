@@ -3,6 +3,7 @@ import { Icon } from "./Icon";
 import {
   beginDemoStart,
   clearPendingDemo,
+  DemoStartRejectedError,
   readPendingDemo,
   startDemoCommand,
   updatePendingDemo,
@@ -169,6 +170,12 @@ export function DemoOnboarding({
       const receipt = await service.start(startDemoCommand(pendingRequest));
       await acceptReceipt(pendingRequest, receipt);
     } catch (cause) {
+      if (cause instanceof DemoStartRejectedError) {
+        clearPendingDemo(storage, workspaceId);
+        setPending(null);
+        setError(`${cause.message}。服务器已拒绝本次创建；没有创建任务、调用模型或改用预置候选。`);
+        return;
+      }
       setPending(updatePendingDemo(storage, workspaceId, pendingRequest, "unknown"));
       setError(`${cause instanceof Error ? cause.message : String(cause)}。刷新只会查询同一命令的服务端回执，不会自动重试收费请求。`);
     } finally {

@@ -145,6 +145,17 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
     };
   }
 
+  const deliveryReview = action(task, "review_delivery_images", "available");
+  if (deliveryReview) {
+    return {
+      kind: "needs_review",
+      title: "这一张的目标是否完整、边界是否合适？",
+      detail: `${Math.max(view.review_summary.pending_reviews || view.review_summary.current_reviews || 1, 1)} 个结果需要人工判断；预置候选不是模型推理结果，也尚未被人工接受。`,
+      primary: { kind: "open_review", id: view.review_work_item_id },
+      action: deliveryReview,
+    };
+  }
+
   const diagnostic=currentResultDiagnostic(task);
   if(diagnostic){
     const copy=diagnosticCopy[diagnostic.code];
@@ -156,7 +167,6 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
     view.review_summary.current_reviews ||
     view.review_summary.pending_reviews ||
     (task.human || view.review_work_item_id ? 1 : 0);
-  const deliveryReview = action(task, "review_delivery_images", "available");
   const formalProcessingAction = action(
     task,
     "start_delivery_processing",
@@ -166,7 +176,6 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
     task.phase === "waiting_for_human" ||
     !!task.human ||
     !!view.review_work_item_id ||
-    !!deliveryReview ||
     (!!task.sampleResult?.images.length && !formalProcessingAction && !task.processing?.length)
   ) {
     return {

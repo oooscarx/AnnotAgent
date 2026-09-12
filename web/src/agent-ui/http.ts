@@ -93,10 +93,20 @@ export class HttpAdapter implements WorkspaceAdapter {
         && model.task_capabilities.includes("vision_language")
       );
     },
-    start: (input) => this.transport<import("./demoOnboardingService").StartDemoReceipt>(
-      "/api/demos/start",
-      { method: "POST", body: JSON.stringify(input) },
-    ),
+    start: async (input) => {
+      try {
+        return await this.transport<import("./demoOnboardingService").StartDemoReceipt>(
+          "/api/demos/start",
+          { method: "POST", body: JSON.stringify(input) },
+        );
+      } catch (error) {
+        if (error instanceof ApiRequestError && error.status >= 400 && error.status < 500) {
+          const { DemoStartRejectedError } = await import("./demoOnboardingService");
+          throw new DemoStartRejectedError(error.message, error.code || null);
+        }
+        throw error;
+      }
+    },
     receipt: async (commandId, signal) => {
       try {
         return await this.transport<import("./demoOnboardingService").StartDemoReceipt>(
