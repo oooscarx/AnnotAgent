@@ -21,6 +21,18 @@ export type FormalReviewResolution = {
   diagnostic:string|null;
 };
 
+export function formalReviewCountsComplete(counts:{
+  total:number;
+  complete:number;
+  unresolved:number;
+  failed:number;
+}):boolean {
+  return counts.total>0
+    && counts.complete===counts.total
+    && counts.unresolved===0
+    && counts.failed===0;
+}
+
 const failedRunStatuses=new Set(["failed","budget_exceeded","interrupted","cancelled"]);
 const successfulRunStatuses=new Set(["completed","completed_with_review","partial"]);
 

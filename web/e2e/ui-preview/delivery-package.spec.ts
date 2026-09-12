@@ -102,3 +102,41 @@ test("package history and download render only persisted server receipts", async
   await page.getByRole("button", { name: "刷新审核与打包状态", exact: true }).click();
   expect(await page.evaluate(() => (window as unknown as { packageReceiptTest: { writes: number } }).packageReceiptTest.writes)).toBe(0);
 });
+
+test("completed formal reviews stay distinct from package authorization and admission", async ({ page }) => {
+  await page.goto("/ui-preview?task=new");
+  await page.evaluate(async (path) => {
+    const { React, createRoot, DeliveryPackage } = await import(path);
+    const host = document.createElement("main");
+    document.body.replaceChildren(host);
+    const state = { starts: 0, authorizations: 0 };
+    Object.assign(window, { packageReviewCompleteTest: state });
+    const service = {
+      history: async () => ({ items: [], next_cursor: null }),
+      pendingPackage: () => undefined,
+      startPackage: async () => { state.starts += 1; throw new Error("must not start"); },
+      packageReadiness: async () => ({
+        intent_revision: 8, intent_sha256: "formal-scope", ready: false,
+        counts: { total: 12, complete: 12, positive: 10, negative: 1, excluded: 1, unresolved: 0, failed: 0 },
+        review_revisions: {}, blockers: [], consent: null, package: null,
+      }),
+      authorizePackage: async (_project: string, _task: string, input: unknown) => {
+        state.authorizations += 1;
+        return { input, state: "armed" };
+      },
+      packageStatus: async () => { throw new Error("no package selected"); },
+      cancelPackage: async () => { throw new Error("unused"); },
+      downloadUrl: () => "/unused",
+    };
+    createRoot(host).render(React.createElement(DeliveryPackage, {
+      service, project: "TEST", task: "TASK",
+      scope: { revision: 8, content_sha256: "formal-scope", image_ids: Array.from({ length: 12 }, (_, index) => `image-${index}`) },
+      onInspect: () => {},
+    }));
+  }, `/@fs/${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`);
+
+  await expect(page.getByText("正式审核齐全", { exact: true })).toBeVisible();
+  await expect(page.getByText("审核已完成，等待你授权本正式范围。", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "允许审核齐全后自动打包", exact: true })).toBeEnabled();
+  expect(await page.evaluate(() => (window as unknown as { packageReviewCompleteTest: { starts: number; authorizations: number } }).packageReviewCompleteTest)).toEqual({ starts: 0, authorizations: 0 });
+});

@@ -1,5 +1,5 @@
 import {expect,it} from "vitest";
-import {resolveFormalReview,resolveFormalReviewPage,type FormalReviewEvidence,type FormalRunEvidence} from "./deliveryReviewState";
+import {formalReviewCountsComplete,resolveFormalReview,resolveFormalReviewPage,type FormalReviewEvidence,type FormalRunEvidence} from "./deliveryReviewState";
 
 const review=(overrides:Partial<FormalReviewEvidence>={}):FormalReviewEvidence=>({
   image_id:"image",confirmation_current:false,review_decision:null,unresolved_objects:3,
@@ -36,4 +36,10 @@ it("rejects inconsistent receipts and duplicate formal image evidence",()=>{
     state:"unresolved",blocks_package:true,diagnostic:"整图决定与当前对象状态不一致",
   });
   expect(()=>resolveFormalReviewPage([review()],[run(),run()])).toThrow("重复图片");
+});
+
+it("keeps formal review completion separate from package admission readiness",()=>{
+  expect(formalReviewCountsComplete({total:12,complete:12,unresolved:0,failed:0})).toBe(true);
+  expect(formalReviewCountsComplete({total:12,complete:12,unresolved:0,failed:1})).toBe(false);
+  expect(formalReviewCountsComplete({total:0,complete:0,unresolved:0,failed:0})).toBe(false);
 });
