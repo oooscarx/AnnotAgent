@@ -135,6 +135,8 @@ G1 is complete under the isolated TEST-provider boundary. This proves orchestrat
 - `cargo test -p annotagent-server stop_http_trace_keeps_unknown_receipt_and_spent_budget_on_retry` — 1/1 passed.
 - `cargo test -p annotagent-storage --test persistent_batches` — 6/6 passed.
 - Exact A4 backend scope tests — Server 1/1 and Application 1/1 passed.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings` — passed.
+- `cargo test --workspace --all-features` — passed with no failures. Explicit Live/real-weight/browser-download tests remained ignored by their existing opt-in guards; no paid Provider or unavailable model weight was invoked.
 
 ### Acceptance status after G2 close
 
