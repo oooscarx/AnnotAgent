@@ -53,9 +53,9 @@ Read-only evidence from `127.0.0.1:8788` also confirms that the existing task re
 
 ### G1 real packaged HTTP evidence
 
-- Current integration/backend source SHA: `05bb74c152820da3a9c4b69470762dd9122a81b4` (includes Backend exact later-upload SHA `69d8ef1`, clarified-Journey SHA `926d9bd`, and Frontend 2 Fit SHA `5dae4db`).
-- Current isolated external-model-only manifest: `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-u_a2uli1/manifest.json`; service `127.0.0.1:8888`, scripted provider `127.0.0.1:8889`. The user service on `8788` was not restarted or mutated.
-- Permanent production-route test: `web/e2e/p0-autonomous-sample.spec.ts` — both tests passed (8.7s + 1.0s) against the built React application and real Rust HTTP/SQLite service. The main request explicitly asks for cup + bottle bounding boxes for an Ultralytics YOLO target, matching the deterministic provider's saved delivery semantics.
+- Current integration/backend source SHA: `424e2b79853c1817b2df38559858357474377589` (includes Backend exact later-upload SHA `69d8ef1`, clarified-Journey SHA `926d9bd`, A2 completion-race SHA `1ab6834`, and Frontend 2 Fit SHA `5dae4db`).
+- Current isolated external-model-only manifest: `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-w5h0foyp/manifest.json`; service `127.0.0.1:8890`, scripted provider `127.0.0.1:8891`. The user service on `8788` was not restarted or mutated.
+- Permanent production-route test: `web/e2e/p0-autonomous-sample.spec.ts` — both tests passed (8.6s + 1.1s) against the built React application and real Rust HTTP/SQLite service. The main request explicitly asks for cup + bottle bounding boxes for an Ultralytics YOLO target, matching the deterministic provider's saved delivery semantics.
 - The browser uploaded 6 real demo-pack images. The exact 6 `{image_id, sha256}` receipts were frozen into Send; the server selected exactly 3 Sample inputs.
 - The browser made one `POST .../journey-consents` and zero `POST .../execution` calls. After the page closed, the durable worker completed Schema → Builder → Sample and created exactly 3 pending HumanRequests bound to the same task and Sample operation.
 - Reopening the exact task showed `检查样例结果 · 3 张` and `3 个结果需要人工判断`; reloading retained the same task/result without a mutation.
@@ -69,7 +69,7 @@ Read-only evidence from `127.0.0.1:8788` also confirms that the existing task re
 ### Acceptance status after the first G1 slice
 
 - A1: passed. One unavoidable bounded-scope decision; zero technical relay clicks after approval.
-- A2: delayed Builder path passed through real HTTP. Synchronous completion and duplicate-wakeup unit coverage are retained in Backend tests; the race-specific HTTP permutations remain to be recorded explicitly.
+- A2: passed. The delayed Builder route returns first, then the original durable Journey reaches the original Sample ID. The immediate-provider route deliberately registers no HTTP observer until after terminal completion, then replays the same consent and execution three times; it retains one Builder, one Sample operation, the same Sample artifact, unchanged calls and unchanged task budget. Duplicate Builder, Sample and dispatch completion notifications cannot rewrite a terminal receipt. Same-database restart preserves the terminal snapshot.
 - A3 protocol: passed. Complete upload-then-description and description-before-later-upload both preserve one Task and avoid repeated technical forms. Ambiguous `YOLO` wording produces one concise question, performs one model call before the answer, creates no premature Sample, then resumes the same Journey with the original consent and exact three image IDs after the saved clarification answer.
 - A3 UI: blocked on `P0-G1-BE-006`. The current clarification read contract exposes the question but requires the client to reconstruct a complete Schema answer. A server-owned compact choice/payload is required so the Thread asks only for the missing output type, preserves known labels and explicitly marks unsupported contour output instead of parsing text or silently converting it to a bounding box.
 - A5: passed: three terminal candidates create three Sample-bound HumanRequests, automatically open the result area and initially fit the full image. Polling does not reset same-image zoom/pan.
