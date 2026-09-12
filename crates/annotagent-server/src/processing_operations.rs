@@ -122,6 +122,37 @@ fn scope(
         .application
         .conversation_processing_context(project, &draft, &sample.id)
         .map_err(ApiError::bad_request)?;
+    let sample_review = if let Some(context) = &conversation {
+        let readiness = state
+            .application
+            .conversation_sample_review_readiness(
+                project,
+                context.conversation_id,
+                context.task_id,
+                &sample.id,
+            )
+            .map_err(ApiError::bad_request)?;
+        if !readiness.ready {
+            let code = readiness
+                .reason_code
+                .as_deref()
+                .unwrap_or("sample_reviews_pending");
+            return Err(ApiError {
+                status: StatusCode::CONFLICT,
+                body: json!({
+                    "status":409,
+                    "code":code,
+                    "error":"Resolve every exact Sample review before authorizing formal processing.",
+                    "admitted":false,
+                    "suggested_action":"review_sample_results",
+                    "sample_review":readiness
+                }),
+            });
+        }
+        Some(readiness)
+    } else {
+        None
+    };
     let images = state
         .application
         .list_project_image_summaries(project)
@@ -197,6 +228,7 @@ fn scope(
         );
         value["goal"] = json!({"goal": context.schema.definition.goal});
         value["conversation"] = json!(context);
+        value["sample_review"] = json!(sample_review.expect("conversation review was checked"));
     }
     if let Some(delivery_scope) = delivery_scope {
         value["delivery_scope"] = delivery_scope;

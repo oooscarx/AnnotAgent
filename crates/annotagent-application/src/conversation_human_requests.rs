@@ -7,6 +7,25 @@ use annotagent_storage::{
 use anyhow::{Context, Result, bail};
 use uuid::Uuid;
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ConversationSampleReviewBlocker {
+    pub request_id: Uuid,
+    pub image_id: String,
+    pub reason_code: String,
+    pub status: annotagent_storage::ConversationHumanRequestStatus,
+    pub deferred: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ConversationSampleReviewReadiness {
+    pub sample_test_id: String,
+    pub assistance_status: Option<String>,
+    pub applied_request_ids: Vec<Uuid>,
+    pub unresolved: Vec<ConversationSampleReviewBlocker>,
+    pub ready: bool,
+    pub reason_code: Option<String>,
+}
+
 fn first_review_subject(
     result: &annotagent_core::WorkflowDryRunSampleResult,
 ) -> Option<&annotagent_core::FinalCandidateProjection> {
@@ -350,6 +369,71 @@ impl LocalApplication {
             .conversation_human_requests(&owner, conversation, task)?)
     }
 
+    /// Report the exact Sample-bound human gate for formal processing. This is a
+    /// passive read: it does not prepare requests, apply answers, publish, or run.
+    pub fn conversation_sample_review_readiness(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        sample_test_id: &str,
+    ) -> Result<ConversationSampleReviewReadiness> {
+        let operation = self
+            .store
+            .sample_operation(sample_test_id)?
+            .context("Sample operation not found")?;
+        if operation.project_id != project
+            || operation.request["conversation"]["conversation_id"]
+                != serde_json::json!(conversation)
+            || operation.request["conversation"]["task_id"] != serde_json::json!(task)
+        {
+            bail!("Sample operation belongs to another conversation task");
+        }
+        let assistance = self.store.sample_assistance_status(sample_test_id)?;
+        let assistance_status = assistance
+            .as_ref()
+            .and_then(|value| value["status"].as_str())
+            .map(str::to_owned);
+        let mut applied_request_ids = Vec::new();
+        let mut unresolved = Vec::new();
+        for request in self
+            .conversation_human_requests(project, conversation, task)?
+            .into_iter()
+            .filter(|request| request.input.sample_test_id == sample_test_id)
+        {
+            if request.status == annotagent_storage::ConversationHumanRequestStatus::Applied {
+                applied_request_ids.push(request.input.id);
+            } else {
+                unresolved.push(ConversationSampleReviewBlocker {
+                    request_id: request.input.id,
+                    image_id: request.input.image_id,
+                    reason_code: request.input.reason_code,
+                    status: request.status,
+                    deferred: request.deferred,
+                });
+            }
+        }
+        let preparation_ready = assistance_status.as_deref() == Some("completed");
+        let ready = preparation_ready && unresolved.is_empty();
+        let reason_code = if ready {
+            None
+        } else if assistance_status.as_deref() == Some("failed") {
+            Some("sample_review_preparation_failed".into())
+        } else if !preparation_ready {
+            Some("sample_review_preparation_incomplete".into())
+        } else {
+            Some("sample_reviews_pending".into())
+        };
+        Ok(ConversationSampleReviewReadiness {
+            sample_test_id: sample_test_id.into(),
+            assistance_status,
+            applied_request_ids,
+            unresolved,
+            ready,
+            reason_code,
+        })
+    }
+
     pub(crate) fn validate_conversation_correction_subject(
         &self,
         project: &str,
@@ -635,6 +719,14 @@ pub(crate) mod tests {
         input.image_id = image.image_id.to_string();
         input.content_hash = image.content_hash;
         assert!(app.store.pending_sample_assistance().unwrap().is_empty());
+        let waiting_review = app
+            .conversation_sample_review_readiness(project, conversation, task.id, &sample.id)
+            .unwrap();
+        assert!(!waiting_review.ready);
+        assert_eq!(
+            waiting_review.reason_code.as_deref(),
+            Some("sample_review_preparation_incomplete")
+        );
         app.store.finish_sample_operation(&sample.id, None).unwrap();
         assert_eq!(app.store.pending_sample_assistance().unwrap().len(), 1);
         // Crash after report/operation completion, before local assistance delivery.
@@ -660,6 +752,15 @@ pub(crate) mod tests {
             assert_eq!(prepared[0].input.outcome_id, input.outcome_id);
         }
         input = prepared[0].input.clone();
+        let pending_review = app
+            .conversation_sample_review_readiness(project, conversation, task.id, &sample.id)
+            .unwrap();
+        assert!(!pending_review.ready);
+        assert_eq!(
+            pending_review.reason_code.as_deref(),
+            Some("sample_reviews_pending")
+        );
+        assert_eq!(pending_review.unresolved[0].request_id, input.id);
         assert_eq!(
             app.prepare_conversation_sample_requests(project, conversation, task.id, &sample.id)
                 .unwrap(),
@@ -678,7 +779,7 @@ pub(crate) mod tests {
             .unwrap();
         let answer = SampleFeedbackRevision {
             revision_id: Uuid::new_v4().to_string(),
-            sample_test_id: sample.id,
+            sample_test_id: sample.id.clone(),
             image_id: input.image_id.clone(),
             sequence: 1,
             reason: if reference {
@@ -716,6 +817,14 @@ pub(crate) mod tests {
         let saved = app
             .answer_conversation_human_request(project, conversation, task.id, input.id, &answer)
             .unwrap();
+        let answered_review = app
+            .conversation_sample_review_readiness(project, conversation, task.id, &sample.id)
+            .unwrap();
+        assert!(!answered_review.ready);
+        assert_eq!(
+            answered_review.unresolved[0].status,
+            annotagent_storage::ConversationHumanRequestStatus::Answered
+        );
         std::fs::write(&path, b"TEST later change").unwrap();
         assert_eq!(
             app.answer_conversation_human_request(
@@ -802,6 +911,12 @@ pub(crate) mod tests {
             annotagent_storage::ConversationHumanRequestStatus::Applied
         );
         assert_eq!(recovered.resume_draft_id.as_deref(), Some(copy.id.as_str()));
+        let applied_review = app
+            .conversation_sample_review_readiness(project, conversation, task.id, &sample.id)
+            .unwrap();
+        assert!(applied_review.ready);
+        assert_eq!(applied_review.applied_request_ids, vec![input.id]);
+        assert!(applied_review.unresolved.is_empty());
         app.store
             .record_conversation_resume_failure(&owner, input.id, "TEST late competing failure")
             .unwrap();

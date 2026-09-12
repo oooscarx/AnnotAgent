@@ -89,10 +89,42 @@ reported blocked; it is not silently converted.
 - `GET /api/projects/P/processing-preview?draft_id=...&sample_test_id=...&limit=N`
   keeps the legacy first-N behavior for non-delivery work. For a delivery Task it
   freezes the saved image IDs/hashes in saved order and rejects any `limit` query.
+  A conversation-owned Sample is eligible only after its local assistance pass has
+  settled and every HumanRequest bound to that exact `sample_test_id` is `applied`.
+  `pending`, `answered`, deferred, cancelled or stale requests return HTTP 409 before
+  an authorization fingerprint is issued. The same check runs again in the confirm
+  command before any processing receipt, publication, Batch or Provider call is made.
   `POST
   /api/projects/P/processing-operations` requires the returned revision and
   authorization fingerprint. Its saved authorization includes the delivery intent
-  revision/hash used later to identify formal child Runs.
+  revision/hash used later to identify formal child Runs, plus the passive
+  `sample_review` readiness snapshot.
+
+The review gate error is stable and safe to render:
+
+```json
+{
+  "status":409,
+  "code":"sample_reviews_pending",
+  "error":"Resolve every exact Sample review before authorizing formal processing.",
+  "admitted":false,
+  "suggested_action":"review_sample_results",
+  "sample_review":{
+    "sample_test_id":"SAMPLE_ID",
+    "assistance_status":"completed",
+    "applied_request_ids":[],
+    "unresolved":[{"request_id":"REQUEST_ID","image_id":"IMAGE_ID","reason_code":"terminal_result_requires_review","status":"pending","deferred":false}],
+    "ready":false,
+    "reason_code":"sample_reviews_pending"
+  }
+}
+```
+
+Assistance still running returns `sample_review_preparation_incomplete`; a failed
+assistance projection returns `sample_review_preparation_failed`. After all exact
+answers have been saved and locally applied, preview returns
+`sample_review:{ready:true,reason_code:null,unresolved:[],applied_request_ids:[...]}`.
+These Sandbox answers remain feedback evidence; they do not become formal annotations.
 - After a Journey has saved a `passed|human_approved` Sample and before formal
   processing exists, `mainline.available_actions` returns
   `start_delivery_processing` as `requires_confirmation`. Its stable GET URL selects

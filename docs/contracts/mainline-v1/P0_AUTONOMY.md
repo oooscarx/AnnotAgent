@@ -13,6 +13,14 @@ This contract describes the existing Journey endpoint after the P0 continuation 
 | Builder → Sample | the same worker observes `draft_ready_for_human_review`, validates and seals the Draft | original image hashes, model binding digests, maximum Sample calls and expiry | original `sample_operation_id` | Sample write is idempotent; duplicate observations cannot create another ID |
 | Sample → review | existing Sample runtime saves terminal reports/candidates | no annotation acceptance is inferred | Sample/image/candidate/source Artifact IDs | real candidate review or a typed blocker is the next human boundary |
 
+Formal processing preview and confirmation both read the exact Sample-bound review
+readiness from the Application. They return `409 sample_reviews_pending` while any
+generated request is not yet applied, including deferred or merely saved-but-not-applied
+answers. No processing receipt is reserved on this rejection. Once each answer is
+persisted and its existing local feedback checkpoint is applied, the preview includes
+the applied request IDs in its authorization fingerprint and may be explicitly approved.
+Sample feedback remains Sandbox evidence and is never promoted to a formal annotation.
+
 The worker is server-owned. Browser polling only reads these receipts. Synchronous child
 completion is consumed in the current loop; asynchronous completion is observed from persisted
 receipts on the next loop. The queue uses one claim/attempt lease, and restart returns routed

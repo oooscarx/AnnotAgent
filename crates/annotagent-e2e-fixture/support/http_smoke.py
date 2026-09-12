@@ -179,7 +179,32 @@ def verify(c, manifest, root):
     # Journey consent covered only the three-image sample and cannot be reused
     # as a hidden limit on formal processing.
     selection = {"draft_id": record["draft_id"], "sample_test_id": record["id"]}
+    blocked_preview = c.request("GET", p + "/processing-preview?" + urllib.parse.urlencode(selection), expected=[409])
+    assert blocked_preview["code"] == "sample_reviews_pending" and blocked_preview["admitted"] is False, blocked_preview
+    assert len(blocked_preview["sample_review"]["unresolved"]) == 3, blocked_preview
+    blocked_command = uid()
+    blocked_processing = c.request("POST", p + "/processing-operations", {"request_id": blocked_command, "selection": selection, "expected_revision": record["draft_revision"], "authorization_fingerprint": "0" * 64}, expected=[409])
+    assert blocked_processing["code"] == "sample_reviews_pending" and blocked_processing["admitted"] is False, blocked_processing
+    assert c.get(tr + "/processing-operations") == []
+    first_review_answer = None
+    for request in automatic_reviews:
+        request_input = request["input"]
+        sample_index = next(index for index, image in enumerate(record["inputs"]) if image["image_id"] == request_input["image_id"])
+        outcome = next(outcome for outcome in record["report"]["samples"][sample_index]["outcomes"] if outcome["id"] == request_input["outcome_id"])
+        answer = {
+            "revision_id": uid(), "sample_test_id": record["id"], "image_id": request_input["image_id"],
+            "sequence": request_input["expected_feedback_sequence"] + 1, "reason": "correct",
+            "outcome_id": request_input["outcome_id"], "corrected_value": outcome["value"],
+            "corrected_label": outcome["label"], "note": "TEST reviewed exact saved sample candidate",
+            "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+        }
+        applied = c.post(tr + "/human-requests/" + request_input["id"] + "/answer", {"answer": answer})
+        assert applied["status"] == "applied" and applied["input"]["sample_test_id"] == record["id"], applied
+        if first_review_answer is None:
+            first_review_answer = (request_input, answer, applied)
     approval = c.get(p + "/processing-preview?" + urllib.parse.urlencode(selection))
+    assert approval["sample_review"]["ready"] is True
+    assert len(approval["sample_review"]["applied_request_ids"]) == 3
     processing = c.post(p + "/processing-operations", {"request_id": uid(), "selection": selection, "expected_revision": approval["revision"], "authorization_fingerprint": approval["authorization_fingerprint"]})
     batch = c.poll("/api/batches/" + processing["batch_id"], lambda value: value["batch"]["status"] not in ["pending", "running", "pausing"])
     assert batch["batch"]["status"] in ["completed", "awaiting_review"], batch
@@ -187,14 +212,8 @@ def verify(c, manifest, root):
     verify_sse(c, run_id)
     c.get("/api/runs/" + run_id + "/result-summary")
     c.get("/api/runs/" + run_id + "/debug-summary")
-    projection = record["report"]["samples"][0]["projection"]
-    candidate = (projection["final_candidates"] or [entry["candidate"] for entry in projection["review_candidates"]])[0]
-    image = record["inputs"][0]
-    human = {"id": uid(), "task_id": task, "conversation_id": conversation, "sample_test_id": record["id"], "image_id": image["image_id"], "content_hash": image["content_hash"], "outcome_id": candidate["outcome"]["id"], "expected_feedback_sequence": 0, "reason_code": "poor_boundary", "question": "TEST confirm saved sample box", "resume_checkpoint_ref": record["draft_id"]}
-    c.post(tr + "/human-requests", human)
-    answer = {"revision_id": uid(), "sample_test_id": record["id"], "image_id": image["image_id"], "sequence": 1, "reason": "poor_boundary", "outcome_id": candidate["outcome"]["id"], "corrected_value": candidate["outcome"]["value"], "corrected_label": candidate["outcome"]["label"], "note": "TEST saved answer", "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
+    human, answer, saved = first_review_answer
     answer_path = tr + "/human-requests/" + human["id"] + "/answer"
-    saved = c.post(answer_path, {"answer": answer})
     replay = c.post(answer_path, {"answer": answer})
     assert replay["answer"] == saved["answer"]
     c.request("POST", answer_path, {"answer": {**answer, "note": "conflicting retry"}}, expected=[400, 409])
@@ -230,7 +249,7 @@ def verify(c, manifest, root):
     assert export["job"]["result"] is None
     c.get(tr + "/exports")
     stop = verify_stop(c, cr, schema_revision, provider, model)
-    pending = {**human, "id": uid(), "expected_feedback_sequence": 1, "question": "TEST pending answer for frontend adapter"}
+    pending = {**human, "id": uid(), "expected_feedback_sequence": 1, "question": "TEST pending answer for frontend adapter", "resume_checkpoint_ref": uid()}
     c.post(tr + "/human-requests", pending)
     plan = c.post(cr + "/send", {"message": {"id": uid(), "text": "TEST Plan only: awaiting explicit approval", "image": None}, "schema_revision": schema_revision, "mode": "plan"})
     builder_item = c.get(tr + "/workspace")["builder_operations"]["items"][0]
@@ -252,7 +271,7 @@ def verify(c, manifest, root):
     execution_posts = [entry for entry in c.trace if entry["method"] == "POST" and entry["path"] == execution]
     assert len(consent_posts) == 1, consent_posts
     assert execution_posts == [], execution_posts
-    return {"project": project, "conversation_id": conversation, "task_id": task, "task_root": tr, "model_profile_id": model["id"], "provider_id": provider["id"], "execution_url": execution, "p0_autonomy": {"task_images": task_images, "task_image_count": len(task_images), "sample_image_count": len(record["inputs"]), "unavoidable_user_decisions": 1, "technical_relay_clicks": 0, "consent_post_count": len(consent_posts), "execution_post_count": len(execution_posts), "consent_response_ms": consent_response_ms, "journey_duration_ms": journey_duration_ms, "first_observation": first_observation, "consent_id": consent["id"], "schema_call_id": consent["schema_proposal"]["call_id"], "builder_operation_id": consent["builder_operation_id"], "sample_operation_id": consent["sample_operation_id"], "draft_id": record["draft_id"], "sample_status": record["status"], "delivery_schema_id": delivery_schema["schema"]["id"], "review_work_item_id": review_workspace["review_work_item_id"], "review_action": review_workspace["available_actions"][0], "automatic_review_request_ids": [item["input"]["id"] for item in automatic_reviews], "execution_dispatch": finished["dispatch"]}, "describe_before_upload": describe_before_upload, "ambiguous_goal": ambiguous_goal, "export": export, "run_id": run_id, "stop": stop, "answered_request_id": human["id"], "pending_request_id": pending["id"], "plan_task_id": plan["task_id"], "controls": controls, "saved_plan": saved_plan, "bbox": bbox, "manual_stop": manual_stop, "trace": str(Path(manifest["workspace"]) / "HTTP_TRACE.json")}
+    return {"project": project, "conversation_id": conversation, "task_id": task, "task_root": tr, "model_profile_id": model["id"], "provider_id": provider["id"], "execution_url": execution, "p0_autonomy": {"task_images": task_images, "task_image_count": len(task_images), "sample_image_count": len(record["inputs"]), "unavoidable_user_decisions": 1, "technical_relay_clicks": 0, "consent_post_count": len(consent_posts), "execution_post_count": len(execution_posts), "consent_response_ms": consent_response_ms, "journey_duration_ms": journey_duration_ms, "first_observation": first_observation, "consent_id": consent["id"], "schema_call_id": consent["schema_proposal"]["call_id"], "builder_operation_id": consent["builder_operation_id"], "sample_operation_id": consent["sample_operation_id"], "draft_id": record["draft_id"], "sample_status": record["status"], "delivery_schema_id": delivery_schema["schema"]["id"], "review_work_item_id": review_workspace["review_work_item_id"], "review_action": review_workspace["available_actions"][0], "automatic_review_request_ids": [item["input"]["id"] for item in automatic_reviews], "processing_review_gate": {"preview_code": blocked_preview["code"], "confirm_code": blocked_processing["code"], "receipt_count_before_reviews": 0, "unresolved_before": len(blocked_preview["sample_review"]["unresolved"]), "applied_after": len(approval["sample_review"]["applied_request_ids"]), "ready_after": approval["sample_review"]["ready"]}, "execution_dispatch": finished["dispatch"]}, "describe_before_upload": describe_before_upload, "ambiguous_goal": ambiguous_goal, "export": export, "run_id": run_id, "stop": stop, "answered_request_id": human["id"], "pending_request_id": pending["id"], "plan_task_id": plan["task_id"], "controls": controls, "saved_plan": saved_plan, "bbox": bbox, "manual_stop": manual_stop, "trace": str(Path(manifest["workspace"]) / "HTTP_TRACE.json")}
 
 
 def verify_describe_before_upload(c, project_root, schema_revision, png):
