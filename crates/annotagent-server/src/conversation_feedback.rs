@@ -151,6 +151,13 @@ pub(super) async fn preview(
     AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
     Query(selection): Query<Selection>,
 ) -> ApiResult<Json<Value>> {
+    if let Some(formal) = state
+        .application
+        .formal_conversation_feedback(&project, conversation, task, selection.message)
+        .map_err(ApiError::bad_request)?
+    {
+        return Ok(Json(formal));
+    }
     if let Some(record) = state
         .application
         .conversation_feedback_authorization(&project, conversation, task, selection.call)
@@ -197,9 +204,15 @@ pub(super) async fn for_message(
         .application
         .conversation_feedback_for_message(&project, conversation, task, query.message_id)
         .map_err(ApiError::bad_request)?;
-    saved.map_or(Ok(Json(Value::Null)), |record| {
-        status_value(&state, &project, conversation, task, record.consent.call_id).map(Json)
-    })
+    if let Some(record) = saved {
+        return status_value(&state, &project, conversation, task, record.consent.call_id)
+            .map(Json);
+    }
+    state
+        .application
+        .formal_conversation_feedback(&project, conversation, task, query.message_id)
+        .map_err(ApiError::bad_request)?
+        .map_or(Ok(Json(Value::Null)), |value| Ok(Json(value)))
 }
 
 fn status_value(

@@ -31,16 +31,28 @@ starts inference, publishes, admits a package, or changes review state.
 | `POST /api/projects/P/conversations/C/send` | `ConversationSendInput` → frozen `ConversationSendReceipt` | New task or follow-up. Ordinary follow-up may queue; SampleCandidate reference takes feedback disposition. Send itself grants nothing. |
 | `GET /api/projects/P/conversations/C/send/M` | saved receipt | Lost-response recovery, no dispatch. |
 
-`ConversationSelectionRef` at the baseline supports `stop_request` and exact
-`sample_candidate`. The latter includes Task/Schema, Draft revision, Sample Test,
-candidate and source Artifact plus an image ID/hash. Application validates every
-link against saved Sandbox evidence before persisting the message. A bare bbox,
-candidate ID or annotation ID is rejected.
+`ConversationSelectionRef` supports `stop_request`, exact `sample_candidate`, and
+the B2 `formal_annotation` reference. Sample references include Task/Schema, Draft
+revision, Sample Test, candidate and source Artifact plus an image ID/hash.
+Application validates every link against saved Sandbox evidence before persisting
+the message. A bare bbox, candidate ID or annotation ID is rejected.
 
 B2 adds the passive canonical `visual-selections` read model so clients do not join
 those identities from independent responses. Each terminal candidate has its own
 `source_artifact_id`; an Artifact is never inherited from another candidate or the
 image. The existing SampleCandidate send DTO and validator remain unchanged.
+
+`delivery-review-items[].annotations[].conversation_reference` is the canonical
+formal annotation reference. The enclosing `ConversationMessageInput.image` carries
+the image ID/hash; the reference carries Task/Schema, delivery intent revision/hash,
+processing operation, Batch, child Run, annotation revision and expected formal
+snapshot hash. Application validation and the storage transaction both recheck the
+full lineage, latest revision and current snapshot. An ordinary send with this
+reference is saved with disposition `formal_feedback` and is never admitted to the
+generic message queue. `GET .../feedback-preview?message_id=M` and
+`GET .../feedback?message_id=M` return the exact saved subject plus the existing
+formal object edit URL. `model_call_supported:false` is explicit: v1 does not infer
+or guess geometry from prose.
 
 ## Delivery intent, Schema and formal review (implemented)
 
@@ -157,8 +169,8 @@ When delivery intake is missing or partial, actions include both local
 call can propose only missing label/target semantics; it has no image pixels or image
 execution authority and never saves the proposal automatically.
 
-`formal_source`, paged review items, task capability readiness, step/result-message
-projection and automatic package admission remain B2–B4 and are not present yet.
+Task capability readiness and step/result-message projection remain B4. Formal
+source, paged review items and package admission are implemented in B2/B3.
 
 Implemented command `POST D/advance` accepts
 `{command_id,expected_read_model_revision,action_id}`. The server may execute only the

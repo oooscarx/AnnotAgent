@@ -107,7 +107,7 @@ pub(super) fn intent(
     })
 }
 
-pub(super) fn snapshot(
+pub(crate) fn snapshot(
     db: &Connection,
     saved: &TaskDeliveryRevision,
     image: ImageId,
@@ -442,7 +442,10 @@ impl SqliteStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{BeginConversationTask, ConversationMessageInput};
+    use crate::{
+        BeginConversationTask, ConversationMessageInput, ConversationSelectionRef,
+        ConversationSendDisposition, ConversationSendInput, ConversationSendMode,
+    };
     use annotagent_core::{
         AnnotationId, AnnotationProvenance, AnnotationSource, AnnotationValue, NormalizedRect,
         TaskKind, dataset_delivery::*,
@@ -572,6 +575,88 @@ mod tests {
             })
             .unwrap();
         assert!(sources().unwrap().is_empty());
+    }
+    #[test]
+    fn formal_annotation_message_requires_current_full_lineage_and_snapshot() {
+        let root = tempfile::tempdir().unwrap();
+        let f = TestData::new(root.path());
+        f.put(&f.annotation);
+        let confirmed = f
+            .confirm(&f.input(DeliveryImageDecision::PositiveComplete))
+            .unwrap();
+        let i = &f.saved.intent;
+        let source = &f
+            .store
+            .delivery_run_sources(&i.project_id, i.conversation_id, i.task_id, f.image)
+            .unwrap()[0];
+        let revision = f
+            .store
+            .list_revisions(f.annotation.id)
+            .unwrap()
+            .pop()
+            .unwrap();
+        let message = ConversationMessageInput {
+            id: Uuid::new_v4(),
+            text: "TEST this formal box is too wide".into(),
+            image: Some(crate::ConversationImageRef {
+                image_id: f.image.to_string(),
+                sha256: "a".repeat(64),
+            }),
+            reference: Some(ConversationSelectionRef::FormalAnnotation {
+                task_id: i.task_id,
+                project_schema_revision: "a".repeat(64),
+                intent_revision: f.saved.revision,
+                intent_sha256: f.saved.content_sha256.clone(),
+                processing_operation_id: source.processing_operation_id.parse().unwrap(),
+                batch_id: source.batch_id.parse().unwrap(),
+                source_run_id: f.run,
+                annotation_id: f.annotation.id,
+                annotation_revision_id: revision.revision_id,
+                expected_snapshot_sha256: confirmed.snapshot.sha256,
+            }),
+        };
+        let send = ConversationSendInput {
+            message: message.clone(),
+            task_id: Some(i.task_id),
+            schema_revision: "a".repeat(64),
+            agent_model: None,
+            mode: Some(ConversationSendMode::Plan),
+        };
+        let saved = f
+            .store
+            .send_conversation_message(&i.project_id, i.conversation_id, &send)
+            .unwrap();
+        assert_eq!(
+            saved.disposition,
+            ConversationSendDisposition::FormalFeedback
+        );
+        assert_eq!(
+            saved,
+            f.store
+                .send_conversation_message(&i.project_id, i.conversation_id, &send)
+                .unwrap()
+        );
+        let mut stale = message;
+        stale.id = Uuid::new_v4();
+        if let Some(ConversationSelectionRef::FormalAnnotation {
+            processing_operation_id,
+            ..
+        }) = &mut stale.reference
+        {
+            *processing_operation_id = Uuid::new_v4();
+        }
+        let stale = ConversationSendInput {
+            message: stale,
+            task_id: Some(i.task_id),
+            schema_revision: "a".repeat(64),
+            agent_model: None,
+            mode: Some(ConversationSendMode::Plan),
+        };
+        assert!(
+            f.store
+                .send_conversation_message(&i.project_id, i.conversation_id, &stale)
+                .is_err()
+        );
     }
     #[test]
     fn object_edits_use_snapshot_cas_and_existing_revision_history() {

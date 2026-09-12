@@ -56,6 +56,13 @@ CAS and history scope are being reused.
   as `propose_delivery_semantics` alongside manual intake. It still requires explicit
   call confirmation and produces a proposal only; it sees no pixels and grants no
   Builder/processing authority.
+- Formal review annotations now expose canonical Conversation references containing
+  the full Task/Schema/delivery/processing/Batch/Run/annotation revision/snapshot
+  lineage. Application and storage validate that lineage independently before the
+  message is committed. Formal feedback enters the existing feedback read surface
+  with the exact saved subject and existing CAS edit action; it never enters the
+  generic queue. `model_call_supported:false` records the bounded behavior: prose
+  does not authorize inferred bounding-box geometry.
 
 ## B0 findings
 

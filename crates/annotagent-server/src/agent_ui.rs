@@ -129,6 +129,13 @@ mod tests {
             examples["call_limit"].clone(),
         )
         .unwrap();
+        let mainline: Value = serde_json::from_str(include_str!(
+            "../../../docs/contracts/mainline-v1/EXAMPLES.json"
+        ))
+        .unwrap();
+        let mut formal = mainline["formal_visual_selection"].clone();
+        formal.as_object_mut().unwrap().remove("contract_status");
+        serde_json::from_value::<annotagent_storage::ConversationSelectionRef>(formal).unwrap();
         serde_json::from_value::<annotagent_storage::ConversationSchemaAuthorization>(
             examples["schema_consent"].clone(),
         )

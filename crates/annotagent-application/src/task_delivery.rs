@@ -224,6 +224,13 @@ impl LocalApplication {
         let saved = self
             .require_delivery_intake(project, conversation, task)?
             .context("Save complete delivery information before reviewing")?;
+        let project_schema_revision = self
+            .conversation_tasks(project, conversation)?
+            .into_iter()
+            .find(|record| record.input.id == task)
+            .context("Delivery Task not found")?
+            .input
+            .schema_revision;
         let scope = saved.intent.dataset_scope.as_deref().unwrap_or_default();
         ensure!(
             cursor <= scope.len(),
@@ -248,6 +255,39 @@ impl LocalApplication {
                 image.image_id,
                 source_run_id,
             )?;
+            let annotations = state
+                .snapshot
+                .annotations
+                .iter()
+                .map(|annotation| {
+                    let latest = self.store.list_revisions(annotation.id)?.last().cloned();
+                    let reference = match (
+                        latest.as_ref(),
+                        source_run_id,
+                        formal["processing_operation_id"].as_str(),
+                        formal["batch_id"].as_str(),
+                    ) {
+                        (Some(revision), Some(run), Some(operation), Some(batch)) => Some(
+                            serde_json::json!({
+                                "scope":"formal_annotation","task_id":task,
+                                "project_schema_revision":project_schema_revision,
+                                "intent_revision":saved.revision,"intent_sha256":saved.content_sha256,
+                                "processing_operation_id":operation,"batch_id":batch,"source_run_id":run,
+                                "annotation_id":annotation.id,"annotation_revision_id":revision.revision_id,
+                                "expected_snapshot_sha256":state.snapshot.sha256
+                            }),
+                        ),
+                        _ => None,
+                    };
+                    Ok(serde_json::json!({
+                        "annotation_id":annotation.id,"label":annotation.label,"value":annotation.value,
+                        "review_status":annotation.review_status,
+                        "annotation_revision_id":latest.map(|revision|revision.revision_id),
+                        "source_artifact_ids":annotation.provenance.artifact_ids,
+                        "feedback_available":reference.is_some(),"conversation_reference":reference
+                    }))
+                })
+                .collect::<Result<Vec<_>>>()?;
             items.push(serde_json::json!({
                 "image_id":image.image_id,"content_sha256":image.content_sha256,
                 "processing_operation_id":formal.get("processing_operation_id"),
@@ -258,7 +298,7 @@ impl LocalApplication {
                 "review_decision":state.review.as_ref().map(|review|review.input.decision),
                 "confirmation_current":state.confirmation_current,
                 "accepted_objects":state.accepted_objects,"unresolved_objects":state.unresolved_objects,
-                "snapshot_sha256":state.snapshot.sha256
+                "snapshot_sha256":state.snapshot.sha256,"annotations":annotations
             }));
         }
         let reviews =

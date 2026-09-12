@@ -28,6 +28,20 @@ pub enum ConversationSelectionRef {
         candidate_id: String,
         source_artifact_id: Uuid,
     },
+    /// One current formal annotation inside an exact Task processing child Run.
+    /// This is conversation context only; it grants no annotation mutation.
+    FormalAnnotation {
+        task_id: Uuid,
+        project_schema_revision: String,
+        intent_revision: u32,
+        intent_sha256: String,
+        processing_operation_id: Uuid,
+        batch_id: annotagent_core::BatchId,
+        source_run_id: annotagent_core::RunId,
+        annotation_id: annotagent_core::AnnotationId,
+        annotation_revision_id: annotagent_core::AnnotationRevisionId,
+        expected_snapshot_sha256: String,
+    },
 }
 
 /// A user-authored journal input. It grants no model or execution authority.
@@ -115,11 +129,18 @@ pub(crate) fn append_message_in_transaction(
             input: saved,
         });
     }
-    if let Some(ConversationSelectionRef::SampleCandidate {
-        task_id,
-        project_schema_revision,
-        ..
-    }) = &input.reference
+    if let Some(
+        ConversationSelectionRef::SampleCandidate {
+            task_id,
+            project_schema_revision,
+            ..
+        }
+        | ConversationSelectionRef::FormalAnnotation {
+            task_id,
+            project_schema_revision,
+            ..
+        },
+    ) = &input.reference
     {
         if input.image.is_none() {
             return Err(invalid("Selected candidate requires an image reference"));
@@ -128,6 +149,63 @@ pub(crate) fn append_message_in_transaction(
         if !task_owned {
             return Err(invalid(
                 "Selected candidate task or Schema revision does not match this conversation",
+            ));
+        }
+    }
+    if let Some(ConversationSelectionRef::FormalAnnotation {
+        task_id,
+        intent_revision,
+        intent_sha256,
+        processing_operation_id,
+        batch_id,
+        source_run_id,
+        annotation_id,
+        annotation_revision_id,
+        expected_snapshot_sha256,
+        ..
+    }) = &input.reference
+    {
+        let image = input
+            .image
+            .as_ref()
+            .ok_or_else(|| invalid("Formal annotation requires its image reference"))?;
+        let valid: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM task_delivery_intents d JOIN processing_operations p ON p.id=?4 JOIN batch_images b ON b.batch_id=?5 AND b.image_id=?6 AND b.child_run_id=?7 JOIN annotations a ON a.id=?8 AND a.run_id=?7 AND a.image_id=?6 JOIN annotation_revisions r ON r.revision_id=?9 AND r.annotation_id=a.id WHERE d.task_id=?1 AND d.revision=?2 AND d.content_sha256=?3 AND d.revision=(SELECT MAX(x.revision) FROM task_delivery_intents x WHERE x.task_id=d.task_id) AND json_extract(p.state_json,'$.authorization.conversation.task_id')=?1 AND json_extract(p.state_json,'$.authorization.conversation.conversation_id')=?10 AND json_extract(p.state_json,'$.authorization.delivery_scope.intent_revision')=?2 AND json_extract(p.state_json,'$.authorization.delivery_scope.intent_sha256')=?3)",
+            params![
+                task_id.to_string(),intent_revision,intent_sha256,processing_operation_id.to_string(),
+                batch_id.to_string(),image.image_id,source_run_id.to_string(),annotation_id.to_string(),
+                annotation_revision_id.to_string(),conversation.to_string()
+            ],
+            |row| row.get(0),
+        )?;
+        if !valid || expected_snapshot_sha256.len() != 64 {
+            return Err(invalid(
+                "Formal annotation lineage is stale, foreign or incomplete",
+            ));
+        }
+        let image_id: annotagent_core::ImageId = image
+            .image_id
+            .parse()
+            .map_err(|_| invalid("Formal annotation image identity is invalid"))?;
+        let saved = crate::delivery_image_review::intent(db, project, conversation, *task_id)?;
+        let snapshot =
+            crate::delivery_image_review::snapshot(db, &saved, image_id, Some(*source_run_id))?;
+        let latest_revision: Option<String> = db
+            .query_row(
+                "SELECT revision_id FROM annotation_revisions WHERE annotation_id=?1 ORDER BY created_at DESC,revision_id DESC LIMIT 1",
+                [annotation_id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if snapshot.sha256 != *expected_snapshot_sha256
+            || !snapshot
+                .annotations
+                .iter()
+                .any(|annotation| annotation.id == *annotation_id)
+            || latest_revision != Some(annotation_revision_id.to_string())
+        {
+            return Err(invalid(
+                "Formal annotation changed before message admission",
             ));
         }
     }

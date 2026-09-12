@@ -36,6 +36,7 @@ pub enum ConversationSendDisposition {
     NewTask,
     TaskMessage,
     CandidateFeedback,
+    FormalFeedback,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,6 +114,10 @@ impl SqliteStore {
                 Some(ConversationSelectionRef::SampleCandidate{task_id,project_schema_revision,..})=>{
                     if input.task_id!=Some(*task_id) || input.schema_revision!=*project_schema_revision { return Err(invalid("Candidate reference conflicts with send task or schema")); }
                     (*task_id,ConversationSendDisposition::CandidateFeedback)
+                },
+                Some(ConversationSelectionRef::FormalAnnotation{task_id,project_schema_revision,..})=>{
+                    if input.task_id!=Some(*task_id) || input.schema_revision!=*project_schema_revision { return Err(invalid("Formal annotation reference conflicts with send task or schema")); }
+                    (*task_id,ConversationSendDisposition::FormalFeedback)
                 },
                 None=>match input.task_id {
                     Some(task)=>(task,ConversationSendDisposition::TaskMessage),
