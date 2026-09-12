@@ -107,7 +107,79 @@ planned contracts for all three frontend owners. No production behavior changes 
 
 ## Next
 
-B1 extends the existing Task workspace with a revisioned read model and a thin,
-idempotent authorized advance command. B2 adds full formal visual lineage and result
-projection. B3 exposes/claims existing package consent and exact Task image-to-Run
-review scope. B4 adds capability readiness and bounded/concurrency HTTP evidence.
+Frontend integration support only. New work is limited to concrete contract defects
+reported against these committed B0–B4 interfaces.
+
+## Delivery commits
+
+- B0 contract audit: `99d16f997db2816a7f41db8640d1d6dd1b75693f`
+- B1 Task read model and authorized local advance:
+  `22ddee918730f29e5f984e19550c5b62201e6945`
+- B3 exact delivery processing/formal source/package consent:
+  `1e2bac549f52ed98c2f9fbec9ed9f288f3e05251`
+- B2 Sample visual selection and natural-language intake action:
+  `2fe42ebcb1746bd985e5204854b2de8c101c5160`
+- B2 formal annotation Conversation lineage:
+  `a4e4be1d765c3cf3c18a538571490fda5ca6dcf8`
+- Post-Sample formal processing action:
+  `3bf3b4e32d0a3a07f156c2f89f6703e81a410195`
+- B4 passive task capability snapshot:
+  `3d5b4429db4963a5d2ee81fabec67f2e979dde4b`
+
+The integration tip is the last SHA and includes the complete ordered chain. There
+are no new SQL migrations in this branch. Existing annotations, Workflows, Runs,
+grants and history are reused; the formal Conversation reference is an additive JSON
+variant.
+
+## Reproducible isolated HTTP environment
+
+From this worktree:
+
+```sh
+python3 crates/annotagent-e2e-fixture/support/http_fixture.py --enable-fixture --smoke
+```
+
+For browser integration, omit `--smoke`; optionally pass an already-built directory
+with `--web-dist /absolute/path/to/dist`. The launcher allocates two loopback ports,
+rejects port 8787, creates a marked `TEST-agent-ui-*` workspace under the system temp
+directory, strips Provider credential environment variables, and starts the existing
+Rust TEST Provider plus the real Router/SQLite application. Its printed manifest can
+be reused with `--workspace <printed TEST path>`; GET does not seed or resume work.
+
+The delivery-tip smoke run used API `127.0.0.1:55661`, TEST Provider
+`127.0.0.1:55662`, and retained isolated evidence under
+`/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-55jnxoy6`.
+Both owned processes stopped after the run. No real credential, paid Provider, model
+download, user workspace or 8787 service was used.
+
+## Final verification
+
+- `cargo fmt --all -- --check`
+- `cargo clippy -p annotagent-storage -p annotagent-application -p annotagent-server --lib --tests -- -D warnings`
+- `cargo test --workspace --offline`: 793 passed, 0 failed, 6 explicitly ignored.
+- Opt-in real HTTP/SQLite/TEST Provider smoke passed at delivery tip, including
+  Journey, Sample, queue/HumanRequest, stop/interrupted, paused resume, bbox, SSE and
+  export paths. The Task workspace call in that smoke also executes the new passive
+  capability projection.
+- Focused B0–B4 regressions cover Task advance replay/stale CAS; non-prefix 3-of-10
+  scope; formal source and annotation lineage; per-candidate Artifact identity; final
+  review one-shot package admission/restart; Registry Profile revision change and
+  owner isolation; 100-image pause/restart/resume; and bounded summaries for 100
+  Projects with 1000 Runs/reviews.
+
+## Remaining limits
+
+- Conversation thread text is still persisted user text. Assistant-facing content is
+  the real structured Schema/Builder/Sample/processing/feedback evidence; no generic
+  assistant prose or private reasoning is invented.
+- Formal annotation prose opens an exact structured CAS edit action. It does not ask
+  a model to infer geometry.
+- Capability readiness is a credential-free saved-evidence snapshot. `unknown` does
+  not trigger a probe. Its Registry revision is a snapshot SHA-256, not a global
+  monotonic counter.
+- Task cost counts durable Conversation call receipts once. Processing allowance is
+  separately present in `budget`; heterogeneous Provider pricing that cannot be
+  compared remains unknown.
+- The TEST suite validates package contents and portable ZIP semantics. Commercial
+  model accuracy, explicitly supplied large-weight ONNX integrations, browser-downloaded
+  ZIP in an unrelated environment, and an official training loader remain unverified.
