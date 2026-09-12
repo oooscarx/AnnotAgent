@@ -17,6 +17,22 @@ Specify the images, what to annotate, and what you intend to train. An LLM organ
 
 *Real saved sample, with review warnings and read-only state preserved. This is not evidence of accepted formal annotations or a completed training package. The capture service is not the final integration build. See the [asset manifest](docs/product/readme/ASSET_MANIFEST.json).*
 
+## First experience
+
+![Six original synthetic tabletop images covering cups, bottles, multiple objects, a negative image and a boundary-edit case](examples/demo-packs/object-detection-review/1.0.0/thumbnail.png)
+
+The repository includes a six-image offline tabletop example with `cup` and `bottle`
+labels and an Ultralytics YOLO detection package target. Every image is an explicitly
+identified original procedural illustration. It demonstrates the workflow; it is not
+photographic data or a training benchmark. [See the assets, fixed splits and license](examples/demo-packs/object-detection-review/1.0.0/README.md).
+
+- **Try with my model** uses an already configured and approved model. Results, tokens and costs come from that live request.
+- **No-setup experience: preset candidates** makes no model request. Inspect and edit the supplied candidates, then review every image and package the result.
+
+Preset candidates must not enter live-mode prompts, inputs or caches. Structural
+validation is not annotation-accuracy validation. A product screenshot will be added
+only after the final integrated build exists; the asset preview is not presented as UI.
+
 ## One task: from images to a package
 
 Consider detecting `ball` in match images for Ultralytics YOLO detection. These four steps describe the intended progression of one task. The real screenshot covers the sample stage; later review and delivery mechanisms are supported by code and separately identified TEST evidence.
