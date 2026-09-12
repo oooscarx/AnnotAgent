@@ -199,14 +199,21 @@ function fixture(overrides: {
           task_id: "t",
           task_revision: overrides.taskRevision?.() ?? "schema-1",
           registry_revision: "registry-1",
-          role: "task_planning_and_vision",
-          required_capabilities: ["text_generation", "image_classification"],
+          role: "task_planning",
+          required_capabilities: ["text_generation"],
           compatible_model_ids: models
+            .filter((item) => item.task_capabilities.includes("text_generation"))
             .filter((item) => item.status === "available" || item.status === "unknown" || item.status === "unverified")
             .map((item) => `model-profile:${item.id}`),
           status: "required",
           return_path: "/projects/p/work?task=t&draft=d",
         }],
+        visual_readiness_boundary: {
+          status: "validate_exact_draft",
+          reason: "Validate the exact frozen Draft bindings through existing previews.",
+          builder_preview_url: "/api/projects/p/conversations/c/tasks/t/builder-preview",
+          sample_preview_url: "/api/projects/p/conversations/c/tasks/t/sample-preview",
+        },
         agent_model_preference: { revision: overrides.preferenceRevision?.() ?? 1, model_profile_id: "planner" },
         authorization: { source: "journey_consent", consent_id: "consent", expires_at: "2027-01-01", permission_digest: "old-auth", allowed_models: context.allowed_models, active: true, can_resume_without_authorization: false },
         budget: {},
@@ -299,6 +306,13 @@ describe("task-scoped model preparation", () => {
   it("builds the continuation only from the owned B4 readiness revision", async () => {
     const snapshot = await fixture().service.inspect(context, new AbortController().signal);
     const request = snapshot.readiness.setup_requests[0];
+    expect(request.role).toBe("task_planning");
+    expect(request.required_capabilities).toEqual(["text_generation"]);
+    expect(snapshot.readiness.visual_readiness_boundary).toMatchObject({
+      status: "validate_exact_draft",
+      builder_preview_url: expect.stringContaining("/builder-preview"),
+      sample_preview_url: expect.stringContaining("/sample-preview"),
+    });
     const built = setupContextFromReadiness(request, snapshot.readiness, "2026-01-01");
     expect(built).toMatchObject({
       id: "setup",
@@ -309,11 +323,10 @@ describe("task-scoped model preparation", () => {
       draft_id: "d",
       draft_revision: 1,
       allowed_models: context.allowed_models,
-      compatible_model_ids: ["model-profile:planner", "model-profile:vision"],
+      compatible_model_ids: ["model-profile:planner"],
       return_to: "/projects/p/work?task=t&draft=d",
     });
     expect(built.requirements).toEqual([
-      expect.objectContaining({ id: "capability:image_classification", capability: "image_classification" }),
       expect.objectContaining({ id: "capability:text_generation", capability: "text_generation" }),
     ]);
     expect(built.requirements.every((item) => !("target" in item))).toBe(true);

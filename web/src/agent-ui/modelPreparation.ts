@@ -180,6 +180,12 @@ export type CapabilityReadiness = {
   registry_revision_kind: "snapshot_sha256";
   candidates: CapabilityReadinessCandidate[];
   setup_requests: MainlineCapabilitySetupRequest[];
+  visual_readiness_boundary: {
+    status: "awaiting_frozen_draft" | "validate_exact_draft";
+    reason: string;
+    builder_preview_url: string;
+    sample_preview_url: string;
+  };
   agent_model_preference: { revision: number; model_profile_id: string | null };
   authorization: {
     source: string | null;
