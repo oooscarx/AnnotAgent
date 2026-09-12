@@ -146,21 +146,25 @@ directory, strips Provider credential environment variables, and starts the exis
 Rust TEST Provider plus the real Router/SQLite application. Its printed manifest can
 be reused with `--workspace <printed TEST path>`; GET does not seed or resume work.
 
-The delivery-tip smoke run used API `127.0.0.1:55661`, TEST Provider
-`127.0.0.1:55662`, and retained isolated evidence under
-`/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-55jnxoy6`.
-Both owned processes stopped after the run. No real credential, paid Provider, model
-download, user workspace or 8787 service was used.
+The fixed P0 smoke used API `127.0.0.1:8876`, TEST Provider `127.0.0.1:8877`,
+and retained isolated evidence under
+`/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-tqi6wd3n`.
+The same workspace was started a second time on the same ports; its manifest records
+`seed_snapshot_unchanged:true` and `restart_verified:true`. Both owned processes stopped
+after each run. No real credential, paid Provider, model download, user workspace or
+8787 service was used.
 
 ## Final verification
 
 - `cargo fmt --all -- --check`
 - `cargo clippy -p annotagent-storage -p annotagent-application -p annotagent-server --lib --tests -- -D warnings`
 - `cargo test --workspace --offline`: 793 passed, 0 failed, 6 explicitly ignored.
-- Opt-in real HTTP/SQLite/TEST Provider smoke passed at delivery tip, including
-  Journey, Sample, queue/HumanRequest, stop/interrupted, paused resume, bbox, SSE and
-  export paths. The Task workspace call in that smoke also executes the new passive
-  capability projection.
+- Opt-in real HTTP/SQLite/TEST Provider smoke passed at fixed SHA `d48ab89`: four
+  exact uploaded Task images, a parameterless Journey preview, one consent POST and
+  no execution POST reached a real three-image `passed` Sample. The broader trace
+  also covers processing, queue pending-human refusal, HumanRequest, stop/interrupted,
+  paused resume, bbox and SSE. Delivery export correctly refuses while whole-image
+  reviews remain, so the fixture does not fabricate package completion.
 - Focused B0–B4 regressions cover Task advance replay/stale CAS; non-prefix 3-of-10
   scope; formal source and annotation lineage; per-candidate Artifact identity; final
   review one-shot package admission/restart; Registry Profile revision change and
@@ -205,9 +209,8 @@ download, user workspace or 8787 service was used.
   per-attempt usage observer. This fixes a TEST HTTP failure that previously settled
   immediately as `in_doubt` before reaching the Provider. There is still no retry of
   an unknown result.
-- Fresh isolated HTTP smoke at API `127.0.0.1:8870`, TEST Provider
-  `127.0.0.1:8871` completed Schema, Builder, Sample, formal processing, stop,
-  review, SSE and export. Evidence is retained in
-  `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-imsjr9j9`.
-  This was a dirty-tree precommit diagnostic and is not represented as evidence for
-  the base SHA; a clean committed-SHA replay is required for the handoff.
+- Clean isolated HTTP smoke at `d48ab89` used API `127.0.0.1:8876` and TEST
+  Provider `127.0.0.1:8877`. Its `p0_autonomy` manifest records four Task images,
+  three Sample images, exact child IDs, `sample_status:"passed"` and a settled
+  dispatch without error. A same-workspace restart retained the complete snapshot
+  without redispatch. The older `TEST-agent-ui-imsjr9j9` trace remains diagnostic only.
