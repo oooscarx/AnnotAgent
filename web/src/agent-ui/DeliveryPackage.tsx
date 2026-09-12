@@ -87,6 +87,7 @@ export function DeliveryPackage({ service, project, task, scope, locked = false,
   }, [project, refresh, service, task]);
 
   useEffect(() => {
+    setReadiness(undefined);
     if (!service.packageReadiness) return;
     const controller = new AbortController();
     void service.packageReadiness(project, task, controller.signal)
@@ -114,6 +115,7 @@ export function DeliveryPackage({ service, project, task, scope, locked = false,
     if (!id) { setJob(undefined); return; }
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    setJob(undefined);
     const read = async () => {
       try {
         const next = await service.packageStatus(project, task, id, controller.signal);
