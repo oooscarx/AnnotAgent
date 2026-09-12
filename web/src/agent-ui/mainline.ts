@@ -9,14 +9,17 @@ export type MainlineMessage={
 };
 export type MainlineStep={id:string;kind:string;title:string;status:"blocked"|"ready"|"awaiting_approval"|"running"|"waiting_for_human"|"completed"|"failed"|"outcome_unknown";detail?:string};
 export type MainlineAction={id:string;state:"authorized"|"available"|"requires_confirmation"|"blocked";method:"GET"|"POST";url:string;requires_confirmation:boolean;reason:string|null;scope?:unknown};
+export type MainlinePublicAction={id:string;kind:string;available:boolean;reason:string;requires_approval:boolean;scope_revision:string;method:"GET"|"POST";url:string};
 export type MainlineTaskView={
   contract_version:"mainline-task-v1";project_id:string;project_owner_id:string;conversation_id:string;task_id:string;read_model_revision:string;
+  revision?:string;intake?:{missing_slots:IntakeSlot[];dataset_scope:unknown;label_rules:unknown;training_target:unknown};
   delivery:unknown;schema:unknown;
   review_summary:{selected_images:number;saved_review_receipts:number;current_reviews:number;pending_reviews:number};
   package:{consents:unknown[];jobs:{id:string;phase:string;intent_revision:number;snapshot_sha256:string;error?:string|null}[]};
-  available_actions:MainlineAction[];blockers:string[];
-  completion:{model_request_completed:boolean;processing_completed:boolean;package_ready:boolean;task_completed:boolean};
-  messages?:MainlineMessage[];steps?:MainlineStep[];active_operation_ids?:string[];review_work_item_id?:string;formal_source?:unknown;capability_readiness?:unknown;
+  available_actions:MainlineAction[];actions?:MainlinePublicAction[];blockers:(string|{code:string;message:string})[];
+  completion:{model_request_completed:boolean;processing_completed:boolean;package_ready:boolean;task_completed:boolean;status?:"incomplete"|"package_ready";package_id?:string;download_url?:string};
+  messages?:MainlineMessage[];steps?:MainlineStep[];active_operation_ids?:string[];review_work_item_id?:string;package_id?:string;formal_source?:unknown;capability_readiness?:unknown;
+  links?:{self:string;thread:string;visual_selections:string;capability_readiness:string;review_work_items:string;package_consents:string;advance:string};
 };
 export type MainlineAdvanceInput={command_id:string;expected_read_model_revision:string;action_id:string};
 export type MainlineAdvanceReceipt={command_id:string;action_id:string;replayed:boolean;result:unknown;workspace:MainlineTaskView};
@@ -45,7 +48,7 @@ export type CapabilitySetupRequest={
 export type CanonicalVisualSelectionItem={
   project_id:string;conversation_id:string;task_id:string;project_schema_revision:string;
   draft_id:string;draft_revision:number;sample_test_id:string;sample_status:string;operation_status:string;result_available:boolean;
-  images:{image_id:string;image_sha256:string;result_revision:string;candidates:{candidate_id:string;annotation_kind:string|null;label:string;source_artifact_id:string|null;feedback_available:boolean}[]}[];
+  images:{image_id:string;image_sha256:string;result_revision:string;candidates:{candidate_id:string;annotation_kind:string|null;label:string;source_artifact_id:string|null;feedback_available:boolean;selection:SampleVisualSelection|null}[]}[];
 };
 export type CanonicalVisualSelectionPage={project_id:string;conversation_id:string;task_id:string;items:CanonicalVisualSelectionItem[];next_cursor:string|null};
 export type MainlineDomainSeams={
@@ -92,13 +95,19 @@ export function deliverySampleResultFromCanonical(
   const supported=new Set(["bounding_box","classification","semantic_mask","instance_mask"]);
   const images=item.images.map(image=>{
     const seen=new Set<string>();
-    const source_artifacts:Record<string,string>={};
+    const candidates:{candidate_id:string;selection:SampleVisualSelection|null}[]=[];
     for(const candidate of image.candidates){
       if(seen.has(candidate.candidate_id))throw new Error("Canonical SampleCandidate identity is duplicated; no reference was created");
       seen.add(candidate.candidate_id);
-      if(candidate.feedback_available&&candidate.source_artifact_id&&candidate.annotation_kind&&supported.has(candidate.annotation_kind))source_artifacts[candidate.candidate_id]=candidate.source_artifact_id;
+      const referenceAvailable=candidate.feedback_available&&candidate.source_artifact_id&&candidate.annotation_kind&&supported.has(candidate.annotation_kind);
+      if(referenceAvailable&&!candidate.selection)throw new Error("Canonical SampleCandidate is missing its server-issued selection");
+      const selection=referenceAvailable
+        ? assertVisualSelection(candidate.selection!,item.project_id,item.task_id) as SampleVisualSelection
+        : null;
+      if(selection&&(selection.candidate.candidate_id!==candidate.candidate_id||selection.candidate.source_artifact_id!==candidate.source_artifact_id))throw new Error("Canonical SampleCandidate selection does not match its candidate");
+      candidates.push({candidate_id:candidate.candidate_id,selection:selection?structuredClone(selection):null});
     }
-    return {image_id:image.image_id,image_sha256:image.image_sha256,result_revision:image.result_revision,source_artifacts,annotations:annotationsByImage[image.image_id]||[]};
+    return {image_id:image.image_id,image_sha256:image.image_sha256,result_revision:image.result_revision,candidates,annotations:annotationsByImage[image.image_id]||[]};
   });
   return {project_id:item.project_id,conversation_id:item.conversation_id,task_id:item.task_id,project_schema_revision:item.project_schema_revision,draft_id:item.draft_id,draft_revision:item.draft_revision,sample_test_id:item.sample_test_id,images};
 }
