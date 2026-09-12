@@ -119,3 +119,15 @@ commercial model accuracy. Ambiguous label/output/export requests still stop at 
 HumanRequest. A Schema that omits valid delivery semantics or a Provider result that is unknown
 stops before image inference and is never automatically retried. Formal processing and package
 admission retain their separate dataset-sized scopes.
+
+Fixed-SHA acceptance at `d48ab89bf0d26d83b96b6a0fa92a1af8262c93da` used the
+external TEST HTTP Provider with the same multi-label bbox identity used by the packaged UI.
+It uploaded four distinct images, sent their exact IDs/hashes, read the parameterless preview,
+POSTed the consent once, and only polled passive GETs until the three-image Sample was `passed`.
+The retained manifest and request trace are under
+`/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-tqi6wd3n`.
+Starting the service again against that same marked workspace produced
+`seed_snapshot_unchanged:true` and `restart_verified:true`; the consent, call, Builder, Draft,
+Sample, Run and review identities did not change. Formal processing covered all four delivery
+images under its own approval. Package export then correctly stopped on outstanding whole-image
+review instead of treating the TEST model candidates as accepted annotations.
