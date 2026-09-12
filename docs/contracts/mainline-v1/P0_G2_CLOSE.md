@@ -79,6 +79,9 @@ ignored test server; production startup and every GET remain side-effect free.
 The legal-empty and projection-failed records reference real persisted, project-owned
 Drafts and exact current Sample snapshots; the fixture verifies those linked GETs
 before exposing the browser URLs.
+Both Sample snapshots contain one real project-image identity and one corresponding
+result. The HTTP smoke rejects any input/result cardinality, image ID, content hash,
+or image-name mismatch and repeats the same checks after restart.
 
 ## Focused commands
 

@@ -230,6 +230,11 @@ def verify_diagnostic_scenes(c, manifest):
             sample = c.get(scene["sample_test_url"])
             assert sample["sample_test"]["id"] == scene["sample_test_id"], sample
             assert sample["sample_test"]["draft_id"] == scene["draft_id"] and sample["current"] is True, sample
+            inputs, results = sample["sample_test"]["inputs"], sample["sample_test"]["report"]["samples"]
+            assert len(inputs) == len(results) == 1, sample
+            assert inputs[0]["image_id"] == scene["image"]["image_id"], (inputs, scene["image"])
+            assert inputs[0]["content_hash"] == scene["image"]["content_hash"], (inputs, scene["image"])
+            assert results[0]["image_name"] == scene["image"]["name"], (results, scene["image"])
         observed[code] = {**scene, "diagnostic": diagnostic}
     return {**seeded, "scenes": observed}
 

@@ -2,7 +2,7 @@
 //! The production router has no seeding route; clients read these records through
 //! the ordinary owned Task workspace endpoint.
 
-use annotagent_application::{LocalApplication, stable_project_id};
+use annotagent_application::{LocalApplication, ProjectImageSummary, stable_project_id};
 use annotagent_core::{
     AnnotationFailureClass, ModelAvailability, ModelCapability, ModelFailure, ModelFailureCategory,
     ModelFailureStage, WorkflowDraft, WorkflowDraftStatus, WorkflowDryRunReport,
@@ -11,7 +11,7 @@ use annotagent_plugin_registry::{InstallApproval, PluginRegistryError};
 use annotagent_storage::{
     BeginConversationTask, ConversationCallAdmission, ConversationCallGrant,
     ConversationCallStatus, ConversationMessageInput, SampleOperation, WorkflowSampleTest,
-    WorkflowSampleTestStatus,
+    WorkflowSampleTestInput, WorkflowSampleTestStatus,
 };
 use anyhow::{Context, Result, ensure};
 use chrono::{Duration, Utc};
@@ -239,7 +239,8 @@ fn save_sample(
     conversation: Uuid,
     task: Uuid,
     scene: &str,
-    sample: Value,
+    mut sample: Value,
+    image: &ProjectImageSummary,
 ) -> Result<(String, String)> {
     let id = fixture_uuid(scene, "sample").to_string();
     let now = Utc::now();
@@ -278,6 +279,9 @@ fn save_sample(
     };
     ensure!(application.store().reserve_sample_operation(&operation)?);
     ensure!(application.store().start_sample_operation(&id)?);
+    sample["image_name"] = json!(image.name);
+    sample["width"] = json!(160);
+    sample["height"] = json!(100);
     let samples = serde_json::to_value(vec![sample])?;
     let report: WorkflowDryRunReport = serde_json::from_value(json!({
         "sandbox":true,
@@ -286,6 +290,10 @@ fn save_sample(
         "total_latency_ms":0,
         "estimated_cost":"0"
     }))?;
+    let inputs = vec![WorkflowSampleTestInput {
+        image_id: image.image_id.to_string(),
+        content_hash: image.content_hash.clone(),
+    }];
     application
         .store()
         .save_workflow_sample_test(&WorkflowSampleTest {
@@ -295,14 +303,18 @@ fn save_sample(
             draft_revision: draft.revision,
             request_revision: draft.revision,
             draft_content_hash: draft.content_hash,
-            image_set_hash: "e".repeat(64),
-            model_snapshot_hash: "f".repeat(64),
+            image_set_hash: annotagent_image_tools::sha256(&serde_json::to_vec(&inputs)?),
+            model_snapshot_hash: annotagent_image_tools::sha256(&serde_json::to_vec(&BTreeMap::<
+                String,
+                String,
+            >::new(
+            ))?),
             status: if report.samples[0].failed {
                 WorkflowSampleTestStatus::Failed
             } else {
                 WorkflowSampleTestStatus::Passed
             },
-            inputs: Vec::new(),
+            inputs,
             model_bindings: BTreeMap::new(),
             report,
             started_at: now,
@@ -344,6 +356,18 @@ pub(crate) fn seed(application: &LocalApplication) -> Result<Value> {
         PROJECT,
         "version: 1\nproject:\n  name: TEST P0 result diagnostics\n  annotation_goal: Test browser-visible safe failure evidence\ndataset:\n  root: images\nruntime: {}\ntasks:\n  - id: objects\n    kind: bounding_box\n    labels: [target]\n    required: true\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n",
     )?;
+    let image_path = application
+        .workspace()
+        .join(PROJECT)
+        .join("images")
+        .join("TEST-diagnostic-input.png");
+    annotagent_image_tools::generate_synthetic_inspection(&image_path)?;
+    let images = application.list_project_image_summaries(PROJECT)?;
+    ensure!(
+        images.len() == 1,
+        "diagnostic Project must contain one image"
+    );
+    let image = &images[0];
     install_missing_weights_plugin(application)?;
     let conversation = application.create_project_conversation(PROJECT)?;
     let revision = application.project_goal(PROJECT)?["revision"]
@@ -416,13 +440,14 @@ pub(crate) fn seed(application: &LocalApplication) -> Result<Value> {
         tasks["legal_empty_detection"],
         "legal_empty_detection",
         json!({
-            "image_index":0,"image_name":"TEST-legal-empty.png","width":640,"height":480,
+            "image_index":0,"image_name":"TEST-legal-empty.png","width":160,"height":100,
             "result_count":0,"auto_accepted_count":0,"review_count":0,
             "failed":false,"empty":true,"outcomes":[],"nodes":[],
             "failure_classes":[AnnotationFailureClass::NoCandidate],
             "projection":{"final_candidates":[],"review_candidates":[],"committed_annotations":[],
                 "no_target":true,"intermediate_artifact_ids":[]}
         }),
+        image,
     )?;
     let projection_failed = save_sample(
         application,
@@ -430,13 +455,14 @@ pub(crate) fn seed(application: &LocalApplication) -> Result<Value> {
         tasks["candidate_projection_failed"],
         "candidate_projection_failed",
         json!({
-            "image_index":0,"image_name":"TEST-projection-failed.png","width":640,"height":480,
+            "image_index":0,"image_name":"TEST-projection-failed.png","width":160,"height":100,
             "result_count":0,"auto_accepted_count":0,"review_count":0,
             "failed":true,"empty":false,"outcomes":[],"nodes":[],
             "failure_classes":[AnnotationFailureClass::InvalidArtifact],
             "projection":{"final_candidates":[],"review_candidates":[],"committed_annotations":[],
                 "no_target":false,"intermediate_artifact_ids":[]}
         }),
+        image,
     )?;
 
     let expired_at = Utc::now() + Duration::milliseconds(100);
@@ -479,6 +505,10 @@ pub(crate) fn seed(application: &LocalApplication) -> Result<Value> {
         scene_manifest[code]["sample_test_url"] = json!(format!(
             "/api/workflow-drafts/{draft_id}/sample-test?test_id={sample_test_id}"
         ));
+        scene_manifest[code]["image"] = json!({
+            "image_id":image.image_id,"content_hash":image.content_hash,
+            "name":image.name,"width":160,"height":100
+        });
     }
     let manifest = json!({
         "contract_version":"p0-diagnostic-scenes-v1",
@@ -587,6 +617,26 @@ mod tests {
                 assert_eq!(sample["sample_test"]["id"], scene["sample_test_id"]);
                 assert_eq!(sample["sample_test"]["draft_id"], scene["draft_id"]);
                 assert_eq!(sample["current"], true);
+                assert_eq!(sample["sample_test"]["inputs"].as_array().unwrap().len(), 1);
+                assert_eq!(
+                    sample["sample_test"]["report"]["samples"]
+                        .as_array()
+                        .unwrap()
+                        .len(),
+                    1
+                );
+                assert_eq!(
+                    sample["sample_test"]["inputs"][0]["image_id"],
+                    scene["image"]["image_id"]
+                );
+                assert_eq!(
+                    sample["sample_test"]["inputs"][0]["content_hash"],
+                    scene["image"]["content_hash"]
+                );
+                assert_eq!(
+                    sample["sample_test"]["report"]["samples"][0]["image_name"],
+                    scene["image"]["name"]
+                );
             }
         }
     }
