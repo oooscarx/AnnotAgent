@@ -1,54 +1,104 @@
-import {test,expect} from "@playwright/test";
-import {resolve} from "node:path";
-test("restored pending admission stays read-only until an explicit exact-scope retry",async({page})=>{
+import { expect, test } from "@playwright/test";
+import { resolve } from "node:path";
+
+test("package authorization uses server readiness and never scans images or starts a package in React", async ({ page }) => {
   await page.goto("/ui-preview?task=new");
-  await page.evaluate(async path=>{
-    const {React,createRoot,DeliveryPackage}=await import(path);const host=document.createElement("main");document.body.replaceChildren(host);
-    const original={command_id:"pending-original",intent_revision:1,intent_sha256:"old-frozen-scope",image_reviews:{oldImage:3},confirmed:true};
-    const state={posts:[] as unknown[],pending:original as unknown,received:false};Object.assign(window,{pendingPackageTest:state});
-    const service={history:async()=>({items:[],next_cursor:null}),pendingPackage:()=>state.pending,
-      packageStatus:async()=>{if(!state.received)throw new Error("TEST no authoritative receipt yet");return {job:{id:"pending-original",phase:"cancelled",intent_revision:1,result:null},active:false,interrupted:false};},
-      startPackage:async(_p:string,_t:string,input:unknown)=>{state.posts.push(input);state.received=true;state.pending=undefined;return {job:{id:"pending-original",phase:"cancelled",intent_revision:1,result:null},active:false,dispatched:false};}};
-    createRoot(host).render(React.createElement(DeliveryPackage,{service,project:"TEST",task:"TASK",scope:{revision:2,content_sha256:"new-scope",image_ids:["differentImage"]},onInspect:()=>{}}));
-  },`/@fs/${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`);
-  await expect(page.getByText("恢复了一个尚未核实回执",{exact:false})).toContainText("revision 1");
-  expect(await page.evaluate(()=>(window as unknown as {pendingPackageTest:{posts:unknown[]}}).pendingPackageTest.posts)).toEqual([]);
-  await page.getByRole("button",{name:"核实原打包请求",exact:true}).click();
-  expect(await page.evaluate(()=>(window as unknown as {pendingPackageTest:{posts:unknown[]}}).pendingPackageTest.posts)).toEqual([]);
-  await page.getByRole("button",{name:"按原范围和命令重试",exact:true}).click();
-  expect(await page.evaluate(()=>(window as unknown as {pendingPackageTest:{posts:unknown[]}}).pendingPackageTest.posts)).toEqual([{command_id:"pending-original",intent_revision:1,intent_sha256:"old-frozen-scope",image_reviews:{oldImage:3},confirmed:true}]);
-  await expect(page.getByText("已取消",{exact:true})).toBeVisible();
-  await expect(page.getByRole("link",{name:"下载数据集 ZIP"})).toHaveCount(0);
+  await page.evaluate(async (path) => {
+    const { React, createRoot, DeliveryPackage } = await import(path);
+    const host = document.createElement("main");
+    document.body.replaceChildren(host);
+    const state = { imageReads: 0, starts: 0, authorizations: [] as unknown[], armed: false };
+    Object.assign(window, { packageAuthorizationTest: state });
+    const service = {
+      history: async () => ({ items: [], next_cursor: null }),
+      pendingPackage: () => undefined,
+      image: async () => { state.imageReads += 1; throw new Error("must not scan"); },
+      startPackage: async () => { state.starts += 1; throw new Error("must not start"); },
+      packageReadiness: async () => ({
+        intent_revision: 2, intent_sha256: "intent", ready: false,
+        counts: { total: 2, complete: 1, positive: 1, negative: 0, excluded: 0, unresolved: 1, failed: 0 },
+        review_revisions: { one: 3 },
+        blockers: [{ code: "review_incomplete", message: "还有 1 张图片待确认", image_ids: ["two"] }],
+        consent: state.armed ? { input: { id: "authorization-one", intent_revision: 2, intent_sha256: "intent", confirmed: true }, state: "armed" } : null,
+        package: null,
+      }),
+      authorizePackage: async (_p: string, _t: string, input: unknown) => {
+        state.authorizations.push(input); state.armed = true;
+        return { input, state: "armed" };
+      },
+      packageStatus: async () => { throw new Error("no package selected"); },
+      cancelPackage: async () => { throw new Error("unused"); },
+      downloadUrl: () => "/unused",
+    };
+    createRoot(host).render(React.createElement(DeliveryPackage, {
+      service, project: "TEST", task: "TASK",
+      scope: { revision: 2, content_sha256: "intent", image_ids: ["one", "two"] },
+      onInspect: () => {},
+    }));
+  }, `/@fs/${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`);
+
+  await expect(page.getByText("已完成 1/2")).toBeVisible();
+  await expect(page.getByText("还有 1 张图片待确认")).toBeVisible();
+  let state = await page.evaluate(() => (window as unknown as { packageAuthorizationTest: { imageReads: number; starts: number; authorizations: unknown[] } }).packageAuthorizationTest);
+  expect(state.imageReads).toBe(0);
+  expect(state.starts).toBe(0);
+  expect(state.authorizations).toEqual([]);
+
+  await page.getByRole("button", { name: "允许审核齐全后自动打包", exact: true }).click();
+  await expect(page.getByText("自动打包授权已保存", { exact: false })).toBeVisible();
+  state = await page.evaluate(() => (window as unknown as { packageAuthorizationTest: { imageReads: number; starts: number; authorizations: unknown[] } }).packageAuthorizationTest);
+  expect(state.imageReads).toBe(0);
+  expect(state.starts).toBe(0);
+  expect(state.authorizations).toHaveLength(1);
+  expect(state.authorizations[0]).toMatchObject({ intent_revision: 2, intent_sha256: "intent", confirmed: true });
 });
-test("package card uses owned persisted status and never packages on mount or status retry",async({page})=>{
+
+test("package history and download render only persisted server receipts", async ({ page }) => {
   await page.goto("/ui-preview?task=new");
-  await page.evaluate(async path=>{
-    const {React,createRoot,DeliveryPackage}=await import(path);
-    const host=document.createElement("main");document.body.replaceChildren(host);
-    const state={writes:[] as unknown[],ready:false};Object.assign(window,{packageTest:state});
-    const service={history:async()=>({items:[{id:"old-package",created_at:"TEST saved"}],next_cursor:null}),
-      image:async(_p:string,_t:string,image:string,run:string|null)=>({intent_revision:2,intent_sha256:"intent",confirmation_current:!!run,review:{revision:3,input:{source_run_id:"formal"}}}),
-      startPackage:async(_p:string,_t:string,input:unknown)=>{state.writes.push(input);return {job:{id:(input as {command_id:string}).command_id,phase:"exporting",result:null,intent_revision:2},active:false,dispatched:true};},
-      packageStatus:async(_p:string,_t:string,id:string)=>({job:{id,phase:state.ready?"ready":"validating",intent_revision:1,result:state.ready?{images:11,objects:20,negatives:1,excluded:1,bytes:12345,sha256:"TEST frozen hash",summary:{labels:["冻结类别"],splits:{train:9,val:2},warnings:["TEST near duplicates not checked"],exclusions:{excluded:"TEST incomplete"}}}:null},active:false,interrupted:!state.ready}),
-      downloadUrl:()=>"/TEST-only-no-download",cancelPackage:async()=>{throw new Error("TEST unused");}};
-    createRoot(host).render(React.createElement(DeliveryPackage,{service,project:"TEST",task:"TASK",scope:{revision:2,content_sha256:"intent",image_ids:["one","two"]},onInspect:()=>{}}));
-  },`/@fs/${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`);
-  await page.getByLabel("本任务已保存的数据包",{exact:true}).selectOption("old-package");
-  await expect(page.getByText("执行已中断或远端状态未知",{exact:true})).toBeVisible();
-  await expect(page.getByRole("link",{name:"下载数据集 ZIP"})).toHaveCount(0);
-  await page.getByRole("button",{name:"读取打包状态",exact:true}).click();
-  expect(await page.evaluate(()=>(window as unknown as {packageTest:{writes:unknown[]}}).packageTest.writes)).toEqual([]);
-  await page.evaluate(()=>(window as unknown as {packageTest:{ready:boolean}}).packageTest.ready=true);
-  await page.getByRole("button",{name:"读取打包状态",exact:true}).click();
-  await expect(page.getByText("数据集已打包",{exact:true})).toBeVisible();
-  await expect(page.getByText("类别：冻结类别",{exact:true})).toBeVisible();
-  await expect(page.getByText("训练图片 9 · 验证图片 2",{exact:false})).toBeVisible();
-  await expect(page.getByRole("link",{name:"下载数据集 ZIP"})).toHaveAttribute("href","/TEST-only-no-download");
-  await page.getByRole("button",{name:"检查当前打包范围",exact:true}).click();
-  await expect(page.getByRole("button",{name:"确认并生成训练数据包",exact:true})).toBeEnabled();
-  expect(await page.evaluate(()=>(window as unknown as {packageTest:{writes:unknown[]}}).packageTest.writes)).toEqual([]);
-  await page.getByRole("button",{name:"确认并生成训练数据包",exact:true}).click();
-  await page.getByRole("button",{name:"确认并生成训练数据包",exact:true}).click();
-  const writes=await page.evaluate(()=>(window as unknown as {packageTest:{writes:unknown[]}}).packageTest.writes);
-  expect(writes).toHaveLength(2);expect(writes[0]).toEqual(writes[1]);
+  await page.evaluate(async (path) => {
+    const { React, createRoot, DeliveryPackage } = await import(path);
+    const host = document.createElement("main");
+    document.body.replaceChildren(host);
+    const state = { writes: 0 };
+    Object.assign(window, { packageReceiptTest: state });
+    const receipt = {
+      job: {
+        id: "saved-package", phase: "ready", intent_revision: 2, snapshot_sha256: "snapshot",
+        result: {
+          images: 11, objects: 20, negatives: 1, excluded: 1, bytes: 12345,
+          sha256: "TEST frozen hash",
+          summary: { labels: ["冻结类别"], splits: { train: 9, val: 2 }, warnings: ["TEST report warning"], exclusions: { excluded: "TEST reason" } },
+        },
+        error: null,
+      },
+      active: false, interrupted: false,
+    };
+    const service = {
+      history: async () => ({ items: [{ id: "saved-package", created_at: "TEST saved" }], next_cursor: null }),
+      pendingPackage: () => undefined,
+      startPackage: async () => { state.writes += 1; throw new Error("must not start"); },
+      packageReadiness: async () => ({
+        intent_revision: 2, intent_sha256: "intent", ready: true,
+        counts: { total: 11, complete: 11, positive: 9, negative: 1, excluded: 1, unresolved: 0, failed: 0 },
+        review_revisions: {}, blockers: [],
+        consent: { input: { id: "consent", intent_revision: 2, intent_sha256: "intent", confirmed: true }, state: "consumed" },
+        package: receipt,
+      }),
+      packageStatus: async () => receipt,
+      cancelPackage: async () => { throw new Error("unused"); },
+      downloadUrl: () => "/TEST-only-no-download",
+    };
+    createRoot(host).render(React.createElement(DeliveryPackage, {
+      service, project: "TEST", task: "TASK",
+      scope: { revision: 2, content_sha256: "intent", image_ids: ["one"] },
+      onInspect: () => {},
+    }));
+  }, `/@fs/${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`);
+
+  await expect(page.getByText("数据集已打包", { exact: true })).toBeVisible();
+  await expect(page.getByText("类别：冻结类别", { exact: true })).toBeVisible();
+  await expect(page.getByText("训练图片 9 · 验证图片 2", { exact: false })).toBeVisible();
+  await expect(page.getByRole("link", { name: "下载数据集 ZIP" })).toHaveAttribute("href", "/TEST-only-no-download");
+  await page.getByRole("button", { name: "刷新审核与打包状态", exact: true }).click();
+  expect(await page.evaluate(() => (window as unknown as { packageReceiptTest: { writes: number } }).packageReceiptTest.writes)).toBe(0);
 });
