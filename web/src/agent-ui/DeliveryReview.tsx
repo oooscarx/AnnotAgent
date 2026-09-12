@@ -15,6 +15,8 @@ import {
 type Image = { id: string; name: string; src?: string };
 type Mode = "sample" | "formal";
 type Selection = { mode: Mode; image: string };
+const formalStateLabel:Record<DeliveryReviewSummary["items"][number]["state"],string>={positive_complete:"整图完整",negative_confirmed:"已确认负样本",excluded:"已排除",unresolved:"待审核",failed:"处理失败"};
+const objectStateLabel:Record<Annotation["review_status"],string>={draft:"草稿",needs_review:"待审核",auto_accepted:"自动接受",human_accepted:"已接受",rejected:"已拒绝"};
 export type DeliveryReviewFocus = {mode:Mode;image_id:string;candidate_id?:string;result_revision:string;reason:string};
 export type DeliveryReviewPermissions = {
   sampleFeedback:boolean;
@@ -45,6 +47,7 @@ export type DeliveryReviewProps = {
   fixedMode?:Mode;
   focus?:DeliveryReviewFocus|null;
   permissions?:DeliveryReviewPermissions;
+  guided?:boolean;
 };
 
 const fromUrl = (images: Image[], hasSample: boolean, preferredMode?:Mode, fixedMode?:Mode): Selection => {
@@ -61,7 +64,7 @@ export function DeliveryReview({
   service, project, task, images, labels = [], sampleResult = null,
   formalResult: formalResultProp, locked = false, onEditingState,
   onVisualSelection, onSampleIssue, onFormalSelection, annotationOrigins = {},
-  preferredMode, fixedMode, focus, permissions,
+  preferredMode, fixedMode, focus, permissions, guided = false,
 }: DeliveryReviewProps) {
   const [formalResult, setFormalResult] = useState<DeliveryFormalResult | null | undefined>(
     formalResultProp !== undefined ? formalResultProp : service.formalResult ? undefined : null,
@@ -377,7 +380,9 @@ export function DeliveryReview({
 
   return <section className="delivery-review" aria-label="当前任务图片结果">
     <div className="delivery-review-heading">
-      <div><h3>检查当前任务结果</h3><p>样例反馈只修改 Sandbox；正式审核只保存到绑定 Batch 的 child Run。</p></div>
+      <div><h3>{guided&&selection.mode==="sample"?`检查样例结果 · ${images.length} 张`:guided?"检查正式结果":"检查当前任务结果"}</h3><p>{guided
+        ? selection.mode==="sample"?"查看终端候选；反馈只用于改进当前样例方案。":"修正对象后，再明确判断整张图片是否完整。"
+        : "样例反馈只修改 Sandbox；正式审核只保存到绑定 Batch 的 child Run。"}</p></div>
       {!fixedMode?<div className="delivery-review-tabs" role="tablist" aria-label="结果类型">
         {sampleResult && <button type="button" role="tab" aria-selected={selection.mode === "sample"} onClick={() => choose({ ...selection, mode: "sample" })}>样例结果</button>}
         <button type="button" role="tab" aria-selected={selection.mode === "formal"} onClick={() => choose({ ...selection, mode: "formal" })}>正式 Batch</button>
@@ -388,15 +393,15 @@ export function DeliveryReview({
       <label>图片<select aria-label="图片" value={selection.image} disabled={busy} onChange={(event) => choose({ ...selection, image: event.target.value })}>
         {images.map((item, index) => <option key={item.id} value={item.id}>{index + 1}/{images.length} · {item.name}</option>)}
       </select></label>
-      {selection.mode === "formal" && formalResult && <p className="delivery-source-receipt">
-        Batch {formalResult.batch_id.slice(0, 8)} · Workflow {formalResult.workflow_version} · child Run {formalRun?.slice(0, 8) ?? "无目标结果"}
-      </p>}
+      {selection.mode === "formal" && formalResult && <p className="delivery-source-receipt">{guided
+        ? formalRun?"本任务的正式处理结果 · 来源已绑定":"本任务的正式处理结果 · 没有可审核的候选来源"
+        : `Batch ${formalResult.batch_id.slice(0, 8)} · Workflow ${formalResult.workflow_version} · child Run ${formalRun?.slice(0, 8) ?? "无目标结果"}`}</p>}
     </div>
     {summary && selection.mode === "formal" && <div className="delivery-review-summary" aria-label="审核摘要">
       <strong>{summary.counts.complete}/{summary.counts.total} 张已完成</strong>
       <span>待处理 {summary.counts.unresolved}</span><span>失败 {summary.counts.failed}</span>
       {!!summaryItems.length && <div className="delivery-review-summary-items">
-        {summaryItems.map((item) => <button type="button" key={item.image_id} onClick={() => choose({ mode: "formal", image: item.image_id })}>{item.image_id.slice(0, 8)} · {item.state}</button>)}
+        {summaryItems.map((item) => <button type="button" key={item.image_id} onClick={() => choose({ mode: "formal", image: item.image_id })}>{item.image_id.slice(0, 8)} · {guided?formalStateLabel[item.state]:item.state}</button>)}
         {summaryCursor && <button type="button" onClick={() => readSummary(summaryCursor)}>加载下一页</button>}
       </div>}
     </div>}
@@ -435,7 +440,7 @@ export function DeliveryReview({
         <button type="button" disabled={busy || locked || !readable || !reason.trim()} onClick={() => void saveNewObject()}>保存新增目标框</button>
       </div>}
       {object && formalRun && <div className="delivery-object-editor">
-        <p>选中对象 · {object.review_status} {dirty ? "· 尚未保存" : ""}</p>
+        <p>选中对象 · {objectStateLabel[object.review_status]} {dirty ? "· 尚未保存" : ""}</p>
         <label>对象类别<select aria-label="对象类别" value={object.label || ""} disabled={busy || locked} onChange={(event) => setDraft({ ...object, label: event.target.value })}>
           {labels.length ? labels.map((item) => <option key={item.stable_id} value={item.stable_id}>{item.display_name}</option>) : <option value={object.label || ""}>{object.label}</option>}
         </select></label>
