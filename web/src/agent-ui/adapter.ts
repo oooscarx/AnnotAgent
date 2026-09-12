@@ -96,6 +96,7 @@ export type Task = {
     destination: string;
     budget: string | null;
   };
+  mainline?: import("./mainline").MainlineTaskView;
 };
 export type Settings = {
   revision: string;

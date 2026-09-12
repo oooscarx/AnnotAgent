@@ -16,7 +16,7 @@ import {stopTargetMatches} from "../conversation-control";
 import type { WorkspaceAdapter, Snapshot, Task, Command, Settings, ImageId, Box, Phase, Action } from "./adapter";
 import {readPendingDelivery,rememberPendingDelivery,clearPendingDelivery} from "./pendingDelivery";
 import {projectCallMessages} from "./messageProjection";
-import {assertVisualSelection,selectedMessage,type VisualSelection} from "./mainline";
+import {assertVisualSelection,selectedMessage,type MainlineAdvanceReceipt,type MainlineTaskView,type VisualSelection} from "./mainline";
 
 type Page<T> = { items: T[]; next_cursor: string | number | null };
 type Project = { project_id: string; project_owner_id: string; title: string; conversation_id: string | null };
@@ -34,6 +34,8 @@ type Workspace = {
   sample_operations?: {id:string;draft_id:string;status:string;error?:string}[];
   resume_actions?: {id:string;kind:string;available:boolean;reason:string;url:string;method:string}[];
   processing_operations?: ProcessingReceipt[];
+  read_model_revision?:string;
+  mainline?:MainlineTaskView;
 };
 type Thread = { id: string; role: "user"; task_id: string; project_owner_id: string; conversation_id: string; message: { input: { text: string; reference?:{scope:string} } } };
 type SafeSettings = { revision: string; sections: { data_privacy: { workspace_id: string }; usage_budget: { future_run_budget: Record<string, unknown> & { max_cost?: string } } } };
@@ -45,6 +47,29 @@ const initialSettings: Settings = { revision: "", theme: "system", language: "zh
 
 /** Only this boundary knows HTTP routes. Reads never create conversations, tasks or execution. */
 export class HttpAdapter implements WorkspaceAdapter {
+  readonly mainlineTask:import("./mainline").MainlineTaskService={
+    read:async(project,conversation,task,signal)=>{
+      const owned=this.task(task);
+      if(owned.project!==project||owned.conversationId!==conversation)throw new Error("任务不属于这个 Project/Conversation；没有读取其他任务。");
+      const workspace=await this.transport<Workspace>(`${this.taskRoot(owned)}/workspace`,{signal});
+      return this.assertMainline(workspace,owned);
+    },
+    advance:async(project,conversation,task,input)=>{
+      const owned=this.task(task);
+      if(owned.project!==project||owned.conversationId!==conversation)throw new Error("任务不属于这个 Project/Conversation；没有推进其他任务。");
+      const receipt=await this.transport<MainlineAdvanceReceipt>(`${this.taskRoot(owned)}/advance`,{method:"POST",body:JSON.stringify(input)});
+      if(receipt.command_id!==input.command_id||receipt.action_id!==input.action_id)throw new Error("任务推进回执身份不匹配；请核实服务端记录。");
+      this.assertMainline({mainline:receipt.workspace},owned);
+      await this.reloadCurrent(owned);
+      return receipt;
+    },
+  };
+  private assertMainline(workspace:Pick<Workspace,"mainline">,task:Task){
+    const value=workspace.mainline;
+    if(!value||value.contract_version!=="mainline-task-v1")throw new Error("服务器尚未提供 Mainline Task read model；不会猜测下一步。");
+    if(value.project_id!==task.project||value.task_id!==task.id||value.conversation_id!==task.conversationId||value.project_owner_id!==this.projects.get(task.project)?.project_owner_id)throw new Error("Mainline Task read model 的所有权不匹配。");
+    return value;
+  }
   private deliveryRoot(project: string, id: string) {
     const task = this.task(id);
     if (task.project !== project) throw new Error("任务不属于此项目");
@@ -87,7 +112,16 @@ export class HttpAdapter implements WorkspaceAdapter {
   readonly deliveryIntake: import("./DeliveryIntake").DeliveryIntakeService = {
     read: async (project, id, signal) => { const task = this.task(id); if (task.project !== project) throw new Error("任务不属于此项目"); const view=await this.transport<import("./DeliveryIntake").IntakeView>(`${this.taskRoot(task)}/delivery-intent`, { signal });if(!signal?.aborted)this.rememberLabelNames(project,id,view);return view; },
     save: async (project, id, input) => { const task = this.task(id); if (task.project !== project) throw new Error("任务不属于此项目"); const view=await this.transport<import("./DeliveryIntake").IntakeView>(`${this.taskRoot(task)}/delivery-intent`, { method: "POST", body: JSON.stringify(input) });this.rememberLabelNames(project,id,view);return view; },
-    prepare: async (project,id,input)=>{const task=this.task(id);if(task.project!==project)throw new Error("任务不属于此项目");const result=await this.transport<{id:string;revision:number}>(`${this.taskRoot(task)}/delivery-schema`,{method:"POST",body:JSON.stringify(input)});await this.reloadCurrent(task);return result;},
+    prepare: async (project,id,input)=>{
+      const task=this.task(id);if(task.project!==project||!task.conversationId)throw new Error("任务不属于此项目");
+      const view=await this.mainlineTask.read(project,task.conversationId,id);
+      const saved=(view.delivery as import("./DeliveryIntake").IntakeView)?.saved;
+      if(!saved||saved.revision!==input.expected_revision||saved.content_sha256!==input.expected_sha256)throw new Error("交付目标版本已变化；请重新查看后再准备方案。");
+      const receipt=await this.advanceAuthorized(task,"prepare_delivery_schema",input.command_id,view);
+      const result=receipt.result as {id?:unknown;revision?:unknown};
+      if(typeof result?.id!=="string"||typeof result.revision!=="number")throw new Error("服务器未返回有效的目标规范回执。");
+      return {id:result.id,revision:result.revision};
+    },
   };
   readonly kind = "http" as const;
   private rememberLabelNames(project:string,id:string,view:import("./DeliveryIntake").IntakeView) {
@@ -144,6 +178,25 @@ export class HttpAdapter implements WorkspaceAdapter {
   private key(suffix: string) { return `annotagent.http-ui.${this.state.workspaceId}.${suffix}`; }
   private stored<T>(suffix: string, fallback: T): T { try { return JSON.parse(this.storage?.getItem(this.key(suffix)) || "null") ?? fallback; } catch { return fallback; } }
   private save(suffix: string, value: unknown) { this.storage?.setItem(this.key(suffix), JSON.stringify(value)); }
+  private async advanceAuthorized(task:Task,actionId:string,commandId:string,view?:MainlineTaskView){
+    if(!task.conversationId)throw new Error("任务没有所属会话；没有推进。");
+    const suffix=`mainline-advance.${task.id}.${actionId}`;
+    let input=this.stored<import("./mainline").MainlineAdvanceInput|null>(suffix,null);
+    if(!input){
+      const current=view||await this.mainlineTask.read(task.project,task.conversationId,task.id);
+      const action=current.available_actions.find(item=>item.id===actionId);
+      if(!action||action.state!=="authorized"||action.method!=="POST"||action.requires_confirmation)throw new Error("服务端没有授权自动执行这个任务步骤；请使用当前批准入口。");
+      input={command_id:commandId,expected_read_model_revision:current.read_model_revision,action_id:actionId};
+      this.save(suffix,input);
+    }
+    try{
+      const receipt=await this.mainlineTask.advance(task.project,task.conversationId,task.id,input);
+      this.save(suffix,null);return receipt;
+    }catch(error){
+      if(error instanceof ApiRequestError&&error.status===409&&error.code==="task_revision_conflict")this.save(suffix,null);
+      throw error;
+    }
+  }
   private async pages<T>(path: string, signal?: AbortSignal): Promise<T[]> {
     const items: T[] = [], seen = new Set<string>();
     let cursor: string | number | null = null;
@@ -301,11 +354,12 @@ export class HttpAdapter implements WorkspaceAdapter {
       const active = ws?.calls.some(c=>c.status==="reserved") || ws?.sample_operations?.some(s=>["running","queued","cancelling"].includes(s.status)) || result.processing?.some(p=>["pending","running","pausing"].includes(p.status));
       const phase: Phase = stop?.normalized_state || (active ? "running" : ws?.calls.some(c=>c.status==="in_doubt") ? "outcome_unknown" : human ? "waiting_for_human" : "idle");
       const edits=this.stored<{revision?:string;boxes?:Record<ImageId,Box[]>}>(`edits.${id}`,{});
+      const mainline=ws?.mainline?this.assertMainline(ws,task):undefined;
       this.emit({ error: undefined, artifacts, tasks: this.state.tasks.map(t => t.id !== id ? t : { ...t,
         items: [...thread.map(t => ({ id: t.id, role: "user" as const, kind:"input" as const, text: t.message.input.text,source:{kind:"message" as const,id:t.id} })),...projectCallMessages(ws?.calls||[])],
         ...result, approval:pendingApproval?.view || t.approval, actions: {...ws?.actions || t.actions,answer:{available:!!result.human && ["classification","bounding_box"].includes(result.human.kind),reason:"仅保存当前人工作答的样例修正"}}, model: ws?.agent_model.model_profile_id || this.defaults.pipeline_builder || t.model,
         loaded:true, image: human?.input.image_id || artifacts[0]?.id || "", editBoxes: edits.revision===result.resultRevision ? edits.boxes || {} : {},
-        phase, receipts, humanQuestion:human?.input.question,
+        phase, receipts, humanQuestion:human?.input.question,mainline,
         stopTargets:stop?.status==="needs_selection"?stop.targets.filter(t=>!stopSelection||stopTargetMatches(t,stopSelection.target)).map(target=>({id:`${target.kind}:${target.id}`,label:`${stopSelection?"核实原选择 · ":""}${this.state.tasks.find(t=>t.id===target.task_id)?.title||target.task_id} · ${target.kind} · ${target.id.slice(0,8)} · ${target.state}`})):[],
         resumeTargets:ws?.resume_actions?.filter(a=>a.available).map(a=>({id:`${a.kind}:${a.id}`,label:a.kind,reason:a.reason})),
         queue: ws?.queue.filter(q => isPendingQueuedMessage(q.status)).map(q => q.input.message.text) || [],

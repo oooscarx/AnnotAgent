@@ -539,13 +539,10 @@ export function AgentPreviewApp({
                         </div>
                         {!fixture && !!task.receipts?.length && <ExecutionProgress receipts={task.receipts} />}
                         {!fixture && adapter.deliveryIntake && !task.id.startsWith("new:") && <DeliveryIntake key={task.id} service={adapter.deliveryIntake} delivery={adapter.delivery} project={task.project} task={task.id} locked={active} images={state.artifacts.filter(i => i.project === task.project).map(i => ({id:String(i.id),name:i.name,src:i.src}))} />}
-                        {!fixture && !active && !task.approval && adapter.prepareAction && task.items.length > 0 && <div className="task-next-actions">
+                        {!fixture && !active && !task.approval && adapter.prepareAction && task.items.length > 0 && task.mainline?.available_actions.some(action=>action.id==="build_and_test_pipeline"&&action.state==="requires_confirmation") && <div className="task-next-actions">
                           {(() => {
-                            const choices = [{kind:"plan" as const,label:"查看规划授权",icon:"plan" as const},{kind:"sample" as const,label:"构建方案并测试样例…",icon:"image" as const},...(task.sample?[{kind:"process" as const,label:"确认方案并开始处理…",icon:"play" as const}]:[]),{kind:"export" as const,label:"导出…",icon:"download" as const}];
-                            const primary = task.sample ? "process" : task.plan ? "sample" : "plan";
-                            const action = choices.find(c=>c.kind===primary)!;
-                            const render = (c:typeof action,main=false) => <button key={c.kind} className={main ? "primary" : undefined} disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),c.kind))}><Icon name={c.icon} size={16} />{c.label}</button>;
-                            return <>{render(action,true)}<Disclosure className="secondary-task-actions" title="其他操作"><div>{choices.filter(c=>c!==action).map(c=>render(c))}</div></Disclosure></>;
+                            const action={kind:"sample" as const,label:"构建方案并测试样例…",icon:"image" as const};
+                            return <button className="primary" disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),action.kind))}><Icon name={action.icon} size={16} />{action.label}</button>;
                           })()}
                         </div>}
                         {!fixture && task.resumeTargets?.map(r=><p key={r.id}>{r.reason}<button onClick={()=>void act(()=>adapter.resumeOperation(command(task),r.id))}>继续 {r.label}</button></p>)}

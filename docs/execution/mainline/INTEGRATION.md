@@ -11,5 +11,7 @@ Only Frontend 1 changes this branch and file.
 | Frontend 2 | ReviewWorkItem / package | pending | not integrated |
 | Frontend 3 | Capability setup / task return | pending | not integrated |
 | Backend | B0 contract only; planned fields not called | `5a732c5` (source `99d16f9`) | contract integrated |
+| Backend B1 | passive Mainline projection + authorized local advance | `0f62007` (source `22ddee9`) | integrated and wired |
+| Frontend 2 seam | delivery VisualSelection and lineage service slots | `b1556d7` (source `b6934bf`) | integrated; component delivery pending |
 
 The earlier context-history branch and backend archive delivery remain separate committed work. They are not silently copied into this branch and will be integrated only by fixed commit after compatibility verification.

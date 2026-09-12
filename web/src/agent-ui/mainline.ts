@@ -7,14 +7,18 @@ export type MainlineMessage={
   text:string; created_at:string; source:{kind:string;id:string};
 };
 export type MainlineStep={id:string;kind:string;title:string;status:"blocked"|"ready"|"awaiting_approval"|"running"|"waiting_for_human"|"completed"|"failed"|"outcome_unknown";detail?:string};
-export type MainlineAction={id:string;kind:string;available:boolean;reason:string;requires_approval:boolean;scope_revision:string};
+export type MainlineAction={id:string;state:"authorized"|"available"|"requires_confirmation"|"blocked";method:"GET"|"POST";url:string;requires_confirmation:boolean;reason:string|null};
 export type MainlineTaskView={
-  project_id:string;project_owner_id:string;conversation_id:string;task_id:string;revision:string;
-  intake:{missing_slots:IntakeSlot[];dataset_scope?:unknown;label_rules?:unknown;training_target?:unknown};
-  messages:MainlineMessage[];steps:MainlineStep[];blockers:{code:string;message:string;setup_request_id?:string}[];
-  actions:MainlineAction[];active_operation_ids:string[];review_work_item_id?:string;package_id?:string;
-  completion:{status:"incomplete"|"package_ready";package_id?:string;download_url?:string};
+  contract_version:"mainline-task-v1";project_id:string;project_owner_id:string;conversation_id:string;task_id:string;read_model_revision:string;
+  delivery:unknown;schema:unknown;
+  review_summary:{selected_images:number;saved_review_receipts:number;current_reviews:number;pending_reviews:number};
+  package:{consents:unknown[];jobs:{id:string;phase:string;intent_revision:number;snapshot_sha256:string;error?:string|null}[]};
+  available_actions:MainlineAction[];blockers:string[];
+  completion:{model_request_completed:boolean;processing_completed:boolean;package_ready:boolean;task_completed:boolean};
+  messages?:MainlineMessage[];steps?:MainlineStep[];active_operation_ids?:string[];review_work_item_id?:string;formal_source?:unknown;capability_readiness?:unknown;
 };
+export type MainlineAdvanceInput={command_id:string;expected_read_model_revision:string;action_id:string};
+export type MainlineAdvanceReceipt={command_id:string;action_id:string;replayed:boolean;result:unknown;workspace:MainlineTaskView};
 
 /** Frozen at selection time. Display names and current canvas state are never identities. */
 export type VisualSelection={
@@ -36,7 +40,10 @@ export type MainlineDomainSeams={
   package?:{open:(packageId:string)=>void};
   capabilitySetup?:{open:(request:CapabilitySetupRequest)=>void};
 };
-export interface MainlineTaskService {read(project:string,conversation:string,task:string,signal:AbortSignal):Promise<MainlineTaskView>}
+export interface MainlineTaskService {
+  read(project:string,conversation:string,task:string,signal?:AbortSignal):Promise<MainlineTaskView>;
+  advance(project:string,conversation:string,task:string,input:MainlineAdvanceInput):Promise<MainlineAdvanceReceipt>;
+}
 
 const present=(value:string)=>typeof value==="string"&&value.length>0;
 export function assertVisualSelection(value:VisualSelection,project:string,task:string):VisualSelection{
@@ -47,4 +54,4 @@ export function selectedMessage(id:string,text:string,value:VisualSelection):Con
   const frozen=assertVisualSelection(value,value.project_id,value.task_id);
   return {id,text,image:{image_id:frozen.image.image_id,sha256:frozen.image.sha256},reference:{scope:"sample_candidate",task_id:frozen.task_id,project_schema_revision:frozen.project_schema_revision,draft_id:frozen.sample.draft_id,draft_revision:frozen.sample.draft_revision,sample_test_id:frozen.sample.sample_test_id,candidate_id:frozen.candidate.candidate_id,source_artifact_id:frozen.candidate.source_artifact_id}};
 }
-export function taskIsComplete(view:MainlineTaskView){return view.completion.status==="package_ready"&&!!view.completion.package_id&&!!view.completion.download_url;}
+export function taskIsComplete(view:MainlineTaskView){return view.completion.task_completed&&view.completion.package_ready&&view.package.jobs.some(job=>job.phase==="ready");}

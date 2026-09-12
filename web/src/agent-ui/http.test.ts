@@ -5,6 +5,7 @@ const project = { project_id: "TEST-alpha", project_owner_id: "owner-a", title: 
 const settings = { revision: "revision-1", sections: { data_privacy: { workspace_id: "TEST-workspace" }, usage_budget: { future_run_budget: { max_requests: 10, max_cost: "2.50" } } } };
 const navTask = (id: string) => ({ task_id: id, title: `TEST ${id}`, schema_revision: "schema-1", project_owner_id: "owner-a", conversation_id: "conversation-a", state: "idle" });
 const root = "/api/projects/TEST-alpha/conversations/conversation-a/tasks";
+const mainline=(id:string)=>({contract_version:"mainline-task-v1",project_id:"TEST-alpha",project_owner_id:"owner-a",conversation_id:"conversation-a",task_id:id,read_model_revision:`read-${id}`,delivery:{saved:{revision:3,content_sha256:"frozen-delivery"}},schema:null,review_summary:{selected_images:0,saved_review_receipts:0,current_reviews:0,pending_reviews:0},package:{consents:[],jobs:[]},available_actions:[{id:"prepare_delivery_schema",state:"authorized",method:"POST",url:`${root}/${id}/advance`,requires_confirmation:false,reason:null}],blockers:[],completion:{model_request_completed:false,processing_completed:false,package_ready:false,task_completed:false}});
 it("delivery labels display names without rewriting IDs and ignore older name revisions",async()=>{
   const reads=mockTransport();let revision=2;
   const transport:Transport=async<T>(path:string,init?:RequestInit)=>path.endsWith("/delivery-intent")?{saved:{revision,intent:{label_spec:[{stable_id:"stable-label",display_name:revision===2?"足球":"旧名称"}]}},missing_slots:[],blockers:[]} as T:reads.transport<T>(path,init);
@@ -112,7 +113,7 @@ function mockTransport(overrides: Record<string, unknown | (() => Promise<unknow
     "/api/projects/TEST-alpha/conversations/conversation-a/task-navigation?limit=100": { items: [navTask("t1"), navTask("t2")], next_cursor: null },
     "/api/projects/TEST-alpha/images": { images: [{ image_id: "image-uuid", name: "TEST.png", url: "/api/projects/TEST-alpha/images/image-uuid/file" }] },
     ...Object.fromEntries(["t1", "t2"].flatMap(id => [
-      [`${root}/${id}/workspace`, { project_id: "TEST-alpha", project_owner_id: "owner-a", conversation_id: "conversation-a", task: { input: { id, schema_revision: "schema-1" } }, agent_model: { revision: 2, model_profile_id: null }, actions: { resume: { available: false, reason: "No checkpoint" } }, queue: [], calls: [] }],
+      [`${root}/${id}/workspace`, { project_id: "TEST-alpha", project_owner_id: "owner-a", conversation_id: "conversation-a", task: { input: { id, schema_revision: "schema-1" } }, agent_model: { revision: 2, model_profile_id: null }, actions: { resume: { available: false, reason: "No checkpoint" } }, queue: [], calls: [],read_model_revision:`read-${id}`,mainline:mainline(id) }],
       [`${root}/${id}/thread?limit=100`, { items: [{ id: `message-${id}`, task_id: id, project_owner_id: "owner-a", conversation_id: "conversation-a", role: "user", message: { input: { text: `真实已存 ${id}` } } }], next_cursor: null }],
       [`${root}/${id}/exports`, []],
       [`${root}/${id}/delivery-schema`, {required:false,schema:null}],
@@ -131,7 +132,7 @@ it("delivery preparation posts the exact owned revision and never falls back to 
     if(init?.method==="POST"){
       posts.push({path,body:JSON.parse(String(init.body))});
       if(reject)throw new Error("TEST delivery revision changed");
-      return {id:"schema-delivery",revision:1} as T;
+      return {command_id:"same-command",action_id:"prepare_delivery_schema",replayed:false,result:{id:"schema-delivery",revision:1},workspace:mainline("t1")} as T;
     }
     return reads.transport<T>(path,init);
   };
@@ -139,7 +140,7 @@ it("delivery preparation posts the exact owned revision and never falls back to 
   expect(posts).toEqual([]);
   const input={command_id:"same-command",expected_revision:3,expected_sha256:"frozen-delivery"};
   expect(await adapter.deliveryIntake.prepare!("TEST-alpha","t1",input)).toEqual({id:"schema-delivery",revision:1});
-  expect(posts).toEqual([{path:`${root}/t1/delivery-schema`,body:input}]);
+  expect(posts).toEqual([{path:`${root}/t1/advance`,body:{command_id:"same-command",expected_read_model_revision:"read-t1",action_id:"prepare_delivery_schema"}}]);
   reject=true;
   await expect(adapter.deliveryIntake.prepare!("TEST-alpha","t1",input)).rejects.toThrow("revision changed");
   await expect(adapter.deliveryIntake.prepare!("OTHER","t1",input)).rejects.toThrow("任务不属于");

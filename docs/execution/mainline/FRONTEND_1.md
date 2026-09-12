@@ -44,3 +44,11 @@ The HTTP send boundary now accepts only a frozen `VisualSelection`, converts it 
 - Expanding delivery intake displayed only the three server-reported missing items. No Provider request or real workspace write was made.
 - Candidate-reference unit coverage: exact image hash, Schema revision, Draft revision, Sample Test, candidate and source Artifact; stale Schema and Preview identities make zero POSTs.
 - Browser regression `persisted Agent replies stay distinct and intake asks only server-reported missing items` passed against that isolated HTTP service and observed zero non-GET requests across open and refresh.
+
+### Backend B1 integration
+
+- Backend source `22ddee9` was inspected and integrated as `0f62007`.
+- `workspace.mainline` is now retained on the owned Task and validated against Project owner, Conversation and Task IDs.
+- The old client heuristic that exposed Plan/Sample/Process/Export together is suppressed once the Mainline projection exists. The visible sample action is derived only from the server's `build_and_test_pipeline · requires_confirmation` action; package/review actions remain in their domain components.
+- Deterministic delivery-Schema preparation now posts `advance` only when the exact read model exposes `prepare_delivery_schema · authorized`. The command and read-model revision are persisted for lost-response replay; other actions continue through their explicit approval flows.
+- Rust B1 targeted test passed; Web typecheck and 25 focused unit tests passed. The new browser journey is pending a freshly seeded B1 fixture.
