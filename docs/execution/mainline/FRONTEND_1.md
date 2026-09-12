@@ -7,7 +7,7 @@
 - Branch: `codex/mainline-integration`.
 - The source worktree contained only user-owned untracked design/product directories; none were copied, removed or committed here.
 
-## F1-0 in progress
+## F1-0 complete
 
 Frontend 1 owns App/http/adapter/public route and type composition. Frontend 2 owns review/image/package modules. Frontend 3 owns model/plugin/settings modules. Backend owns Rust, migrations and `docs/contracts/mainline-v1`.
 
@@ -60,3 +60,24 @@ The HTTP send boundary now accepts only a frozen `VisualSelection`, converts it 
 - Frontend 2 commits through `238a838` are integrated: task-bound Sample/Formal review surfaces, strict formal Run lineage, review work-item seam and package readiness/consent UI. The new optional formal/package services remain absent in `HttpAdapter` until Backend B2/B3 exists; this leaves those actions visibly unavailable instead of falling back to the legacy latest-Run/package path.
 - Frontend 3 patch `2c52266` (source `943a6ab`, patch-id verified by its owner) is integrated: task-scoped model preparation, exact return guard and Settings return banner. Task-side mounting remains blocked on Backend capability readiness; returning from settings never auto-resumes or reuses an old authorization.
 - Frontend 2's initial Sample selection had two lineage defects caught during rolling integration: feedback revision was task-wide (fixed in `309b7ed`), and source Artifact is still image-wide even though candidates can have different Artifacts (`ML-009`, blocking Composer wiring).
+
+## F1-2 complete on the integration branch
+
+- Backend B2 canonical Sample selection (`0e776cd`) and Frontend 2's aligned selection projection (`3279929`) are integrated. Each selected Sample candidate now carries its own Project/Conversation/Task, Schema, Draft, Sample Test, image hash, candidate, source Artifact and result revision into the main Composer.
+- Backend B3a/B3b (`c5d741d`, `dcf4abc`) and Frontend 1 wiring (`2401e27`) are integrated. Formal review selections use the server-issued `formal_annotation` reference; the client does not rebuild lineage or infer geometry from prose.
+- The full-dataset action follows the exact server-issued `start_delivery_processing` preview URL. It prepares one confirmation card only; no GET/mount starts processing and approval keeps the existing idempotent mutation boundary.
+- Backend B4 (`5a827d5`) and Frontend 3 readiness UI (`76507bc`) are integrated. Commit `361c402` mounts it in the task: only missing Agent/visual capabilities are requested, setup returns to the same Project and Task, and a return performs a passive recheck without resuming or expanding an earlier authorization.
+- The old heuristic Sample action is suppressed while required capabilities are missing. Ready selected Agent plus a ready Project-bound visual profile leaves the server Sample action available.
+
+### Verification after F1-2
+
+- Full Web unit suite: 108 files, 363 tests passed.
+- Production Web build and TypeScript/tokens checks passed.
+- Focused model setup, capability recheck and HTTP adapter suite: 34 tests passed.
+- Earlier isolated HTTP browser evidence on the generated TEST workspace verified canonical Sample selection and passive formal/package reads. No paid or real Provider was called.
+
+## F1-3 in progress
+
+The formal review, package readiness/consent, exact processing action and Package Ready completion semantics are now composed in the production UI. Remaining acceptance work is an end-to-end TEST-provider journey that produces and independently extracts a real YOLO ZIP, plus cross-checks for model-setup return, stop/unknown, restart and idempotency. Package Ready remains the only overall Task completion condition.
+
+No push, main merge, real workspace cleanup or unapproved external model call has occurred.
