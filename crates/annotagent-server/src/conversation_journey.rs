@@ -66,8 +66,11 @@ pub(super) async fn recover_answers(state: ServerState) {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct JourneySelection {
+    #[serde(default)]
     consent_id: uuid::Uuid,
+    #[serde(default)]
     builder_operation_id: uuid::Uuid,
+    #[serde(default)]
     sample_operation_id: uuid::Uuid,
     #[serde(default)]
     schema_id: uuid::Uuid,
@@ -78,6 +81,7 @@ pub(super) struct JourneySelection {
     repair_request_id: Option<uuid::Uuid>,
     pending_request_id: Option<uuid::Uuid>,
     /// JSON array of exact Model Profile / Plugin selection IDs, not model hashes.
+    #[serde(default)]
     allowed_models: String,
 }
 
@@ -92,11 +96,89 @@ pub(super) async fn history(
     Ok(Json(json!({"items":items,"limit":50})))
 }
 
+fn automatic_visual_models(readiness: &Value) -> ApiResult<Vec<String>> {
+    let candidates = readiness["candidates"]
+        .as_array()
+        .ok_or_else(|| ApiError::internal("Capability readiness omitted candidates"))?;
+    let is_ready_visual = |candidate: &&Value| {
+        candidate["readiness"] == "ready"
+            && candidate["roles"]
+                .as_array()
+                .is_some_and(|roles| roles.iter().any(|role| role.as_str() != Some("agent")))
+    };
+    let exact_scope = candidates
+        .iter()
+        .filter(is_ready_visual)
+        .filter(|candidate| candidate["allowed_by_current_scope"] == true)
+        .filter_map(|candidate| candidate["id"].as_str().map(str::to_owned))
+        .collect::<Vec<_>>();
+    if !exact_scope.is_empty() {
+        return Ok(exact_scope);
+    }
+    let bound = candidates
+        .iter()
+        .filter(is_ready_visual)
+        .filter(|candidate| {
+            candidate["project_bindings"]
+                .as_array()
+                .is_some_and(|bindings| !bindings.is_empty())
+        })
+        .collect::<Vec<_>>();
+    let primary = bound
+        .iter()
+        .filter(|candidate| {
+            candidate["project_bindings"]
+                .as_array()
+                .is_some_and(|bindings| {
+                    bindings
+                        .iter()
+                        .any(|binding| binding["role"] == "primary_inference")
+                })
+        })
+        .collect::<Vec<_>>();
+    let selected = if primary.len() == 1 {
+        Some(*primary[0])
+    } else if primary.is_empty() && bound.len() == 1 {
+        Some(bound[0])
+    } else {
+        None
+    };
+    selected
+        .and_then(|candidate| candidate["id"].as_str())
+        .map(|id| vec![id.to_owned()])
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            body: json!({
+                "error":"Choose one ready Project-bound primary inference model before approving the automatic Sample scope.",
+                "status":StatusCode::BAD_REQUEST.as_u16(),
+                "code":"capability_setup_required",
+                "suggested_action":"configure_project_model_binding",
+                "registry_revision":readiness["registry_revision"],
+                "setup_requests":readiness["setup_requests"],
+                "eligible_project_model_ids":bound.iter().filter_map(|candidate|candidate["id"].as_str()).collect::<Vec<_>>()
+            }),
+        })
+}
+
 pub(super) async fn preview(
     State(state): State<ServerState>,
     AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
-    Query(selection): Query<JourneySelection>,
+    Query(mut selection): Query<JourneySelection>,
 ) -> ApiResult<Json<Value>> {
+    if selection.consent_id.is_nil()
+        && selection.builder_operation_id.is_nil()
+        && selection.sample_operation_id.is_nil()
+        && selection.allowed_models.is_empty()
+    {
+        let readiness = super::mainline_capability::snapshot(&state, &project, conversation, task)?;
+        let allowed = automatic_visual_models(&readiness)?;
+        let stable = |purpose: &str| uuid::Uuid::new_v5(&task, purpose.as_bytes());
+        selection.consent_id = stable("annotagent-p0-journey-consent-v1");
+        selection.builder_operation_id = stable("annotagent-p0-builder-operation-v1");
+        selection.sample_operation_id = stable("annotagent-p0-sample-operation-v1");
+        selection.schema_call_id = Some(stable("annotagent-p0-schema-call-v1"));
+        selection.allowed_models = serde_json::to_string(&allowed).map_err(ApiError::internal)?;
+    }
     let models: Vec<String> =
         serde_json::from_str(&selection.allowed_models).map_err(ApiError::bad_request)?;
     let data = state
@@ -264,8 +346,47 @@ pub(super) async fn preview(
         .project_conversation_call_limit(&project)
         .map_err(ApiError::bad_request)?;
     Ok(Json(
-        json!({"consent":consent,"builder":builder,"data":data,"project_call_limit":project_limit,"estimated_cost":null,"operation":"Build one Draft, then test only the listed images with permitted model bindings. No publication, dataset Run or annotation acceptance. Saving this consent alone does not start execution."}),
+        json!({"consent":consent,"builder":builder,"data":data,"project_call_limit":project_limit,"estimated_cost":null,"operation":"Approve one bounded Schema, Builder and Sample continuation using only the listed images/models/calls. Saving the exact consent persists its execution intent. No publication, dataset Run or annotation acceptance."}),
     ))
+}
+
+fn start_newly_approved_journey(
+    state: &ServerState,
+    project: &str,
+    conversation: uuid::Uuid,
+    task: uuid::Uuid,
+    saved: &ConversationJourneyRecord,
+) -> ApiResult<()> {
+    if saved.effective_consent().repair_after_answer.is_some() {
+        return Ok(());
+    }
+    let current = state
+        .application
+        .conversation_journey_execution_status(project, conversation, task, saved.consent.id)
+        .map_err(ApiError::bad_request)?;
+    if current["dispatch"].is_null() {
+        let queue_id = uuid::Uuid::new_v4();
+        if state
+            .application
+            .queue_conversation_journey_dispatch(
+                project,
+                conversation,
+                task,
+                saved.consent.id,
+                queue_id,
+            )
+            .map_err(ApiError::bad_request)?
+        {
+            spawn_queued_journey(
+                state.clone(),
+                project.to_owned(),
+                conversation,
+                task,
+                saved.consent.id,
+            );
+        }
+    }
+    Ok(())
 }
 
 pub(super) async fn save(
@@ -288,6 +409,7 @@ pub(super) async fn save(
                 "Journey retry changed its original consent",
             ));
         }
+        start_newly_approved_journey(&state, &project, conversation, task, &saved)?;
         return Ok(Json(saved));
     }
     if !consent.allow_unknown_cost
@@ -313,11 +435,12 @@ pub(super) async fn save(
                 "Initial planning model or goal scope changed",
             ));
         }
-        return state
+        let saved = state
             .application
             .save_conversation_journey_consent(&project, conversation, &consent)
-            .map(Json)
-            .map_err(ApiError::bad_request);
+            .map_err(ApiError::bad_request)?;
+        start_newly_approved_journey(&state, &project, conversation, task, &saved)?;
+        return Ok(Json(saved));
     }
     let selection = BuilderSelection {
         operation_id: consent.builder_operation_id,
@@ -349,11 +472,12 @@ pub(super) async fn save(
             "Journey planning model, prior authorization or call scope changed",
         ));
     }
-    state
+    let saved = state
         .application
         .save_conversation_journey_consent(&project, conversation, &consent)
-        .map(Json)
-        .map_err(ApiError::bad_request)
+        .map_err(ApiError::bad_request)?;
+    start_newly_approved_journey(&state, &project, conversation, task, &saved)?;
+    Ok(Json(saved))
 }
 
 pub(super) async fn get(
@@ -880,7 +1004,7 @@ async fn advance(
 
 #[cfg(test)]
 mod tests {
-    use super::{child_waits_for_commit, committed_child_failure};
+    use super::{automatic_visual_models, child_waits_for_commit, committed_child_failure};
     use serde_json::json;
 
     #[test]
@@ -923,5 +1047,45 @@ mod tests {
                     .starts_with(expected)
             );
         }
+    }
+
+    #[test]
+    fn automatic_scope_uses_only_one_explicit_project_primary_binding() {
+        let readiness = json!({
+            "registry_revision":"TEST-registry",
+            "setup_requests":[{"id":"TEST-setup"}],
+            "candidates":[
+                {"id":"model-profile:one","readiness":"ready","roles":["vision_language"],"allowed_by_current_scope":false,
+                 "project_bindings":[{"role":"primary_inference"}]},
+                {"id":"model-profile:other-provider","readiness":"ready","roles":["detection"],"allowed_by_current_scope":false,
+                 "project_bindings":[]}
+            ]
+        });
+        assert_eq!(
+            automatic_visual_models(&readiness).unwrap(),
+            vec!["model-profile:one"]
+        );
+        let no_binding = json!({
+            "registry_revision":"TEST-registry",
+            "setup_requests":[{"id":"TEST-setup"}],
+            "candidates":[
+                {"id":"model-profile:one","readiness":"ready","roles":["vision_language"],"allowed_by_current_scope":false,"project_bindings":[]},
+                {"id":"model-profile:other-provider","readiness":"ready","roles":["detection"],"allowed_by_current_scope":false,"project_bindings":[]}
+            ]
+        });
+        let error = automatic_visual_models(&no_binding).unwrap_err();
+        assert_eq!(error.body["code"], "capability_setup_required");
+        assert_eq!(error.body["eligible_project_model_ids"], json!([]));
+
+        let frozen = json!({
+            "candidates":[
+                {"id":"model-profile:frozen","readiness":"ready","roles":["detection"],"allowed_by_current_scope":true,"project_bindings":[]},
+                {"id":"model-profile:new","readiness":"ready","roles":["vision_language"],"allowed_by_current_scope":false,"project_bindings":[{"role":"primary_inference"}]}
+            ]
+        });
+        assert_eq!(
+            automatic_visual_models(&frozen).unwrap(),
+            vec!["model-profile:frozen"]
+        );
     }
 }

@@ -183,3 +183,31 @@ download, user workspace or 8787 service was used.
 - The TEST suite validates package contents and portable ZIP semantics. Commercial
   model accuracy, explicitly supplied large-weight ONNX integrations, browser-downloaded
   ZIP in an unrelated environment, and an official training loader remain unverified.
+
+## P0 automatic continuation increment
+
+- Base: `563f2f7c64e8523fe2ad0b6d1c478f8c5dfab4ce` (durable Journey queue and
+  Builder-to-Sample continuation).
+- Image import/upload responses now return exact current image identities. A new
+  Task Send may freeze those identities through `task_images`; duplicate command
+  replay restores the same Task and partial DeliveryIntake.
+- A partial intake containing exact images and missing only label/target semantics
+  exposes one `build_and_test_pipeline` action. Its no-query Journey preview freezes
+  a maximum of three Sample images, exact Provider/model binding digests and stable
+  command IDs. Six Task images remain six; they are not truncated to the Sample cap.
+- Saving the exact Journey consent durably queues Schema→Builder→Sample. No second
+  technical execution click is needed. Existing callers may repeat the execution
+  POST safely.
+- Automatic model selection is limited to one ready Project-bound visual model,
+  preferring `primary_inference`. Missing/ambiguous binding returns a server-owned
+  `visual_inference` setup request and performs no call.
+- The Schema Provider transport now carries its admitted call UUID into the existing
+  per-attempt usage observer. This fixes a TEST HTTP failure that previously settled
+  immediately as `in_doubt` before reaching the Provider. There is still no retry of
+  an unknown result.
+- Fresh isolated HTTP smoke at API `127.0.0.1:8870`, TEST Provider
+  `127.0.0.1:8871` completed Schema, Builder, Sample, formal processing, stop,
+  review, SSE and export. Evidence is retained in
+  `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-imsjr9j9`.
+  This was a dirty-tree precommit diagnostic and is not represented as evidence for
+  the base SHA; a clean committed-SHA replay is required for the handoff.

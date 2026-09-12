@@ -895,6 +895,7 @@ mod tests {
                 image: None,
                 reference: None,
             },
+            task_images: vec![],
             task_id: None,
             schema_revision: app.project_goal(project).unwrap()["revision"]
                 .as_str()

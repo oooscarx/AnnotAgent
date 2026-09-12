@@ -2,9 +2,34 @@
 
 This contract describes the existing Journey endpoint after the P0 continuation repair. It does not add another executor or grant. Schema, Builder and Sample remain the existing child services and keep their own receipts, limits, cancellation and geometry gates.
 
-## Explicit execution and passive reads
+## One exact approval and passive reads
 
-`POST /api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/journey-consents/{consent_id}/execution` accepts `{}`. The first accepted request persists a server execution intent before waiting for worker capacity. A successful response may therefore contain either:
+For a newly uploaded Task, `POST /api/projects/{project_id}/conversations/{conversation_id}/send`
+accepts additive `task_images:[{image_id,sha256}]`. It is valid only while creating an ordinary
+Task. The server verifies Project ownership and the current content hash, saves the Send receipt,
+then creates revision 1 of the existing DeliveryIntake with the complete ordered image scope.
+It does not infer labels, grant a model call, or start work. Repeating the same message ID and
+payload restores the original Task/receipt; a changed image scope conflicts. The upload/import
+report now returns `images[]` with the stable IDs and hashes for exactly the valid files in that
+request, so clients never infer attachment identity from list order.
+
+When that intake has an exact image scope and is missing only label rules/training target,
+`GET .../workspace` exposes one `build_and_test_pipeline` action. Its URL is parameterless
+`GET .../journey-preview`. The preview derives stable consent/Schema-call/Builder/Sample IDs,
+keeps all Task images in the intake, and freezes no more than three ordered images for Sample.
+It selects only the one Ready Project-bound `primary_inference` model (or the sole Ready visual
+Project binding). It never expands to all Registry models. No binding or an ambiguous binding
+returns `400 capability_setup_required` with the server-owned `visual_inference` setup request.
+The request uses one `required_capabilities` entry (detection/grounding when available, otherwise
+VLM fallback); it does not require segmentation.
+
+`POST .../journey-consents` is the single user approval for the exact Schema + Builder + Sample
+scope. A newly saved initial consent immediately persists its durable execution intent and starts
+the existing worker when capacity is available. Repeating the POST returns the same consent and
+dispatch. Older clients may still call the execution POST below; it is idempotent and cannot add
+a second worker.
+
+`POST /api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/journey-consents/{consent_id}/execution` accepts `{}`. For an older saved consent without a dispatch, the first accepted request persists a server execution intent before waiting for worker capacity. A successful response may therefore contain either:
 
 ```json
 {
@@ -87,4 +112,10 @@ The boolean is true only for `queued`/`running`, unexpired, unrevoked consent wh
 
 ## Current boundary
 
-This increment closes the Builder-to-Sample relay and durable capacity queue. It does not yet prove that free-form upload text can deterministically establish every missing DeliveryIntake slot without a question. Ambiguous label/output/export requests must still stop at one explicit clarification. Formal processing and package admission retain their separate dataset-sized scopes until their P0 increments are delivered.
+This increment closes upload identity → partial intake → one bounded approval → durable Schema,
+Builder and Sample continuation. A deterministic external TEST Provider smoke reaches a real
+saved Sample through the normal HTTP/SQLite/provider path; it is test evidence, not a claim about
+commercial model accuracy. Ambiguous label/output/export requests still stop at the existing
+HumanRequest. A Schema that omits valid delivery semantics or a Provider result that is unknown
+stops before image inference and is never automatically retried. Formal processing and package
+admission retain their separate dataset-sized scopes.
