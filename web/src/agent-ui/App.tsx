@@ -8,9 +8,6 @@ import type {
 } from "./adapter";
 import { Dialog } from "./Dialog";
 import { Disclosure } from "./Disclosure";
-import { TaskExportHistory } from "./TaskExportHistory";
-import { TaskSchemaDrafts } from "./TaskSchemaDrafts";
-import { TaskFeedback } from "./TaskFeedback";
 import {TaskHistory} from "./TaskHistoryView";
 import { SidebarTitle } from "./SidebarTitle";
 import { ProjectManagement } from "./ProjectManagement";
@@ -35,6 +32,8 @@ import { routeProject, taskLocation, settingsTaskReturn, taskHistoryPath } from 
 import { parseAgentRoute } from "./navigationContract";
 import { DemoOnboarding } from "./DemoOnboarding";
 import { TaskUsage } from "./TaskUsage";
+import { CurrentTaskStatus } from "./CurrentTaskStatus";
+import { selectCurrentTaskPresentation, type CurrentTaskAction } from "./currentTaskPresentation";
 export const phaseNames: Record<Phase, string> = {
   idle: "准备任务",
   planning: "正在模拟规划",
@@ -109,7 +108,9 @@ export function AgentPreviewApp({
   );
   const [busy, setBusy] = useState(false);
   const [approvalBusy, setApprovalBusy] = useState(false);
+  const [taskEditor, setTaskEditor] = useState<string | null>(null);
   const approvalPending = useRef(false);
+  const autoOpenedReview = useRef(new Set<string>());
   const owner = fixture ? null : routeProject(url);
   const selectedId = url.searchParams.get("task");
   const task = (!fixture && !owner && (!selectedId || parseAgentRoute(url).kind !== "settings")) ? undefined : state.tasks.find(t => (!owner || t.project === owner) &&
@@ -297,11 +298,61 @@ export function AgentPreviewApp({
   let setupContext:ReturnType<typeof modelSetupContext>;
   let setupContextError="";
   if(!fixture&&task)try{setupContext=modelSetupContext(task,url);}catch(cause){setupContextError=(cause as Error).message;}
+  const currentTask = !fixture && task ? selectCurrentTaskPresentation(task) : undefined;
+  const reviewAutoKey = currentTask?.kind === "needs_review" && task
+    ? `${task.id}:${task.mainline?.review_work_item_id || task.resultRevision || task.mainline?.read_model_revision}`
+    : "";
+  useEffect(() => {
+    if (!task || !reviewAutoKey || autoOpenedReview.current.has(reviewAutoKey)) return;
+    autoOpenedReview.current.add(reviewAutoKey);
+    const next = taskLocation(urlRef.current, task.project);
+    next.searchParams.set("task", task.id);
+    next.searchParams.set("pane", "image");
+    next.searchParams.set("image", String(task.human?.image || task.image));
+    history.replaceState(history.state, "", next);
+    setUrl(next);
+  }, [reviewAutoKey, task?.id, task?.human?.image, task?.image, task?.project]);
   const returnFromSetup=()=>{
     if(!setupContext)return;
     const next=new URL(setupContext.return_to,location.origin);
     history.pushState(null,"",next);setUrl(next);
     void adapter.loadTask?.(setupContext.project_id,setupContext.task_id).catch(cause=>setError((cause as Error).message));
+  };
+  const handleCurrentTaskAction = (next: CurrentTaskAction) => {
+    if (!task) return;
+    if (next.kind === "open_review") {
+      navigate({ pane: "image", image: String(task.human?.image || task.image) });
+      return;
+    }
+    if (next.kind === "confirm_approval") {
+      setApproval(command(task));
+      return;
+    }
+    if (next.kind === "stop") {
+      void act(() => adapter.interruptOperation(command(task)));
+      return;
+    }
+    if (next.kind === "resume") {
+      void act(() => adapter.resumeOperation(command(task)));
+      return;
+    }
+    if (next.kind === "download_package") {
+      if (!next.url) setError("服务器尚未提供这个训练数据包的下载地址。");
+      return;
+    }
+    const kind = next.kind === "prepare_processing"
+      ? "process"
+      : next.kind === "prepare_export"
+        ? "export"
+        : "sample";
+    if (!adapter.prepareAction) {
+      setError("服务器没有提供当前任务的授权范围。");
+      return;
+    }
+    void act(async () => {
+      await adapter.prepareAction!(command(task), kind);
+      setApproval(command(task));
+    });
   };
   const openDemoReceipt=async(receipt:import("./demoOnboardingService").StartDemoReceipt)=>{
     if(!receipt.project_id||!receipt.task_id)throw new Error("示例启动回执缺少可打开的任务");
@@ -558,7 +609,7 @@ export function AgentPreviewApp({
                             )}
                           </article>
                         ))}
-                        <div className="operation" aria-live="polite">
+                        {fixture && <div className="operation" aria-live="polite">
                           {fixture ? phaseNames[task.phase] : ({ planning: "正在规划", running: "执行中", completed: "当前操作已完成", failed: "执行失败" } as Partial<Record<Phase, string>>)[task.phase] || phaseNames[task.phase]}
                           {task.operationModel && (
                             <small>
@@ -570,9 +621,7 @@ export function AgentPreviewApp({
                               }
                             </small>
                           )}
-                        </div>
-                        {!fixture && !!task.receipts?.length && <ExecutionProgress receipts={task.receipts} />}
-                        {!fixture && adapter.taskUsage && !task.id.startsWith("new:") && <TaskUsage projectId={task.project} taskId={task.id} service={adapter.taskUsage} compact/>}
+                        </div>}
                         {setupContextError&&<p role="alert" className="error">模型准备范围无效：{setupContextError}</p>}
                         {!fixture && setupContext && adapter.modelPreparation && (
                           <SetupRequest
@@ -599,36 +648,32 @@ export function AgentPreviewApp({
                             onCancel={returnFromSetup}
                           />
                         )}
-                        {!fixture && adapter.deliveryIntake && !task.id.startsWith("new:") && <DeliveryIntake key={task.id} service={adapter.deliveryIntake} delivery={adapter.delivery} project={task.project} task={task.id} locked={active} sampleResult={task.sampleResult} onVisualSelection={selection=>setReference(selection)} onSampleIssue={selection=>{setReference(selection);requestAnimationFrame(()=>compose.current?.focus());}} onFormalSelection={selection=>{setReference(selection);requestAnimationFrame(()=>compose.current?.focus());}} images={state.artifacts.filter(i => i.project === task.project).map(i => ({id:String(i.id),name:i.name,src:i.src}))} />}
-                        {!fixture && !setupContext && !active && !task.approval && adapter.prepareAction && task.items.length > 0 && task.mainline?.available_actions.some(action=>action.id==="build_and_test_pipeline"&&action.state==="requires_confirmation") && <div className="task-next-actions">
-                          {(() => {
-                            const action={kind:"sample" as const,label:"生成方案并测试样例…",icon:"image" as const};
-                            return <button className="primary" disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),action.kind))}><Icon name={action.icon} size={16} />{action.label}</button>;
-                          })()}
-                        </div>}
-                        {!fixture && !setupContext && !active && !task.approval && adapter.prepareAction && task.mainline?.available_actions.some(action=>action.id==="test_pipeline_samples"&&action.state==="requires_confirmation") && <div className="task-next-actions">
-                          <button className="primary" disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),"sample"))}><Icon name="image" size={16} />测试当前方案样例…</button>
-                        </div>}
-                        {!fixture && !setupContext && task.mainline?.available_actions.filter(action=>action.id==="test_pipeline_samples"&&action.state==="blocked").map(action=><div className="notice" role="status" key={action.id}><strong>已保存方案的样例没有执行成功</strong><p>{action.failure?.message||"样例范围已变化或失效。"}</p><p>旧方案保留为历史证据；请重新生成当前方案。系统不会自动重试付费调用。</p></div>)}
-                        {!fixture && !active && !task.approval && adapter.prepareAction && task.mainline?.available_actions.some(action=>action.id==="start_delivery_processing"&&action.state==="requires_confirmation") && <div className="task-next-actions">
-                          <button className="primary" disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),"process"))}><Icon name="play" size={16} />确认范围并开始全量处理…</button>
-                        </div>}
-                        {!fixture && task.resumeTargets?.map(r=><p key={r.id}>{r.reason}<button onClick={()=>void act(()=>adapter.resumeOperation(command(task),r.id))}>继续 {r.label}</button></p>)}
+                        {!fixture && !setupContext && currentTask && <CurrentTaskStatus
+                          key={`${task.id}:${currentTask.kind}:${task.approval?.id || "no-approval"}`}
+                          presentation={currentTask}
+                          approval={task.approval}
+                          busy={busy || approvalBusy}
+                          onPrimary={handleCurrentTaskAction}
+                          onEditTask={() => setTaskEditor(taskEditor === task.id ? null : task.id)}
+                          details={<>
+                            {!!task.receipts?.length && <ExecutionProgress receipts={task.receipts} />}
+                            {adapter.taskUsage && !task.id.startsWith("new:") && <TaskUsage projectId={task.project} taskId={task.id} service={adapter.taskUsage} compact/>}
+                            {task.plan && <PlanBlock plan={task.plan} expanded={false} fixture={false} />}
+                            {task.processing?.map(p=><p key={p.id}>处理批次 · {p.status} <a href={p.url}>查看本次结果 →</a></p>)}
+                            {task.exports?.map(e=><p key={e.id}>导出 · {e.status} · {e.detail} {e.url && <a href={e.url} download>下载真实导出文件</a>}</p>)}
+                            {task.sample?.draft && <a href={`/projects/${encodeURIComponent(task.project)}/manage/pipelines/${encodeURIComponent(task.sample.draft)}`}>查看此样例的 Workflow 与 Artifact</a>}
+                            {task.conversationId && <a href={taskHistoryPath(task.project,task.id,"trace")}>查看完整执行轨迹</a>}
+                          </>}
+                        />}
+                        {!fixture && taskEditor === task.id && adapter.deliveryIntake && !task.id.startsWith("new:") && <DeliveryIntake key={`editor:${task.id}`} service={adapter.deliveryIntake} project={task.project} task={task.id} locked={active} images={state.artifacts.filter(i => i.project === task.project).map(i => ({id:String(i.id),name:i.name,src:i.src}))} />}
                         {!fixture && !!task.stopTargets?.length && <div className="notice"><strong>请选择停止哪一项</strong>{task.stopTargets.map(t=><button key={t.id} onClick={()=>void act(()=>adapter.selectStop!(command(task),t.id))}>{t.label}</button>)}</div>}
-                        {!fixture && task.processing?.map(p=><p key={p.id}>处理批次 · {p.status} <a href={p.url}>查看本次结果 →</a></p>)}
-                        {!fixture && task.exports?.map(e=><p key={e.id}>导出 · {e.status} · {e.detail} {e.url && <a href={e.url} download>下载真实导出文件</a>}</p>)}
-                        {!fixture && task.conversationId && adapter.taskExportHistory && <TaskExportHistory key={`exports:${task.project}:${task.id}`} project={task.project} conversation={task.conversationId} task={task.id} service={adapter.taskExportHistory}/>}
-                        {!fixture && task.conversationId && state.workspaceId && adapter.taskSchemaDrafts && <TaskSchemaDrafts key={`schema:${task.project}:${task.id}`} project={task.project} conversation={task.conversationId} task={task.id} workspace={state.workspaceId} service={adapter.taskSchemaDrafts}/>}
-                        {!fixture && task.conversationId && state.workspaceId && adapter.taskFeedback && <TaskFeedback key={`feedback:${task.project}:${task.id}`} project={task.project} conversation={task.conversationId} task={task.id} workspace={state.workspaceId} service={adapter.taskFeedback}/>}
-                        {!fixture && task.approval && <section className="plan-block"><strong>{task.approval.title}</strong><ul>{task.approval.scope.map((s,i)=><li key={i}>{s}</li>)}</ul><p>费用：{task.approval.budget ?? "未知；可能产生费用"}</p><button className="primary" disabled={approvalBusy} onClick={()=>setApproval(command(task))}>查看并确认授权</button>{approvalBusy && <p role="status">请求已提交，正在读取服务器执行状态；离开不会取消。</p>}</section>}
-                        {task.plan && (
+                        {fixture && task.plan && (
                           <PlanBlock
                             plan={task.plan}
                             expanded={task.phase === "awaiting_approval"}
                             fixture={fixture}
                           />
                         )}
-                        {!fixture && task.sample?.draft && <a href={`/projects/${encodeURIComponent(task.project)}/manage/pipelines/${encodeURIComponent(task.sample.draft)}`}>编辑此样例的 Workflow 草稿</a>}
                         {fixture && task.phase === "awaiting_approval" && (
                           <button
                             className="primary"
@@ -638,7 +683,7 @@ export function AgentPreviewApp({
                             {fixture ? "批准并试跑 3 张" : "查看并批准当前操作"}
                           </button>
                         )}
-                        {task.phase === "interrupted" && (
+                        {fixture && task.phase === "interrupted" && (
                           <div className="notice">
                             <strong>{fixture ? "已在模拟安全边界停止" : "停止回执已确认"}</strong>
                             <p>{fixture ? "保留已有结果；继续不会重新提交已保存的修正。" : task.actions?.resume?.reason}</p>
@@ -655,7 +700,7 @@ export function AgentPreviewApp({
                             </button>
                           </div>
                         )}
-                        {task.phase === "waiting_for_human" && (
+                        {fixture && task.phase === "waiting_for_human" && (
                           <div className="notice">
                             <strong>{fixture ? "请确认杯柄是否包含在框内" : task.humanQuestion || "需要人工确认；正在读取具体问题"}</strong>
                             <p>
@@ -670,12 +715,12 @@ export function AgentPreviewApp({
                             </button>
                           </div>
                         )}
-                        {task.phase === "outcome_unknown" && (
+                        {fixture && task.phase === "outcome_unknown" && (
                           <div className="error">
                             远端结果未知。不能直接重试收费请求；请查看执行记录并核实服务端状态。
                           </div>
                         )}
-                        {task.phase === "failed" && (
+                        {fixture && task.phase === "failed" && (
                           <div className="error">
                             {fixture ? "演示失败：输入和计划保留。可以修改需求后重新发送。" : task.error || "执行失败，请查看已保存的执行记录；不会自动重试收费请求。"}
                           </div>

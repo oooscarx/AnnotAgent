@@ -1001,6 +1001,44 @@ caption {
 .ui-app .model-picker button > span { width: 100%; overflow-wrap: anywhere; }
 .ui-app .model-picker button .ui-icon { float: right; }
 .ui-app .task-next-actions { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin: 20px 0; }
+.ui-app .current-task {
+  display: grid;
+  gap: 14px;
+  margin: 18px 0;
+  padding: 16px 0;
+  border-block: 1px solid var(--aa-border);
+}
+.ui-app .current-task-copy { display: grid; gap: 5px; }
+.ui-app .current-task-copy > small {
+  color: var(--aa-text-muted);
+  font-size: 12px;
+}
+.ui-app .current-task-copy > strong { font-size: 15px; line-height: 1.4; }
+.ui-app .current-task-copy > p,
+.ui-app .current-task-details p { margin: 0; line-height: 1.6; }
+.ui-app .current-task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.ui-app .current-task-scope {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+  padding-left: 20px;
+}
+.ui-app .current-task-details > div {
+  display: grid;
+  gap: 12px;
+  padding-top: 10px;
+}
+.ui-app .current-task-needs_review {
+  border-top-color: var(--aa-accent);
+}
+.ui-app .current-task-blocked .current-task-copy > strong {
+  color: var(--aa-danger);
+}
 .ui-app .secondary-task-actions summary { display: flex; align-items: center; gap: 8px; color: var(--aa-text-muted); font-size: 12px; }
 .ui-app .secondary-task-actions > div { display: grid; gap: 6px; padding: 8px 0; }
 .ui-app .secondary-task-actions button { justify-content: flex-start; }
@@ -1025,6 +1063,9 @@ caption {
   .ui-app .composer-tools button, .ui-app .attach-button, .ui-app .artifact-toolbar button { min-height: 44px; }
   .ui-app .workspace-header > div:first-of-type { flex: 1; }
   .ui-app .model-anchor { flex: 1; }
+  .ui-app .current-task-actions { align-items: stretch; }
+  .ui-app .current-task-actions > button,
+  .ui-app .current-task-actions > a { flex: 1 1 180px; justify-content: center; }
 }
 .ui-app .execution-progress { display: grid; gap: 10px; padding: 14px 0; border-block: 1px solid var(--aa-border); overflow-wrap: anywhere; }
 .ui-app .execution-progress p { margin: 0; }
