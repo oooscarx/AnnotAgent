@@ -147,6 +147,42 @@ G1 is complete under the isolated TEST-provider boundary. This proves orchestrat
 - A9: the complete P0 path has current-application desktop screenshots; Sample review additionally has dark/mobile evidence. Native browser 200% zoom remains unverified and is not claimed.
 - Commercial-provider accuracy and real-person novice usability remain unverified. No Fixture or TEST result is relabeled as Live inference.
 
+## G2 final close — browser diagnostic matrix and authorization lifecycle
+
+- Integrated the Backend deterministic diagnostic fixtures in local commits `03158b4`, `96762dc` and `3f11f86`, then completed the production presentation and lifecycle contract in `06fbe37`.
+- The current task read model and Http Adapter now distinguish ten stable outcomes: missing model weights, unavailable capability, request not sent, remote outcome unknown, invalid model structure, legal empty detection, terminal projection failure, expired authorization, revoked authorization and exhausted task-call budget. `authorization_revoked` is covered by contract/unit tests; the other lifecycle and inference cases are exercised by the deterministic browser scene matrix.
+- A usable current Sample always outranks stale historical call failures. Otherwise the selector uses the current Sample diagnostic, current call-grant lifecycle, current failed/in-doubt/invalid receipt and finally broader capability readiness. This prevents a historical setup warning from hiding the actual current failure.
+- Diagnostic recovery links are validated as same-origin read-only `GET` targets, open explicitly in a new tab and are never followed by polling, mount or recovery code. None of the diagnostic scenes exposes a fictional continue or confirmation action.
+- The legal-empty and projection-failure fixtures persist a real Project-owned Workflow Draft, real 160x100 PNG input and exact one-to-one Sample input/result identity. The production route therefore exercises the same ownership and cardinality checks as ordinary Sample results instead of bypassing them with display-only data.
+- Frontend 3 model preparation is integrated as `de41e42`: it shows one current blocker, does not demand reconfiguration for Ready, keeps Unknown uncertain, limits the compact compatible list, returns to the exact task and preserves the server continuation fields. It does not auto-probe or auto-resume a paid request.
+- Final isolated fixture workspace: `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-8_p_1m6z`; manifest: `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-8_p_1m6z/manifest.json`. Restart verification records `seed_snapshot_unchanged:true` and `restart_verified:true`. The user service on `8788` and real workspace were not touched.
+- Eight actual built-application screenshots are retained under `web/test-results/p0-diagnostics-final-3/p0-diagnostic-scenes-typed-72b84-remain-passive-and-distinct/`. They include the real TEST input image for legal-empty and projection-failure states and show no mutation controls.
+
+### Final G2 verification
+
+- `npm test -- --run` — 119 files / 445 tests passed.
+- `npm run typecheck` — passed.
+- `npm run build` — passed; 143 modules transformed.
+- `p0-autonomous-sample.spec.ts` plus `p0-diagnostic-scenes.spec.ts` — 5/5 production-route browser tests passed against built React, real Rust HTTP/SQLite and the loopback TEST provider. The four autonomous paths cover full Sample → formal review → ZIP, exact three-of-ten image scope, description-before-upload and one bounded output clarification; the fifth iterates all eight current-application diagnostic scenes.
+- Same-database restart smoke — passed; no seed mutation and no extra charged operation was created.
+- `cargo fmt --all --check` — passed.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings` — passed.
+- `cargo test --workspace --all-features` — passed with no failures. Application: 170 passed / 1 ignored; Server: 82 passed / 2 ignored; Storage: 202 passed; Core: 121 passed. Existing explicit Live, real-weight and browser-download opt-in cases remain ignored and are not claimed.
+
+### Final G2 acceptance
+
+- A4: passed with the exact three-of-ten browser case and backend ownership/materialization regressions.
+- A6: passed. The required missing-weight, request-not-sent, remote-unknown, invalid-structure, legal-empty and projection-failure outcomes are distinct in the production UI; capability-unavailable and authorization lifecycle remain separate typed categories. No failure becomes a fake bbox or automatic retry.
+- A7: passed under the TEST boundary. Stop settles to remote-unknown without fictional resume; exact paused-Batch resume retains child identity; expiration and budget exhaustion are passive current-application states; restart preserves terminal state and spent budget.
+- A8: passed under TEST with one server-owned package authorization, one restart-safe package job and a real downloadable ZIP.
+- G2 is complete. Native browser 200% zoom, commercial-model accuracy and real-person novice usability are still explicitly unverified and are not inferred from automated or TEST evidence.
+
+## G3 readiness audit
+
+- R1/R2 Demo HTTP contracts are frozen in `docs/contracts/demo-onboarding/HTTP_BINDINGS.md`, but the current Rust server still has no production `/api/demo-catalog` or `/api/demos/start` route and the production `HttpAdapter` does not provide `demoOnboarding`. The visible Demo seam therefore remains Preview-only and cannot satisfy A11.
+- R3 and R6 have durable implementation and unit/HTTP contract coverage; R4 uses the existing progress, stop and unknown-outcome semantics; R5 reuses the existing archive-only context contract. They still require one combined Demo/mainline HTTP acceptance route after R1/R2 are delivered.
+- No commercial Provider call is authorized by this audit. A12 remains conditional and unverified.
+
 ## Safety boundary
 
 - React reads and presents server state; polling remains GET-only.
