@@ -107,6 +107,53 @@ describe("single current-task presentation", () => {
     });
   });
 
+  it("lets the server proposal resolve label and target without another form", () => {
+    const result = selectCurrentTaskPresentation(
+      task(
+        view({
+          intake: {
+            missing_slots: ["label_spec", "training_target"],
+            dataset_scope: [{ image_id: "image-1" }],
+            label_rules: null,
+            training_target: null,
+          },
+          available_actions: [
+            action("build_and_test_pipeline", "requires_confirmation"),
+          ],
+        }),
+      ),
+    );
+
+    expect(result).toMatchObject({
+      kind: "ready_to_start",
+      primary: { kind: "prepare_sample" },
+    });
+  });
+
+  it("still asks for images before accepting a builder and sample proposal", () => {
+    const result = selectCurrentTaskPresentation(
+      task(
+        view({
+          intake: {
+            missing_slots: ["dataset_scope", "label_spec", "training_target"],
+            dataset_scope: null,
+            label_rules: null,
+            training_target: null,
+          },
+          available_actions: [
+            action("build_and_test_pipeline", "requires_confirmation"),
+          ],
+        }),
+      ),
+    );
+
+    expect(result).toMatchObject({
+      kind: "needs_information",
+      missing: ["dataset_scope", "label_spec", "training_target"],
+    });
+    expect(result.primary).toBeUndefined();
+  });
+
   it("never exposes a second same-scope Sample execution approval", () => {
     const result = selectCurrentTaskPresentation(
       task(

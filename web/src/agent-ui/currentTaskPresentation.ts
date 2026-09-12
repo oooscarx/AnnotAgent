@@ -172,7 +172,24 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
     };
   }
 
+  const buildAndSample = action(
+    task,
+    "build_and_test_pipeline",
+    "requires_confirmation",
+  );
   const missing = view.intake?.missing_slots || [];
+  const hasFrozenImages = !missing.includes("dataset_scope");
+  if (buildAndSample && hasFrozenImages) {
+    return {
+      kind: "ready_to_start",
+      title: "目标和图片已明确，可以开始样例",
+      detail:
+        "确认当前图片、模型和预算范围后，服务器会连续准备规范、生成方案并运行最多 3 张样例。",
+      primary: { kind: "prepare_sample" },
+      action: buildAndSample,
+    };
+  }
+
   if (missing.length) {
     return {
       kind: "needs_information",
@@ -182,22 +199,6 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
           ? "其他任务信息已经保留，只需要补充这一项。"
           : `已知信息不会重复询问；当前还缺 ${missing.length} 项。`,
       missing,
-    };
-  }
-
-  const buildAndSample = action(
-    task,
-    "build_and_test_pipeline",
-    "requires_confirmation",
-  );
-  if (buildAndSample) {
-    return {
-      kind: "ready_to_start",
-      title: "目标和图片已明确，可以开始样例",
-      detail:
-        "确认当前图片、模型和预算范围后，服务器会连续准备规范、生成方案并运行最多 3 张样例。",
-      primary: { kind: "prepare_sample" },
-      action: buildAndSample,
     };
   }
 
