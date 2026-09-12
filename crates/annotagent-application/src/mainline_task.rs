@@ -1,7 +1,8 @@
 //! Passive Task delivery projection and bounded, server-authorized local advancement.
 use crate::{LocalApplication, PrepareDeliverySchema, require_delivery_schema};
 use annotagent_storage::{
-    ConversationCallStatus, ConversationJourneyRecord, DeliveryPackagePhase, SampleOperation,
+    ConversationCallStatus, ConversationHumanRequestStatus, ConversationJourneyRecord,
+    DeliveryPackagePhase, SampleOperation,
 };
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
@@ -218,6 +219,17 @@ impl LocalApplication {
             self.store
                 .conversation_sample_operations(project, conversation, task)?;
         let processing_candidate = self.latest_processing_candidate(&sample_operations)?;
+        let pending_sample_reviews = self
+            .conversation_human_requests(project, conversation, task)?
+            .into_iter()
+            .filter(|request| {
+                request.status == ConversationHumanRequestStatus::Pending
+                    && !request.deferred
+                    && processing_candidate.as_ref().is_some_and(|sample| {
+                        sample["sample_test_id"] == request.input.sample_test_id
+                    })
+            })
+            .collect::<Vec<_>>();
         let pending_journey_sample =
             self.pending_journey_sample_action(project, conversation, task, &journeys)?;
         let processing_completed = processing.iter().any(|operation| {
@@ -339,6 +351,17 @@ impl LocalApplication {
                     "maximum_sample_images":delivery.maximum_sample_images,
                     "includes":["schema_proposal","builder","sample"],
                     "missing_semantics":delivery.missing_slots
+                }
+            }));
+        } else if !pending_sample_reviews.is_empty() {
+            actions.push(json!({
+                "id":"review_sample_results","state":"available","method":"GET",
+                "url":format!("{root}/visual-selections"),"requires_confirmation":false,
+                "reason":"sample_candidates_require_human_judgment",
+                "scope":{
+                    "sample_test_id":processing_candidate.as_ref().map(|sample|sample["sample_test_id"].clone()),
+                    "pending_request_ids":pending_sample_reviews.iter().map(|request|request.input.id).collect::<Vec<_>>(),
+                    "pending_count":pending_sample_reviews.len()
                 }
             }));
         } else if !delivery.blockers.is_empty() {
@@ -474,6 +497,12 @@ impl LocalApplication {
             "embedded_kinds":["system_receipt"],
             "note":"The Task view embeds safe model-call receipts. The Thread endpoint contains persisted user messages only; no assistant reply is fabricated."
         });
+        projection["sample_review"] = json!({
+            "pending_count":pending_sample_reviews.len(),
+            "pending_request_ids":pending_sample_reviews.iter().map(|request|request.input.id).collect::<Vec<_>>(),
+            "sample_test_id":processing_candidate.as_ref().map(|sample|sample["sample_test_id"].clone()),
+            "url":format!("{root}/visual-selections")
+        });
         projection["actions"] = Value::Array(
             projection["available_actions"]
                 .as_array()
@@ -497,7 +526,7 @@ impl LocalApplication {
                 })
                 .collect(),
         );
-        if formal_result.is_object() {
+        if formal_result.is_object() || !pending_sample_reviews.is_empty() {
             projection["review_work_item_id"] = json!(task);
         }
         if let Some(job) = packages.first() {
