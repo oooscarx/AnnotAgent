@@ -91,7 +91,7 @@ it("formal delivery reads never dispatch and commands retain frozen scope across
   await expect(adapter.delivery.confirmImage("TEST-alpha","t1",confirmation)).rejects.toThrow("stale whole-image snapshot");
 });
 it("reads only task-owned physical usage attempts and preserves the server Decimal strings",async()=>{
-  const page={scope:{project_id:"TEST-alpha",conversation_id:"conversation-a",task_id:"t1"},state:"complete" as const,summary:{attempt_count:1,known_cost:"0.007",currency:"USD",costs_by_currency:[{currency:"USD",cost:"0.007"}],input_tokens:1500,cached_input_tokens:0,output_tokens:500,unknown_attempt_count:0},attempts:{items:[],next_cursor:50}};
+  const page={scope:{project_id:"TEST-alpha",conversation_id:"conversation-a",task_id:"t1"},state:"complete" as const,summary:{attempt_count:1,known_cost:"0.007",currency:"USD",costs_by_currency:[{currency:"USD",cost:"0.007"}],input_tokens:1500,cached_input_tokens:0,output_tokens:500,token_unknown_attempt_count:0,unknown_cost_attempt_count:0},attempts:{items:[],next_cursor:50}} satisfies import("./TaskUsage").TaskUsagePage;
   const second={...page,attempts:{items:[],next_cursor:null}};
   const reads=mockTransport({
     [`${root}/t1/model-usage?limit=50`]:page,
