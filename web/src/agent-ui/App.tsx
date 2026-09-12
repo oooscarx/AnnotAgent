@@ -622,7 +622,9 @@ export function AgentPreviewApp({
                             {item.role === "tool" && <strong>工具记录</strong>}
                             <p>{item.text}</p>
                             {item.kind==="clarification"&&<small>需要补充信息</small>}
-                            {item.details?.map((detail,index)=><p key={index}>{detail}</p>)}
+                            {!!item.details?.length && <Disclosure title="查看说明">
+                              {item.details.map((detail,index)=><p key={index}>{detail}</p>)}
+                            </Disclosure>}
                             {item.source?.kind==="model_call"&&<><small>真实模型回复 · {item.source.status||"状态未记录"}</small><Disclosure title="查看模型回复来源"><small>{item.source.id}</small></Disclosure></>}
                             {item.reference && (
                               <small>

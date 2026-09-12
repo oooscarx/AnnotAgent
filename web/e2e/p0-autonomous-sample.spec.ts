@@ -203,3 +203,77 @@ export:
   await expect(page.getByRole("region",{name:"当前任务状态",exact:true})).toContainText("图片和要求已记录，可以准备样例");
   await page.screenshot({path:testInfo.outputPath("01-description-first-ready.png"),fullPage:true,animations:"disabled"});
 });
+
+test("ambiguous YOLO goal asks one output question and resumes the same Journey",async({page,request},testInfo)=>{
+  test.skip(!process.env.AGENT_UI_TEST_MANIFEST,"Requires the marked isolated Agent UI fixture");
+  test.setTimeout(180_000);
+  const manifest=JSON.parse(readFileSync(process.env.AGENT_UI_TEST_MANIFEST!,"utf8"));
+  expect(manifest.fixture).toBe("external-model-only");
+  const project=`TEST-p0-clarification-${randomUUID()}`;
+  const yaml=`version: 1
+project:
+  name: TEST P0 clarification
+dataset:
+  root: images
+runtime: {}
+tasks: []
+review:
+  auto_accept_confidence: 0.9
+  force_review_below: 0.5
+export:
+  formats: [native]
+`;
+  expect((await request.post("/api/projects",{data:{id:project,yaml}})).ok()).toBe(true);
+  const binding=await request.put(`/api/projects/${project}/model-bindings`,{data:{bindings:[{capability:"vision_language",role:"primary_inference",match_kind:"capability",model_profile_id:manifest.model_profile_id,locked:false}]}});
+  expect(binding.ok(),await binding.text()).toBe(true);
+  const profiles=await(await request.get("/api/model-profiles")).json();
+  const planner=profiles.models.find((model:{remote_model_id:string})=>model.remote_model_id==="e2e-conversation-clarify");
+  expect(planner?.id).toBeTruthy();
+  const conversation=(await(await request.post(`/api/projects/${project}/conversations`)).json()).conversation_id;
+  const preference=await(await request.get(`/api/projects/${project}/conversations/${conversation}/agent-model`)).json();
+  const selected=await request.post(`/api/projects/${project}/conversations/${conversation}/agent-model`,{data:{request_id:randomUUID(),expected_revision:preference.revision,model_profile_id:planner.id}});
+  expect(selected.ok(),await selected.text()).toBe(true);
+
+  const writes:string[]=[];
+  page.on("request",event=>{if(!["GET","HEAD"].includes(event.method()))writes.push(`${event.method()} ${new URL(event.url()).pathname}`);});
+  await page.goto(`/projects/${project}/work`);
+  const files=[1,2,3,4,5,6].map(index=>resolve(`../examples/demo-packs/object-detection-review/1.0.0/images/desk_0${index}.png`));
+  await page.locator('input[type="file"]').setInputFiles(files);
+  await page.getByRole("textbox",{name:"给 AnnotAgent 的需求"}).fill("标注这些图片中的杯子，训练 YOLO。先给我看三张样例。");
+  await page.getByRole("button",{name:"发送",exact:true}).click();
+  await expect.poll(()=>new URL(page.url()).searchParams.get("task")).not.toBeNull();
+  const task=new URL(page.url()).searchParams.get("task")!;
+  const root=`/api/projects/${project}/conversations/${conversation}/tasks/${task}`;
+  await expect(page.getByRole("button",{name:"开始标注样例",exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"开始标注样例",exact:true}).click();
+  const approval=page.getByRole("dialog");
+  const consentResponse=page.waitForResponse(response=>response.request().method()==="POST"&&new URL(response.url()).pathname===`${root}/journey-consents`);
+  await approval.getByRole("button",{name:"接受未知费用并执行此范围",exact:true}).click();
+  const accepted=await consentResponse;expect(accepted.ok(),await accepted.text()).toBe(true);
+  const consent=(await accepted.json()).consent;
+
+  const status=page.getByRole("region",{name:"当前任务状态",exact:true});
+  await expect(status).toContainText("只需要确认输出类型");
+  await expect(page.getByText("需要框出目标、描出轮廓，还是做整图分类？",{exact:true})).toBeVisible();
+  await expect(status.getByRole("button",{name:"框住目标",exact:true})).toBeEnabled();
+  await expect(status.getByRole("button",{name:"描出轮廓",exact:true})).toBeDisabled();
+  await expect(status.getByRole("button",{name:"整图分类",exact:true})).toBeDisabled();
+  await page.screenshot({path:testInfo.outputPath("01-output-question.png"),fullPage:true,animations:"disabled"});
+
+  const answerResponse=page.waitForResponse(response=>response.request().method()==="POST"&&new URL(response.url()).pathname.endsWith("/clarification/answer"));
+  await status.getByRole("button",{name:"框住目标",exact:true}).click();
+  const answered=await answerResponse;expect(answered.ok(),await answered.text()).toBe(true);
+  const answer=await answered.json();
+  expect(answer.journey_resume.consent_id).toBe(consent.id);
+  expect(answer.selected_choice).toBe("bounding_box");
+  await expect(status).toContainText("需要你的判断",{timeout:90_000});
+  await expect(page.getByRole("region",{name:"当前任务图片结果",exact:true})).toBeVisible();
+  const workspace=await(await request.get(`${root}/workspace`)).json();
+  expect(workspace.calls.filter((call:{evidence?:{decision?:unknown}})=>call.evidence?.decision)).toHaveLength(1);
+  expect(workspace.sample_operations).toHaveLength(1);
+  expect(workspace.sample_operations[0].id).toBe(consent.sample_operation_id);
+  expect(writes.filter(write=>write===`POST ${root}/journey-consents`)).toHaveLength(1);
+  expect(writes.filter(write=>write.endsWith("/clarification/answer"))).toHaveLength(1);
+  expect(writes.some(write=>write.endsWith("/human-schema-drafts")||write.endsWith("/execution"))).toBe(false);
+  await page.screenshot({path:testInfo.outputPath("02-same-journey-review.png"),fullPage:true,animations:"disabled"});
+});
