@@ -18,6 +18,7 @@ import { VisionWorkers } from "./VisionWorkers";
 import { ProviderControls } from "./ProviderControls";
 import { ProviderPresetPicker } from "./ProviderPresetPicker";
 import { ProbeUsage } from "./ProbeUsage";
+import { SetupSettingsReturn } from "./SetupSettingsReturn";
 import { isEnvironmentVariableName } from "../providerCatalog";
 function Row({
   title,
@@ -166,6 +167,7 @@ export function SettingsView({
       </nav>
       <section className="settings-scroll">
         <div className="settings-content">
+          <SetupSettingsReturn search={location.search} />
           <header>
             <h1>{en ? config.en : config.zh}</h1>
             <p>{!fixture && section === "providers" ? "账户连接与凭证状态；不会在读取时自动探测模型。" : config.description}</p>
@@ -504,7 +506,7 @@ export function SettingsView({
                   <p>没有执行真实探测。视觉工作流绑定在下一页单独管理。</p>
                 </>
               )}
-              {(section === "agent" || section === "vision") && !fixture && adapter.modelProfileManagement && <ModelProfiles service={adapter.modelProfileManagement} />}
+              {(section === "agent" || section === "vision") && !fixture && adapter.modelProfileManagement && <ModelProfiles service={adapter.modelProfileManagement} scope={section} />}
               {section === "vision" && !fixture && adapter.pluginManagement && <PluginSettings service={adapter.pluginManagement} workspaceId={state.workspaceId} />}
               {section === "vision" && !fixture && adapter.visionWorkerManagement && <Disclosure title="HTTP Vision 协议绑定"><VisionWorkers service={adapter.visionWorkerManagement} /></Disclosure>}
               {section === "vision" && (fixture || !adapter.pluginManagement) && (
