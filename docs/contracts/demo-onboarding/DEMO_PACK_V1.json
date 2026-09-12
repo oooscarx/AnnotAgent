@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "demo_id": "object-detection-review",
+  "version": "1.0.0",
+  "display": {
+    "title": "Review object detections",
+    "summary": "Create a scoped task, inspect candidates, review every image, and prepare one package.",
+    "learning_objectives": [
+      "distinguish model or preset candidates from human review",
+      "finish every image before package admission"
+    ]
+  },
+  "project": {
+    "display_name": "Object detection review demo",
+    "goal": "Review the supplied object candidates and produce a bounded training package."
+  },
+  "assets": [
+    {
+      "id": "thumbnail",
+      "kind": "thumbnail",
+      "path": "thumbnail.webp",
+      "sha256": "64-lowercase-hex",
+      "mime_type": "image/webp",
+      "bytes": 1234,
+      "width": 640,
+      "height": 360
+    },
+    {
+      "id": "image-01",
+      "kind": "image",
+      "path": "images/image-01.jpg",
+      "sha256": "64-lowercase-hex",
+      "mime_type": "image/jpeg",
+      "bytes": 1234,
+      "width": 1280,
+      "height": 720
+    },
+    {
+      "id": "preset-candidates",
+      "kind": "preset_candidates",
+      "path": "candidates.json",
+      "sha256": "64-lowercase-hex",
+      "mime_type": "application/json",
+      "bytes": 1234,
+      "width": null,
+      "height": null
+    }
+  ],
+  "task": {
+    "source_image_asset_ids": ["image-01"],
+    "labels": [
+      {
+        "id": "object",
+        "name": "object",
+        "annotation_kind": "bounding_box",
+        "color": "#22C55E"
+      }
+    ],
+    "training_target": {
+      "framework": "ultralytics",
+      "task": "ultralytics_yolo_detection",
+      "format_revision": 1
+    },
+    "split_policy": {"train": 0.8, "validation": 0.2, "test": 0.0, "seed": 42},
+    "review_policy": "human_whole_image"
+  },
+  "modes": {
+    "preset_candidates": {"enabled": true, "asset_id": "preset-candidates"},
+    "live_model": {"enabled": true, "required_capabilities": ["vision_language"]}
+  }
+}
+

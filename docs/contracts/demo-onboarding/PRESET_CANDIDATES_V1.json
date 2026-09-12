@@ -1,0 +1,23 @@
+{
+  "format": "annotagent.demo-candidates",
+  "version": 1,
+  "demo_id": "object-detection-review",
+  "demo_version": "1.0.0",
+  "images": [
+    {
+      "image_asset_id": "image-01",
+      "image_sha256": "64-lowercase-hex",
+      "candidates": [
+        {
+          "id": "candidate-01",
+          "label_id": "object",
+          "annotation_kind": "bounding_box",
+          "value": {"x": 0.1, "y": 0.2, "width": 0.3, "height": 0.4},
+          "score": 0.9,
+          "source_artifact_id": "preset-artifact-01"
+        }
+      ]
+    }
+  ]
+}
+
