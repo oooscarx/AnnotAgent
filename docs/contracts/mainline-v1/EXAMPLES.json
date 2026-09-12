@@ -1,0 +1,186 @@
+{
+  "contract_version": "mainline-v1-b0",
+  "baseline": "d3220cb54bd50589efed86b6c0753bf4ea8db0db",
+  "save_delivery_intent": {
+    "contract_status": "implemented",
+    "request": {
+      "command_id": "10000000-0000-4000-8000-000000000001",
+      "expected_revision": 0,
+      "image_ids": [
+        "20000000-0000-4000-8000-000000000001",
+        "20000000-0000-4000-8000-000000000002",
+        "20000000-0000-4000-8000-000000000003"
+      ],
+      "label_spec": [
+        {
+          "stable_id": "ball",
+          "display_name": "Ball",
+          "aliases": [],
+          "include": "visible soccer balls",
+          "exclude": "logos and circular field markings"
+        }
+      ],
+      "training_target": {
+        "annotation_kind": "bounding_box",
+        "framework": "ultralytics",
+        "export_profile": "ultralytics_yolo_detection",
+        "profile_revision": 1
+      },
+      "split_policy": {
+        "train_percent": 80,
+        "seed": 12,
+        "preserve_existing": true,
+        "keep_known_groups_together": true
+      },
+      "image_metadata": {}
+    },
+    "response_shape": {
+      "saved": {
+        "revision": 1,
+        "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "intent": "TaskDeliveryIntent"
+      },
+      "missing_slots": [],
+      "blockers": [],
+      "maximum_sample_images": 3,
+      "execution_authorized": false,
+      "proposals": []
+    }
+  },
+  "prepare_delivery_schema": {
+    "contract_status": "implemented",
+    "request": {
+      "command_id": "10000000-0000-4000-8000-000000000002",
+      "expected_revision": 1,
+      "expected_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "effect": "one idempotent human Schema Draft; zero model calls"
+  },
+  "sample_candidate_message": {
+    "contract_status": "implemented",
+    "message": {
+      "id": "30000000-0000-4000-8000-000000000001",
+      "text": "This box is too wide",
+      "image": {
+        "image_id": "20000000-0000-4000-8000-000000000001",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "reference": {
+        "scope": "sample_candidate",
+        "task_id": "40000000-0000-4000-8000-000000000001",
+        "project_schema_revision": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "draft_id": "draft-1",
+        "draft_revision": 2,
+        "sample_test_id": "sample-1",
+        "candidate_id": "candidate-1",
+        "source_artifact_id": "50000000-0000-4000-8000-000000000001"
+      }
+    }
+  },
+  "formal_visual_selection": {
+    "contract_status": "planned",
+    "scope": "formal_annotation",
+    "task_id": "40000000-0000-4000-8000-000000000001",
+    "intent_revision": 1,
+    "intent_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "image_id": "20000000-0000-4000-8000-000000000001",
+    "image_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "processing_operation_id": "60000000-0000-4000-8000-000000000001",
+    "source_run_id": "70000000-0000-4000-8000-000000000001",
+    "annotation_id": "80000000-0000-4000-8000-000000000001",
+    "annotation_revision_id": "revision-id",
+    "expected_snapshot_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "coordinate_space": "normalized_xywh"
+  },
+  "package_consent": {
+    "contract_status": "planned_http_existing_storage",
+    "request": {
+      "id": "90000000-0000-4000-8000-000000000001",
+      "intent_revision": 1,
+      "intent_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "confirmed": true
+    },
+    "response_shape": {
+      "input": "same request",
+      "state": "armed",
+      "readiness": {
+        "ready": false,
+        "selected_images": 3,
+        "confirmed_images": 2,
+        "blocked_images": 1,
+        "reasons": ["whole_image_review_missing"]
+      },
+      "job": null
+    }
+  },
+  "task_workspace_additions": {
+    "contract_status": "planned",
+    "read_model_revision": "sha256",
+    "steps": [
+      {
+        "kind": "processing",
+        "state": "completed",
+        "operation_id": "60000000-0000-4000-8000-000000000001",
+        "request_completed": true,
+        "task_completed": false,
+        "blocking_reason": "whole_image_review_pending"
+      }
+    ],
+    "available_actions": [
+      {
+        "id": "review_next_image",
+        "state": "available",
+        "method": "GET",
+        "url": "/api/projects/P/conversations/C/tasks/T/delivery-review-items?limit=1",
+        "requires_confirmation": false,
+        "reason": null
+      },
+      {
+        "id": "authorize_package_after_review",
+        "state": "requires_confirmation",
+        "method": "POST",
+        "url": "/api/projects/P/conversations/C/tasks/T/delivery-package-consents",
+        "requires_confirmation": true,
+        "reason": "exact_delivery_revision_required"
+      }
+    ],
+    "completion": {
+      "model_request_completed": true,
+      "processing_completed": true,
+      "package_ready": false,
+      "task_completed": false
+    }
+  },
+  "advance": {
+    "contract_status": "planned",
+    "request": {
+      "command_id": "a0000000-0000-4000-8000-000000000001",
+      "expected_read_model_revision": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "action_id": "prepare_delivery_schema"
+    },
+    "response_shape": {
+      "command_id": "a0000000-0000-4000-8000-000000000001",
+      "status": "completed",
+      "dispatched": false,
+      "result_ref": {
+        "kind": "schema_draft",
+        "id": "schema-id"
+      },
+      "workspace": "MainlineTaskView"
+    }
+  },
+  "model_profile_stale_writer": {
+    "contract_status": "implemented",
+    "request": {
+      "expected_revision": 4,
+      "display_name": "Updated profile"
+    },
+    "response_409": {
+      "status": 409,
+      "code": "model_profile_revision_conflict",
+      "expected_revision": 4,
+      "current_revision": 5,
+      "suggested_action": "reload_model_profile"
+    }
+  }
+}
