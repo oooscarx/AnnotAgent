@@ -3,7 +3,24 @@ import { Disclosure } from "./Disclosure";
 import "./task-usage.css";
 
 export type TaskUsageState = "no_model_requests" | "complete" | "partial" | "unknown";
-export type TaskUsageStatus = "reserved" | "running" | "succeeded" | "failed" | "in_doubt" | "cancelled";
+export type TaskUsageStatus = "started" | "succeeded" | "failed" | "in_doubt";
+
+export type TaskUsageFailure = {
+  stage: string;
+  category: string;
+  http_status: number | null;
+};
+
+export type TaskUsagePricing = {
+  currency: string;
+  input_per_million_tokens: string | null;
+  output_per_million_tokens: string | null;
+  cached_input_per_million_tokens: string | null;
+  per_image: string | null;
+  per_request: string | null;
+  source: string;
+  updated_at: string | null;
+};
 
 export type TaskUsageAttempt = {
   attempt_id: string;
@@ -24,16 +41,17 @@ export type TaskUsageAttempt = {
   cost: string | null;
   currency: string | null;
   pricing_snapshot: {
-    input_per_million_tokens: string | null;
-    output_per_million_tokens: string | null;
-    cached_input_per_million_tokens: string | null;
-    per_request: string | null;
+    model_profile_id: string;
+    model_profile_revision: number;
+    pricing: TaskUsagePricing;
     captured_at: string;
-  } | null;
+  };
   started_at: string;
   completed_at: string | null;
   duration_ms: number | null;
-  failure: string | null;
+  failure: TaskUsageFailure | null;
+  effective_request: Record<string, unknown>;
+  sequence?: number;
 };
 
 export type TaskUsagePage = {
@@ -43,20 +61,20 @@ export type TaskUsagePage = {
     attempt_count: number;
     known_cost: string | null;
     currency: string | null;
-    currency_totals?: { currency: string; cost: string }[];
-    input_tokens: number | null;
-    cached_input_tokens: number | null;
-    output_tokens: number | null;
+    costs_by_currency: { currency: string; cost: string }[];
+    input_tokens: number;
+    cached_input_tokens: number;
+    output_tokens: number;
     unknown_attempt_count: number;
   };
-  attempts: { items: TaskUsageAttempt[]; next_cursor: string | null };
+  attempts: { items: TaskUsageAttempt[]; next_cursor: number | null };
 };
 
 export type TaskUsageService = {
   getTaskUsage(
     projectId: string,
     taskId: string,
-    cursor?: string,
+    cursor?: number,
     signal?: AbortSignal,
   ): Promise<TaskUsagePage>;
   subscribeTaskUsage?(
@@ -74,16 +92,19 @@ const stateLabels: Record<TaskUsageState, string> = {
 };
 
 const statusLabels: Record<TaskUsageStatus, string> = {
-  reserved: "已预留",
-  running: "请求中",
+  started: "请求中",
   succeeded: "成功",
   failed: "失败",
   in_doubt: "结果未知",
-  cancelled: "已取消",
 };
 
 function tokenValue(value: number | null) {
   return value == null ? "未知" : value.toLocaleString("zh-CN");
+}
+
+function summaryToken(value: number, unknownAttempts: number) {
+  const recorded = value.toLocaleString("zh-CN");
+  return unknownAttempts > 0 ? `已记录 ${recorded}，另有未知` : recorded;
 }
 
 function attemptCost(attempt: TaskUsageAttempt) {
@@ -111,11 +132,11 @@ function UsageAttempt({ attempt }: { attempt: TaskUsageAttempt }) {
       <p>用量来源：{attempt.usage_source} · Model Profile r{attempt.model_profile_revision}</p>
       <p>
         {attempt.pricing_snapshot
-          ? `价格快照：${attempt.pricing_snapshot.captured_at}`
+          ? `价格 revision r${attempt.pricing_snapshot.model_profile_revision} · 快照 ${attempt.pricing_snapshot.captured_at}`
           : "价格快照未知；不会按当前价格重算历史"}
         {attempt.duration_ms == null ? " · 耗时未知" : ` · ${attempt.duration_ms} ms`}
       </p>
-      {attempt.failure && <p role="alert">{attempt.failure}</p>}
+      {attempt.failure && <p role="alert">{attempt.failure.stage} · {attempt.failure.category}{attempt.failure.http_status == null ? "" : ` · HTTP ${attempt.failure.http_status}`}</p>}
       <Disclosure title="请求与价格证据">
         <pre>{JSON.stringify({
           attempt_id: attempt.attempt_id,
@@ -125,6 +146,7 @@ function UsageAttempt({ attempt }: { attempt: TaskUsageAttempt }) {
           model_profile_id: attempt.model_profile_id,
           model_profile_revision: attempt.model_profile_revision,
           pricing_snapshot: attempt.pricing_snapshot,
+          effective_request: attempt.effective_request,
           started_at: attempt.started_at,
           completed_at: attempt.completed_at,
         }, null, 2)}</pre>
@@ -136,20 +158,16 @@ function UsageAttempt({ attempt }: { attempt: TaskUsageAttempt }) {
 export function TaskUsageView({ value, compact = false }: { value: TaskUsagePage; compact?: boolean }) {
   const taskAttempts = value.attempts.items.filter((attempt) => attempt.kind === "task");
   const probes = value.attempts.items.filter((attempt) => attempt.kind === "probe");
-  const currencyTotals = value.summary.currency_totals ?? (
-    value.summary.known_cost != null && value.summary.currency != null
-      ? [{ currency: value.summary.currency, cost: value.summary.known_cost }]
-      : []
-  );
+  const currencyTotals = value.summary.costs_by_currency;
   return (
     <div className="task-usage-view" data-state={value.state}>
       <div className="task-usage-summary">
         <div><strong>{stateLabels[value.state]}</strong><p>{value.summary.attempt_count} 次请求尝试</p></div>
         {value.state !== "no_model_requests" && (
           <div>
-            <p>输入 {tokenValue(value.summary.input_tokens)} · 输出 {tokenValue(value.summary.output_tokens)}</p>
+            <p>输入 {summaryToken(value.summary.input_tokens, value.summary.unknown_attempt_count)} · 输出 {summaryToken(value.summary.output_tokens, value.summary.unknown_attempt_count)}</p>
             {currencyTotals.length > 0
-              ? currencyTotals.map((item) => <p key={item.currency}>{item.currency} {item.cost}</p>)
+              ? currencyTotals.map((item) => <p key={item.currency}>{value.summary.unknown_attempt_count > 0 ? "已知费用 " : ""}{item.currency} {item.cost}</p>)
               : <p>总费用未知（不是 0）</p>}
           </div>
         )}
@@ -231,7 +249,7 @@ export function TaskUsage({
       {loading && !combined && <p role="status">读取本次 Task 的模型请求…</p>}
       {error && <p role="alert">{error}。未把缺失记录显示为零。</p>}
       {combined && <TaskUsageView value={combined} compact={compact} />}
-      {latest?.attempts.next_cursor && <button disabled={loading} onClick={() => void loadMore()}>{loading ? "读取下一页…" : "加载更早请求"}</button>}
+      {latest?.attempts.next_cursor != null && <button disabled={loading} onClick={() => void loadMore()}>{loading ? "读取下一页…" : "加载更多请求"}</button>}
     </section>
   );
 }
