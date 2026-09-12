@@ -59,3 +59,25 @@ test("server actions keep unavailable formal edits and decisions disabled",async
   await expect(page.getByRole("button",{name:"拒绝这个对象",exact:true})).toBeDisabled();
   await expect(page.getByRole("button",{name:"确认整张图标注完整并继续",exact:true})).toBeDisabled();
 });
+
+test("browser history cannot discard an unsaved formal edit",async({page})=>{
+  await page.goto("/ui-preview?task=new&delivery_image=image-1");
+  await page.evaluate(async([path,imageUrl])=>{
+    const {React,createRoot,P0ResultPanel}=await import(path);
+    const host=document.createElement("main");document.body.replaceChildren(host);
+    const annotation=(image_id:string)=>({id:`object-${image_id}`,image_id,task_id:"objects",label:"cup",value:{kind:"bounding_box",rect:[0.1,0.1,0.2,0.2]},attributes:{},source:"model",review_status:"needs_review",provenance:{},created_at:"TEST"});
+    const service={image:async(_p:string,_t:string,image_id:string,source_run_id:string)=>({intent_revision:1,intent_sha256:"intent",snapshot:{image_id,source_run_id,sha256:`snapshot-${image_id}`,content_sha256:`pixels-${image_id}`,annotations:[annotation(image_id)]},sources:[],review:null,confirmation_current:false,accepted_objects:0,unresolved_objects:1,notice:"TEST"}),editObject:async()=>{},confirmImage:async()=>{}};
+    const view={kind:"formal_review",images:[{id:"image-1",name:"one",src:imageUrl},{id:"image-2",name:"two",src:imageUrl}],labels:[{stable_id:"cup",display_name:"杯子"},{stable_id:"bottle",display_name:"瓶子"}],formal_result:{project_id:"project",task_id:"task",processing_operation_id:"operation",batch_id:"batch",workflow_version:"workflow@1",status:"completed",images:[{image_id:"image-1",child_run_id:"run-1"},{image_id:"image-2",child_run_id:"run-2"}]},focus:null,actions:[{id:"formal_edit_object",available:true,reason:null}]};
+    createRoot(host).render(React.createElement(P0ResultPanel,{service,projectId:"project",taskId:"task",view}));
+  },[harness,pixel]);
+  await page.getByLabel("图片",{exact:true}).selectOption("image-2");
+  await page.getByRole("button",{name:/Annotation list/}).click();
+  await page.getByRole("button",{name:/杯子/}).click();
+  await page.getByLabel("对象类别").selectOption("bottle");
+  await expect(page.getByText(/尚未保存/)).toBeVisible();
+  page.once("dialog",dialog=>dialog.dismiss());
+  await page.goBack();
+  await expect(page.getByLabel("图片",{exact:true})).toHaveValue("image-2");
+  await expect(page.getByLabel("对象类别")).toHaveValue("bottle");
+  await expect(page).toHaveURL(/delivery_image=image-2/);
+});
