@@ -162,6 +162,23 @@ The existing Task route is authoritative. No Demo-only runtime is introduced:
 | `POST T/delivery-images/{image_id}` | Existing whole-image decision. Preset positive completion is allowed only after at least one candidate is human accepted and no candidate is unresolved. Empty preset images use `negative_confirmed`. |
 | Existing package consent/package routes | Require a current whole-image receipt for every one of the six frozen images, including exclusions. The frozen package carries the preset manifest/source hash and human revision IDs. |
 
+The preset action state machine is exclusive:
+
+- while any frozen image lacks a current whole-image receipt, `GET T/workspace`
+  returns only `review_delivery_images`;
+- once all six receipts are current and no package consent is armed, it returns only
+  `authorize_training_package`;
+- while the one admitted package is running, and after it becomes ready, no Schema,
+  Builder or model-setup action is substituted;
+- preset Tasks omit capability diagnostics such as `model_weights_missing`, because
+  this mode has no model dependency. The passive capability snapshot remains readable.
+
+The ZIP lineage records `source_kind:preset_candidate`, `source_run_id:null` and a
+validated `source_evidence_sha256` derived from the frozen Demo manifest/source asset.
+Model-run packages use `source_kind:model_run`. Older lineage without `source_kind`
+keeps the previous validation rule, so existing Published/package snapshots remain
+readable.
+
 Preset object review request:
 
 ```json

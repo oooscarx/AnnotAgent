@@ -65,7 +65,14 @@ pub(super) async fn snapshot(
         .agent_ui_snapshot(&project, conversation, task)
         .map_err(ApiError::conversation)?;
     let capability = super::mainline_capability::snapshot(&state, &project, conversation, task)?;
-    let diagnostics = super::mainline_capability::capability_result_diagnostics(&capability);
+    let preset_import = value["mainline"]["formal_source"]["kind"]
+        .as_str()
+        .is_some_and(|kind| kind == "preset_candidate_import");
+    let diagnostics = if preset_import {
+        Vec::new()
+    } else {
+        super::mainline_capability::capability_result_diagnostics(&capability)
+    };
     value["mainline"]["capability_readiness"] = capability;
     value["mainline"]["result_diagnostics"]
         .as_array_mut()

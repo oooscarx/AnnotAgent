@@ -529,12 +529,20 @@ impl LocalApplication {
                 "url":format!("{root}/advance"),"requires_confirmation":false,
                 "reason":"delivery_intake_blocked"
             }));
-        } else if preset_review_ready && pending_reviews > 0 {
-            actions.push(json!({
-                "id":"review_delivery_images","state":"available","method":"GET",
-                "url":format!("{root}/delivery-review-items"),"requires_confirmation":false,
-                "reason":"preset_candidates_require_human_whole_image_review"
-            }));
+        } else if preset_review_ready {
+            if pending_reviews > 0 {
+                actions.push(json!({
+                    "id":"review_delivery_images","state":"available","method":"GET",
+                    "url":format!("{root}/delivery-review-items"),"requires_confirmation":false,
+                    "reason":"preset_candidates_require_human_whole_image_review"
+                }));
+            } else if !package_ready && !consents.iter().any(|consent| consent.state == "armed") {
+                actions.push(json!({
+                    "id":"authorize_training_package","state":"requires_confirmation","method":"POST",
+                    "url":format!("{root}/delivery-package-consents"),"requires_confirmation":true,
+                    "reason":"exact_delivery_revision_required"
+                }));
+            }
         } else if schema.is_none() {
             actions.push(json!({
                 "id":"prepare_delivery_schema","state":"authorized","method":"POST",

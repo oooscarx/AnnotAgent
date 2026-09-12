@@ -1,5 +1,5 @@
 //! Independent semantic checks on reopened ZIP bytes, not writer preflight results.
-use crate::training_package::{ImageConfirmation, PackageManifest};
+use crate::training_package::{ImageConfirmation, PackageLineageSourceKind, PackageManifest};
 use annotagent_core::dataset_delivery::DatasetSplit;
 use anyhow::{Context, Result, ensure};
 use image::ImageDecoder;
@@ -419,21 +419,35 @@ fn validate_lineage(manifest: &PackageManifest) -> Result<()> {
                 && valid_digest(&entry.annotation_snapshot_sha256),
             "Image confirmation lineage mismatch"
         );
+        let source_valid = match entry.source_kind {
+            Some(PackageLineageSourceKind::ModelRun) => {
+                entry.source_run_id.is_some() && entry.source_evidence_sha256.is_some()
+            }
+            Some(PackageLineageSourceKind::PresetCandidate) => {
+                entry.source_run_id.is_none()
+                    && entry.source_evidence_sha256.is_some()
+                    && entry.schema_sha256.is_none()
+                    && entry.workflow_sha256.is_none()
+                    && entry.model_binding_sha256.is_none()
+            }
+            None => entry.source_run_id.is_some() == entry.source_evidence_sha256.is_some(),
+        };
         ensure!(
-            entry.source_run_id.is_some() == entry.source_evidence_sha256.is_some()
+            source_valid
                 && entry
                     .source_evidence_sha256
                     .as_ref()
                     .is_none_or(|v| valid_digest(v)),
-            "Invalid source Run evidence"
+            "Invalid source evidence"
         );
         if matches!(
             image.confirmation,
             ImageConfirmation::PositiveComplete { .. }
         ) {
             ensure!(
-                entry.source_run_id.is_some(),
-                "Positive image source Run missing"
+                entry.source_run_id.is_some()
+                    || entry.source_kind == Some(PackageLineageSourceKind::PresetCandidate),
+                "Positive image source evidence missing"
             );
             ensure!(
                 !entry.annotation_revision_ids.is_empty(),

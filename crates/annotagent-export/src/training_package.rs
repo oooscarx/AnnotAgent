@@ -82,6 +82,13 @@ pub struct ImageEvidence {
 }
 
 /// Whitelisted provenance only: no raw model configuration, paths or conversation text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackageLineageSourceKind {
+    ModelRun,
+    PresetCandidate,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PackageImageLineage {
@@ -89,6 +96,8 @@ pub struct PackageImageLineage {
     pub workflow_sha256: Option<String>,
     pub model_binding_sha256: Option<String>,
     pub original_name: String,
+    #[serde(default)]
+    pub source_kind: Option<PackageLineageSourceKind>,
     pub source_run_id: Option<annotagent_core::RunId>,
     pub confirmation_id: String,
     pub confirmation_revision: u32,
