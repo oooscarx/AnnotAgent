@@ -46,6 +46,17 @@ CAS and history scope are being reused.
   blocked state, saves final review, validates one ready ZIP job, exact replay and
   restart recovery without a Provider.
 
+## B2 incremental selection
+
+- `GET .../tasks/{task}/visual-selections` is the canonical SampleCandidate source.
+  It returns one atomic envelope for Project/conversation/Task Schema, Draft revision,
+  Sample Test, image bytes/result revision and each terminal candidate's own Artifact.
+  A two-candidate regression proves Artifact IDs are not shared at image scope.
+- A missing/partial delivery intake now exposes the existing text-only Schema preview
+  as `propose_delivery_semantics` alongside manual intake. It still requires explicit
+  call confirmation and produces a proposal only; it sees no pixels and grants no
+  Builder/processing authority.
+
 ## B0 findings
 
 - The current mainline delivery code is present only on the `d3220cb` line; the

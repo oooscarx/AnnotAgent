@@ -69,6 +69,7 @@ pub(super) fn routes() -> Router<ServerState> {
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/human-requests/{request_id}/resume", post(super::conversation_human_requests::resume))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/sample-preview", get(super::sample_operations::conversation_preview))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/sample-operations", get(super::sample_operations::conversation_history))
+        .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/visual-selections", get(super::sample_operations::visual_selections))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/builder-preview", get(super::conversation_builder::preview))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/journey-preview", get(super::conversation_journey::preview))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/journey-consents", get(super::conversation_journey::history).post(super::conversation_journey::save))

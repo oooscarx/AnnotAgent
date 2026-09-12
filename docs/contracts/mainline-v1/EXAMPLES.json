@@ -92,6 +92,36 @@
     "expected_snapshot_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
     "coordinate_space": "normalized_xywh"
   },
+  "sample_visual_selections": {
+    "contract_status": "implemented_b2",
+    "response_shape": {
+      "project_id": "P",
+      "conversation_id": "10000000-0000-4000-8000-000000000001",
+      "task_id": "20000000-0000-4000-8000-000000000001",
+      "items": [{
+        "project_schema_revision": "sha256",
+        "draft_id": "draft-id",
+        "draft_revision": 3,
+        "sample_test_id": "sample-id",
+        "sample_status": "passed",
+        "operation_status": "succeeded",
+        "result_available": true,
+        "images": [{
+          "image_id": "image-id",
+          "image_sha256": "sha256",
+          "result_revision": "sha256",
+          "candidates": [{
+            "candidate_id": "candidate-id",
+            "annotation_kind": "bounding_box",
+            "label": "cup",
+            "source_artifact_id": "artifact-uuid",
+            "feedback_available": true
+          }]
+        }]
+      }],
+      "next_cursor": null
+    }
+  },
   "package_consent": {
     "contract_status": "implemented_b3",
     "request": {

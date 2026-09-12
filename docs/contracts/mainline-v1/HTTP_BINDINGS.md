@@ -26,6 +26,7 @@ starts inference, publishes, admits a package, or changes review state.
 | `GET /api/navigation?cursor=&limit=50` | `{workspace_id,items:[{project_id,project_owner_id,title,conversation_id}],next_cursor}` | Owner-keyset page, limit 1..100. |
 | `GET /api/projects/P/conversations/C/task-navigation?cursor=0&limit=50` | `{items:[{task_id,source_message_id,schema_revision,sequence,state}],next_cursor}` | Message-sequence keyset; state is activity only, not dataset completion. |
 | `GET /api/projects/P/conversations/C/tasks/T/thread?cursor=0&limit=50` | `{items:[ResultMessageProjection],next_cursor}` | Currently only persisted user messages; no fabricated assistant reply. |
+| `GET /api/projects/P/conversations/C/tasks/T/visual-selections?cursor=0&limit=10` | Canonical paged Sample selection envelopes with Task Schema, Draft/Sample, image hash/result revision and per-candidate Artifact lineage | Limit 1..20. Whole-image/null results are not candidate references; a nil source Artifact is returned with `feedback_available:false`. |
 | `GET /api/projects/P/conversations/C/tasks/T/workspace` | existing calls, queue, HumanRequests, Builder/Journey/Sample/processing and B1 `read_model_revision`, `delivery`, `mainline` | Individually committed reconciliation snapshot. B1 reconciles delivery, matching Schema, current review counts and package receipts. Exact formal source and capability readiness remain B3/B4. |
 | `POST /api/projects/P/conversations/C/send` | `ConversationSendInput` → frozen `ConversationSendReceipt` | New task or follow-up. Ordinary follow-up may queue; SampleCandidate reference takes feedback disposition. Send itself grants nothing. |
 | `GET /api/projects/P/conversations/C/send/M` | saved receipt | Lost-response recovery, no dispatch. |
@@ -35,6 +36,11 @@ starts inference, publishes, admits a package, or changes review state.
 candidate and source Artifact plus an image ID/hash. Application validates every
 link against saved Sandbox evidence before persisting the message. A bare bbox,
 candidate ID or annotation ID is rejected.
+
+B2 adds the passive canonical `visual-selections` read model so clients do not join
+those identities from independent responses. Each terminal candidate has its own
+`source_artifact_id`; an Artifact is never inherited from another candidate or the
+image. The existing SampleCandidate send DTO and validator remain unchanged.
 
 ## Delivery intent, Schema and formal review (implemented)
 
@@ -144,6 +150,12 @@ The `mainline` object currently contains:
   methods/URLs, scope/revision/hash and `requires_confirmation`.
 - `package`: consent and job reconciliation. Task completion is true only when a package is
   Ready; a completed model call, Schema, Draft, Sample or Batch is not task completion.
+
+When delivery intake is missing or partial, actions include both local
+`save_delivery_intake` and `propose_delivery_semantics` with state
+`requires_confirmation` and the existing text-only `schema-preview` URL. That Schema
+call can propose only missing label/target semantics; it has no image pixels or image
+execution authority and never saves the proposal automatically.
 
 `formal_source`, paged review items, task capability readiness, step/result-message
 projection and automatic package admission remain B2–B4 and are not present yet.

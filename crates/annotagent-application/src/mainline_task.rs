@@ -140,6 +140,11 @@ impl LocalApplication {
                 "url":format!("{root}/delivery-intent"),"requires_confirmation":true,
                 "reason":if delivery.saved.is_none() {"delivery_intake_missing"} else {"delivery_intake_incomplete"}
             }));
+            actions.push(json!({
+                "id":"propose_delivery_semantics","state":"requires_confirmation","method":"GET",
+                "url":format!("{root}/schema-preview"),"requires_confirmation":true,
+                "reason":"text_only_schema_call_can_propose_missing_delivery_semantics"
+            }));
             blockers.push("delivery_intake_incomplete".into());
         } else if !delivery.blockers.is_empty() {
             actions.push(json!({

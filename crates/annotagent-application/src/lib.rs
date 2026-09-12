@@ -4,6 +4,7 @@ mod agent_ui;
 mod mainline_task;
 mod task_delivery;
 mod training_delivery;
+mod visual_selection;
 pub use mainline_task::{AdvanceTaskInput, AdvanceTaskReceipt};
 pub use task_delivery::{
     PrepareDeliverySchema, SaveTaskDeliveryIntent, TaskDeliveryImageView, TaskDeliveryView,

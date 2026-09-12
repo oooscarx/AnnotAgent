@@ -194,6 +194,35 @@ fn fixture_with_schema_class_and_box(
     }
 }
 
+#[test]
+fn canonical_visual_selection_preserves_per_candidate_artifact_lineage() {
+    let fixture = fixture_with_schema_and_class_member(false, false, true);
+    let projection = fixture
+        .app
+        .conversation_visual_selections(PROJECT, fixture.conversation, fixture.task.id, 0, 10)
+        .unwrap();
+    let candidates = projection["items"][0]["images"][0]["candidates"]
+        .as_array()
+        .unwrap();
+    assert_eq!(candidates.len(), 3);
+    let selected = &fixture.sample.report.samples[0].projection.final_candidates;
+    for expected in selected {
+        let actual = candidates
+            .iter()
+            .find(|candidate| candidate["candidate_id"] == expected.outcome.id)
+            .unwrap();
+        assert_eq!(
+            actual["source_artifact_id"],
+            expected.source_artifact_id.0.to_string()
+        );
+        assert_eq!(actual["feedback_available"], true);
+    }
+    assert_ne!(
+        candidates[1]["source_artifact_id"],
+        candidates[2]["source_artifact_id"]
+    );
+}
+
 impl Fixture {
     fn context(&self) -> ConversationFeedbackContext {
         self.app

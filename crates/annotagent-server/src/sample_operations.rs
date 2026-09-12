@@ -143,6 +143,31 @@ pub(super) async fn conversation_history(
     Ok(Json(json!({"items":items})))
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct VisualSelectionPage {
+    cursor: Option<usize>,
+    limit: Option<usize>,
+}
+
+pub(super) async fn visual_selections(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+    Query(page): Query<VisualSelectionPage>,
+) -> ApiResult<Json<Value>> {
+    state
+        .application
+        .conversation_visual_selections(
+            &project,
+            conversation,
+            task,
+            page.cursor.unwrap_or(0),
+            page.limit.unwrap_or(10),
+        )
+        .map(Json)
+        .map_err(ApiError::conversation)
+}
+
 pub(super) fn validate_scope(
     state: &ServerState,
     draft: &WorkflowDraft,
