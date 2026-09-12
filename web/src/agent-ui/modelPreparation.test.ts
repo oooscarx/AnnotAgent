@@ -217,7 +217,17 @@ function fixture(overrides: {
           sample_preview_url: "/api/projects/p/conversations/c/tasks/t/sample-preview",
         },
         agent_model_preference: { revision: overrides.preferenceRevision?.() ?? 1, model_profile_id: "planner" },
-        authorization: { source: "journey_consent", consent_id: "consent", expires_at: "2027-01-01", permission_digest: "old-auth", allowed_models: context.allowed_models, active: true, can_resume_without_authorization: overrides.canResume?.() ?? false },
+        authorization: {
+          source: "journey_consent",
+          consent_id: "consent",
+          expires_at: "2027-01-01",
+          permission_digest: "old-auth",
+          allowed_models: context.allowed_models,
+          active: true,
+          can_resume_without_authorization: overrides.canResume?.() ?? false,
+          continuation_state: overrides.canResume?.() ? "queued" : "approval_required",
+          continuation_reason: overrides.canResume?.() ? "saved_execution_intent_is_active" : "authorized_scope_changed",
+        },
         budget: {},
         task_cost: { scope: "conversation_task_model_calls", receipt_count: 0, known: true, amount: "0", currency: null, reason: null },
         passive: true,
@@ -475,7 +485,7 @@ describe("task-scoped model preparation", () => {
     expect(result.continuation).toEqual({
       state: "server_continuing",
       consent_id: "consent",
-      reason: "server_confirmed_existing_scope_continuation",
+      reason: "saved_execution_intent_is_active",
     });
     expect(result.snapshot.readiness.passive).toBe(true);
   });

@@ -196,6 +196,16 @@ export type CapabilityReadiness = {
     active: boolean;
     /** Server authority only. The frontend must never infer or dispatch continuation. */
     can_resume_without_authorization: boolean;
+    continuation_state:
+      | "queued"
+      | "running"
+      | "sample_started"
+      | "approval_required"
+      | "not_requested"
+      | "not_authorized"
+      | "settled"
+      | "interrupted";
+    continuation_reason: string;
   };
   budget: unknown;
   task_cost: {
@@ -294,17 +304,21 @@ export function preparationContinuation(
       reason: "task_registry_or_authorization_scope_changed",
     };
   }
-  if (authorization.active && authorization.can_resume_without_authorization) {
+  if (
+    authorization.active
+    && authorization.can_resume_without_authorization
+    && (authorization.continuation_state === "queued" || authorization.continuation_state === "running")
+  ) {
     return {
       state: "server_continuing",
       consent_id: authorization.consent_id,
-      reason: "server_confirmed_existing_scope_continuation",
+      reason: authorization.continuation_reason,
     };
   }
   return {
     state: "approval_required",
     consent_id: authorization.consent_id,
-    reason: "current_scope_requires_one_task_approval",
+    reason: authorization.continuation_reason || "current_scope_requires_one_task_approval",
   };
 }
 
@@ -590,6 +604,10 @@ export function createModelPreparationService(
       readiness.auto_expands_allowed_models !== false ||
       readiness.consistency !== "server_composed_versioned_snapshot" ||
       typeof readiness.authorization.can_resume_without_authorization !== "boolean" ||
+      typeof readiness.authorization.continuation_reason !== "string" ||
+      !["queued", "running", "sample_started", "approval_required", "not_requested", "not_authorized", "settled", "interrupted"].includes(readiness.authorization.continuation_state) ||
+      (readiness.authorization.can_resume_without_authorization
+        && !["queued", "running"].includes(readiness.authorization.continuation_state)) ||
       readiness.project_id !== context.project_id ||
       readiness.conversation_id !== context.conversation_id ||
       readiness.task_id !== context.task_id ||

@@ -98,3 +98,8 @@ approval, while missing readiness remains a concrete blocker.
 Backend issue `P0-F3-001` tracks removal of the duplicate Sample approval and the
 durable Builder-to-Sample wakeup. Until that backend contract is committed and
 integrated, Frontend 3 does not claim A1/A2 are complete.
+
+Backend delivered the durable continuation contract in `563f2f7`. Frontend 3
+accepts `server_continuing` only for the exact `queued`/`running` states with the
+server-provided continuation reason; contradictory read-model fields fail closed.
+Joint A1/A2 still require Frontend 1 integration and real HTTP evidence.

@@ -20,6 +20,7 @@ Frontend 3 changes:
 - Added `CapabilitySetupCard`, a single task blocker with one setup action and no technical IDs in the default view.
 - Setup completion now performs one passive recheck and immediately returns the result to the original Task. It does not execute Builder/Sample, probe a Provider, install a model or change `allowed_models`.
 - Added `PreparationContinuation`. `server_continuing` is emitted only when the authoritative server snapshot explicitly says the existing active authorization can resume and every frozen guard is unchanged. Changed scope returns `approval_required`; missing readiness remains `setup_required`.
+- Aligned that state to Backend `563f2f7`: only `queued`/`running` with `saved_execution_intent_is_active` can become `server_continuing`. Inconsistent boolean/state pairs are rejected instead of being upgraded locally.
 - Reduced the default setup surface: the concrete missing capability and at most three compatible options remain visible; model inventories, cost/version evidence and frozen technical scope are under details.
 
 ## Integration seam
@@ -42,5 +43,7 @@ The Backend read model must own `authorization.can_resume_without_authorization`
 
 - Focused capability/setup tests: 16 passed.
 - Web typecheck: passed.
-- Full Web unit/build and live HTTP P0 A1/A2: pending after Backend/F1 integration.
+- Backend durable Journey continuation: delivered at `563f2f7`, pending Frontend 1 integration and joint HTTP A1/A2 evidence.
+- Full Web unit/build: passed at the first P0 delivery; focused contract tests and typecheck passed after alignment to `563f2f7`.
+- Live HTTP P0 A1/A2: pending after Frontend 1 integration.
 - No Provider call, probe, install, credential read, push or real workspace mutation was performed.
