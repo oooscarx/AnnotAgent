@@ -21,6 +21,7 @@ it("validates declaration inputs and uses exact decimal price strings",()=>{
 it("validates ModelLimits and GenerationDefaults independently of capability declarations",()=>{
   const value={
     ...modelEditorValue(),provider_id:"p",display_name:"Model",remote_model_id:"remote",
+    protocol_features:{...modelEditorValue().protocol_features,reasoning_controls:true},
     limits:{context_tokens:32768,maximum_output_tokens:2048},
     generation_defaults:{maximum_output_tokens:1024,temperature:0.1,top_p:0.9,reasoning_mode:"medium"},
   };
@@ -31,10 +32,18 @@ it("validates ModelLimits and GenerationDefaults independently of capability dec
   expect(()=>validateModelEditor({...value,limits:{...value.limits,context_tokens:0}},options)).toThrow("大于零");
 });
 it("accepts a configured mode list but does not label it as Provider-verified evidence",()=>{
-  const value={...modelEditorValue(),provider_id:"p",display_name:"Model",remote_model_id:"remote",generation_defaults:{reasoning_mode:"medium"}};
+  const value={...modelEditorValue(),provider_id:"p",display_name:"Model",remote_model_id:"remote",protocol_features:{...modelEditorValue().protocol_features,reasoning_controls:true},generation_defaults:{reasoning_mode:"medium"}};
   const declared={model_profile_id:"model",model_profile_revision:7,status:"declared" as const,supported_reasoning_modes:["low","medium"],source:"model_profile"};
   expect(validateModelEditor(value,declared).generation_defaults.reasoning_mode).toBe("medium");
   expect(()=>validateModelEditor({...value,generation_defaults:{reasoning_mode:"high"}},declared)).toThrow("可选模式清单");
+});
+it("requires the reasoning capability and validates enable_thinking semantics",()=>{
+  const base={...modelEditorValue(),provider_id:"p",display_name:"Model",remote_model_id:"remote"};
+  expect(()=>validateModelEditor({...base,generation_defaults:{reasoning_mode:"medium"}})).toThrow("必须声明支持推理参数");
+  const capable={...base,protocol_features:{...base.protocol_features,reasoning_controls:true}};
+  expect(()=>validateModelEditor({...capable,generation_defaults:{reasoning_wire_parameter:"reasoning_effort"}})).toThrow("一起配置");
+  expect(()=>validateModelEditor({...capable,generation_defaults:{reasoning_mode:"medium",reasoning_wire_parameter:"enable_thinking"}})).toThrow("enabled 或 disabled");
+  expect(validateModelEditor({...capable,generation_defaults:{reasoning_mode:"enabled",reasoning_wire_parameter:"enable_thinking"}}).generation_defaults.reasoning_mode).toBe("enabled");
 });
 it("does not turn reasoning_controls into an invented mode list",()=>{
   const value={...modelEditorValue(),provider_id:"p",display_name:"Model",remote_model_id:"remote",protocol_features:{...modelEditorValue().protocol_features,reasoning_controls:true}};

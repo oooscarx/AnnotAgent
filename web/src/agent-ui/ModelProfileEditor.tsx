@@ -160,6 +160,17 @@ export function validateModelEditor(
     throw new Error("默认最大输出不能超过模型最大输出限制。");
 
   const reasoningMode = value.generation_defaults.reasoning_mode;
+  const reasoningWireParameter = value.generation_defaults.reasoning_wire_parameter;
+  if ((reasoningMode || reasoningWireParameter) && !value.protocol_features.reasoning_controls)
+    throw new Error("配置思考模式前必须声明支持推理参数。reasoning_controls 本身不会选择模式。");
+  if (reasoningWireParameter && !reasoningMode)
+    throw new Error("推理参数映射必须和明确的思考模式一起配置。");
+  if (
+    reasoningWireParameter === "enable_thinking"
+    && reasoningMode
+    && !["enabled", "disabled"].includes(String(reasoningMode))
+  )
+    throw new Error("enable_thinking 只接受 enabled 或 disabled。");
   if (
     reasoningMode &&
     runtimeOptions &&
