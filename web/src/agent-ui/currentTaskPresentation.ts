@@ -182,7 +182,7 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
   if (buildAndSample && hasFrozenImages) {
     return {
       kind: "ready_to_start",
-      title: "目标和图片已明确，可以开始样例",
+      title: "图片和要求已记录，可以准备样例",
       detail:
         "确认当前图片、模型和预算范围后，服务器会连续准备规范、生成方案并运行最多 3 张样例。",
       primary: { kind: "prepare_sample" },
