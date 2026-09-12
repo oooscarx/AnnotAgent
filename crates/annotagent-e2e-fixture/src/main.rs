@@ -414,6 +414,15 @@ async fn openai_completion(
         return Json(response);
     }
     let tools = tools_by_name(&request);
+    if request["model"] == "e2e-conversation-bbox-feedback-image-class"
+        && tools.contains_key("get_pipeline_builder_context")
+        && called_tools(&request).is_empty()
+    {
+        // TEST-only asynchronous boundary: the real server must return the
+        // saved Journey dispatch before this Builder request completes, then
+        // continue to the already-authorized Sample without another POST.
+        tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+    }
     if tools.contains_key("propose_future_annotation_schema") {
         // A separate bounded TEST protocol. It never routes through the generic
         // planner or the original Schema proposal fixture, and proves no quality.

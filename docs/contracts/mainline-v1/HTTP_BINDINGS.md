@@ -276,17 +276,23 @@ and `validate_exact_draft` afterward, with the existing Builder/Sample preview
 URLs. Those previews validate the actual selected nodes/bindings and permissions.
 Neither setup request auto-selects a model or weakens production eligibility.
 
-## ML-020 saved Journey sample continuation (implemented)
+## Saved Journey sample continuation (implemented)
 
-The Task read model now distinguishes the two durable halves of an approved
-Journey. A completed Builder with `outcome:draft_ready_for_human_review` is not a
-completed Sample and does not authorize a new Builder:
+The Task read model distinguishes a saved grant from an admitted dispatch. New P0
+consents are both saved and durably queued by their one approval POST. A completed
+Builder with `outcome:draft_ready_for_human_review` is not a completed Sample and
+does not authorize a new Builder:
 
-- `mainline.available_actions[]` and the G0 `actions[]` return
+- A legacy consent created before automatic admission can still return
   `id:test_pipeline_samples`, `state:requires_confirmation` and the exact saved
   Journey/Draft/Sample scope. `method:GET` + `url` reads the original consent;
   `execution_method:POST` + `execution_url` invokes its existing explicit
-  execution boundary with `{}`.
+  execution boundary with `{}`. This prevents a software upgrade from executing
+  old grants that were saved under a two-step contract.
+- A new P0 consent, or any Journey whose durable dispatch is `queued|running`,
+  returns `id:inspect_automatic_sample_progress`, `state:available`,
+  `requires_confirmation:false` and the execution status GET URL. It never asks
+  for a second Sample POST inside the same current authorization.
 - The scope includes `journey_consent_id`, `sample_operation_id`, exact Draft
   ID/revision/content hash, ordered image IDs/hashes, allowed model binding
   digests, the saved maximum Sample calls and expiry. A revoked, expired, edited
@@ -306,6 +312,7 @@ The two existing routes used by this projection are:
 | Method and URL | Request / response | Side effects |
 |---|---|---|
 | `GET D/journey-consents/K` | Original owned `ConversationJourneyRecord` including frozen consent and optional sealed Sample scope. | None. It does not claim a dispatch or create a Sample. |
+| `POST D/journey-consents` | Exact preview consent → saved consent plus current dispatch. | A newly inserted, current P0 consent atomically queues one server-owned continuation. Exact replay returns the same identities. |
 | `POST D/journey-consents/K/execution` | Empty object `{}` → current `ConversationJourneyExecutionStatus`. | Persists one `queued` execution intent, then one worker claims it as `running`. Existing Builder and Sample IDs are reused; active or already-created work is returned without redispatch. |
 
 For an existing mid-Journey consent, clients render and confirm the server action,
@@ -324,13 +331,18 @@ read-model fields.
 
 ```json
 {
-  "message":{"id":"COMMAND_UUID","text":"框出杯子和瓶子并交付 YOLO Detection 训练包","image":null},
+  "message":{"id":"COMMAND_UUID","text":"标注这些图片中的杯子和瓶子，框住完整可见物体，用于 Ultralytics YOLO 目标检测。先给我看三张样例。","image":null},
   "task_images":[
-    {"image_id":"IMAGE_UUID","sha256":"64_HEX"}
+    {"image_id":"IMAGE_UUID_1","sha256":"64_HEX_1"},
+    {"image_id":"IMAGE_UUID_2","sha256":"64_HEX_2"},
+    {"image_id":"IMAGE_UUID_3","sha256":"64_HEX_3"},
+    {"image_id":"IMAGE_UUID_4","sha256":"64_HEX_4"},
+    {"image_id":"IMAGE_UUID_5","sha256":"64_HEX_5"},
+    {"image_id":"IMAGE_UUID_6","sha256":"64_HEX_6"}
   ],
   "task_id":null,
   "schema_revision":"PROJECT_SHA256",
-  "mode":"execute"
+  "mode":"plan"
 }
 ```
 
