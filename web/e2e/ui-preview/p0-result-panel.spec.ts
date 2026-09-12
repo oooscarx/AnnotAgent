@@ -26,6 +26,8 @@ test("three terminal Sample images appear and the server focus is applied only o
   },[harness,pixel]);
 
   await expect(page.getByText("需要判断：瓶子边界需要判断",{exact:true})).toBeVisible();
+  await expect(page.getByText("样例反馈",{exact:true})).toBeVisible();
+  await expect(page.getByRole("tab",{name:"正式 Batch"})).toHaveCount(0);
   await page.getByRole("button",{name:/Annotation list/}).click();
   await expect(page.getByRole("button",{name:/瓶子/})).toHaveAttribute("aria-pressed","true");
   await page.getByRole("button",{name:/杯子/}).first().click();

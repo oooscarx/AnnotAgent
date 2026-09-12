@@ -42,15 +42,16 @@ export type DeliveryReviewProps = {
   onFormalSelection?: (selection: FormalReviewSelection) => void;
   annotationOrigins?:Record<string,Record<string,DemoAnnotationOrigin>>;
   preferredMode?:Mode;
+  fixedMode?:Mode;
   focus?:DeliveryReviewFocus|null;
   permissions?:DeliveryReviewPermissions;
 };
 
-const fromUrl = (images: Image[], hasSample: boolean, preferredMode?:Mode): Selection => {
+const fromUrl = (images: Image[], hasSample: boolean, preferredMode?:Mode, fixedMode?:Mode): Selection => {
   const query = new URL(location.href).searchParams;
   const explicit=query.get("delivery_view");
   return {
-    mode: explicit === "sample" && hasSample ? "sample" : explicit === "formal" ? "formal" : preferredMode === "sample" && hasSample ? "sample" : "formal",
+    mode: fixedMode==="sample"&&hasSample?"sample":fixedMode==="formal"?"formal":explicit === "sample" && hasSample ? "sample" : explicit === "formal" ? "formal" : preferredMode === "sample" && hasSample ? "sample" : "formal",
     image: images.find((item) => item.id === query.get("delivery_image"))?.id ?? images[0]?.id ?? "",
   };
 };
@@ -60,12 +61,12 @@ export function DeliveryReview({
   service, project, task, images, labels = [], sampleResult = null,
   formalResult: formalResultProp, locked = false, onEditingState,
   onVisualSelection, onSampleIssue, onFormalSelection, annotationOrigins = {},
-  preferredMode, focus, permissions,
+  preferredMode, fixedMode, focus, permissions,
 }: DeliveryReviewProps) {
   const [formalResult, setFormalResult] = useState<DeliveryFormalResult | null | undefined>(
     formalResultProp !== undefined ? formalResultProp : service.formalResult ? undefined : null,
   );
-  const [selection, setSelection] = useState(() => fromUrl(images, !!sampleResult, preferredMode));
+  const [selection, setSelection] = useState(() => fromUrl(images, !!sampleResult, preferredMode, fixedMode));
   const [view, setView] = useState<DeliveryImageView>();
   const [summary, setSummary] = useState<DeliveryReviewSummary>();
   const [summaryItems, setSummaryItems] = useState<DeliveryReviewSummary["items"]>([]);
@@ -163,14 +164,14 @@ export function DeliveryReview({
   useEffect(() => {
     const restore = () => {
       if (pending.current) return;
-      const next = fromUrl(images, !!sampleResult, preferredMode);
+      const next = fromUrl(images, !!sampleResult, preferredMode, fixedMode);
       if (next.image !== selection.image || next.mode !== selection.mode) {
         setDraft(undefined); setSelected(undefined); setSelection(next);
       }
     };
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
-  }, [images, preferredMode, sampleResult, selection]);
+  }, [fixedMode, images, preferredMode, sampleResult, selection]);
 
   useEffect(()=>{
     if(!focus||dirty||busy||pending.current)return;
@@ -232,6 +233,7 @@ export function DeliveryReview({
   }, [busy, dirty]);
 
   const choose = (next: Selection) => {
+    if(fixedMode&&next.mode!==fixedMode)return;
     if (pending.current || (dirty && !window.confirm("放弃当前尚未保存的对象修改？"))) return;
     setDraft(undefined); setSelected(undefined); setSelection(next); setReason(""); setMessage("");
     const url = new URL(location.href);
@@ -376,10 +378,10 @@ export function DeliveryReview({
   return <section className="delivery-review" aria-label="当前任务图片结果">
     <div className="delivery-review-heading">
       <div><h3>检查当前任务结果</h3><p>样例反馈只修改 Sandbox；正式审核只保存到绑定 Batch 的 child Run。</p></div>
-      <div className="delivery-review-tabs" role="tablist" aria-label="结果类型">
+      {!fixedMode?<div className="delivery-review-tabs" role="tablist" aria-label="结果类型">
         {sampleResult && <button type="button" role="tab" aria-selected={selection.mode === "sample"} onClick={() => choose({ ...selection, mode: "sample" })}>样例结果</button>}
         <button type="button" role="tab" aria-selected={selection.mode === "formal"} onClick={() => choose({ ...selection, mode: "formal" })}>正式 Batch</button>
-      </div>
+      </div>:<strong>{fixedMode==="sample"?"样例反馈":"正式审核"}</strong>}
     </div>
     {focus&&<p className="delivery-source-receipt" role="status">需要判断：{focus.reason}</p>}
     <div className="delivery-review-controls">
