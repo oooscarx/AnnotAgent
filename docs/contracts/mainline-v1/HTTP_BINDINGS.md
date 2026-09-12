@@ -658,6 +658,11 @@ pages may therefore follow either reference without suppressing a storage-integr
 error. The smoke and restart checks require both GETs to resolve and require the
 Sample response to report `current:true`.
 
+Each Sample scene also includes one `image` object with its project-owned
+`image_id`, `content_hash`, `name`, `width` and `height`. The Sample has exactly one
+frozen input and one result at index zero; their image identity/name must match this
+object. The image bytes are a real synthetic PNG inside the isolated TEST Project.
+
 The test-data boundary is explicit: the fixture creates typed external outcome
 receipts and Sample reports, while ownership checks, SQLite writes, Registry
 readiness, budget math, restart recovery, and the HTTP projection execute the real
