@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { DeliveryPackage } from "./DeliveryPackage";
 import { assertDemoDeliveryPanelRead, demoSourceModeLabel } from "./demoDeliveryPresentation";
 import type { DemoDeliveryPanelRead, DemoDeliveryPanelService, DeliveryPackageRead } from "./deliveryService";
+import "./demo-delivery.css";
 
 export type DemoDeliveryPanelProps = {
   projectId:string;

@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DeliveryReview } from "./DeliveryReview";
 import { assertDemoReviewPanelRead, demoOriginLabel, demoReviewStateLabel, demoSourceModeLabel } from "./demoDeliveryPresentation";
 import type { DemoReviewPanelRead, DemoReviewPanelService } from "./deliveryService";
+import "./demo-delivery.css";
 
 export type DemoReviewPanelProps = {
   projectId:string;
@@ -18,6 +19,9 @@ export function DemoReviewPanel({service,projectId,taskId,reviewId,onOpenArtifac
   const [view,setView]=useState<DemoReviewPanelRead>();
   const [error,setError]=useState("");
   const [reload,setReload]=useState(0);
+  const onReadyRef=useRef(onReady);
+
+  useEffect(()=>{onReadyRef.current=onReady;},[onReady]);
 
   useEffect(()=>{
     const controller=new AbortController();
@@ -27,11 +31,11 @@ export function DemoReviewPanel({service,projectId,taskId,reviewId,onOpenArtifac
         if(controller.signal.aborted)return;
         const checked=assertDemoReviewPanelRead(next,projectId,taskId,reviewId);
         setView(checked);
-        onReady?.(checked);
+        onReadyRef.current?.(checked);
       })
       .catch((cause:Error)=>{if(!controller.signal.aborted)setError(cause.message);});
     return()=>controller.abort();
-  },[onReady,projectId,reload,reviewId,service,taskId]);
+  },[projectId,reload,reviewId,service,taskId]);
 
   const openImage=(imageId:string)=>{
     const url=new URL(location.href);
@@ -51,14 +55,14 @@ export function DemoReviewPanel({service,projectId,taskId,reviewId,onOpenArtifac
       <p>{demoSourceModeLabel(view.demo)}</p>
       <p>开始体验只导入候选，不代表你已审核。对象接受与整图确认会分别保存。</p>
     </header>
-    <div className="delivery-review-summary-items" aria-label="示例图片状态">
-      {view.images.map(image=><article key={image.image_id}>
-        <button type="button" onClick={()=>openImage(image.image_id)}>
+    <div className="demo-review-gallery" aria-label="示例图片状态">
+      {view.images.map(image=><article className="demo-review-image" key={image.image_id}>
+        <button className="demo-review-image-preview" type="button" onClick={()=>openImage(image.image_id)}>
           <img src={image.thumbnail_url||image.url} alt="" loading="lazy" />
           <span>{image.name}</span>
           <span>{demoReviewStateLabel(image.state)}</span>
         </button>
-        {Object.values(image.annotation_origins).map(origin=><small key={origin.source_id}>{demoOriginLabel(origin)}</small>)}
+        {Object.values(image.annotation_origins).map(origin=><small className="demo-origin" key={origin.source_id}>{demoOriginLabel(origin)}</small>)}
         {image.source_artifact_id&&onOpenArtifact&&<button type="button" onClick={()=>onOpenArtifact(image.source_artifact_id!)}>查看来源 Artifact</button>}
       </article>)}
     </div>
