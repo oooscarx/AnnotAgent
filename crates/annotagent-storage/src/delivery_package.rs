@@ -257,7 +257,8 @@ impl SqliteStore {
                 let evidence=review.input.source_run_id.map(|run| {
                     tx.query_row("SELECT project_schema_json,workflow_snapshot_json,provider,model FROM runs WHERE id=?1 AND project_id=?2",params![run.to_string(),project],|r|Ok((r.get::<_,String>(0)?,r.get::<_,Option<String>>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?)))
                 }).transpose()?;
-                let source_evidence_sha256=evidence.as_ref().map(|v|serde_json::to_vec(v).map(|bytes|format!("{:x}",Sha256::digest(bytes)))).transpose()?;
+                let preset_evidence:Option<(String,String,String)>=if review.input.source_run_id.is_none(){tx.query_row("SELECT manifest_sha256,source_asset_id,source_asset_sha256 FROM demo_preset_candidate_imports WHERE project_owner_id=?1 AND conversation_id=?2 AND task_id=?3",params![project,conversation.to_string(),task.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?}else{None};
+                let source_evidence_sha256=if let Some(value)=evidence.as_ref(){Some(format!("{:x}",Sha256::digest(serde_json::to_vec(value)?)))}else if let Some(value)=preset_evidence.as_ref(){Some(format!("{:x}",Sha256::digest(serde_json::to_vec(value)?)))}else{None};
                 let schema_sha256=evidence.as_ref().map(|v|format!("{:x}",Sha256::digest(v.0.as_bytes())));
                 let workflow_sha256=evidence.as_ref().and_then(|v|v.1.as_ref()).map(|v|format!("{:x}",Sha256::digest(v.as_bytes())));
                 let model_binding_sha256=evidence.as_ref().map(|v|serde_json::to_vec(&(&v.2,&v.3)).map(|bytes|format!("{:x}",Sha256::digest(bytes)))).transpose()?;

@@ -382,18 +382,20 @@ impl LocalApplication {
             .collect::<Vec<_>>();
         let pending_journey_sample =
             self.pending_journey_sample_action(project, conversation, task, &journeys)?;
-        let processing_completed = processing.iter().any(|operation| {
-            matches!(
-                operation.get("phase").and_then(Value::as_str),
-                Some("completed" | "completed_with_review" | "partial")
-            ) || matches!(
-                operation
-                    .get("batch")
-                    .and_then(|v| v.get("status"))
-                    .and_then(Value::as_str),
-                Some("completed" | "completed_with_review" | "partial")
-            )
-        });
+        let preset_review_ready = self.store.is_demo_preset_task(&owner, conversation, task)?;
+        let processing_completed = preset_review_ready
+            || processing.iter().any(|operation| {
+                matches!(
+                    operation.get("phase").and_then(Value::as_str),
+                    Some("completed" | "completed_with_review" | "partial")
+                ) || matches!(
+                    operation
+                        .get("batch")
+                        .and_then(|v| v.get("status"))
+                        .and_then(Value::as_str),
+                    Some("completed" | "completed_with_review" | "partial")
+                )
+            });
         let consents = if delivery.saved.is_some() {
             self.training_package_consents(project, conversation, task)?
         } else {
@@ -409,7 +411,14 @@ impl LocalApplication {
             Some(_) => "running",
             None => "waiting",
         };
-        let formal_result = if delivery.saved.is_some()
+        let formal_result = if preset_review_ready {
+            json!({
+                "kind":"preset_candidate_import",
+                "status":"needs_review",
+                "live_inference_occurred":false,
+                "model_run_id":null
+            })
+        } else if delivery.saved.is_some()
             && delivery.missing_slots.is_empty()
             && delivery.blockers.is_empty()
         {
@@ -520,14 +529,21 @@ impl LocalApplication {
                 "url":format!("{root}/advance"),"requires_confirmation":false,
                 "reason":"delivery_intake_blocked"
             }));
+        } else if preset_review_ready && pending_reviews > 0 {
+            actions.push(json!({
+                "id":"review_delivery_images","state":"available","method":"GET",
+                "url":format!("{root}/delivery-review-items"),"requires_confirmation":false,
+                "reason":"preset_candidates_require_human_whole_image_review"
+            }));
         } else if schema.is_none() {
             actions.push(json!({
                 "id":"prepare_delivery_schema","state":"authorized","method":"POST",
                 "url":format!("{root}/advance"),"requires_confirmation":false,
                 "reason":null
             }));
-        } else if processing.is_empty() && processing_candidate.is_some() {
-            let candidate = processing_candidate.as_ref().unwrap();
+        } else if processing.is_empty()
+            && let Some(candidate) = processing_candidate.as_ref()
+        {
             let draft_id = candidate["draft_id"].as_str().unwrap();
             let sample_test_id = candidate["sample_test_id"].as_str().unwrap();
             actions.push(json!({
@@ -592,7 +608,7 @@ impl LocalApplication {
             "formal_source":formal_result,
             "messages":messages,
             "steps":[
-                {"id":"schema","kind":"schema","title":"Task Schema","state":if schema.is_some(){"completed"}else{"waiting"},"status":if schema.is_some(){"completed"}else if delivery.saved.is_none()||!delivery.missing_slots.is_empty(){"blocked"}else{"ready"},"request_completed":schema.is_some(),"task_completed":false},
+                {"id":"schema","kind":"schema","title":"Task Schema","state":if schema.is_some()||preset_review_ready{"completed"}else{"waiting"},"status":if schema.is_some()||preset_review_ready{"completed"}else if delivery.saved.is_none()||!delivery.missing_slots.is_empty(){"blocked"}else{"ready"},"request_completed":schema.is_some()||preset_review_ready,"task_completed":false},
                 {"id":"processing","kind":"processing","title":"Dataset processing","state":if processing_completed{"completed"}else if processing.is_empty(){"waiting"}else{"running"},"status":if processing_completed{"completed"}else if processing.is_empty(){"awaiting_approval"}else{"running"},"request_completed":processing_completed,"task_completed":false},
                 {"id":"whole_image_review","kind":"whole_image_review","title":"Whole-image review","state":if selected_images>0&&pending_reviews==0{"completed"}else{"waiting"},"status":if selected_images>0&&pending_reviews==0{"completed"}else if processing_completed{"ready"}else{"blocked"},"request_completed":selected_images>0&&pending_reviews==0,"task_completed":false},
                 {"id":"training_package","kind":"training_package","title":"Training package","state":package_state,"status":if package_ready{"completed"}else if package_state=="failed"{"failed"}else if package_state=="running"{"running"}else if selected_images>0&&pending_reviews==0{"awaiting_approval"}else{"blocked"},"request_completed":package_ready,"task_completed":package_ready}

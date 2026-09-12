@@ -344,6 +344,7 @@ impl LocalApplication {
         );
         let formal = self.task_delivery_formal_result(project, conversation, task)?;
         let formal_images = formal["images"].as_array().cloned().unwrap_or_default();
+        let project_images = self.list_project_image_summaries(project)?;
         let end = cursor.saturating_add(limit).min(scope.len());
         let mut items = Vec::new();
         for image in &scope[cursor..end] {
@@ -367,6 +368,11 @@ impl LocalApplication {
                 .iter()
                 .map(|annotation| {
                     let latest = self.store.list_revisions(annotation.id)?.last().cloned();
+                    let preset_source_artifact_id = self.store.demo_preset_annotation_origin(
+                        &saved.intent.project_id,
+                        task,
+                        annotation.id,
+                    )?;
                     let reference = match (
                         latest.as_ref(),
                         source_run_id,
@@ -388,6 +394,8 @@ impl LocalApplication {
                     Ok(serde_json::json!({
                         "annotation_id":annotation.id,"label":annotation.label,"value":annotation.value,
                         "review_status":annotation.review_status,
+                        "origin":if annotation.source==annotagent_core::AnnotationSource::Imported{"preset_candidate"}else if annotation.source==annotagent_core::AnnotationSource::Human{"human_revision"}else{"live_model_prediction"},
+                        "source_artifact_id":preset_source_artifact_id,
                         "annotation_revision_id":latest.map(|revision|revision.revision_id),
                         "source_artifact_ids":annotation.provenance.artifact_ids,
                         "feedback_available":reference.is_some(),"conversation_reference":reference
@@ -396,6 +404,9 @@ impl LocalApplication {
                 .collect::<Result<Vec<_>>>()?;
             items.push(serde_json::json!({
                 "image_id":image.image_id,"content_sha256":image.content_sha256,
+                "name":project_images.iter().find(|item|item.image_id==image.image_id).map(|item|item.name.clone()),
+                "url":format!("/api/projects/{project}/images/{}/content",image.image_id),
+                "thumbnail_url":format!("/api/projects/{project}/images/{}/thumbnail",image.image_id),
                 "processing_operation_id":formal.get("processing_operation_id"),
                 "batch_id":formal.get("batch_id"),"child_run_id":source_run_id,
                 "execution_status":execution.and_then(|item|item.get("status")),
@@ -605,6 +616,28 @@ impl LocalApplication {
         self.store
             .edit_delivery_object(&saved.intent.project_id, conversation, task, image, input)
             .map_err(Into::into)
+    }
+
+    /// Reviews a repository-imported Demo candidate through the same delivery snapshot CAS.
+    /// This records a human revision and never creates or invokes a model Run.
+    pub fn review_task_demo_preset_object(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        image: ImageId,
+        input: &annotagent_storage::DemoPresetObjectReviewInput,
+    ) -> Result<annotagent_core::AnnotationRevision> {
+        let saved = self
+            .require_delivery_intake(project, conversation, task)?
+            .context("Save delivery information before reviewing preset candidates")?;
+        Ok(self.store.review_demo_preset_object(
+            &saved.intent.project_id,
+            conversation,
+            task,
+            image,
+            input,
+        )?)
     }
 
     /// Saves only a scoped human receipt, never accepts objects, starts a model or packages data.

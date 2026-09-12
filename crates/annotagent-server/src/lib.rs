@@ -13,6 +13,7 @@ mod conversation_queue;
 mod conversation_schema;
 mod conversation_stop;
 mod conversations;
+mod demo_onboarding;
 mod event_replay;
 mod export_jobs;
 mod image_previews;
@@ -146,6 +147,7 @@ pub struct ServerState {
     export_workers: Arc<tokio::sync::Semaphore>,
     export_jobs: Arc<tokio::sync::Mutex<BTreeMap<uuid::Uuid, tokio::task::JoinHandle<()>>>>,
     processing_gate: Arc<tokio::sync::Mutex<()>>,
+    demo_start_gate: Arc<tokio::sync::Mutex<()>>,
     settings_writes: Arc<tokio::sync::Mutex<()>>,
     security: security::LocalSecurity,
 }
@@ -212,6 +214,7 @@ impl ServerState {
         credential_reference: CredentialReference,
         default_write_reference: CredentialReference,
     ) -> anyhow::Result<Self> {
+        demo_onboarding::validate_repository_catalog()?;
         let settings_path = application.workspace().join(".annotagent/settings.toml");
         #[allow(unused_mut)]
         let mut settings_persisted = settings_path.is_file();
@@ -257,6 +260,7 @@ impl ServerState {
             export_workers: Arc::new(tokio::sync::Semaphore::new(2)),
             export_jobs: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
             processing_gate: Arc::new(tokio::sync::Mutex::new(())),
+            demo_start_gate: Arc::new(tokio::sync::Mutex::new(())),
             settings_writes: Arc::new(tokio::sync::Mutex::new(())),
             security: security::LocalSecurity::default(),
         })
@@ -627,6 +631,11 @@ type ApiResult<T> = Result<T, ApiError>;
 pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
     let local_security = state.security.clone();
     let api = Router::new()
+        .route("/api/demo-catalog", get(demo_onboarding::list))
+        .route("/api/demo-catalog/{demo_id}/versions/{version}", get(demo_onboarding::get_manifest))
+        .route("/api/demo-catalog/{demo_id}/versions/{version}/assets/{asset_id}", get(demo_onboarding::get_asset))
+        .route("/api/demos/start", post(demo_onboarding::start))
+        .route("/api/demos/start/{command_id}", get(demo_onboarding::receipt))
         .route("/api/navigation", get(agent_ui::navigation))
         .route("/api/health", get(health))
         .route("/api/session", get(local_session))
