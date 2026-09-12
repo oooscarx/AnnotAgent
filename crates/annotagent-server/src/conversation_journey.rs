@@ -859,6 +859,45 @@ async fn advance(
                     return status(State(state), AxumPath((project, conversation, task, id))).await;
                 }
             };
+            let delivery = state
+                .application
+                .task_delivery_intent(&project, conversation, task)
+                .map_err(ApiError::bad_request)?;
+            if delivery.missing_slots.is_empty()
+                && delivery.blockers.is_empty()
+                && let Some(delivery) = delivery.saved
+            {
+                let already_prepared = state
+                    .application
+                    .human_conversation_schema_drafts(&project, conversation, task)
+                    .map_err(ApiError::bad_request)?
+                    .iter()
+                    .any(|draft| {
+                        annotagent_application::require_delivery_schema(
+                            Some(&delivery),
+                            &draft.definition,
+                        )
+                        .is_ok()
+                    });
+                if !already_prepared {
+                    state
+                        .application
+                        .prepare_delivery_schema(
+                            &project,
+                            conversation,
+                            task,
+                            &annotagent_application::PrepareDeliverySchema {
+                                command_id: uuid::Uuid::new_v5(
+                                    &id,
+                                    b"annotagent-p0-delivery-schema-v1",
+                                ),
+                                expected_revision: delivery.revision,
+                                expected_sha256: delivery.content_sha256,
+                            },
+                        )
+                        .map_err(ApiError::bad_request)?;
+                }
+            }
             let (_, builder) = conversation_builder::scope(
                 &state,
                 &project,

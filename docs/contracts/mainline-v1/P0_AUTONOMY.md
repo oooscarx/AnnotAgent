@@ -19,6 +19,13 @@ receipts on the next loop. The queue uses one claim/attempt lease, and restart r
 `running` work to `queued`. Revoked/expired scope, cancelled children and unknown remote outcomes
 end the dispatch without a new call.
 
+When the Schema proposal supplies delivery semantics that exactly complete the saved intake, the
+same Journey also calls the existing deterministic `prepare_delivery_schema` Application service
+with a consent-derived command ID. This creates one private, versioned delivery Schema and is safe
+to replay. It does not mark the Schema human accepted, publish a Workflow, or add image permission.
+The technical `prepare_delivery_schema` action therefore does not reappear after an automatically
+prepared Sample.
+
 ## One exact approval and passive reads
 
 For a newly uploaded Task, `POST /api/projects/{project_id}/conversations/{conversation_id}/send`
@@ -109,6 +116,26 @@ While the dispatch is queued or running and no Sample record exists, `GET .../wo
 ```
 
 The same Journey is not projected as `test_pipeline_samples/requires_confirmation` during automatic continuation.
+
+Once the Sample has terminal `needs_review` candidates, the Task projection makes that judgment the
+single current action:
+
+```json
+{
+  "id":"review_sample_results",
+  "state":"available",
+  "method":"GET",
+  "url":"/api/projects/P/conversations/C/tasks/T/visual-selections",
+  "requires_confirmation":false,
+  "reason":"sample_candidates_require_human_judgment",
+  "scope":{"sample_test_id":"S","pending_request_ids":["H1","H2","H3"],"pending_count":3}
+}
+```
+
+`mainline.sample_review` repeats that bounded summary and `review_work_item_id` is the owned Task
+ID. Each HumanRequest and visual selection still contains the full Sample/image/candidate/Artifact
+lineage. Until those current Sample requests are resolved, the read model does not present
+`prepare_delivery_schema` or full-dataset processing as its current action.
 
 `GET .../capability-readiness` exposes:
 

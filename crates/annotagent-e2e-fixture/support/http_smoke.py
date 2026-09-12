@@ -163,6 +163,18 @@ def verify(c, manifest, root):
     assert finished["sample"]["id"] == consent["sample_operation_id"], finished
     record = c.get(f"/api/workflow-drafts/{finished['sample']['draft_id']}/sample-test?test_id={consent['sample_operation_id']}")["sample_test"]
     assert 0 < len(record["inputs"]) <= 3
+    delivery_schema = c.get(tr + "/delivery-schema")
+    assert delivery_schema["schema"] is not None, delivery_schema
+    visual = c.get(tr + "/visual-selections?limit=10")
+    assert len(visual["items"]) == 1, visual
+    assert len(visual["items"][0]["images"]) == 3, visual
+    assert all(image["candidates"] for image in visual["items"][0]["images"]), visual
+    automatic_reviews = [item for item in c.get(tr + "/human-requests") if item["status"] == "pending" and item["input"]["reason_code"] == "terminal_result_requires_review"]
+    assert len(automatic_reviews) == 3, automatic_reviews
+    review_workspace = c.get(tr + "/workspace")["mainline"]
+    assert review_workspace["review_work_item_id"] == task, review_workspace
+    assert review_workspace["sample_review"]["pending_count"] == 3, review_workspace
+    assert [action["id"] for action in review_workspace["available_actions"]] == ["review_sample_results"], review_workspace
     # Delivery processing owns the complete six-image Task scope. The prior
     # Journey consent covered only the three-image sample and cannot be reused
     # as a hidden limit on formal processing.
@@ -238,7 +250,7 @@ def verify(c, manifest, root):
     execution_posts = [entry for entry in c.trace if entry["method"] == "POST" and entry["path"] == execution]
     assert len(consent_posts) == 1, consent_posts
     assert execution_posts == [], execution_posts
-    return {"project": project, "conversation_id": conversation, "task_id": task, "task_root": tr, "model_profile_id": model["id"], "provider_id": provider["id"], "execution_url": execution, "p0_autonomy": {"task_images": task_images, "task_image_count": len(task_images), "sample_image_count": len(record["inputs"]), "unavoidable_user_decisions": 1, "technical_relay_clicks": 0, "consent_post_count": len(consent_posts), "execution_post_count": len(execution_posts), "consent_response_ms": consent_response_ms, "journey_duration_ms": journey_duration_ms, "first_observation": first_observation, "consent_id": consent["id"], "schema_call_id": consent["schema_proposal"]["call_id"], "builder_operation_id": consent["builder_operation_id"], "sample_operation_id": consent["sample_operation_id"], "draft_id": record["draft_id"], "sample_status": record["status"], "execution_dispatch": finished["dispatch"]}, "export": export, "run_id": run_id, "stop": stop, "answered_request_id": human["id"], "pending_request_id": pending["id"], "plan_task_id": plan["task_id"], "controls": controls, "saved_plan": saved_plan, "bbox": bbox, "manual_stop": manual_stop, "trace": str(Path(manifest["workspace"]) / "HTTP_TRACE.json")}
+    return {"project": project, "conversation_id": conversation, "task_id": task, "task_root": tr, "model_profile_id": model["id"], "provider_id": provider["id"], "execution_url": execution, "p0_autonomy": {"task_images": task_images, "task_image_count": len(task_images), "sample_image_count": len(record["inputs"]), "unavoidable_user_decisions": 1, "technical_relay_clicks": 0, "consent_post_count": len(consent_posts), "execution_post_count": len(execution_posts), "consent_response_ms": consent_response_ms, "journey_duration_ms": journey_duration_ms, "first_observation": first_observation, "consent_id": consent["id"], "schema_call_id": consent["schema_proposal"]["call_id"], "builder_operation_id": consent["builder_operation_id"], "sample_operation_id": consent["sample_operation_id"], "draft_id": record["draft_id"], "sample_status": record["status"], "delivery_schema_id": delivery_schema["schema"]["id"], "review_work_item_id": review_workspace["review_work_item_id"], "review_action": review_workspace["available_actions"][0], "automatic_review_request_ids": [item["input"]["id"] for item in automatic_reviews], "execution_dispatch": finished["dispatch"]}, "export": export, "run_id": run_id, "stop": stop, "answered_request_id": human["id"], "pending_request_id": pending["id"], "plan_task_id": plan["task_id"], "controls": controls, "saved_plan": saved_plan, "bbox": bbox, "manual_stop": manual_stop, "trace": str(Path(manifest["workspace"]) / "HTTP_TRACE.json")}
 
 
 def verify_stop(c, cr, schema_revision, provider, normal_model):

@@ -196,6 +196,16 @@ Step/result-message projection remains bounded by existing real thread and opera
 receipts. Formal source, capability readiness, paged review items and package
 admission are implemented.
 
+After the automatic Journey saves real Sample candidates requiring review,
+`workspace.mainline.available_actions` contains the one passive
+`review_sample_results` GET action to `D/visual-selections`.
+`mainline.sample_review` contains `sample_test_id`, `pending_count`, exact
+`pending_request_ids` and that URL; `review_work_item_id` is the Task ID. The same
+Journey has already used the existing deterministic delivery-Schema service with a
+consent-derived idempotency ID, so the UI is not asked to prepare another Schema.
+Pending Sample review also prevents `start_delivery_processing` from being projected
+as the current action. The action does not itself accept any candidate.
+
 Implemented command `POST D/advance` accepts
 `{command_id,expected_read_model_revision,action_id}`. The server may execute only the
 exact local/durable action already returned as `authorized` by the read model. Actions
