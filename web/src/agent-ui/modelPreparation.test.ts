@@ -15,6 +15,7 @@ import {
   restoreSetupContext,
   setupReturnPath,
   setupSettingsPath,
+  setupContextFromCapabilityRequest,
   type SetupContext,
 } from "./modelPreparation";
 
@@ -74,6 +75,10 @@ const context: SetupContext = {
   conversation_id: "c",
   task_id: "t",
   task_revision: "schema-1",
+  registry_revision: "registry-1",
+  role: "task_planning_and_vision",
+  compatible_model_ids: ["planner", "vision"],
+  setup_status: "required",
   draft_id: "d",
   draft_revision: 1,
   draft_content_hash: "draft-hash",
@@ -138,6 +143,48 @@ function fixture(overrides: {
 }
 
 describe("task-scoped model preparation", () => {
+  it("adapts the G0 CapabilitySetupRequest only with a frozen continuation scope", () => {
+    const value = setupContextFromCapabilityRequest({
+      id: "setup",
+      project_id: "p",
+      task_id: "t",
+      task_revision: "schema-1",
+      registry_revision: "registry-1",
+      role: "task_planning_and_vision",
+      required_capabilities: ["image_classification", "text_generation"],
+      compatible_model_ids: ["planner", "vision"],
+      status: "required",
+      return_path: "/projects/p/work?task=t&draft=d",
+    }, {
+      conversation_id: "c",
+      draft_id: "d",
+      draft_revision: 1,
+      draft_content_hash: "draft-hash",
+      authorization_fingerprint: "old-auth",
+      allowed_models: context.allowed_models,
+      requirements: context.requirements,
+      created_at: "2026-01-01",
+    });
+    expect(value).toEqual(context);
+    expect(() => setupContextFromCapabilityRequest({
+      id: "setup",
+      project_id: "p",
+      task_id: "t",
+      task_revision: "schema-1",
+      registry_revision: "registry-1",
+      role: "vision",
+      required_capabilities: ["image_classification"],
+      compatible_model_ids: [],
+      status: "required",
+      return_path: "/projects/p/work?task=t",
+    }, {
+      conversation_id: "c",
+      allowed_models: [],
+      requirements: context.requirements,
+      created_at: "2026-01-01",
+    })).toThrow("requirements");
+  });
+
   it("keeps planning and vision models separate and never writes or probes", async () => {
     const { calls, service } = fixture();
     const result = await service.inspect(context, new AbortController().signal);
