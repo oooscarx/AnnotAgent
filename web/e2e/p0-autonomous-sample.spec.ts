@@ -5,7 +5,7 @@ import { expect as baseExpect, test } from "./fixtures";
 
 const expect = baseExpect.configure({ timeout: 75_000 });
 
-test("one bounded approval continues six newly uploaded images to three real Sample reviews", async ({ browser, page, request }) => {
+test("one bounded approval continues six newly uploaded images to three real Sample reviews", async ({ browser, page, request }, testInfo) => {
   test.skip(!process.env.AGENT_UI_TEST_MANIFEST, "Requires the marked isolated Agent UI fixture");
   test.setTimeout(240_000);
   const manifest = JSON.parse(readFileSync(process.env.AGENT_UI_TEST_MANIFEST!, "utf8"));
@@ -43,6 +43,7 @@ export:
   expect(bound.ok(), await bound.text()).toBe(true);
 
   const writes: string[] = [];
+  const mark = async (name: string) => page.screenshot({ path: testInfo.outputPath(`${name}.png`), fullPage: true, animations: "disabled" });
   page.on("request", (event) => {
     if (!["GET", "HEAD"].includes(event.method())) writes.push(`${event.method()} ${new URL(event.url()).pathname}`);
   });
@@ -63,18 +64,31 @@ export:
   const before = await (await request.get(`${root}/workspace`)).json();
   expect(before.mainline.intake.dataset_scope).toHaveLength(6);
   expect(before.mainline.available_actions.filter((action: { id: string }) => action.id === "build_and_test_pipeline")).toHaveLength(1);
+  await expect(page.getByRole("region", { name: "当前任务状态", exact: true })).toContainText("图片和要求已记录，可以准备样例");
+  await mark("01-ready-to-start");
 
   await page.getByRole("button", { name: "开始标注样例", exact: true }).click();
   const approval = page.getByRole("dialog");
   await expect(approval).toContainText("3 张图片已冻结");
+  await mark("02-bounded-approval");
   const consentResponse = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === `${root}/journey-consents`);
+  const consentStarted = Date.now();
   await approval.getByRole("button", { name: "接受未知费用并执行此范围", exact: true }).click();
   const accepted = await consentResponse;
+  expect(Date.now() - consentStarted).toBeLessThan(3_000);
   expect(accepted.ok(), await accepted.text()).toBe(true);
   const acceptedBody = await accepted.json();
   expect(acceptedBody.consent.images).toHaveLength(3);
   expect(writes.filter((write) => write === `POST ${root}/journey-consents`)).toHaveLength(1);
   expect(writes.some((write) => write.endsWith("/execution"))).toBe(false);
+  const executionPath = `${root}/journey-consents/${acceptedBody.consent.id}/execution`;
+  const firstObservationResponse = await request.get(executionPath);
+  expect(firstObservationResponse.ok(), await firstObservationResponse.text()).toBe(true);
+  const firstObservation = await firstObservationResponse.json();
+  expect(["queued", "running"]).toContain(firstObservation.dispatch.status);
+  expect(firstObservation.sample).toBeNull();
+  await expect(page.getByRole("region", { name: "当前任务状态", exact: true })).toContainText(/正在|已排队/);
+  await mark("03-server-running");
 
   await page.close();
   await expect.poll(async () => {
@@ -99,6 +113,16 @@ export:
     item.input.task_id === task &&
     item.status === "pending",
   )).toBe(true);
+  expect(completedWorkspace.mainline.available_actions).toHaveLength(1);
+  expect(completedWorkspace.mainline.available_actions[0]).toMatchObject({
+    id: "review_sample_results",
+    method: "GET",
+    requires_confirmation: false,
+    scope: {
+      sample_test_id: acceptedBody.consent.sample_operation_id,
+      pending_count: 3,
+    },
+  });
 
   const sampleRecordResponse = await request.get(`/api/workflow-drafts/${completedSample.draft_id}/sample-test?test_id=${acceptedBody.consent.sample_operation_id}`);
   expect(sampleRecordResponse.ok(), await sampleRecordResponse.text()).toBe(true);
@@ -113,6 +137,7 @@ export:
   await expect(result).toBeVisible();
   await expect(result.getByRole("heading", { name: "检查样例结果 · 3 张", exact: true })).toBeVisible();
   await expect(reopened.getByRole("region", { name: "当前任务状态", exact: true })).toContainText("3 个结果需要人工判断");
+  await reopened.screenshot({ path: testInfo.outputPath("04-sample-review.png"), fullPage: true, animations: "disabled" });
   await reopened.reload();
   await expect(reopened).toHaveURL(new RegExp(`task=${task}`));
   await expect(reopened.getByRole("region", { name: "当前任务图片结果", exact: true })).toBeVisible();

@@ -51,13 +51,24 @@ Read-only evidence from `127.0.0.1:8788` also confirms that the existing task re
 
 ### G1 real packaged HTTP evidence
 
-- Integration/backend source SHA: `af79fb78e17c98613d509f2a87fa8fdd1168c6f7`.
-- Isolated external-model-only manifest: `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-cotzf1rt/manifest.json`; service `127.0.0.1:8882`, scripted provider `127.0.0.1:8883`. The user service on `8788` was not restarted or mutated.
-- Permanent production-route test: `web/e2e/p0-autonomous-sample.spec.ts` — 1 passed in 5.4s against the built React application and real Rust HTTP/SQLite service. Its request explicitly asks for cup + bottle bounding boxes for an Ultralytics YOLO target, matching the deterministic provider's saved delivery semantics.
+- Integration/backend source SHA: `7055bb9e367c2e98a9d4b45c2593678c21e277b0`.
+- Isolated external-model-only manifest: `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-6puer3ep/manifest.json`; service `127.0.0.1:8884`, scripted provider `127.0.0.1:8885`. The user service on `8788` was not restarted or mutated.
+- Permanent production-route test: `web/e2e/p0-autonomous-sample.spec.ts` — 1 passed in 8.5s against the built React application and real Rust HTTP/SQLite service. Its request explicitly asks for cup + bottle bounding boxes for an Ultralytics YOLO target, matching the deterministic provider's saved delivery semantics.
 - The browser uploaded 6 real demo-pack images. The exact 6 `{image_id, sha256}` receipts were frozen into Send; the server selected exactly 3 Sample inputs.
 - The browser made one `POST .../journey-consents` and zero `POST .../execution` calls. After the page closed, the durable worker completed Schema → Builder → Sample and created exactly 3 pending HumanRequests bound to the same task and Sample operation.
 - Reopening the exact task showed `检查样例结果 · 3 张` and `3 个结果需要人工判断`; reloading retained the same task/result without a mutation.
+- The first Builder transport deliberately waited four seconds. Consent admission returned in 12ms; the first passive status read was `dispatch=running` with `sample=null`; the original authorized Sample reached review after 4.45s. No second POST or replacement Sample was created.
+- After Sample completion, the sole server action is the read-only `review_sample_results` action with the exact Sample ID and three pending HumanRequest IDs. Formal processing is not offered before those decisions.
+- The continuous TEST browser recording and four current-application screenshots are under `web/test-results/p0-autonomous-sample-one-b-38fa8-o-three-real-Sample-reviews/` (`01-ready-to-start`, `02-bounded-approval`, `03-server-running`, `04-sample-review`, and `video.webm`).
 - The TEST provider proves orchestration and recovery, not commercial-model accuracy. Formal processing, dataset review and package export remain separately authorized scopes.
+
+### Acceptance status after the first G1 slice
+
+- A1: passed. One unavoidable bounded-scope decision; zero technical relay clicks after approval.
+- A2: delayed Builder path passed through real HTTP. Synchronous completion and duplicate-wakeup unit coverage are retained in Backend tests; the race-specific HTTP permutations remain to be recorded explicitly.
+- A3: complete upload-then-description input passes without repeated label/output forms. Description-before-later-upload and ambiguous `YOLO` wording are still open and are not claimed.
+- A5: passed at the contract boundary: three terminal candidates create three Sample-bound HumanRequests and automatically open the result area. Visual inspection found that the result canvas does not initially fit the whole image; Frontend 2 owns the pending fix.
+- A9 sample portion: ready, approval, running and review states have current-application screenshots and one continuous recording. Missing-information, delivered, mobile, dark-theme and native 200% evidence remain open; G1 is therefore not yet declared complete.
 
 ## Safety boundary
 
