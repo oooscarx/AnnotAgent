@@ -126,8 +126,8 @@ test("sample issue emits a complete sample VisualSelection and never writes form
       service, project: "TEST", task: "TEST-task",
       sampleResult: {
         project_id: "TEST", task_id: "TEST-task", draft_id: "draft-one", draft_revision: 7,
-        sample_test_id: "sample-one", feedback_revision: 3,
-        images: [{ image_id: "image-one", snapshot_sha256: "sample-snapshot", source_artifact_id: "artifact-one", annotations: [annotation] }],
+        sample_test_id: "sample-one",
+        images: [{ image_id: "image-one", snapshot_sha256: "sample-snapshot", source_artifact_id: "artifact-one", feedback_revision: 3, annotations: [annotation] }],
       },
       images: [{ id: "image-one", name: "TEST original", src: imageUrl }],
       onSampleIssue: (selection: unknown) => state.selections.push(selection),
