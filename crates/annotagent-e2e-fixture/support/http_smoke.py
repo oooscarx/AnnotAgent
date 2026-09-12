@@ -99,7 +99,7 @@ def verify(c, manifest, root):
         c.trace.append({"method": "POST", "path": "/api/projects", "status": error.code, "request": {}, "response": json.loads(error.read())})
     provider = c.post("/api/providers", {"display_name": "TEST integration external HTTP", "adapter": "open_ai_compatible", "base_url": manifest["provider_url"]})
     c.post(f"/api/providers/{provider['id']}/credential", {"source": "session_only", "secret": "TEST-integration-only"})
-    model = c.post("/api/model-profiles", {"provider_id": provider["id"], "display_name": "TEST deterministic model", "remote_model_id": "e2e-conversation-classification-feedback-clarify", "input_modalities": ["text", "image"], "task_capabilities": ["text_generation", "vision_language", "image_classification"], "protocol_features": {"tool_calls": True, "structured_output": True}})
+    model = c.post("/api/model-profiles", {"provider_id": provider["id"], "display_name": "TEST deterministic model", "remote_model_id": "e2e-conversation-bbox-feedback-image-class", "input_modalities": ["text", "image"], "task_capabilities": ["text_generation", "vision_language", "image_classification"], "protocol_features": {"tool_calls": True, "structured_output": True}})
     c.post(f"/api/providers/{provider['id']}/active-probe", {"model_profile_id": model["id"], "confirmed_billable": True})
     defaults = c.get("/api/agent-model-bindings")
     c.request("PUT", "/api/agent-model-bindings", {**defaults, "pipeline_builder": model["id"]})
@@ -120,7 +120,7 @@ def verify(c, manifest, root):
     preference = c.get(cr + "/agent-model")
     c.post(cr + "/agent-model", {"request_id": uid(), "expected_revision": preference["revision"], "model_profile_id": model["id"]})
     schema_revision = c.get(p + "/goal")["revision"]
-    command = {"message": {"id": uid(), "text": "框出这四张图片里的杯子并交付 YOLO Detection 数据集", "image": None}, "task_images": task_images, "schema_revision": schema_revision, "mode": "plan"}
+    command = {"message": {"id": uid(), "text": "框出这四张图片里的杯子和瓶子并交付 YOLO Detection 数据集", "image": None}, "task_images": task_images, "schema_revision": schema_revision, "mode": "plan"}
     receipt = c.post(cr + "/send", command)
     assert c.post(cr + "/send", command) == receipt
     task = receipt["task_id"]
