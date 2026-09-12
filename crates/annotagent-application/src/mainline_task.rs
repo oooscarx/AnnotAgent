@@ -79,6 +79,20 @@ impl LocalApplication {
         let package_ready = packages
             .iter()
             .any(|job| job.phase == DeliveryPackagePhase::Ready);
+        let package_state = match packages.first().map(|job| job.phase) {
+            Some(DeliveryPackagePhase::Ready) => "completed",
+            Some(DeliveryPackagePhase::Failed | DeliveryPackagePhase::Cancelled) => "failed",
+            Some(_) => "running",
+            None => "waiting",
+        };
+        let formal_result = if delivery.saved.is_some()
+            && delivery.missing_slots.is_empty()
+            && delivery.blockers.is_empty()
+        {
+            self.task_delivery_formal_result(project, conversation, task)?
+        } else {
+            Value::Null
+        };
 
         let (selected_images, reviewed_images, current_reviews, pending_reviews) =
             if let Some(saved) = &delivery.saved {
@@ -148,7 +162,7 @@ impl LocalApplication {
         } else if pending_reviews > 0 {
             actions.push(json!({
                 "id":"review_delivery_images","state":"available","method":"GET",
-                "url":format!("{root}/delivery-intent"),"requires_confirmation":false,
+                "url":format!("{root}/delivery-review-items"),"requires_confirmation":false,
                 "reason":"whole_image_review_pending"
             }));
         } else if !package_ready && !consents.iter().any(|consent| consent.state == "armed") {
@@ -169,6 +183,13 @@ impl LocalApplication {
                 "selected_images":selected_images,"saved_review_receipts":reviewed_images,
                 "current_reviews":current_reviews,"pending_reviews":pending_reviews
             },
+            "formal_source":formal_result,
+            "steps":[
+                {"kind":"schema","state":if schema.is_some(){"completed"}else{"waiting"},"request_completed":schema.is_some(),"task_completed":false},
+                {"kind":"processing","state":if processing_completed{"completed"}else if processing.is_empty(){"waiting"}else{"running"},"request_completed":processing_completed,"task_completed":false},
+                {"kind":"whole_image_review","state":if selected_images>0&&pending_reviews==0{"completed"}else{"waiting"},"request_completed":selected_images>0&&pending_reviews==0,"task_completed":false},
+                {"kind":"training_package","state":package_state,"request_completed":package_ready,"task_completed":package_ready}
+            ],
             "package":{
                 "consents":consents,
                 "jobs":packages.iter().map(|job| json!({

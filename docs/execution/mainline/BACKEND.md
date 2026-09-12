@@ -29,6 +29,23 @@ CAS and history scope are being reused.
 - Focused HTTP test covers passive projection, local advance, exact replay, stale
   revision conflict and one-schema persistence. No Provider is created or called.
 
+## B3 incremental delivery
+
+- Delivery processing now freezes the exact saved image IDs and hashes. It rejects a
+  `limit` for delivery Tasks; the legacy prefix behavior remains for non-delivery
+  processing. A pure boundary test proves a non-prefix 3-of-10 selection and rejects
+  changed hashes.
+- Formal sources now join Task processing operation → exact delivery revision → Batch
+  image → child Run. A project-global terminal Run is no longer offered as a review
+  source. `GET formal-result` and paged `GET delivery-review-items` expose that
+  lineage and bounded review state.
+- Package consent list/get/authorize/cancel HTTP routes now expose existing durable
+  storage. The last current whole-image review, or consent after reviews are ready,
+  admits at most one existing local packaging job. GET remains passive. A real HTTP
+  test creates original images/formal annotations, arms before review, observes the
+  blocked state, saves final review, validates one ready ZIP job, exact replay and
+  restart recovery without a Provider.
+
 ## B0 findings
 
 - The current mainline delivery code is present only on the `d3220cb` line; the

@@ -49,6 +49,92 @@ impl LocalApplication {
             .store
             .delivery_package_consents(&owner, conversation, task)?)
     }
+    pub fn training_package_consent(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+    ) -> Result<annotagent_storage::DeliveryPackageConsent> {
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self
+            .store
+            .delivery_package_consent(&owner, conversation, task, id)?)
+    }
+
+    /// Passive consent projection. It checks current review snapshots but never
+    /// consumes the consent or creates an Export job.
+    pub fn training_package_consent_view(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        consent: &annotagent_storage::DeliveryPackageConsent,
+    ) -> Result<serde_json::Value> {
+        let owner = self.conversation_project_identity(project)?;
+        let saved = self
+            .store
+            .task_delivery_intent(&owner, conversation, task)?;
+        let selected_images = saved
+            .as_ref()
+            .and_then(|saved| saved.intent.dataset_scope.as_ref())
+            .map_or(0, Vec::len);
+        let mut confirmed_images = 0usize;
+        let mut reasons = Vec::new();
+        let stale = saved.as_ref().is_none_or(|saved| {
+            saved.revision != consent.input.intent_revision
+                || saved.content_sha256 != consent.input.intent_sha256
+        });
+        if stale {
+            reasons.push("delivery_intent_changed");
+        } else if let Some(saved) = saved.as_ref() {
+            let reviews = self
+                .store
+                .delivery_image_reviews(&owner, conversation, task)?;
+            for image in saved.intent.dataset_scope.as_deref().unwrap_or_default() {
+                let review = reviews
+                    .iter()
+                    .find(|review| review.input.image_id == image.image_id);
+                if let Some(review) = review {
+                    let current = self.store.delivery_image_snapshot(
+                        &owner,
+                        conversation,
+                        task,
+                        image.image_id,
+                        review.input.source_run_id,
+                    )?;
+                    if current.sha256 == review.snapshot.sha256 {
+                        confirmed_images += 1;
+                    }
+                }
+            }
+            if confirmed_images != selected_images {
+                reasons.push("whole_image_review_missing_or_stale");
+            }
+        }
+        let job = self
+            .store
+            .delivery_package(&owner, conversation, task, consent.input.id)
+            .ok()
+            .map(status)
+            .transpose()?;
+        let effective_state = if stale && consent.state == "armed" {
+            "stale"
+        } else if consent.state == "armed" && confirmed_images != selected_images {
+            "blocked"
+        } else {
+            consent.state.as_str()
+        };
+        Ok(serde_json::json!({
+            "input":consent.input,"state":consent.state,"effective_state":effective_state,
+            "readiness":{
+                "ready":consent.state=="armed" && !stale && selected_images>0 && confirmed_images==selected_images,
+                "selected_images":selected_images,"confirmed_images":confirmed_images,
+                "blocked_images":selected_images.saturating_sub(confirmed_images),"reasons":reasons
+            },
+            "job":job
+        }))
+    }
     pub fn authorize_training_package(
         &self,
         project: &str,

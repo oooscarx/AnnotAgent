@@ -48,6 +48,8 @@ pub struct DeliveryImageReview {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DeliveryRunSource {
+    pub processing_operation_id: String,
+    pub batch_id: String,
     pub run_id: String,
     pub model: String,
     pub status: String,
@@ -348,9 +350,9 @@ impl SqliteStore {
             let saved = intent(db, project, conversation, task)?;
             // Reuse ownership, scope and current image-version checks.
             snapshot(db, &saved, image, None)?;
-            let mut stmt = db.prepare("SELECT r.id,r.model,r.status,r.created_at FROM runs r JOIN run_images i ON i.run_id=r.id WHERE r.project_id=?1 AND i.image_id=?2 AND r.status IN ('completed','completed_with_review','partial') ORDER BY r.created_at DESC,r.id")?;
-            stmt.query_map(params![project, image.to_string()], |r| Ok(DeliveryRunSource {
-                run_id: r.get(0)?, model: r.get(1)?, status: r.get(2)?, created_at: r.get(3)?,
+            let mut stmt = db.prepare("SELECT p.id,b.batch_id,r.id,r.model,r.status,r.created_at FROM runs r JOIN batch_images b ON b.child_run_id=r.id JOIN processing_operations p ON p.id=b.batch_id WHERE r.project_id=?1 AND b.image_id=?2 AND json_extract(p.state_json,'$.authorization.conversation.conversation_id')=?3 AND json_extract(p.state_json,'$.authorization.conversation.task_id')=?4 AND json_extract(p.state_json,'$.authorization.delivery_scope.intent_revision')=?5 AND json_extract(p.state_json,'$.authorization.delivery_scope.intent_sha256')=?6 AND r.status IN ('completed','completed_with_review','partial') ORDER BY r.created_at DESC,r.id")?;
+            stmt.query_map(params![project, image.to_string(), conversation.to_string(), task.to_string(), saved.revision, saved.content_sha256], |r| Ok(DeliveryRunSource {
+                processing_operation_id:r.get(0)?,batch_id:r.get(1)?,run_id: r.get(2)?, model: r.get(3)?, status: r.get(4)?, created_at: r.get(5)?,
             }))?.collect::<Result<Vec<_>,_>>().map_err(Into::into)
         })
     }
@@ -711,10 +713,22 @@ mod tests {
                 .save_task_delivery_intent(Uuid::new_v4(), 0, &intent)
                 .unwrap();
             let schema=annotagent_core::ProjectSchema::from_yaml("version: 1\nproject:\n  name: TEST\ndataset:\n  root: images\nruntime: {}\ntasks:\n  - id: objects\n    kind: bounding_box\n    labels: [target]\nreview:\n  auto_accept_confidence: 0.99\n  force_review_below: 0.95\nexport:\n  formats: [native]\n").unwrap();
+            let processing = Uuid::new_v4();
+            let processing_state = serde_json::json!({
+                "id":processing,"batch_id":processing,"phase":"started",
+                "authorization":{
+                    "conversation":{"conversation_id":conversation,"task_id":task},
+                    "delivery_scope":{"intent_revision":saved.revision,"intent_sha256":saved.content_sha256},
+                    "images":[{"image_id":image,"content_hash":"a".repeat(64)}]
+                }
+            });
             store.with_connection(|db| {
                 db.execute("INSERT INTO images(id,project_id,relative_path,sha256,metadata_json,imported_at) VALUES(?1,?2,'TEST.png',?3,'{}','TEST')",params![image.to_string(),project,"a".repeat(64)])?;
                 db.execute("INSERT INTO runs(id,project_id,project_name,skill_id,provider,model,status,project_schema_json,created_at,updated_at) VALUES(?1,?2,'TEST','TEST','TEST','TEST','completed',?3,'TEST','TEST')",params![run.to_string(),project,serde_json::to_string(&schema)?])?;
                 db.execute("INSERT INTO run_images(run_id,image_id,status) VALUES(?1,?2,'completed')",params![run.to_string(),image.to_string()])?;
+                db.execute("INSERT INTO processing_operations(id,project_id,request_json,state_json,created_at,updated_at) VALUES(?1,'TEST-route','{}',?2,'TEST','TEST')",params![processing.to_string(),serde_json::to_string(&processing_state)?])?;
+                db.execute("INSERT INTO dataset_batches(id,project_id,project_path,provider,status,max_concurrency,workflow_version,workflow_snapshot_json,project_snapshot_json,budget_limits_json,budget_ledger_json,event_sequence,created_at,updated_at) VALUES(?1,'TEST-route','TEST','TEST','completed',1,'TEST','{}','{}','{}','{}',0,'TEST','TEST')",[processing.to_string()])?;
+                db.execute("INSERT INTO batch_images(batch_id,image_id,image_path,position,status,child_run_id,attempt_count,reservation_json,actual_usage_json,checkpoint_json,updated_at) VALUES(?1,?2,'TEST.png',0,'completed',?3,0,'{}','{}','{}','TEST')",params![processing.to_string(),image.to_string(),run.to_string()])?;
                 Ok(())
             }).unwrap();
             let annotation = Annotation {

@@ -10,7 +10,7 @@ use annotagent_core::{
 use annotagent_storage::{
     DeliveryImageReview, DeliveryImageReviewInput, DeliveryImageSnapshot, TaskDeliveryRevision,
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -144,6 +144,152 @@ pub(crate) fn selected_delivery_image(
 }
 
 impl LocalApplication {
+    /// Current formal result is an exact Task processing operation and its Batch child Runs.
+    /// Older project Runs and processing done for another delivery revision are excluded.
+    pub fn task_delivery_formal_result(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+    ) -> Result<serde_json::Value> {
+        let saved = self
+            .require_delivery_intake(project, conversation, task)?
+            .context("Save complete delivery information before processing")?;
+        let scope = saved.intent.dataset_scope.as_deref().unwrap_or_default();
+        for operation in self.conversation_processing_history(project, conversation, task)? {
+            if operation["authorization"]["delivery_scope"]["intent_revision"] != saved.revision
+                || operation["authorization"]["delivery_scope"]["intent_sha256"]
+                    != saved.content_sha256
+            {
+                continue;
+            }
+            let Some(batch_id) = operation["batch_id"].as_str() else {
+                continue;
+            };
+            let batch_id: annotagent_core::BatchId = batch_id.parse()?;
+            let batch = self.store.get_batch(batch_id)?;
+            ensure!(
+                batch.project_id == project,
+                "Processing Batch ownership changed"
+            );
+            let authorized = operation["authorization"]["images"]
+                .as_array()
+                .context("Processing image scope missing")?;
+            if authorized.len() != scope.len()
+                || scope.iter().any(|image| {
+                    !authorized.iter().any(|item| {
+                        item["image_id"] == image.image_id.to_string()
+                            && item["content_hash"] == image.content_sha256
+                    })
+                })
+            {
+                bail!("Processing image scope differs from the current delivery scope");
+            }
+            let images = self
+                .store
+                .list_batch_images_summary(batch_id)?
+                .into_iter()
+                .map(|item| {
+                    serde_json::json!({
+                        "image_id":item.image.image_id,
+                        "child_run_id":item.image.child_run_id,
+                        "status":item.image.status,
+                        "run_status":item.run_status,
+                        "error":item.image.error.or(item.terminal_reason),
+                        "annotation_count":item.annotation_count,
+                        "review_count":item.review_count
+                    })
+                })
+                .collect::<Vec<_>>();
+            return Ok(serde_json::json!({
+                "project_id":project,"task_id":task,
+                "intent_revision":saved.revision,"intent_sha256":saved.content_sha256,
+                "processing_operation_id":operation["id"],"batch_id":batch.id,
+                "workflow_id":operation["workflow_id"],"workflow_version":operation["version"],
+                "status":batch.status,"images":images
+            }));
+        }
+        Ok(serde_json::Value::Null)
+    }
+
+    pub fn task_delivery_review_items(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        cursor: usize,
+        limit: usize,
+    ) -> Result<serde_json::Value> {
+        ensure!((1..=100).contains(&limit), "Review limit must be 1..100");
+        let saved = self
+            .require_delivery_intake(project, conversation, task)?
+            .context("Save complete delivery information before reviewing")?;
+        let scope = saved.intent.dataset_scope.as_deref().unwrap_or_default();
+        ensure!(
+            cursor <= scope.len(),
+            "Review cursor is outside the current scope"
+        );
+        let formal = self.task_delivery_formal_result(project, conversation, task)?;
+        let formal_images = formal["images"].as_array().cloned().unwrap_or_default();
+        let end = cursor.saturating_add(limit).min(scope.len());
+        let mut items = Vec::new();
+        for image in &scope[cursor..end] {
+            let execution = formal_images
+                .iter()
+                .find(|item| item["image_id"] == image.image_id.to_string());
+            let source_run_id = execution
+                .and_then(|item| item["child_run_id"].as_str())
+                .map(str::parse)
+                .transpose()?;
+            let state = self.task_delivery_image(
+                project,
+                conversation,
+                task,
+                image.image_id,
+                source_run_id,
+            )?;
+            items.push(serde_json::json!({
+                "image_id":image.image_id,"content_sha256":image.content_sha256,
+                "processing_operation_id":formal.get("processing_operation_id"),
+                "batch_id":formal.get("batch_id"),"child_run_id":source_run_id,
+                "execution_status":execution.and_then(|item|item.get("status")),
+                "execution_error":execution.and_then(|item|item.get("error")),
+                "review_revision":state.review.as_ref().map_or(0, |review|review.revision),
+                "review_decision":state.review.as_ref().map(|review|review.input.decision),
+                "confirmation_current":state.confirmation_current,
+                "accepted_objects":state.accepted_objects,"unresolved_objects":state.unresolved_objects,
+                "snapshot_sha256":state.snapshot.sha256
+            }));
+        }
+        let reviews =
+            self.store
+                .delivery_image_reviews(&saved.intent.project_id, conversation, task)?;
+        let counts = scope.iter().fold(
+            std::collections::BTreeMap::from([
+                ("positive", 0usize),
+                ("negative", 0usize),
+                ("excluded", 0usize),
+            ]),
+            |mut counts, image| {
+                if let Some(review) = reviews.iter().find(|r| r.input.image_id == image.image_id) {
+                    let key = match review.input.decision {
+                        annotagent_storage::DeliveryImageDecision::PositiveComplete => "positive",
+                        annotagent_storage::DeliveryImageDecision::NegativeConfirmed => "negative",
+                        annotagent_storage::DeliveryImageDecision::Excluded => "excluded",
+                    };
+                    *counts.get_mut(key).unwrap() += 1;
+                }
+                counts
+            },
+        );
+        Ok(serde_json::json!({
+            "project_id":project,"task_id":task,"intent_revision":saved.revision,
+            "intent_sha256":saved.content_sha256,
+            "summary":{"selected":scope.len(),"positive":counts["positive"],"negative":counts["negative"],"excluded":counts["excluded"],"unreviewed":scope.len().saturating_sub(reviews.len())},
+            "items":items,"next_cursor":(end<scope.len()).then_some(end.to_string())
+        }))
+    }
+
     /// User already supplied exact semantics; reuse the existing human Schema draft service,
     /// without a redundant planning model call or any Project/Workflow publication.
     pub fn prepare_delivery_schema(

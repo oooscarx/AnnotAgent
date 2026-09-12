@@ -46,7 +46,9 @@ Base URL `D=/api/projects/P/conversations/C/tasks/T`.
 | `POST D/delivery-intent` | Saves `SaveTaskDeliveryIntent`; owner, image hashes and CAS checked. It never calls a model. |
 | `GET D/delivery-schema` | Current human Schema matching exact delivery revision/hash, or null. |
 | `POST D/delivery-schema` | `{command_id,expected_revision,expected_sha256}`; deterministically creates the existing human Schema Draft. No LLM, publication or execution. |
-| `GET D/delivery-images/I?source_run_id=R` | `TaskDeliveryImageView`; source choices are derived only from this Task's approved processing history. No global-latest fallback. |
+| `GET D/formal-result` | Current exact delivery revision's processing operation, Batch, Published Workflow version and ordered image→child Run/status/error projection; null before an exact processing operation exists. |
+| `GET D/delivery-review-items?cursor=0&limit=50` | Frozen intent revision/hash, bounded counts and ordered image items with processing/batch/child Run, review revision/decision, snapshot and error. Limit 1..100; cursor is an index into the frozen delivery order. |
+| `GET D/delivery-images/I?source_run_id=R` | `TaskDeliveryImageView`; source choices join this Task's exact delivery processing operation→Batch→child Run. Project-global terminal Runs are excluded. |
 | `POST D/delivery-images/I` | Whole-image receipt with intent/snapshot/review CAS. Empty detection is not negative; `confirmed:true` is required. |
 | `POST D/delivery-images/I/objects` | Revises one formal object with Run, annotation, image snapshot and intent lineage. |
 | `POST D/delivery-images/I/missing-objects` | Creates one human formal object with Run/image snapshot and intent lineage. |
@@ -67,15 +69,17 @@ reported blocked; it is not silently converted.
 - `GET D/sample-preview`, `GET D/sample-operations`; project Sample POST remains the
   existing bounded Sandbox path. A Plan grant is not vision permission.
 - `GET /api/projects/P/processing-preview?draft_id=...&sample_test_id=...&limit=N`
-  freezes the first N project images at the baseline. `POST
+  keeps the legacy first-N behavior for non-delivery work. For a delivery Task it
+  freezes the saved image IDs/hashes in saved order and rejects any `limit` query.
+  `POST
   /api/projects/P/processing-operations` requires the returned revision and
-  authorization fingerprint. For a delivery Task this must be changed in B3 to use
-  the exact delivery image IDs rather than `limit`/project order.
+  authorization fingerprint. Its saved authorization includes the delivery intent
+  revision/hash used later to identify formal child Runs.
 - Existing stop, queue, HumanRequest, resume and event routes keep their current
   command IDs, budgets and terminal semantics. Paused checkpoints can resume;
   in-doubt Provider calls cannot.
 
-## Training package (partially exposed)
+## Training package and one-shot consent (implemented)
 
 Implemented HTTP:
 
@@ -86,24 +90,22 @@ Implemented HTTP:
 | `POST D/delivery-packages/J/cancel` | `{confirmed:true}`. |
 | `GET D/delivery-packages/J/download` | Owned ZIP, only after Ready; no work starts on GET. |
 
-Already implemented in Application/Storage but **not routed at the baseline**:
-`training_package_consents`, `authorize_training_package`,
-`cancel_training_package_consent`, `automatic_training_package_input`, and
-`admit_authorized_training_package`. Therefore the baseline cannot claim automatic
-packaging after the last whole-image review.
+Added B3 routes backed by the existing Application/Storage consent methods:
 
-Planned B3 routes (additive, backed by those existing methods):
-
-- `GET/POST D/delivery-package-consents`
+- `GET D/delivery-package-consents` → `{items,next_cursor:null}` (latest 20)
+- `POST D/delivery-package-consents` with
+  `{id,intent_revision,intent_sha256,confirmed:true}`
 - `GET D/delivery-package-consents/K`
 - `POST D/delivery-package-consents/K/cancel` with `{confirmed:true}`
 
-`GET/list` will project `armed/blocked/consumed/cancelled/stale`, readiness counts,
+`GET/list` projects saved `state`, effective `armed/blocked/consumed/cancelled/stale`, readiness counts,
 reasons, frozen delivery revision/hash and linked job. Authorizing uses
 `DeliveryPackageConsentInput {id,intent_revision,intent_sha256,confirmed:true}`.
-The final qualifying review will invoke a durable task-advance operation; storage CAS
-must transition one armed consent to one package job. No consent, stale/cancelled
-consent or incomplete review means no admission.
+The final qualifying review, or authorization after all reviews are current, tries
+the existing durable admission. Storage atomically transitions one armed consent to
+one package job and exact retries never redispatch. Local capacity exhaustion leaves
+the consent armed, so an exact review/consent retry can try again. No consent,
+stale/cancelled consent or incomplete review means no admission. GET never admits.
 
 ## Model readiness, CAS and history cutoff (implemented facts)
 

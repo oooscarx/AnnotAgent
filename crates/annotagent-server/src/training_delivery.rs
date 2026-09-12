@@ -2,16 +2,19 @@
 use super::*;
 use annotagent_storage::{DeliveryPackageInput, DeliveryPackagePhase};
 
-pub(super) async fn start(
-    State(state): State<ServerState>,
-    AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
-    Json(input): Json<DeliveryPackageInput>,
-) -> ApiResult<Json<Value>> {
+async fn dispatch(
+    state: &ServerState,
+    project: &str,
+    conversation: uuid::Uuid,
+    task: uuid::Uuid,
+    input: &DeliveryPackageInput,
+    authorized: bool,
+) -> ApiResult<Value> {
     let mut jobs = state.export_jobs.lock().await;
     jobs.retain(|_, job| !job.is_finished());
     let existing = state
         .application
-        .training_package_status(&project, conversation, task, input.command_id)
+        .training_package_status(project, conversation, task, input.command_id)
         .is_ok();
     let permit = if existing {
         None
@@ -28,13 +31,19 @@ pub(super) async fn start(
                 })?,
         )
     };
-    let (receipt, created) = state
-        .application
-        .admit_training_package(&project, conversation, task, &input)
-        .map_err(ApiError::conversation)?;
+    let (receipt, created) = if authorized {
+        state
+            .application
+            .admit_authorized_training_package(project, conversation, task, input)
+    } else {
+        state
+            .application
+            .admit_training_package(project, conversation, task, input)
+    }
+    .map_err(ApiError::conversation)?;
     if created {
         let application = state.application.clone();
-        let worker_project = project.clone();
+        let worker_project = project.to_owned();
         let id = input.command_id;
         let handle = tokio::task::spawn_blocking(move || {
             let _permit = permit;
@@ -44,10 +53,136 @@ pub(super) async fn start(
     }
     let active = jobs
         .get(&input.command_id)
-        .is_some_and(|j| !j.is_finished());
-    Ok(Json(
-        json!({"job":receipt,"active":active,"dispatched":created}),
-    ))
+        .is_some_and(|job| !job.is_finished());
+    Ok(json!({"job":receipt,"active":active,"dispatched":created}))
+}
+
+/// Event-side best effort. A saved review or consent remains successful when local
+/// export capacity is full; its exact retry can try admission again.
+pub(super) async fn try_dispatch_automatic(
+    state: &ServerState,
+    project: &str,
+    conversation: uuid::Uuid,
+    task: uuid::Uuid,
+) {
+    let Ok(consents) = state
+        .application
+        .training_package_consents(project, conversation, task)
+    else {
+        return;
+    };
+    let Some(consent) = consents
+        .into_iter()
+        .find(|consent| consent.state == "armed")
+    else {
+        return;
+    };
+    let Ok(Some(input)) = state.application.automatic_training_package_input(
+        project,
+        conversation,
+        task,
+        consent.input.id,
+    ) else {
+        return;
+    };
+    let _ = dispatch(state, project, conversation, task, &input, true).await;
+}
+
+pub(super) async fn start(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+    Json(input): Json<DeliveryPackageInput>,
+) -> ApiResult<Json<Value>> {
+    dispatch(&state, &project, conversation, task, &input, false)
+        .await
+        .map(Json)
+}
+
+pub(super) async fn list_consents(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+) -> ApiResult<Json<Value>> {
+    let consents = state
+        .application
+        .training_package_consents(&project, conversation, task)
+        .map_err(ApiError::conversation)?;
+    let items = consents
+        .iter()
+        .map(|consent| {
+            state
+                .application
+                .training_package_consent_view(&project, conversation, task, consent)
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(ApiError::conversation)?;
+    Ok(Json(json!({"items":items,"next_cursor":null})))
+}
+
+pub(super) async fn authorize_consent(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+    Json(input): Json<annotagent_storage::DeliveryPackageConsentInput>,
+) -> ApiResult<Json<Value>> {
+    let consent = state
+        .application
+        .authorize_training_package(&project, conversation, task, &input)
+        .map_err(ApiError::conversation)?;
+    try_dispatch_automatic(&state, &project, conversation, task).await;
+    let restored = state
+        .application
+        .training_package_consent(&project, conversation, task, consent.input.id)
+        .map_err(ApiError::conversation)?;
+    state
+        .application
+        .training_package_consent_view(&project, conversation, task, &restored)
+        .map(Json)
+        .map_err(ApiError::conversation)
+}
+
+pub(super) async fn get_consent(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task, id)): AxumPath<(
+        String,
+        uuid::Uuid,
+        uuid::Uuid,
+        uuid::Uuid,
+    )>,
+) -> ApiResult<Json<Value>> {
+    let consent = state
+        .application
+        .training_package_consent(&project, conversation, task, id)
+        .map_err(ApiError::conversation)?;
+    state
+        .application
+        .training_package_consent_view(&project, conversation, task, &consent)
+        .map(Json)
+        .map_err(ApiError::conversation)
+}
+
+pub(super) async fn cancel_consent(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task, id)): AxumPath<(
+        String,
+        uuid::Uuid,
+        uuid::Uuid,
+        uuid::Uuid,
+    )>,
+    Json(input): Json<CancelPackage>,
+) -> ApiResult<Json<Value>> {
+    if !input.confirmed {
+        return Err(ApiError::conversation(anyhow::anyhow!(
+            "Explicit cancellation is required"
+        )));
+    }
+    let consent = state
+        .application
+        .cancel_training_package_consent(&project, conversation, task, id)
+        .map_err(ApiError::conversation)?;
+    state
+        .application
+        .training_package_consent_view(&project, conversation, task, &consent)
+        .map(Json)
+        .map_err(ApiError::conversation)
 }
 
 pub(super) async fn status(
@@ -147,6 +282,210 @@ mod tests {
     use annotagent_runtime::{RunRecord, RuntimeStore};
     use axum::http::Method;
     use std::{collections::BTreeMap, io::Read};
+
+    #[tokio::test]
+    async fn package_consent_is_passive_until_final_review_then_admits_one_restart_safe_job() {
+        let temp = tempfile::tempdir().unwrap();
+        let app = Arc::new(LocalApplication::new(temp.path()).unwrap());
+        let schema = "version: 1\nproject:\n  name: TEST automatic package\ndataset:\n  root: images\nruntime: {}\ntasks:\n  - id: objects\n    kind: bounding_box\n    labels: [target]\n    required: true\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n";
+        app.create_project("TEST-auto-package", schema).unwrap();
+        let incoming = temp.path().join("TEST auto package input");
+        std::fs::create_dir(&incoming).unwrap();
+        image::RgbImage::from_pixel(48, 32, image::Rgb([8, 9, 10]))
+            .save(incoming.join("negative.png"))
+            .unwrap();
+        image::RgbImage::from_pixel(48, 32, image::Rgb([11, 12, 13]))
+            .save(incoming.join("negative-two.png"))
+            .unwrap();
+        app.import_images("TEST-auto-package", &incoming).unwrap();
+        let images = app
+            .list_project_image_summaries("TEST-auto-package")
+            .unwrap();
+        let conversation = app
+            .create_project_conversation("TEST-auto-package")
+            .unwrap();
+        let sent = app
+            .send_project_conversation_message(
+                "TEST-auto-package",
+                conversation,
+                &serde_json::from_value(json!({
+                    "message":{"id":uuid::Uuid::new_v4(),"text":"TEST negative package","image":null},
+                    "task_id":null,"schema_revision":app.project_goal("TEST-auto-package").unwrap()["revision"],"mode":"plan"
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        let service = router(
+            test_state(app.clone(), Arc::new(InMemorySecretStore::default())).await,
+            None,
+        );
+        let root = format!(
+            "/api/projects/TEST-auto-package/conversations/{conversation}/tasks/{}",
+            sent.task_id
+        );
+        let intent = response_json(
+            request(
+                &service,
+                Method::POST,
+                &format!("{root}/delivery-intent"),
+                Some(json!({
+                    "command_id":uuid::Uuid::new_v4(),"expected_revision":0,"image_ids":images.iter().map(|image|image.image_id).collect::<Vec<_>>(),
+                    "label_spec":[{"stable_id":"target","display_name":"Target","aliases":[],"include":"","exclude":""}],
+                    "training_target":{"annotation_kind":"bounding_box","framework":"ultralytics","export_profile":"ultralytics_yolo_detection","profile_revision":1},
+                    "split_policy":{"train_percent":80,"seed":2,"preserve_existing":true,"keep_known_groups_together":true}
+                })),
+            )
+            .await,
+        )
+        .await;
+        let owner = intent["saved"]["intent"]["project_id"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let run = RunId::new();
+        app.store()
+            .create_run(&RunRecord {
+                id: run,
+                project_id: owner,
+                project_name: "TEST-auto-package".into(),
+                skill_id: "TEST formal result".into(),
+                provider: "TEST".into(),
+                model: "TEST no inference".into(),
+                status: RunStatus::Completed,
+                project_schema_json: serde_json::to_string(
+                    &annotagent_core::ProjectSchema::from_yaml(schema).unwrap(),
+                )
+                .unwrap(),
+                workflow_snapshot_json: None,
+            })
+            .await
+            .unwrap();
+        app.store()
+            .register_run_image(run, images[0].image_id, "completed")
+            .unwrap();
+        app.store()
+            .register_run_image(run, images[1].image_id, "completed")
+            .unwrap();
+        for image in &images {
+            app.store()
+                .commit_annotation(
+                    run,
+                    &Annotation {
+                        id: AnnotationId::new(),
+                        image_id: image.image_id,
+                        task_id: "objects".into(),
+                        label: Some("target".into()),
+                        value: AnnotationValue::BoundingBox {
+                            rect: NormalizedRect::new(0.1, 0.1, 0.2, 0.2).unwrap(),
+                        },
+                        attributes: BTreeMap::new(),
+                        confidence: None,
+                        source: AnnotationSource::Human,
+                        review_status: ReviewStatus::HumanAccepted,
+                        provenance: AnnotationProvenance::default(),
+                        created_at: chrono::Utc::now(),
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        let consent_id = uuid::Uuid::new_v4();
+        let consent_body = json!({
+            "id":consent_id,"intent_revision":intent["saved"]["revision"],
+            "intent_sha256":intent["saved"]["content_sha256"],"confirmed":true
+        });
+        let consent = response_json(
+            request(
+                &service,
+                Method::POST,
+                &format!("{root}/delivery-package-consents"),
+                Some(consent_body.clone()),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(consent["state"], "armed");
+        assert_eq!(consent["effective_state"], "blocked");
+        assert_eq!(consent["readiness"]["ready"], false);
+        assert!(consent["job"].is_null());
+        for image in &images {
+            let image_uri = format!("{root}/delivery-images/{}", image.image_id);
+            let view_uri = format!("{image_uri}?source_run_id={run}");
+            let view = response_json(request(&service, Method::GET, &view_uri, None).await).await;
+            let reviewed = request(
+                &service,
+                Method::POST,
+                &image_uri,
+                Some(json!({
+                    "command_id":uuid::Uuid::new_v4(),"intent_revision":intent["saved"]["revision"],
+                    "intent_sha256":intent["saved"]["content_sha256"],"image_id":image.image_id,
+                    "source_run_id":run,"expected_snapshot_sha256":view["snapshot"]["sha256"],
+                    "expected_review_revision":0,"decision":"positive_complete","reason":null,"confirmed":true
+                })),
+            )
+            .await;
+            assert_eq!(reviewed.status(), StatusCode::OK);
+        }
+        let package_uri = format!("{root}/delivery-packages/{consent_id}");
+        let mut finished = None;
+        for _ in 0..300 {
+            let value =
+                response_json(request(&service, Method::GET, &package_uri, None).await).await;
+            if !value["active"].as_bool().unwrap() {
+                finished = Some(value);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let finished = finished.expect("TEST automatic package worker must settle");
+        assert_eq!(finished["job"]["phase"], "ready", "{finished}");
+        assert_eq!(finished["job"]["result"]["objects"], 2);
+        assert_eq!(finished["job"]["result"]["negatives"], 0);
+        let restored = response_json(
+            request(
+                &service,
+                Method::POST,
+                &format!("{root}/delivery-package-consents"),
+                Some(consent_body),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(restored["state"], "consumed");
+        assert_eq!(restored["job"]["id"], consent_id.to_string());
+        let list = response_json(
+            request(
+                &service,
+                Method::GET,
+                &format!("{root}/delivery-package-consents"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(list["items"].as_array().unwrap().len(), 1);
+        assert_eq!(list["items"][0]["job"]["id"], consent_id.to_string());
+        drop(service);
+        let reopened = LocalApplication::new(temp.path()).unwrap();
+        let history = reopened
+            .training_package_consents("TEST-auto-package", conversation, sent.task_id)
+            .unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].state, "consumed");
+        assert_eq!(
+            reopened
+                .training_package_status(
+                    "TEST-auto-package",
+                    conversation,
+                    sent.task_id,
+                    consent_id,
+                )
+                .unwrap()
+                .phase,
+            DeliveryPackagePhase::Ready
+        );
+    }
 
     #[tokio::test]
     async fn training_package_http_downloads_real_frozen_originals_and_rejects_foreign_or_changed_files()

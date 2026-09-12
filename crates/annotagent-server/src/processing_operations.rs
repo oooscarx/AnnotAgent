@@ -21,6 +21,55 @@ pub(super) struct ConfirmProcessing {
     authorization_fingerprint: String,
 }
 
+fn freeze_processing_inputs(
+    all_inputs: Vec<WorkflowSampleTestInput>,
+    delivery: Option<&annotagent_storage::TaskDeliveryRevision>,
+    limit: Option<usize>,
+) -> ApiResult<(Vec<WorkflowSampleTestInput>, Option<Value>)> {
+    if let Some(delivery) = delivery {
+        if limit.is_some() {
+            return Err(ApiError::bad_request(
+                "Delivery processing uses its exact saved image scope; omit limit and review that scope",
+            ));
+        }
+        let selected = delivery
+            .intent
+            .dataset_scope
+            .as_ref()
+            .ok_or_else(|| ApiError::bad_request("Delivery image scope is missing"))?
+            .iter()
+            .map(|image| {
+                all_inputs
+                    .iter()
+                    .find(|input| {
+                        input.image_id == image.image_id.to_string()
+                            && input.content_hash == image.content_sha256
+                    })
+                    .cloned()
+                    .ok_or_else(|| {
+                        ApiError::bad_request(
+                            "A saved delivery image changed or was removed; confirm a new scope",
+                        )
+                    })
+            })
+            .collect::<ApiResult<Vec<_>>>()?;
+        return Ok((
+            selected,
+            Some(json!({
+                "intent_revision":delivery.revision,
+                "intent_sha256":delivery.content_sha256
+            })),
+        ));
+    }
+    let count = limit.unwrap_or(all_inputs.len());
+    if count == 0 || count > all_inputs.len() {
+        return Err(ApiError::bad_request(
+            "Choose an available image range greater than zero",
+        ));
+    }
+    Ok((all_inputs.into_iter().take(count).collect(), None))
+}
+
 fn scope(
     state: &ServerState,
     project: &str,
@@ -69,17 +118,32 @@ fn scope(
             "This sample has execution failures or an invalid plan. Resolve them before processing.",
         ));
     }
+    let conversation = state
+        .application
+        .conversation_processing_context(project, &draft, &sample.id)
+        .map_err(ApiError::bad_request)?;
     let images = state
         .application
         .list_project_image_summaries(project)
         .map_err(ApiError::bad_request)?;
-    let inputs = images
+    let available_images = images.len();
+    let all_inputs = images
         .iter()
         .map(|image| WorkflowSampleTestInput {
             image_id: image.image_id.to_string(),
             content_hash: image.content_hash.clone(),
         })
         .collect::<Vec<_>>();
+    let delivery = if let Some(context) = &conversation {
+        state
+            .application
+            .require_delivery_intake(project, context.conversation_id, context.task_id)
+            .map_err(ApiError::bad_request)?
+    } else {
+        None
+    };
+    let (inputs, delivery_scope) =
+        freeze_processing_inputs(all_inputs, delivery.as_ref(), selection.limit)?;
     let schema_hash = state
         .application
         .project_execution_schema_hash(project)
@@ -92,12 +156,7 @@ fn scope(
             "Images, model connection or Project definition changed after the sample. A new sample and authorization are required.",
         ));
     }
-    let count = selection.limit.unwrap_or(inputs.len());
-    if count == 0 || count > inputs.len() {
-        return Err(ApiError::bad_request(
-            "Choose an available image range greater than zero",
-        ));
-    }
+    let count = inputs.len();
     let maximum = settings
         .budget
         .max_requests
@@ -120,14 +179,10 @@ fn scope(
         .collect::<Result<Vec<_>, _>>()
         .map_err(ApiError::internal)?;
     let feedback_count = sample_feedback.iter().map(Vec::len).sum::<usize>();
-    let conversation = state
-        .application
-        .conversation_processing_context(project, &draft, &sample.id)
-        .map_err(ApiError::bad_request)?;
     let mut value = json!({
         "project_id":project,"draft_id":draft.id,"sample_test_id":sample.id,"revision":draft.revision,"draft_content_hash":draft.content_hash,
         "goal":state.application.project_goal(project).map_err(ApiError::bad_request)?,
-        "plan_name":draft.name,"project_schema_hash":schema_hash,"image_count":count,"available_images":inputs.len(),"images":inputs.iter().take(count).collect::<Vec<_>>(),
+        "plan_name":draft.name,"project_schema_hash":schema_hash,"image_count":count,"available_images":available_images,"images":inputs,
         "models":models,"maximum_model_calls":maximum,"estimated_cost":null,
         "sample_feedback":sample_feedback,"sample_feedback_count":feedback_count,
         "sample_images_are_sandbox_only":true,"review_policy":"Uncertain results stay in Review. This action does not accept every output.",
@@ -142,6 +197,9 @@ fn scope(
         );
         value["goal"] = json!({"goal": context.schema.definition.goal});
         value["conversation"] = json!(context);
+    }
+    if let Some(delivery_scope) = delivery_scope {
+        value["delivery_scope"] = delivery_scope;
     }
     add_native_scope(&mut value, &native_models);
     if !native_models.is_empty() {
@@ -477,4 +535,54 @@ fn require_processing_not_stopped(state: &ServerState, id: &str) -> ApiResult<()
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delivery_scope_freezes_exact_three_of_ten_and_rejects_limit_or_changed_hash() {
+        let ids = (0..10)
+            .map(|_| annotagent_core::ImageId::new())
+            .collect::<Vec<_>>();
+        let all = ids
+            .iter()
+            .enumerate()
+            .map(|(index, id)| WorkflowSampleTestInput {
+                image_id: id.to_string(),
+                content_hash: format!("{index:064x}"),
+            })
+            .collect::<Vec<_>>();
+        let selected = [7usize, 2, 9];
+        let delivery: annotagent_storage::TaskDeliveryRevision = serde_json::from_value(json!({
+            "revision":4,"content_sha256":"d".repeat(64),
+            "intent":{
+                "version":1,"project_id":uuid::Uuid::new_v4().to_string(),
+                "conversation_id":uuid::Uuid::new_v4(),"task_id":uuid::Uuid::new_v4(),
+                "dataset_scope":selected.iter().map(|index|json!({
+                    "image_id":ids[*index],"content_sha256":format!("{index:064x}"),
+                    "content_revision":format!("{index:064x}"),"existing_split":null,"group_ids":[]
+                })).collect::<Vec<_>>(),
+                "label_spec":[{"stable_id":"target","display_name":"Target","aliases":[],"include":"","exclude":""}],
+                "training_target":{"annotation_kind":"bounding_box","framework":"ultralytics","export_profile":"ultralytics_yolo_detection","profile_revision":1},
+                "split_policy":{"train_percent":80,"seed":1,"preserve_existing":true,"keep_known_groups_together":true},
+                "review_policy":"human_whole_image"
+            }
+        }))
+        .unwrap();
+        let (frozen, scope) = freeze_processing_inputs(all.clone(), Some(&delivery), None).unwrap();
+        assert_eq!(
+            frozen.iter().map(|item| &item.image_id).collect::<Vec<_>>(),
+            selected
+                .iter()
+                .map(|index| &all[*index].image_id)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(scope.unwrap()["intent_revision"], 4);
+        assert!(freeze_processing_inputs(all.clone(), Some(&delivery), Some(3)).is_err());
+        let mut changed = all;
+        changed[2].content_hash = "f".repeat(64);
+        assert!(freeze_processing_inputs(changed, Some(&delivery), None).is_err());
+    }
 }

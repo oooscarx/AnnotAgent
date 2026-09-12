@@ -93,7 +93,7 @@
     "coordinate_space": "normalized_xywh"
   },
   "package_consent": {
-    "contract_status": "planned_http_existing_storage",
+    "contract_status": "implemented_b3",
     "request": {
       "id": "90000000-0000-4000-8000-000000000001",
       "intent_revision": 1,
@@ -103,6 +103,7 @@
     "response_shape": {
       "input": "same request",
       "state": "armed",
+      "effective_state": "blocked",
       "readiness": {
         "ready": false,
         "selected_images": 3,
@@ -111,6 +112,21 @@
         "reasons": ["whole_image_review_missing"]
       },
       "job": null
+    }
+  },
+  "formal_result": {
+    "contract_status": "implemented_b3",
+    "response_shape": {
+      "project_id": "P",
+      "task_id": "T",
+      "intent_revision": 1,
+      "intent_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "processing_operation_id": "60000000-0000-4000-8000-000000000001",
+      "batch_id": "60000000-0000-4000-8000-000000000001",
+      "workflow_id": "workflow-id",
+      "workflow_version": 1,
+      "status": "completed",
+      "images": [{"image_id":"image-id","child_run_id":"run-id","status":"completed","run_status":"completed","error":null,"annotation_count":1,"review_count":0}]
     }
   },
   "task_workspace_additions": {

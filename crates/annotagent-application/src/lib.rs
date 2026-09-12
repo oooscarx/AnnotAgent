@@ -6636,7 +6636,11 @@ impl<'a> DatasetCoordinator<'a> {
         let mut images = self
             .application
             .list_images_for_project_path(&project_path)?;
-        if let Some(limit) = limit {
+        // A confirmed processing scope is an ordered set of exact image identities,
+        // not the first N Project paths. Legacy non-confirmed batches keep `limit`.
+        if confirmed.is_none()
+            && let Some(limit) = limit
+        {
             images.truncate(limit);
         }
         if images.is_empty() {
@@ -6649,7 +6653,7 @@ impl<'a> DatasetCoordinator<'a> {
             .into_owned();
         let project_root = project_path.parent().unwrap_or(&self.application.workspace);
         let stable_scope_id = stable_project_id(project_root);
-        let image_records = images
+        let mut image_records = images
             .iter()
             .map(|path| {
                 let bytes = std::fs::read(path)
@@ -6686,9 +6690,19 @@ impl<'a> DatasetCoordinator<'a> {
                     })
                 })
                 .collect::<Result<Vec<_>>>()?;
-            if actual != scope.images {
-                bail!("Image scope changed after processing authorization");
+            let mut selected = Vec::with_capacity(scope.images.len());
+            let mut positions = std::collections::BTreeSet::new();
+            for expected in &scope.images {
+                let position = actual
+                    .iter()
+                    .position(|item| item == expected)
+                    .context("Image scope changed after processing authorization")?;
+                if !positions.insert(position) {
+                    bail!("Processing authorization contains a duplicate image");
+                }
+                selected.push(image_records[position].clone());
             }
+            image_records = selected;
         }
         let project_id = project_path
             .parent()
@@ -31032,6 +31046,77 @@ export:
         assert_eq!(page.items[0].id, "project-010");
         assert_eq!(page.items[6].id, "project-016");
         assert_eq!(page.next_offset, Some(17));
+    }
+
+    #[test]
+    fn confirmed_batch_materializes_exact_non_prefix_three_of_ten_scope() {
+        use std::io::Write as _;
+
+        let temp = tempfile::tempdir().expect("temp");
+        let application = LocalApplication::new(temp.path()).expect("application");
+        application
+            .create_project(
+                "TEST-exact-three",
+                "version: 1\nproject:\n  name: TEST exact three\ndataset:\n  root: images\nruntime: {}\ntasks:\n  - id: objects\n    kind: bounding_box\n    labels: [target]\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n",
+            )
+            .unwrap();
+        let incoming = temp.path().join("TEST exact three input");
+        std::fs::create_dir(&incoming).unwrap();
+        for index in 0..10u8 {
+            let path = incoming.join(format!("image-{index}.png"));
+            annotagent_image_tools::generate_synthetic_inspection(&path).unwrap();
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(path)
+                .unwrap()
+                .write_all(&[index])
+                .unwrap();
+        }
+        application
+            .import_images("TEST-exact-three", &incoming)
+            .unwrap();
+        let all = application
+            .list_project_image_summaries("TEST-exact-three")
+            .unwrap();
+        let expected = [7usize, 2, 9]
+            .into_iter()
+            .map(|index| WorkflowSampleTestInput {
+                image_id: all[index].image_id.to_string(),
+                content_hash: all[index].content_hash.clone(),
+            })
+            .collect::<Vec<_>>();
+        let scope = ConfirmedBatchScope {
+            id: BatchId::new(),
+            settings: load_settings(None).unwrap(),
+            images: expected.clone(),
+            project_schema_hash: application
+                .project_execution_schema_hash("TEST-exact-three")
+                .unwrap(),
+        };
+        let batch = DatasetCoordinator::new(&application)
+            .create_confirmed(
+                &application.project_path("TEST-exact-three").unwrap(),
+                "TEST-provider",
+                None,
+                Some(3),
+                None,
+                Some(&scope),
+            )
+            .unwrap();
+        let actual = application
+            .store()
+            .list_batch_images(batch.id)
+            .unwrap()
+            .into_iter()
+            .map(|item| item.image_id.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            actual,
+            expected
+                .into_iter()
+                .map(|item| item.image_id)
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]

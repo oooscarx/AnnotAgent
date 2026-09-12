@@ -26,6 +26,42 @@ pub(super) async fn current_schema(
     Ok(Json(json!({"required":delivery.is_some(),"schema":schema})))
 }
 
+pub(super) async fn formal_result(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+) -> ApiResult<Json<Value>> {
+    state
+        .application
+        .task_delivery_formal_result(&project, conversation, task)
+        .map(Json)
+        .map_err(ApiError::conversation)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ReviewPage {
+    cursor: Option<usize>,
+    limit: Option<usize>,
+}
+
+pub(super) async fn review_items(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+    Query(page): Query<ReviewPage>,
+) -> ApiResult<Json<Value>> {
+    state
+        .application
+        .task_delivery_review_items(
+            &project,
+            conversation,
+            task,
+            page.cursor.unwrap_or(0),
+            page.limit.unwrap_or(50),
+        )
+        .map(Json)
+        .map_err(ApiError::conversation)
+}
+
 pub(super) async fn prepare_schema(
     State(state): State<ServerState>,
     AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
@@ -76,11 +112,12 @@ pub(super) async fn confirm_image(
             "Confirmation image does not match the route"
         )));
     }
-    state
+    let review = state
         .application
         .confirm_task_delivery_image(&project, conversation, task, &input)
-        .map(Json)
-        .map_err(ApiError::conversation)
+        .map_err(ApiError::conversation)?;
+    super::training_delivery::try_dispatch_automatic(&state, &project, conversation, task).await;
+    Ok(Json(review))
 }
 
 pub(super) async fn edit_object(
