@@ -6,6 +6,25 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+fn latest_processing_candidate(journeys: &[Value]) -> Option<Value> {
+    journeys.iter().find_map(|journey| {
+        let sample = journey.get("sample")?;
+        let status = sample.get("status")?.as_str()?;
+        if !matches!(status, "passed" | "human_approved") {
+            return None;
+        }
+        let draft_id = sample.get("draft_id")?.as_str()?;
+        let sample_test_id = sample.get("id")?.as_str()?;
+        let draft_revision = sample.get("draft_revision")?.as_u64()?;
+        let draft_content_hash = sample.get("draft_content_hash")?.as_str()?;
+        Some(json!({
+            "draft_id":draft_id,"draft_revision":draft_revision,
+            "draft_content_hash":draft_content_hash,
+            "sample_test_id":sample_test_id,"sample_status":status
+        }))
+    })
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdvanceTaskInput {
@@ -58,6 +77,8 @@ impl LocalApplication {
             )
         });
         let processing = self.conversation_processing_history(project, conversation, task)?;
+        let journeys = self.conversation_journey_history(project, conversation, task)?;
+        let processing_candidate = latest_processing_candidate(&journeys);
         let processing_completed = processing.iter().any(|operation| {
             matches!(
                 operation.get("phase").and_then(Value::as_str),
@@ -157,6 +178,23 @@ impl LocalApplication {
                 "id":"prepare_delivery_schema","state":"authorized","method":"POST",
                 "url":format!("{root}/advance"),"requires_confirmation":false,
                 "reason":null
+            }));
+        } else if processing.is_empty() && processing_candidate.is_some() {
+            let candidate = processing_candidate.as_ref().unwrap();
+            let draft_id = candidate["draft_id"].as_str().unwrap();
+            let sample_test_id = candidate["sample_test_id"].as_str().unwrap();
+            actions.push(json!({
+                "id":"start_delivery_processing","state":"requires_confirmation","method":"GET",
+                "url":format!("/api/projects/{project}/processing-preview?draft_id={draft_id}&sample_test_id={sample_test_id}"),
+                "requires_confirmation":true,
+                "reason":"exact_delivery_processing_scope_requires_confirmation",
+                "scope":{
+                    "delivery_revision":delivery.saved.as_ref().map(|saved|saved.revision),
+                    "delivery_sha256":delivery.saved.as_ref().map(|saved|saved.content_sha256.clone()),
+                    "images":delivery.saved.as_ref().and_then(|saved|saved.intent.dataset_scope.clone()).unwrap_or_default(),
+                    "draft":candidate,
+                    "preview_freezes_model_bindings_destination_and_cost":true
+                }
             }));
         } else if processing.is_empty() {
             actions.push(json!({
@@ -292,5 +330,24 @@ impl LocalApplication {
             result: serde_json::to_value(schema)?,
             workspace: self.mainline_task_read_model(project, conversation, task)?,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::latest_processing_candidate;
+    use serde_json::json;
+
+    #[test]
+    fn processing_candidate_requires_a_successful_exact_sample() {
+        let hash = "a".repeat(64);
+        let journeys = vec![
+            json!({"sample":{"id":"newer-failed","draft_id":"draft-2","draft_revision":2,"draft_content_hash":hash,"status":"failed"}}),
+            json!({"sample":{"id":"eligible","draft_id":"draft-1","draft_revision":4,"draft_content_hash":hash,"status":"human_approved"}}),
+        ];
+        let selected = latest_processing_candidate(&journeys).unwrap();
+        assert_eq!(selected["sample_test_id"], "eligible");
+        assert_eq!(selected["draft_revision"], 4);
+        assert!(latest_processing_candidate(&[json!({"sample":null})]).is_none());
     }
 }

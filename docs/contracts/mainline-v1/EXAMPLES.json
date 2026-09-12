@@ -208,6 +208,22 @@
       "workspace": "mainline projection"
     }
   },
+  "start_delivery_processing_action": {
+    "contract_status": "implemented_b2",
+    "id": "start_delivery_processing",
+    "state": "requires_confirmation",
+    "method": "GET",
+    "url": "/api/projects/P/processing-preview?draft_id=draft-1&sample_test_id=sample-1",
+    "requires_confirmation": true,
+    "reason": "exact_delivery_processing_scope_requires_confirmation",
+    "scope": {
+      "delivery_revision": 1,
+      "delivery_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "images": [{"image_id":"image-1","content_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],
+      "draft": {"draft_id":"draft-1","draft_revision":2,"draft_content_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","sample_test_id":"sample-1","sample_status":"passed"},
+      "preview_freezes_model_bindings_destination_and_cost": true
+    }
+  },
   "model_profile_stale_writer": {
     "contract_status": "implemented",
     "request": {

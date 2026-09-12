@@ -93,6 +93,14 @@ reported blocked; it is not silently converted.
   /api/projects/P/processing-operations` requires the returned revision and
   authorization fingerprint. Its saved authorization includes the delivery intent
   revision/hash used later to identify formal child Runs.
+- After a Journey has saved a `passed|human_approved` Sample and before formal
+  processing exists, `mainline.available_actions` returns
+  `start_delivery_processing` as `requires_confirmation`. Its stable GET URL selects
+  that exact Draft and Sample. Its scope repeats the current delivery revision/hash,
+  ordered image IDs/hashes and Draft/Sample identity. Calling the preview freezes and
+  validates current model bindings, destination, allowance and known/unknown cost;
+  the action itself grants and dispatches nothing. If no eligible Sample exists the
+  read model continues to return `build_and_test_pipeline`.
 - Existing stop, queue, HumanRequest, resume and event routes keep their current
   command IDs, budgets and terminal semantics. Paused checkpoints can resume;
   in-doubt Provider calls cannot.

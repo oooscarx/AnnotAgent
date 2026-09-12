@@ -63,6 +63,10 @@ CAS and history scope are being reused.
   with the exact saved subject and existing CAS edit action; it never enters the
   generic queue. `model_call_supported:false` records the bounded behavior: prose
   does not authorize inferred bounding-box geometry.
+- Once an exact Journey Sample is `passed` or `human_approved`, the Task read model
+  exposes `start_delivery_processing` with the existing processing preview URL and
+  current delivery/Draft/Sample scope. This closes the post-Sample action gap without
+  dispatching on GET or treating Sample permission as formal processing permission.
 
 ## B0 findings
 
