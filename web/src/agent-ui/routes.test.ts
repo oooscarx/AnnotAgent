@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { routeProject, taskLocation, settingsTaskReturn } from "./routes";
+import { routeProject, taskLocation, settingsTaskReturn, taskHistoryPath } from "./routes";
 const url = (path: string) => new URL(path, "http://localhost");
 describe("production task navigation uses the single native route tree", () => {
   it("restores a resolved task from Settings without accepting arbitrary return URLs",()=>{
@@ -17,5 +17,10 @@ describe("production task navigation uses the single native route tree", () => {
     expect(taskLocation(url("/projects/p/work?task=t&image=i&pane=image"),"other").search).toBe("");
     expect(taskLocation(url("/settings/plugins?return_project=p&return_task=t&workspace_return=/projects/p/work"),"p").search).toBe("");
     expect(taskLocation(url("/projects/p/work?task=t&image=i&pane=image"),"p").search).toBe("?task=t&image=i&pane=image");
+  });
+  it("builds explicit read-only task history entry points",()=>{
+    expect(taskHistoryPath("project","task/id","trace")).toBe("/projects/project/manage/tasks?task=task%2Fid&view=trace");
+    expect(taskHistoryPath("project","task/id","save")).toContain("view=save");
+    expect(taskHistoryPath("project","task/id","load")).toContain("view=load");
   });
 });

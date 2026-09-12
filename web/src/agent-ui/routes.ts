@@ -20,3 +20,8 @@ export function settingsTaskReturn(url:URL,project:string,taskId:string):URL {
   next.searchParams.set("task",taskId);
   return next;
 }
+
+export function taskHistoryPath(projectId:string,taskId:string,view:"trace"|"save"|"load"):string {
+  const base=`/projects/${encodeURIComponent(projectId)}/manage/tasks`;
+  return `${base}?task=${encodeURIComponent(taskId)}&view=${view}`;
+}

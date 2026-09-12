@@ -31,7 +31,7 @@ import { ExecutionProgress } from "./ExecutionProgress";
 import { DeliveryIntake } from "./DeliveryIntake";
 import { SetupRequest } from "./SetupRequest";
 import { setupContextFromReadiness, type CapabilityReadiness } from "./modelPreparation";
-import { routeProject, taskLocation, settingsTaskReturn } from "./routes";
+import { routeProject, taskLocation, settingsTaskReturn, taskHistoryPath } from "./routes";
 import { parseAgentRoute } from "./navigationContract";
 import { DemoOnboarding } from "./DemoOnboarding";
 export const phaseNames: Record<Phase, string> = {
@@ -457,7 +457,7 @@ export function AgentPreviewApp({
                       <p>
                         原应用中的数据、方案、处理记录、审核、导出与回收站保持不变。
                       </p>
-                      {fixture ? <p>此隔离界面尚未连接这些真实管理操作。</p> : <><a href={`/projects/${encodeURIComponent(task.project)}/manage/data`}>图片数据</a><a href={`/projects/${encodeURIComponent(task.project)}/manage/labels`}>标签定义</a><a href={`/projects/${encodeURIComponent(task.project)}/manage/review`}>审核标注</a><a href={`/projects/${encodeURIComponent(task.project)}/manage/export`}>导出标注</a><a href={`/projects/${encodeURIComponent(task.project)}/manage/trash`}>回收站</a><a href={`/projects/${encodeURIComponent(task.project)}/manage/pipelines`}>自动化方案</a><a href={`/projects/${encodeURIComponent(task.project)}/manage/runs`}>处理记录</a><a href={`/projects/${encodeURIComponent(task.project)}/manage/tasks`}>Agent 任务历史</a></>}
+                      {fixture ? <p>此隔离界面尚未连接这些真实管理操作。</p> : <><strong>当前任务</strong><a href={taskHistoryPath(task.project,task.id,"trace")}>查看执行轨迹</a><a href={taskHistoryPath(task.project,task.id,"save")}>保存会话 JSON</a><a href={taskHistoryPath(task.project,task.id,"load")}>加载会话 JSON</a><strong>项目</strong><a href={`/projects/${encodeURIComponent(task.project)}/manage/data`}>图片数据</a><a href={`/projects/${encodeURIComponent(task.project)}/manage/labels`}>标签定义</a><a href={`/projects/${encodeURIComponent(task.project)}/manage/review`}>审核标注</a><a href={`/projects/${encodeURIComponent(task.project)}/manage/export`}>导出标注</a><a href={`/projects/${encodeURIComponent(task.project)}/manage/trash`}>回收站</a><a href={`/projects/${encodeURIComponent(task.project)}/manage/pipelines`}>自动化方案</a><a href={`/projects/${encodeURIComponent(task.project)}/manage/runs`}>处理记录</a><a href={`/projects/${encodeURIComponent(task.project)}/manage/tasks`}>全部 Agent 任务历史</a></>}
                   </ProjectMenu>
                 </>
               )}

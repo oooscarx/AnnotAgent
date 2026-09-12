@@ -5,10 +5,36 @@ import {Disclosure} from "./Disclosure";
 import {ContextArchiveView} from "./ContextArchiveView";
 import {TraceRecord} from "./TraceRecord";
 export function TaskHistory({projectId,tasks,service}:{projectId:string;tasks:Task[];service:TaskHistoryService}){
-  const [search,setSearch]=useState("");const [selected,setSelected]=useState(()=>new URL(location.href).searchParams.get("task")||"");const rows=tasks.filter(t=>t.project===projectId&&!t.id.startsWith("new:"));const current=rows.find(t=>t.id===selected);
+  const initial=new URL(location.href).searchParams;
+  const [search,setSearch]=useState("");
+  const [selected,setSelected]=useState(()=>initial.get("task")||"");
+  const [view,setView]=useState<"trace"|"save"|"load">(()=>{
+    const value=initial.get("view");return value==="save"||value==="load"?value:"trace";
+  });
+  const rows=tasks.filter(t=>t.project===projectId&&!t.id.startsWith("new:"));const current=rows.find(t=>t.id===selected);
   const choose=(id:string)=>{setSelected(id);const u=new URL(location.href);u.searchParams.set("task",id);history.pushState(null,"",u);};
-  useEffect(()=>{const change=()=>setSelected(new URL(location.href).searchParams.get("task")||"");window.addEventListener("popstate",change);return()=>window.removeEventListener("popstate",change);},[]);
-  return <section className="native-project-manager native-task-history" aria-label="Agent 任务历史"><h1>Agent 任务历史</h1><p>查看多轮输入、模型调用、方案构建、样例测试和人工协助的实际服务器记录。查看和刷新不会执行任务。</p><ContextArchiveView key={projectId} project={projectId} conversations={[...new Set(rows.flatMap(t=>t.conversationId?[t.conversationId]:[]))]} service={service.archives}/><label>搜索历史任务<input aria-label="搜索历史任务" value={search} onChange={e=>setSearch(e.target.value)}/></label><p>{rows.length} 个已保存任务</p><div className="settings-rows">{rows.filter(t=>`${t.title} ${t.id}`.toLowerCase().includes(search.toLowerCase())).map(t=><div className="settings-row" key={t.id}><div><strong>{t.title}</strong><p>{t.phase}</p></div><div className="actions"><button aria-pressed={selected===t.id} onClick={()=>choose(t.id)}>查看轨迹</button><a href={`/projects/${encodeURIComponent(projectId)}/work?task=${encodeURIComponent(t.id)}`}>打开原任务</a></div></div>)}</div>{selected&&!current&&<p role="alert">此任务不在当前项目已加载历史中，未打开其他任务。</p>}{current?.conversationId&&<Trace key={`${projectId}:${current.id}`} task={current} service={service}/>}</section>;
+  useEffect(()=>{const change=()=>{const params=new URL(location.href).searchParams;setSelected(params.get("task")||"");const value=params.get("view");setView(value==="save"||value==="load"?value:"trace");};window.addEventListener("popstate",change);return()=>window.removeEventListener("popstate",change);},[]);
+  const switchView=(next:typeof view)=>{setView(next);const u=new URL(location.href);u.searchParams.set("view",next);history.pushState(null,"",u);};
+  const conversations=[...new Set(rows.flatMap(t=>t.conversationId?[t.conversationId]:[]))];
+  return <section className="native-project-manager native-task-history" aria-label="Agent 任务历史">
+    <h1>Agent 任务历史</h1>
+    <p>查看多轮输入、模型调用、方案构建、样例测试和人工协助的实际服务器记录。查看、保存和加载都不会执行任务。</p>
+    <nav className="native-management-tabs" aria-label="任务历史操作">
+      <button aria-pressed={view==="trace"} onClick={()=>switchView("trace")}>执行轨迹</button>
+      <button aria-pressed={view==="save"} onClick={()=>switchView("save")}>保存会话 JSON</button>
+      <button aria-pressed={view==="load"} onClick={()=>switchView("load")}>加载会话 JSON</button>
+    </nav>
+    {view==="save"||view==="load"?<>
+      <p role="status">{view==="save"?"选择下方保存按钮下载完整的已持久化会话。":"选择 JSON 文件后先预览；确认加载只创建只读历史，不恢复授权或执行。"}</p>
+      <ContextArchiveView key={`${projectId}:${view}`} project={projectId} conversations={conversations} service={service.archives}/>
+    </>:<>
+      <label>搜索历史任务<input aria-label="搜索历史任务" value={search} onChange={e=>setSearch(e.target.value)}/></label>
+      <p>{rows.length} 个已保存任务</p>
+      <div className="settings-rows">{rows.filter(t=>`${t.title} ${t.id}`.toLowerCase().includes(search.toLowerCase())).map(t=><div className="settings-row" key={t.id}><div><strong>{t.title}</strong><p>{t.phase}</p></div><div className="actions"><button aria-pressed={selected===t.id} onClick={()=>choose(t.id)}>查看轨迹</button><a href={`/projects/${encodeURIComponent(projectId)}/work?task=${encodeURIComponent(t.id)}`}>打开原任务</a></div></div>)}</div>
+      {selected&&!current&&<p role="alert">此任务不在当前项目已加载历史中，未打开其他任务。</p>}
+      {current?.conversationId&&<Trace key={`${projectId}:${current.id}`} task={current} service={service}/>}
+    </>}
+  </section>;
 }
 function Trace({task,service}:{task:Task;service:TaskHistoryService}){
   const [data,setData]=useState<Awaited<ReturnType<TaskHistoryService["read"]>>>();const [error,setError]=useState("");const [refresh,setRefresh]=useState(0);
