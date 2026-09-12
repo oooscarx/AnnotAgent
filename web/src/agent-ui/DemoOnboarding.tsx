@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import {
   beginDemoStart,
@@ -80,16 +80,19 @@ export function DemoOnboarding({
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
-  const pending = useMemo(() => readPendingDemo(storage), [storage]);
+  const initialPending = useRef(readPendingDemo(storage));
+  const [pending, setPending] = useState(initialPending.current);
 
   const acceptReceipt = async (request: PendingDemoStart, value: StartDemoReceipt) => {
     const receipt = validateDemoReceipt(request, value);
     if (receipt.status === "failed") {
-      updatePendingDemo(storage, request, receipt.retry_safe ? "confirmed" : "unknown");
-      throw new Error(receipt.detail || "示例初始化失败；服务器已保留可核实的回执");
+      const saved=updatePendingDemo(storage, request, receipt.retry_safe ? "confirmed" : "unknown");
+      setPending(saved);
+      setError(receipt.detail || "示例初始化失败；服务器已保留可核实的回执");
+      return;
     }
-    updatePendingDemo(storage, request, "confirmed");
-    setStatus(receipt.status === "model_setup_required" ? "示例任务已创建，正在打开同一任务的模型设置。" : "示例任务已创建，正在打开。 ");
+    setPending(updatePendingDemo(storage, request, "confirmed"));
+    setStatus(receipt.status === "model_setup_required" ? "示例任务已创建，正在打开同一任务的模型设置。" : "示例任务已创建，正在打开。");
     await onStarted(receipt);
   };
 
@@ -98,13 +101,14 @@ export function DemoOnboarding({
     void service.catalog(controller.signal)
       .then((value) => { if (!controller.signal.aborted) setCatalog(visibleDemoEntries(value)); })
       .catch((cause) => { if (!controller.signal.aborted) setError(`无法读取示例目录：${cause instanceof Error ? cause.message : String(cause)}`); });
-    if (pending && pending.state !== "confirmed") {
+    const recovering=initialPending.current;
+    if (recovering && recovering.state !== "confirmed") {
       setStatus("正在核实上次示例启动回执；不会重新提交或调用模型。 ");
-      void service.receipt(pending.command_id, controller.signal)
+      void service.receipt(recovering.command_id, controller.signal)
         .then((receipt) => {
           if (controller.signal.aborted) return;
           if (!receipt) { setStatus("没有找到已确认回执。只有再次点击原操作才会重试同一命令。 "); return; }
-          return acceptReceipt(pending, receipt);
+          return acceptReceipt(recovering, receipt);
         })
         .catch((cause) => { if (!controller.signal.aborted) setError(`启动结果尚未核实：${cause instanceof Error ? cause.message : String(cause)}`); });
     }
@@ -124,11 +128,12 @@ export function DemoOnboarding({
       mode,
       confirmed_scope: true,
     });
+    setPending(request);
     try {
       const receipt = await service.start(request);
       await acceptReceipt(request, receipt);
     } catch (cause) {
-      updatePendingDemo(storage, request, "unknown");
+      setPending(updatePendingDemo(storage, request, "unknown"));
       setError(`${cause instanceof Error ? cause.message : String(cause)}。刷新只会查询同一命令的服务端回执，不会自动重试收费请求。`);
     } finally {
       setBusy(false);
@@ -143,6 +148,6 @@ export function DemoOnboarding({
     {status && <p role="status">{status}</p>}
     {catalog?.length === 0 && <p>服务器当前没有可用且许可完整的示例包。</p>}
     <div className="demo-grid">{catalog?.map((item) => <DemoCard key={`${item.id}@${item.version}`} item={item} busy={busy} onStart={(entry, mode) => void start(entry, mode)}/>)}</div>
-    {pending?.state === "confirmed" && <button className="subtle" onClick={() => { clearPendingDemo(storage); setStatus("可以显式创建一个新的示例任务。 "); }}>再试一次（创建新任务）</button>}
+    {pending?.state === "confirmed" && <button className="subtle" onClick={() => { clearPendingDemo(storage); setPending(null); setStatus("可以显式创建一个新的示例任务。"); }}>再试一次（创建新任务）</button>}
   </section>;
 }
