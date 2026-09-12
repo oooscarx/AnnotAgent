@@ -43,3 +43,4 @@ The HTTP send boundary now accepts only a frozen `VisualSelection`, converts it 
 - The real Project route restored saved user messages, structured model decision receipts, execution history, a pending HumanRequest, completed Batch metadata and a real download link.
 - Expanding delivery intake displayed only the three server-reported missing items. No Provider request or real workspace write was made.
 - Candidate-reference unit coverage: exact image hash, Schema revision, Draft revision, Sample Test, candidate and source Artifact; stale Schema and Preview identities make zero POSTs.
+- Browser regression `persisted Agent replies stay distinct and intake asks only server-reported missing items` passed against that isolated HTTP service and observed zero non-GET requests across open and refresh.

@@ -35,6 +35,23 @@ test("a: real owned thread/image reads, Back/refresh, no execution on GET",async
   const ws=await (await request.get(`${root}/tasks/${tasks[0].task_id}/workspace`)).json();
   expect(ws.project_owner_id).toBeTruthy();
 });
+test("a: persisted Agent replies stay distinct and intake asks only server-reported missing items",async({page,request})=>{
+  const {p,tasks}=await identity(request);const writes:string[]=[];
+  page.on("request",r=>{if(r.method()!=="GET")writes.push(`${r.method()} ${new URL(r.url()).pathname}`);});
+  await page.goto(`/projects/${p.project_id}/work?task=${tasks[0].task_id}`);
+  const replies=page.locator(".assistant-message").filter({hasText:"真实模型回复"});
+  await expect(replies).toHaveCount(2);
+  await expect(page.locator(".user-message").first()).toContainText(tasks[0].title);
+  await expect(page.getByText("当前操作已完成",{exact:false})).toHaveCount(0);
+  await page.getByRole("button",{name:"补充缺失信息",exact:true}).click();
+  await expect(page.getByText("只补充当前缺失内容",{exact:true})).toBeVisible();
+  await expect(page.getByText("使用哪些图片、标注类别和规则、训练用途与格式",{exact:true})).toBeVisible();
+  for(const label of ["用哪些图片？","标注哪些类别？"])await expect(page.getByText(label,{exact:true}).first()).toBeVisible();
+  expect(writes).toEqual([]);
+  await page.reload();
+  await expect(replies).toHaveCount(2);
+  expect(writes).toEqual([]);
+});
 test("b: six real Settings reads, local preference save/cancel and return context",async({page,request})=>{
   const {p,tasks}=await identity(request);
   await page.goto(`/projects/${p.project_id}/work?task=${tasks[0].task_id}&pane=image`);
