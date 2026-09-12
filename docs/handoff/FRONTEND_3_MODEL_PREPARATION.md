@@ -35,11 +35,13 @@
 
 `ModelProfiles` re-reads the current profile, retains the editor on a revision mismatch, and sends `expected_revision`. The existing server regression `model_profile_patch_cas_conflict_and_legacy_request` proves the competing CAS writer receives `409 model_profile_revision_conflict`. No Rust change was made.
 
-## Backend observations FE3API-001 / ML-005 / ML-010 / ML-012
+## Backend observations FE3API-001 / ML-005 / ML-010 / ML-012 / ML-015
 
 FE3API-001/ML-005 identified that the earlier UI had to assemble ownership, Registry and authorization truth from independent reads. Backend ML-010 commit `3d5b4429db4963a5d2ee81fabec67f2e979dde4b` resolves this with the passive, server-composed `mainline-capability-v1` snapshot. F3 consumes that object without importing Backend code. It still treats every setup return as authorization recheck only, because the server explicitly reports `can_resume_without_authorization=false` and `auto_expands_allowed_models=false`.
 
 ML-012 identified that Backend commit `58e18ad6f6e27059d4b2e78345b057a2b90bd126` intentionally emits capability-only `setup_requests[]`: the server does not and should not choose a single Provider/Plugin/Instance target for the user. The F3 seam now derives one display requirement per declared capability and maps only the server's `compatible_model_ids` to alternative setup choices. The chosen candidate ID is carried into Settings, while the candidate's server `setup.api_url` remains visible provenance; no setup choice expands authorization or resumes work.
+
+ML-015 Backend commit `07925834bf401a411e94245fa545f1b7640a4924` narrows the pre-Draft request to `role: task_planning` and `required_capabilities: [text_generation]`. F3 consumes that request literally and displays `visual_readiness_boundary` separately. A bbox output request is not converted into an `object_detection` setup requirement: exact visual capabilities and bindings are deferred to the frozen Draft's Builder/Sample previews.
 
 ## Test boundary
 

@@ -218,6 +218,16 @@ export function SetupRequest({
             ))}
           </div>
 
+          <div className="setup-visual-boundary">
+            <strong>视觉模型将在方案确定后校验</strong>
+            <p>
+              {snapshot.readiness.visual_readiness_boundary.status === "awaiting_frozen_draft"
+                ? "当前还没有冻结的 Draft，不能从“框出目标”直接推断必须使用某一种检测模型。"
+                : "已有 Draft；视觉节点、模型绑定和权限由实际 Builder 与 Sample Preview 校验。"}
+            </p>
+            <p>{snapshot.readiness.visual_readiness_boundary.reason}</p>
+          </div>
+
           <Disclosure title={`Provider Model Profiles · ${snapshot.provider_models.length}`}>
             <p>Agent 规划模型与视觉模型按具体输入、capability 和协议要求分开匹配。</p>
             {snapshot.provider_models.length === 0 && <p>没有兼容 Model Profile。</p>}
