@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { TaskUsageView, type TaskUsageAttempt, type TaskUsagePage } from "./TaskUsage";
+import { TaskUsageReadError, TaskUsageView, mergeUsagePages, type TaskUsageAttempt, type TaskUsagePage } from "./TaskUsage";
 
 const attempt = (overrides: Partial<TaskUsageAttempt> = {}): TaskUsageAttempt => ({
   attempt_id: "attempt-1",
@@ -63,6 +63,25 @@ const page = (overrides: Partial<TaskUsagePage> = {}): TaskUsagePage => ({
 });
 
 describe("TaskUsage", () => {
+  it("renders an unknown-cost recovery message without exposing transport parsing details", () => {
+    const html = renderToStaticMarkup(<TaskUsageReadError />);
+    expect(html).toContain("暂时无法读取本次用量，费用未知");
+    expect(html).toContain("请稍后刷新");
+    expect(html).not.toMatch(/Unexpected token|doctype|JSON|费用为零/);
+  });
+  it("defaults to one compact cost status and collapsed call detail, with cost evidence labeled", () => {
+    const html = renderToStaticMarkup(<TaskUsageView value={page()} />);
+    expect(html).toContain("调用明细");
+    expect(html).toContain("按冻结单价估算");
+    expect(html).not.toContain('<details open');
+  });
+
+  it("does not combine foreign pages or double count overlapping physical attempts", () => {
+    const a = page();
+    const b = page({ attempts: { items: [attempt(), attempt({attempt_id:"attempt-2"})], next_cursor:null } });
+    expect(mergeUsagePages([a,b])?.attempts.items).toHaveLength(2);
+    expect(() => mergeUsagePages([a,page({scope:{project_id:"other",task_id:"task"}})])).toThrow(/范围/);
+  });
   it("shows preset mode as no request without fabricated token or cost", () => {
     const html = renderToStaticMarkup(<TaskUsageView value={page({
       state: "no_model_requests",
