@@ -11,9 +11,9 @@ import type { DeliveryService } from "./deliveryService";
 import type {
   DeliveryFormalResult,
   DeliverySampleResult,
-  FormalReviewSelection,
   SampleVisualSelection,
 } from "./deliveryVisualSelection";
+import type { FormalVisualSelection } from "./mainline";
 
 type ResultImage={id:string;name:string;src?:string};
 export type P0ResultAction={
@@ -34,7 +34,7 @@ export type P0ResultPanelProps={
   projectId:string;
   taskId:string;
   view:P0ResultPanelView;
-  onSelection?:(selection:SampleVisualSelection|FormalReviewSelection)=>void;
+  onSelection?:(selection:SampleVisualSelection|FormalVisualSelection)=>void;
   onSampleIssue?:(selection:SampleVisualSelection)=>void;
   onPackageReady?:(packageId:string)=>void;
 };

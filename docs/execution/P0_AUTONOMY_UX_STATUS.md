@@ -30,13 +30,15 @@ Read-only evidence from `127.0.0.1:8788` also confirms that the existing task re
 - A review work item opens the existing right image pane once per server work item/result revision. This is view-only URL restoration and does not issue an execution request.
 - Execution receipts, model usage, plan lineage and technical links remain available in one lazy detail disclosure.
 - Keep task editing, trace, schema, feedback and historical records reachable on demand.
-- Integrate fixed Backend, Frontend 2 and Frontend 3 commits as they are delivered.
+- Integrated the first durable Backend continuation increment: queued/running Journey intents remain active across browser closure and Builder completion starts the original frozen Sample operation without a second confirmation.
+- Integrated Frontend 2's terminal-only Sample result surface and Frontend 3's task-scoped model preparation. A real review state opens the right result surface; model setup first appears as one compact blocker and returns to the same task after a passive recheck.
 
 ### G0 verification
 
 - `npm test -- --run src/agent-ui/currentTaskPresentation.test.ts src/agent-ui/App.modelSetup.test.ts src/agent-ui/mainline.test.ts` — 14 passed.
 - `npm run typecheck` — passed.
-- Real HTTP G1 remains blocked on the Backend Journey wake-up delivery; no production success is claimed from the UI selector tests.
+- Real HTTP G1 remains unverified until the isolated upload-to-review trace passes; no production success is claimed from the UI selector or Backend unit tests.
+- The remaining A1 blocker is earlier than Builder: uploaded image identities are not yet frozen into the natural-language Send, and the Backend has not yet delivered automatic DeliveryIntake materialization from a complete request.
 
 ## Safety boundary
 

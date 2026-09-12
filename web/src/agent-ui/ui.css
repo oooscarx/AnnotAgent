@@ -1039,6 +1039,15 @@ caption {
 .ui-app .current-task-blocked .current-task-copy > strong {
   color: var(--aa-danger);
 }
+.ui-app .p0-result-pane {
+  min-width: 0;
+  overflow: auto;
+  padding: 16px;
+  background: var(--aa-surface);
+}
+.ui-app .p0-result-pane .delivery-review {
+  min-height: 100%;
+}
 .ui-app .secondary-task-actions summary { display: flex; align-items: center; gap: 8px; color: var(--aa-text-muted); font-size: 12px; }
 .ui-app .secondary-task-actions > div { display: grid; gap: 6px; padding: 8px 0; }
 .ui-app .secondary-task-actions button { justify-content: flex-start; }

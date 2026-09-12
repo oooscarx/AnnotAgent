@@ -34,6 +34,8 @@ import { DemoOnboarding } from "./DemoOnboarding";
 import { TaskUsage } from "./TaskUsage";
 import { CurrentTaskStatus } from "./CurrentTaskStatus";
 import { selectCurrentTaskPresentation, type CurrentTaskAction } from "./currentTaskPresentation";
+import { CapabilitySetupCard } from "./CapabilitySetupCard";
+import { P0ResultPanel, type P0ResultPanelView } from "./P0ResultPanel";
 export const phaseNames: Record<Phase, string> = {
   idle: "准备任务",
   planning: "正在模拟规划",
@@ -109,6 +111,7 @@ export function AgentPreviewApp({
   const [busy, setBusy] = useState(false);
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [taskEditor, setTaskEditor] = useState<string | null>(null);
+  const [setupPanelTask, setSetupPanelTask] = useState<string | null>(null);
   const approvalPending = useRef(false);
   const autoOpenedReview = useRef(new Set<string>());
   const owner = fixture ? null : routeProject(url);
@@ -298,7 +301,34 @@ export function AgentPreviewApp({
   let setupContext:ReturnType<typeof modelSetupContext>;
   let setupContextError="";
   if(!fixture&&task)try{setupContext=modelSetupContext(task,url);}catch(cause){setupContextError=(cause as Error).message;}
+  const setupRequest = setupContext
+    ? (task?.mainline?.capability_readiness as CapabilityReadiness | undefined)?.setup_requests.find(request => request.id === setupContext?.id)
+    : undefined;
   const currentTask = !fixture && task ? selectCurrentTaskPresentation(task) : undefined;
+  const taskAssets = task ? state.artifacts.filter(asset => !asset.project || asset.project === task.project) : [];
+  const p0ResultView: P0ResultPanelView | undefined = !fixture && task?.sampleResult && currentTask?.kind === "needs_review"
+    ? {
+        kind: "sample_feedback",
+        images: task.sampleResult.images.flatMap(image => {
+          const asset = taskAssets.find(candidate => String(candidate.id) === image.image_id);
+          return asset ? [{ id: String(asset.id), name: asset.name, src: asset.src }] : [];
+        }),
+        labels: Object.entries(task.labelNames || {}).map(([stable_id, display_name]) => ({ stable_id, display_name })),
+        sample_result: task.sampleResult,
+        focus: task.human ? {
+          mode: "sample",
+          image_id: String(task.human.image),
+          candidate_id: task.human.candidate,
+          result_revision: task.resultRevision || task.sampleResult.images.find(image => image.image_id === String(task.human?.image))?.result_revision || "unversioned",
+          reason: task.humanQuestion || "检查这个候选的目标与边界。",
+        } : null,
+        actions: [{
+          id: "sample_feedback",
+          available: task.sampleResult.images.some(image => image.candidates.some(candidate => candidate.selection !== null)),
+          reason: "仅对服务端签发了完整候选引用的样例开放反馈。",
+        }],
+      }
+    : undefined;
   const reviewAutoKey = currentTask?.kind === "needs_review" && task
     ? `${task.id}:${task.mainline?.review_work_item_id || task.resultRevision || task.mainline?.read_model_revision}`
     : "";
@@ -314,6 +344,7 @@ export function AgentPreviewApp({
   }, [reviewAutoKey, task?.id, task?.human?.image, task?.image, task?.project]);
   const returnFromSetup=()=>{
     if(!setupContext)return;
+    setSetupPanelTask(null);
     const next=new URL(setupContext.return_to,location.origin);
     history.pushState(null,"",next);setUrl(next);
     void adapter.loadTask?.(setupContext.project_id,setupContext.task_id).catch(cause=>setError((cause as Error).message));
@@ -623,7 +654,14 @@ export function AgentPreviewApp({
                           )}
                         </div>}
                         {setupContextError&&<p role="alert" className="error">模型准备范围无效：{setupContextError}</p>}
-                        {!fixture && setupContext && adapter.modelPreparation && (
+                        {!fixture && setupContext && setupRequest && setupPanelTask !== task.id && (
+                          <CapabilitySetupCard
+                            request={setupRequest}
+                            busy={busy}
+                            onOpen={() => setSetupPanelTask(task.id)}
+                          />
+                        )}
+                        {!fixture && setupContext && setupPanelTask === task.id && adapter.modelPreparation && (
                           <SetupRequest
                             context={setupContext}
                             service={adapter.modelPreparation}
@@ -1058,11 +1096,11 @@ export function AgentPreviewApp({
                       }
                     }}
                   />
-                  <ArtifactPane
+                  {!p0ResultView || !adapter.delivery ? <ArtifactPane
                     key={`${task.id}:${url.searchParams.get("image") || task.image}:${task.resultRevision || ""}`}
                     task={task}
                     adapter={adapter}
-                    assets={state.artifacts.filter(a => !a.project || a.project === task.project)}
+                    assets={taskAssets}
                     image={fixture ? Math.max(1, Math.min(3, Number(url.searchParams.get("image")) || 1)) : url.searchParams.get("image") || task.image}
                     onImage={(n) => navigate({ image: String(n) })}
                     onReference={(candidate, image) =>
@@ -1076,7 +1114,21 @@ export function AgentPreviewApp({
                     }
                     close={() => navigate({ pane: null })}
                     onError={setError}
-                  />
+                  /> : <aside className="p0-result-pane" aria-label="当前审核结果">
+                    <P0ResultPanel
+                      service={adapter.delivery}
+                      projectId={task.project}
+                      taskId={task.id}
+                      view={p0ResultView}
+                      onSelection={selection => {
+                        if ("sample" in selection) setReference(selection);
+                      }}
+                      onSampleIssue={selection => {
+                        setReference(selection);
+                        requestAnimationFrame(() => compose.current?.focus());
+                      }}
+                    />
+                  </aside>}
                 </>
               )}
             </div>
