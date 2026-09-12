@@ -774,6 +774,36 @@ mod tests {
             finished.evidence.unwrap()["schema_id"],
             schema.id.to_string()
         );
+        let finished = store
+            .conversation_builder_operation(&project, task, success)
+            .unwrap()
+            .unwrap();
+        store
+            .settle_conversation_builder(
+                &project,
+                task,
+                success,
+                true,
+                &json!({"schema_id":schema.id,"schema_revision":1,"draft_id":"TEST draft"}),
+            )
+            .unwrap();
+        store
+            .settle_conversation_builder(
+                &project,
+                task,
+                success,
+                false,
+                &json!({"error":"TEST late duplicate failure"}),
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .conversation_builder_operation(&project, task, success)
+                .unwrap()
+                .unwrap(),
+            finished,
+            "duplicate completion delivery cannot rewrite a terminal Builder receipt"
+        );
     }
 
     #[test]

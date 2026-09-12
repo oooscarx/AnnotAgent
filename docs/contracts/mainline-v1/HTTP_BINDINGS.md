@@ -337,6 +337,12 @@ durably `queued`. Repeating either consent or execution POST returns current rec
 and cannot create another Builder or Sample. See `P0_AUTONOMY.md` for restart and
 read-model fields.
 
+The execution GET is an observer only, never a completion subscription. An immediate Provider can
+finish Builder and Sample before the first GET; the first observation then returns the saved
+terminal Sample. Exact consent/execution replays after that point retain one Builder operation, one
+Sample operation and unchanged task-budget counters. The Sample report is the durable sandbox
+artifact; this path does not claim or create a formal production Run.
+
 When the saved goal says only `YOLO`, the Schema protocol treats detection,
 segmentation and whole-image classification as materially different outputs. A
 `decision:"clarify"` receipt therefore creates exactly one clarification object and

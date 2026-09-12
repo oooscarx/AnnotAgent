@@ -85,6 +85,15 @@ All GET routes remain passive. In particular, GET execution/status, Task workspa
 
 When this exact Journey finds its already saved Builder in `reserved`/`running`, the worker stays attached and rereads durable receipts. A completed Builder with `evidence.outcome:"draft_ready_for_human_review"` is validated, sealed to the original consent and starts only the consent's original `sample_operation_id`. A duplicate completion observation is harmless because the Sample operation ID and sealed scope are immutable.
 
+There is no browser completion subscription to register. The worker observes child state from the
+same SQLite receipts used by the GET projection. This covers both orderings: a slow child commits
+after the worker first observes `reserved|running`, while an immediate child may commit before any
+browser GET. Replaying the exact consent or execution command after terminal completion returns the
+same Builder/Sample identities. It does not add a call receipt, increase
+`planning_reserved_calls`, create another Sample operation, or replace the immutable
+`WorkflowSampleTest`. Guided Sample is a sandbox result and does not create a formal production
+Run; formal processing remains a separate approval boundary.
+
 On restart, a new P0 dispatch that was `running` and contains its server-saved `project_route_id` returns to `queued`. Startup schedules it without a browser. Child recovery runs first: a text call in doubt, interrupted Builder, or interrupted Sample is read as terminal and is not resent. Legacy dispatch rows have no route identity and retain the old `interrupted` behavior.
 
 Terminal child states produce a safe dispatch error such as:
