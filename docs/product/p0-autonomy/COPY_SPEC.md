@@ -20,8 +20,8 @@ source request 和 Run ID 放在“技术详情”里。
 摘要：
 
 > 从本次上传的 6 张图片中固定选择 3 张，查找 cup 和 bottle，边界包含完整
-> 可见物体。使用 TEST P0 slow journey，图片发送到 127.0.0.1:8796；最多
-> 8 次规划调用、12 次样例调用。费用未知，不启动其余 3 张。
+> 可见物体。使用 {model_name}，图片发送到 {provider_destination}；最多
+> {builder_limit} 次方案调用、{sample_limit} 次样例调用。{cost_state}，不启动其余图片。
 
 主按钮：`开始标注样例`
 
