@@ -245,7 +245,17 @@ export class HttpAdapter implements WorkspaceAdapter {
   }
   get pluginManagement() { return this.transport === request ? api : undefined; }
   get visionWorkerManagement() { return this.transport === request ? api : undefined; }
-  get modelProfileManagement() { return this.transport === request ? api : undefined; }
+  private modelProfileService?: import("./ModelProfiles").ModelProfileService;
+  get modelProfileManagement() {
+    if (this.transport !== request) return undefined;
+    return this.modelProfileService ??= {
+      ...api,
+      getEffectiveModelRequest: (modelProfileId, signal) => this.transport<import("./ModelRequestEvidence").EffectiveModelRequest>(
+        `/api/model-profiles/${esc(modelProfileId)}/effective-request`,
+        { signal },
+      ),
+    };
+  }
   get runtimeSettingsManagement() { return this.transport === request ? api : undefined; }
   get projectManagement() { return this.transport === request ? api : undefined; }
   get providerControls() { return this.transport === request ? api : undefined; }
