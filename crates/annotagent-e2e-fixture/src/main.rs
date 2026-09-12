@@ -582,35 +582,43 @@ async fn openai_completion(
             json!({"decision":"draft","kind":if classification {"classification"} else {"bounding_box"},"labels":if classification {json!(["室内","室外"])} else {json!(["cup"])},"multi_label":false,"attributes":{},"boundary_rules":["TEST fixture rule"],"rationale":"TEST scripted Schema proposal, not Live model quality evidence"})
         };
         if serialized.contains("task-delivery-semantics-v1") && !classification {
+            let clarification = arguments["decision"] == "clarify";
             if request["model"] == "e2e-conversation-bbox-feedback-image-class" {
                 arguments["labels"] = json!(["cup", "bottle"]);
                 arguments["boundary_rules"] = json!([
                     "Annotate physical cups and bottles; exclude printed depictions and cupcakes"
                 ]);
             }
-            let labels = arguments["labels"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .map(|label| {
-                    json!({
-                        "existing_id":null,
-                        "display_name":match label {"cup"=>"杯子","bottle"=>"瓶子",other=>other},
-                        "aliases":[label],
-                        "include":format!("真实{label}，包括部分遮挡目标"),
-                        "exclude":format!("{label}图案和相似但不同类别")
+            let labels = if clarification {
+                arguments["delivery"]["labels"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+            } else {
+                arguments["labels"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(|label| {
+                        json!({
+                            "existing_id":null,
+                            "display_name":match label {"cup"=>"杯子","bottle"=>"瓶子",other=>other},
+                            "aliases":[label],
+                            "include":format!("真实{label}，包括部分遮挡目标"),
+                            "exclude":format!("{label}图案和相似但不同类别")
+                        })
                     })
-                })
-                .collect::<Vec<_>>();
+                    .collect::<Vec<_>>()
+            };
             arguments["delivery"] = json!({
                 "labels":labels,
-                "training_target":{
+                "training_target":if clarification {Value::Null} else {json!({
                     "annotation_kind":"bounding_box",
                     "framework":"ultralytics",
                     "export_profile":"ultralytics_yolo_detection",
                     "profile_revision":1
-                }
+                })}
             });
         }
         if request["model"] == "e2e-conversation-classification-schema-background" {

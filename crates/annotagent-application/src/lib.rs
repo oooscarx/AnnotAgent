@@ -44,7 +44,8 @@ pub use conversation_stop::ConversationStopObservation;
 mod guidance;
 pub use conversation_schema::{
     ConversationOutputKind, ConversationSchemaAttempt, ConversationSchemaDecision,
-    ConversationSchemaExecution, parse_conversation_schema_response, propose_conversation_schema,
+    ConversationSchemaExecution, SchemaClarificationChoice, SchemaOutputChoice,
+    parse_conversation_schema_response, propose_conversation_schema,
 };
 mod export_delivery;
 mod management;

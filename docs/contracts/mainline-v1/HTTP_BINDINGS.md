@@ -354,6 +354,39 @@ Schema freezes the completed delivery revision/hash and keeps the consent's orig
 ordered image IDs/hashes. A cancelled/stale clarification or a classification versus
 detection mismatch is rejected before continuation.
 
+The owned clarification GET now adds a compact answer contract when the saved model
+receipt already contains complete label semantics and is missing only its output type:
+
+```json
+{
+  "id":"SCHEMA_CALL_UUID",
+  "status":"pending",
+  "expected_schema_revision":"PROJECT_GOAL_SHA256",
+  "question":"需要框出目标、描出轮廓，还是做整图分类？",
+  "choices":[
+    {"value":"bounding_box","label":"框住目标","supported":true,"unsupported_reason_code":null,"unsupported_reason":null},
+    {"value":"segmentation","label":"描出轮廓","supported":false,"unsupported_reason_code":"segmentation_delivery_not_implemented","unsupported_reason":"当前交付运行时没有可发布的分割 Schema 与导出路径。"},
+    {"value":"classification","label":"整图分类","supported":false,"unsupported_reason_code":"classification_delivery_not_implemented","unsupported_reason":"当前有界训练交付只支持 Ultralytics YOLO 目标检测。"}
+  ],
+  "answer":{"method":"POST","url":".../calls/SCHEMA_CALL_UUID/clarification/answer","required_fields":["command_id","expected_schema_revision","journey_consent_id","choice"]}
+}
+```
+
+`POST .../calls/Q/clarification/answer` accepts only:
+
+```json
+{"command_id":"UUID","expected_schema_revision":"PROJECT_GOAL_SHA256","journey_consent_id":"UUID","choice":"bounding_box"}
+```
+
+It reconstructs the complete private Schema from the call's persisted label proposal and
+the current owned DeliveryIntake, saves the exact clarification link, then resumes the same
+Journey. It performs no new Schema model call and does not accept annotations or publish.
+An exact `command_id` replay returns the same Schema. A stale revision returns
+`409 schema_clarification_revision_conflict`; a reused/different command after an answer
+returns `409 schema_clarification_answer_conflict`; a disabled choice returns its listed
+stable reason code with `admitted:false`. Empty `choices` means the saved proposal lacks a
+safe output-type-only context and the full Schema editor remains necessary.
+
 Journey Sample execution resolves the frozen image IDs/hashes to current Project
 indices at admission and repeats that check during execution. The index values are
 presentation state, not authority. Later uploads or sort-order changes cannot replace

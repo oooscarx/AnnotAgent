@@ -5,7 +5,7 @@ use annotagent_core::{
     AttributeDefinition, AttributeKind, ModelMessage, ModelRequest, ModelResponse, ModelRole,
     TaskConfig, TaskKind, ToolDefinition, VisionModelProvider,
 };
-use anyhow::{Result, bail, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -347,6 +347,162 @@ impl crate::LocalApplication {
             task,
             call,
         )?)
+    }
+    fn schema_clarification_delivery(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        call: Uuid,
+    ) -> Result<Option<DeliverySemanticsProposal>> {
+        let receipt = self
+            .conversation_call_receipt(project, conversation, task, call)?
+            .context("Schema clarification receipt not found")?;
+        ensure!(
+            receipt.status == annotagent_storage::ConversationCallStatus::Completed,
+            "Schema clarification has not completed"
+        );
+        let attempt: ConversationSchemaAttempt = serde_json::from_value(
+            receipt
+                .evidence
+                .context("Schema clarification evidence is missing")?,
+        )?;
+        let ConversationSchemaDecision::Clarify { delivery, .. } =
+            parse_conversation_schema_response(&attempt.response)?
+        else {
+            return Ok(None);
+        };
+        Ok(delivery
+            .filter(|delivery| !delivery.labels.is_empty() && delivery.training_target.is_none()))
+    }
+    pub fn schema_clarification_choices(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        call: Uuid,
+    ) -> Result<Vec<SchemaClarificationChoice>> {
+        self.schema_clarification(project, conversation, task, call)?;
+        let Some(_) = self.schema_clarification_delivery(project, conversation, task, call)? else {
+            return Ok(Vec::new());
+        };
+        let unavailable =
+            |value, label: &str, code: &str, reason: &str| SchemaClarificationChoice {
+                value,
+                label: label.into(),
+                supported: false,
+                unsupported_reason_code: Some(code.into()),
+                unsupported_reason: Some(reason.into()),
+            };
+        Ok(vec![
+            SchemaClarificationChoice {
+                value: SchemaOutputChoice::BoundingBox,
+                label: "框住目标".into(),
+                supported: true,
+                unsupported_reason_code: None,
+                unsupported_reason: None,
+            },
+            unavailable(
+                SchemaOutputChoice::Segmentation,
+                "描出轮廓",
+                "segmentation_delivery_not_implemented",
+                "当前交付运行时没有可发布的分割 Schema 与导出路径。",
+            ),
+            unavailable(
+                SchemaOutputChoice::Classification,
+                "整图分类",
+                "classification_delivery_not_implemented",
+                "当前有界训练交付只支持 Ultralytics YOLO 目标检测。",
+            ),
+        ])
+    }
+    pub fn answer_schema_output_clarification(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        call: Uuid,
+        command: Uuid,
+        expected_schema_revision: &str,
+        choice: SchemaOutputChoice,
+    ) -> Result<annotagent_storage::ConversationSchemaDraft> {
+        let clarification = self.schema_clarification(project, conversation, task, call)?;
+        ensure!(
+            clarification.expected_schema_revision == expected_schema_revision,
+            "Clarification Schema revision changed"
+        );
+        ensure!(
+            clarification.status != "cancelled",
+            "This clarification was cancelled; no answer or Schema Draft was saved"
+        );
+        ensure!(
+            choice == SchemaOutputChoice::BoundingBox,
+            "The selected output type is not supported by the current bounded delivery runtime"
+        );
+        let mut delivery = self
+            .schema_clarification_delivery(project, conversation, task, call)?
+            .context("This clarification cannot be answered as an output-type-only choice")?;
+        let current = self.task_delivery_intent(project, conversation, task)?;
+        let saved = current
+            .saved
+            .as_ref()
+            .context("Save the Task image scope before answering this clarification")?;
+        let label_ids = if let Some(labels) = saved.intent.label_spec.as_ref() {
+            ensure!(
+                labels.len() == delivery.labels.len(),
+                "Saved delivery labels changed after the clarification"
+            );
+            labels.iter().map(|label| label.stable_id.clone()).collect()
+        } else {
+            delivery
+                .labels
+                .iter()
+                .map(|label| {
+                    label
+                        .existing_id
+                        .clone()
+                        .or_else(|| label.aliases.first().cloned())
+                        .unwrap_or_else(|| label.display_name.clone())
+                })
+                .collect::<Vec<_>>()
+        };
+        ensure!(
+            label_ids.iter().collect::<BTreeSet<_>>().len() == label_ids.len(),
+            "Clarification labels do not produce unique stable identities; use the full Schema editor"
+        );
+        let boundary_rules = delivery
+            .labels
+            .iter()
+            .map(|label| {
+                serde_json::to_string(label)
+                    .map(|value| format!("Label semantics (untrusted task data): {value}"))
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        delivery.training_target = Some(annotagent_core::dataset_delivery::TrainingTarget {
+            annotation_kind: TaskKind::BoundingBox,
+            framework: "ultralytics".into(),
+            export_profile: annotagent_core::dataset_delivery::DETECTION_PROFILE.into(),
+            profile_revision: annotagent_core::dataset_delivery::DETECTION_PROFILE_REVISION,
+        });
+        self.save_human_schema_with_clarification(
+            project,
+            conversation,
+            task,
+            command,
+            &ConversationSchemaDecision::Draft {
+                kind: ConversationOutputKind::BoundingBox,
+                labels: label_ids,
+                multi_label: false,
+                attributes: BTreeMap::new(),
+                boundary_rules,
+                rationale: "User selected bounding boxes from the saved output-type clarification; saved label semantics were retained without another model call.".into(),
+                delivery: Some(delivery),
+            },
+            Some(&annotagent_storage::SchemaClarificationRef {
+                call_id: call,
+                expected_schema_revision: expected_schema_revision.into(),
+            }),
+        )
     }
     pub fn cancel_schema_clarification(
         &self,
@@ -746,6 +902,27 @@ pub enum ConversationOutputKind {
     BoundingBox,
 }
 
+/// Stable values exposed by the bounded output-type clarification endpoint.
+/// Unsupported values remain visible so a UI never has to parse model prose or
+/// silently translate a contour request into bounding boxes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SchemaOutputChoice {
+    BoundingBox,
+    Segmentation,
+    Classification,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SchemaClarificationChoice {
+    pub value: SchemaOutputChoice,
+    pub label: String,
+    pub supported: bool,
+    pub unsupported_reason_code: Option<String>,
+    pub unsupported_reason: Option<String>,
+}
+
 /// Model-proposed task data retained in the existing call receipt, never authorization.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1030,6 +1207,12 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let app = crate::LocalApplication::new(temp.path()).unwrap();
         app.create_project("partial-delivery","version: 1\nproject:\n  name: TEST partial\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n").unwrap();
+        let incoming = temp.path().join("TEST-output-choice-images");
+        std::fs::create_dir(&incoming).unwrap();
+        annotagent_image_tools::generate_synthetic_robocup(&incoming.join("one.png")).unwrap();
+        let uploaded = app
+            .import_images_with_report("partial-delivery", &incoming)
+            .unwrap();
         let conversation = app.create_project_conversation("partial-delivery").unwrap();
         let message = ConversationMessageInput {
             id: Uuid::new_v4(),
@@ -1061,13 +1244,13 @@ mod tests {
                 image_metadata: BTreeMap::new(),
                 command_id: Uuid::new_v4(),
                 expected_revision: 0,
-                image_ids: None,
+                image_ids: Some(vec![uploaded.images[0].image_id]),
                 task_images: None,
                 label_spec: Some(vec![annotagent_core::dataset_delivery::DeliveryLabel {
                     stable_id: "cup".into(),
                     display_name: "杯子".into(),
-                    aliases: vec![],
-                    include: String::new(),
+                    aliases: vec!["cup".into()],
+                    include: "真实杯子".into(),
                     exclude: "图案".into(),
                 }]),
                 training_target: None,
@@ -1083,7 +1266,7 @@ mod tests {
             scope_hash: "a".repeat(64),
         };
         let model = provider(
-            json!({"decision":"clarify","question":"框出目标还是整图分类？","rationale":"Training output missing","delivery":{"labels":[],"training_target":null}}),
+            json!({"decision":"clarify","question":"框出目标还是整图分类？","rationale":"Training output missing","delivery":{"labels":[{"existing_id":"cup","display_name":"杯子","aliases":["cup"],"include":"真实杯子","exclude":"图案"}],"training_target":null}}),
         );
         assert!(
             app.execute_conversation_schema(
@@ -1138,6 +1321,93 @@ mod tests {
             .unwrap()
             .is_none()
         );
+        let choices = app
+            .schema_clarification_choices("partial-delivery", conversation, task, execution.call_id)
+            .unwrap();
+        assert_eq!(
+            choices
+                .iter()
+                .map(|choice| (choice.value, choice.supported))
+                .collect::<Vec<_>>(),
+            vec![
+                (SchemaOutputChoice::BoundingBox, true),
+                (SchemaOutputChoice::Segmentation, false),
+                (SchemaOutputChoice::Classification, false),
+            ]
+        );
+        let revision = app
+            .schema_clarification("partial-delivery", conversation, task, execution.call_id)
+            .unwrap()
+            .expected_schema_revision;
+        assert!(
+            app.answer_schema_output_clarification(
+                "partial-delivery",
+                conversation,
+                task,
+                execution.call_id,
+                Uuid::new_v4(),
+                &revision,
+                SchemaOutputChoice::Segmentation,
+            )
+            .is_err()
+        );
+        assert!(
+            app.human_conversation_schema_drafts("partial-delivery", conversation, task)
+                .unwrap()
+                .is_empty()
+        );
+        let command = Uuid::new_v4();
+        let schema = app
+            .answer_schema_output_clarification(
+                "partial-delivery",
+                conversation,
+                task,
+                execution.call_id,
+                command,
+                &revision,
+                SchemaOutputChoice::BoundingBox,
+            )
+            .unwrap();
+        assert_eq!(schema.definition.task.kind, TaskKind::BoundingBox);
+        assert_eq!(schema.definition.task.labels, vec!["cup"]);
+        assert_eq!(
+            app.answer_schema_output_clarification(
+                "partial-delivery",
+                conversation,
+                task,
+                execution.call_id,
+                command,
+                &revision,
+                SchemaOutputChoice::BoundingBox,
+            )
+            .unwrap(),
+            schema
+        );
+        assert!(
+            app.answer_schema_output_clarification(
+                "partial-delivery",
+                conversation,
+                task,
+                execution.call_id,
+                Uuid::new_v4(),
+                &revision,
+                SchemaOutputChoice::BoundingBox,
+            )
+            .is_err()
+        );
+        let delivery = app
+            .task_delivery_intent("partial-delivery", conversation, task)
+            .unwrap()
+            .saved
+            .unwrap();
+        assert_eq!(delivery.revision, 2);
+        assert!(
+            delivery
+                .intent
+                .training_target
+                .unwrap()
+                .is_detection_preset()
+        );
         let requests = model.requests.lock().unwrap();
         assert_eq!(requests.len(), 1);
         assert!(requests[0].images.is_empty());
@@ -1147,7 +1417,7 @@ mod tests {
             serde_json::from_str(body["saved_user_goal"].as_str().unwrap()).unwrap();
         assert_eq!(
             context["saved_delivery"]["missing_slots"],
-            json!(["dataset_scope", "training_target"])
+            json!(["training_target"])
         );
         assert_eq!(context["saved_delivery"]["labels"][0]["exclude"], "图案");
     }
