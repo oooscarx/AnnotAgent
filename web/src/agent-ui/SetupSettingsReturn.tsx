@@ -14,6 +14,10 @@ export function readSetupSettingsContext(
   return id ? restoreSetupContext(storage, id) : undefined;
 }
 
+export function readSetupCandidate(search = location.search) {
+  return new URLSearchParams(search).get("candidate") ?? undefined;
+}
+
 export function SetupSettingsReturn({ search = location.search }: { search?: string }) {
   const state = useMemo(() => {
     try {
@@ -26,6 +30,7 @@ export function SetupSettingsReturn({ search = location.search }: { search?: str
     return <p role="alert">无法恢复模型准备任务：{state.error}</p>;
   const context = state.context;
   if (!context) return null;
+  const candidate = readSetupCandidate(search);
   return (
     <aside className="setup-settings-return" aria-label="模型准备返回任务">
       <div>
@@ -35,6 +40,7 @@ export function SetupSettingsReturn({ search = location.search }: { search?: str
           {context.draft_id ? ` · Draft ${context.draft_id.slice(0, 8)}` : ""}。
           {` ${context.role}`}。返回后重新检查版本、兼容能力和授权；不会自动继续收费操作。
         </p>
+        {candidate && <p>当前选择的准备方案：{candidate}</p>}
       </div>
       <div className="actions">
         <a href={setupReturnPath(context, "cancelled")}>取消设置并返回</a>

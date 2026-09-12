@@ -83,10 +83,10 @@ export function SetupRequest({
     [context.requirements],
   );
 
-  const open = (target: SetupTarget) => {
+  const open = (target: SetupTarget, candidateId?: string) => {
     try {
       preserveSetupContext(sessionStorage, context);
-      onOpenSettings(setupSettingsPath(context, target), context);
+      onOpenSettings(setupSettingsPath(context, target, candidateId), context);
     } catch (reason) {
       setError((reason as Error).message);
     }
@@ -169,9 +169,9 @@ export function SetupRequest({
         <>
           {snapshot.context_changes.length > 0 && <div role="alert"><strong>任务上下文已变化</strong>{snapshot.context_changes.map((item) => <p key={item}>{item}</p>)}<p>可以继续配置，但返回后必须重新读取并确认授权。</p></div>}
           <div className="setup-requirements">
-            {snapshot.requirements.map(({ requirement, ready_candidate_ids, uncertain_candidate_ids }) => (
+            {snapshot.requirements.map(({ requirement, ready_candidate_ids, uncertain_candidate_ids, alternatives }) => (
               <article key={requirement.id}>
-                <strong>{targetLabels[requirement.target]} · {requirement.capability}</strong>
+                <strong>{requirement.capability}</strong>
                 <p>{requirement.purpose}</p>
                 <p>
                   {ready_candidate_ids.length
@@ -180,9 +180,40 @@ export function SetupRequest({
                       ? `${uncertain_candidate_ids.length} 个候选尚未验证；这不等于必然失败`
                       : "没有可继续的兼容候选"}
                 </p>
-                <button onClick={() => open(requirement.target)}>
-                  打开{targetLabels[requirement.target]}设置
-                </button>
+                {alternatives.length > 0 ? (
+                  <div className="setup-alternatives" aria-label={`${requirement.capability} 可选准备方式`}>
+                    <p>选择其中一种即可满足此能力，不需要全部配置。</p>
+                    {alternatives.map((candidate) => (
+                      <div className="setup-alternative" key={candidate.id}>
+                        <div>
+                          <strong>{targetLabels[candidate.target]}</strong>
+                          <p>{candidate.id}</p>
+                          {candidate.reasons.map((reason) => <p key={reason}>{reason}</p>)}
+                        </div>
+                        <div className="actions">
+                          <span data-state={candidate.state}>{stateLabels[candidate.state]}</span>
+                          <button
+                            title={`服务器设置接口：${candidate.setup_api_url}`}
+                            onClick={() => open(candidate.target, candidate.id)}
+                          >
+                            {candidate.state === "ready" ? "查看配置" : "配置此方案"}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="actions">
+                    {requirement.capability === "text_generation" ? (
+                      <button onClick={() => open("agent_model")}>配置 Agent 模型</button>
+                    ) : (
+                      <>
+                        <button onClick={() => open("provider_model")}>配置远程视觉模型</button>
+                        <button onClick={() => open("plugin")}>查看 Plugin 与本地模型</button>
+                      </>
+                    )}
+                  </div>
+                )}
               </article>
             ))}
           </div>
