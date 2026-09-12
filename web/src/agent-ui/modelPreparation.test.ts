@@ -11,6 +11,7 @@ import type {
 } from "../types";
 import {
   createModelPreparationService,
+  completeSetupReturn,
   preserveSetupContext,
   restoreSetupContext,
   setupReturnPath,
@@ -117,6 +118,7 @@ function fixture(overrides: {
   taskRevision?: () => string;
   draftRevision?: () => number;
   preferenceRevision?: () => number;
+  canResume?: () => boolean;
 } = {}) {
   const calls: { path: string; init?: RequestInit }[] = [];
   const models = overrides.models ?? [model("planner", "text_generation"), model("vision", "image_classification")];
@@ -215,7 +217,7 @@ function fixture(overrides: {
           sample_preview_url: "/api/projects/p/conversations/c/tasks/t/sample-preview",
         },
         agent_model_preference: { revision: overrides.preferenceRevision?.() ?? 1, model_profile_id: "planner" },
-        authorization: { source: "journey_consent", consent_id: "consent", expires_at: "2027-01-01", permission_digest: "old-auth", allowed_models: context.allowed_models, active: true, can_resume_without_authorization: false },
+        authorization: { source: "journey_consent", consent_id: "consent", expires_at: "2027-01-01", permission_digest: "old-auth", allowed_models: context.allowed_models, active: true, can_resume_without_authorization: overrides.canResume?.() ?? false },
         budget: {},
         task_cost: { scope: "conversation_task_model_calls", receipt_count: 0, known: true, amount: "0", currency: null, reason: null },
         passive: true,
@@ -342,6 +344,7 @@ describe("task-scoped model preparation", () => {
     const recheck = await service.recheck(result, new AbortController().signal);
     expect(recheck.capability_prepared).toBe(false);
     expect(recheck.can_resume_without_authorization).toBe(false);
+    expect(recheck.continuation.state).toBe("setup_required");
   });
 
   it("represents a multimodal profile separately for planning and vision roles", async () => {
@@ -444,7 +447,7 @@ describe("task-scoped model preparation", () => {
     draftRevision = 2;
     preferenceRevision = 2;
     const result = await service.recheck(before, new AbortController().signal);
-    expect(result.capability_prepared).toBe(false);
+    expect(result.capability_prepared).toBe(true);
     expect(result.can_resume_without_authorization).toBe(false);
     expect(result.changed).toEqual([
       "Task schema revision 已变化",
@@ -455,7 +458,26 @@ describe("task-scoped model preparation", () => {
     expect(result.draft_reused).toBe(true);
     expect(result.allowed_models_expanded).toBe(false);
     expect(result.authorization).toBe("recheck_required");
+    expect(result.continuation).toMatchObject({
+      state: "approval_required",
+      consent_id: "consent",
+      reason: "task_registry_or_authorization_scope_changed",
+    });
     expect(result.snapshot.context.allowed_models).toEqual(context.allowed_models);
+  });
+
+  it("uses only the authoritative server flag to describe an unchanged continuation", async () => {
+    const { service } = fixture({ canResume: () => true });
+    const before = await service.inspect(context, new AbortController().signal);
+    const result = await service.recheck(before, new AbortController().signal);
+    expect(result.capability_prepared).toBe(true);
+    expect(result.can_resume_without_authorization).toBe(true);
+    expect(result.continuation).toEqual({
+      state: "server_continuing",
+      consent_id: "consent",
+      reason: "server_confirmed_existing_scope_continuation",
+    });
+    expect(result.snapshot.readiness.passive).toBe(true);
   });
 
   it("persists only a validated same-task return context", () => {
@@ -473,5 +495,20 @@ describe("task-scoped model preparation", () => {
     expect(setupReturnPath(context, "configured")).toBe("/projects/p/work?task=t&draft=d&setup_request=setup&setup_outcome=configured");
     expect(() => preserveSetupContext(storage, { ...context, return_to: "https://example.com" })).toThrow("同一 Project 和 Task");
     expect(() => preserveSetupContext(storage, { ...context, allowed_models: [...context.allowed_models, context.allowed_models[0]] })).toThrow("重复模型");
+  });
+
+  it("finishes setup return after one passive recheck even when a new approval is required", async () => {
+    const values = new Map<string, string>();
+    const storage = {
+      setItem: (key: string, value: string) => values.set(key, value),
+      getItem: (key: string) => values.get(key) ?? null,
+      removeItem: (key: string) => values.delete(key),
+    } as unknown as Storage;
+    preserveSetupContext(storage, context);
+    const before = await fixture().service.inspect(context, new AbortController().signal);
+    const result = await fixture().service.recheck(before, new AbortController().signal);
+    expect(completeSetupReturn(storage, context, result)).toBe(result);
+    expect(storage.getItem("annotagent.setup-request.v1:setup")).toBeNull();
+    expect(result.continuation.state).toBe("approval_required");
   });
 });
