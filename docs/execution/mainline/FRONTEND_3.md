@@ -47,4 +47,5 @@ The Backend read model must own `authorization.can_resume_without_authorization`
 - Full Web unit/build: passed at the first P0 delivery; focused contract tests and typecheck passed after alignment to `563f2f7`.
 - Live HTTP P0 A1/A2: pending after Frontend 1 integration.
 - Independent Backend verification used a detached worktree fixed at exact SHA `563f2f7` after an initial parallel-worktree race was identified. Targeted Journey tests passed: Storage 11, Application 1 and Server 2. The earlier `task_images` compile report came from Backend's concurrent A1 work, not this commit, and is superseded by the isolated result.
+- Backend A1 work-in-progress review raised `P0-F3-004`: the parameterless Journey preview must not put every Ready visual Registry candidate into `allowed_models`. It must select the minimal current Project/task-bound scope and route a missing binding to Setup; otherwise recipients and unrelated capabilities can expand behind one approval.
 - No Provider call, probe, install, credential read, push or real workspace mutation was performed.
