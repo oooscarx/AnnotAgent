@@ -330,7 +330,7 @@ export function AgentPreviewApp({
       }
     : undefined;
   const reviewAutoKey = currentTask?.kind === "needs_review" && task
-    ? `${task.id}:${task.mainline?.review_work_item_id || task.resultRevision || task.mainline?.read_model_revision}`
+    ? `${task.id}:${task.mainline?.review_work_item_id || task.human?.id || task.sample?.id || "review"}`
     : "";
   useEffect(() => {
     if (!task || !reviewAutoKey || autoOpenedReview.current.has(reviewAutoKey)) return;

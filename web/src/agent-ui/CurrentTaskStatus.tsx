@@ -12,7 +12,7 @@ const actionLabel: Record<CurrentTaskAction["kind"], string> = {
   confirm_approval: "确认当前范围",
   stop: "停止当前操作",
   resume: "继续任务",
-  open_review: "检查图片与标注",
+  open_review: "重新定位当前结果",
   prepare_processing: "确认范围并处理剩余图片",
   prepare_export: "生成训练数据包",
   download_package: "下载训练数据包",
@@ -77,7 +77,11 @@ export function CurrentTaskStatus({
         ) : (
           primary && (
             <button
-              className={primary.kind === "stop" ? undefined : "primary"}
+              className={
+                primary.kind === "stop" || primary.kind === "open_review"
+                  ? undefined
+                  : "primary"
+              }
               type="button"
               disabled={busy}
               onClick={() => onPrimary(primary)}

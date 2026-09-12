@@ -38,7 +38,9 @@ Read-only evidence from `127.0.0.1:8788` also confirms that the existing task re
 
 - `npm test -- --run src/agent-ui/currentTaskPresentation.test.ts src/agent-ui/App.modelSetup.test.ts src/agent-ui/mainline.test.ts` — 14 passed.
 - `npm run typecheck` — passed.
+- Focused P0 UI unit checks after review-focus hardening — 16 passed.
 - Frontend 2 P0 result browser checks — 5 passed after correcting the Vite `/@fs` harness URL; this is Fixture UI evidence, not a live-model claim.
+- Review focus is now keyed to the stable server work item, human request or Sample instead of the changing read-model revision. Polling no longer repeatedly steals focus, and the visible review action is only a secondary recovery control because the result opens automatically.
 - Real HTTP G1 remains unverified until the isolated upload-to-review trace passes; no production success is claimed from the UI selector or Backend unit tests.
 - The remaining A1 blocker is earlier than Builder: uploaded image identities are not yet frozen into the natural-language Send, and the Backend has not yet delivered automatic DeliveryIntake materialization from a complete request.
 
