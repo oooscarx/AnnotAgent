@@ -236,6 +236,34 @@ it("sample consent uses the saved delivery Schema instead of another Schema mode
   expect(JSON.parse(query.get("allowed_models")!)).toEqual(["model-profile:vision","model-instance:ready-local"]);
   expect(reads.paths.some(p=>p.includes("schema-preview"))).toBe(false);
 });
+it("uses one server-owned preview and approval for Schema, Builder and Sample",async()=>{
+  const previewPath=`${root}/t1/journey-preview`;
+  const combined={id:"build_and_test_pipeline",state:"requires_confirmation",method:"GET",url:previewPath,requires_confirmation:true,reason:"confirm_one_bounded_schema_builder_sample_scope",scope:{maximum_sample_images:3}};
+  const view={...mainline("t1"),intake:{missing_slots:["label_spec","training_target"],dataset_scope:[{image_id:"image-uuid"}],label_rules:null,training_target:null},available_actions:[combined]};
+  const workspace={project_id:"TEST-alpha",project_owner_id:"owner-a",conversation_id:"conversation-a",task:{input:{id:"t1",schema_revision:"schema-1"}},agent_model:{revision:2,model_profile_id:null},actions:{},queue:[],calls:[],mainline:view};
+  const images=[{image_id:"image-uuid",content_hash:"pixels"}],allowed_models=[{model_id:"model-profile:vision",binding_digest:"binding"}];
+  const consent={id:"journey",task_id:"t1",builder_operation_id:"builder",sample_operation_id:"sample",builder_model_id:"agent",previous_grant_id:null,builder_scope_hash:"scope",schema_id:"00000000-0000-0000-0000-000000000000",schema_revision:0,schema_digest:"schema",images,allowed_models,maximum_builder_calls:8,maximum_sample_calls:12,expires_at:"2099-01-01T00:00:00Z",allow_unknown_cost:false,schema_proposal:{call_id:"schema-call",model_id:"agent",scope_hash:"scope",expires_at:"2099-01-01T00:00:00Z",allow_unknown_cost:false}};
+  const preview={consent,builder:{model_name:"Planner",destination:"https://TEST.invalid"},data:{models:[{scope:allowed_models[0],display_name:"Vision",destination:"https://VISION.invalid",permissions:{}}]},estimated_cost:null,operation:"TEST"};
+  const calls:{path:string;method:string;body?:unknown}[]=[];
+  const reads=mockTransport({[`${root}/t1/workspace`]:workspace,[previewPath]:preview});
+  const transport:Transport=async<T>(path:string,init?:RequestInit)=>{
+    calls.push({path,method:init?.method||"GET",...(init?.body?{body:JSON.parse(String(init.body))}:{})});
+    if(path===`${root}/t1/journey-consents`&&init?.method==="POST")return {consent:{...consent,allow_unknown_cost:true,schema_proposal:{...consent.schema_proposal,allow_unknown_cost:true}},resolved_consent:null,revoked:false,sample:null} as T;
+    return reads.transport<T>(path,init);
+  };
+  const adapter=new HttpAdapter(transport,memoryStorage());await adapter.refresh();await adapter.loadTask("TEST-alpha","t1");calls.length=0;
+  const command={id:"one-approval",project:"TEST-alpha",task:"t1",revision:"schema-1"};
+  await adapter.prepareAction(command,"sample");
+  expect(calls).toEqual([{path:previewPath,method:"GET"}]);
+  const approval=adapter.snapshot().tasks.find(item=>item.id==="t1")?.approval;
+  expect(approval).toMatchObject({title:"确认这次样例范围"});
+  await adapter.approveAction(command);
+  const writes=calls.filter(call=>call.method==="POST");
+  expect(writes).toHaveLength(1);
+  expect(writes[0]?.path).toBe(`${root}/t1/journey-consents`);
+  expect(writes[0]?.body).toMatchObject({id:"journey",task_id:"t1",allow_unknown_cost:true,schema_proposal:{allow_unknown_cost:true}});
+  expect(calls.some(call=>call.path.endsWith("/execution"))).toBe(false);
+});
 it("continues the exact saved Journey into Sample without creating another Journey or Builder",async()=>{
   const consentId="journey-1",sampleId="sample-1",readPath=`${root}/t1/journey-consents/${consentId}`,executePath=`${readPath}/execution`;
   const images=[{image_id:"image-uuid",content_hash:"pixels"}],allowed_models=[{model_id:"model-profile:vision",binding_digest:"binding-digest"}];

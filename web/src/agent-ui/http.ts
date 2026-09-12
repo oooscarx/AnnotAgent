@@ -545,6 +545,22 @@ export class HttpAdapter implements WorkspaceAdapter {
     if(this.stored(`approval.${task.id}`,null)) throw new Error("上次批准的结果待核对；请读取原回执，不能自动发起新的付费操作");
     const root = this.taskRoot(task);
     if(kind === "sample") {
+      const combined=task.mainline?.available_actions.find(item=>item.id==="build_and_test_pipeline");
+      if(combined) {
+        if(combined.state!=="requires_confirmation"||combined.method!=="GET"||!combined.requires_confirmation)throw new Error("服务器没有提供可确认的方案与样例范围");
+        const read=new URL(combined.url,"http://annotagent.local");
+        if(read.origin!=="http://annotagent.local"||read.pathname!==`${root}/journey-preview`||read.search||read.hash)throw new Error("服务器返回的方案与样例预览地址不属于当前任务");
+        const p=await this.transport<JourneyPreview>(combined.url);
+        const raw=p.consent;
+        const complete=[raw.id,raw.task_id,raw.builder_operation_id,raw.sample_operation_id,raw.builder_scope_hash,raw.schema_digest,raw.expires_at].every(value=>typeof value==="string"&&value.length>0);
+        const models=p.data?.models||[];
+        const modelScopes=new Map(models.map(model=>[`${model.scope.model_id}:${model.scope.binding_digest}`,model]));
+        if(!complete||raw.task_id!==task.id||!Array.isArray(raw.images)||raw.images.length<1||raw.images.length>3||raw.images.some(image=>!image.image_id||!image.content_hash)||!Array.isArray(raw.allowed_models)||raw.allowed_models.length<1||raw.allowed_models.some(model=>!model.model_id||!model.binding_digest||!modelScopes.has(`${model.model_id}:${model.binding_digest}`))||!Number.isSafeInteger(raw.maximum_builder_calls)||raw.maximum_builder_calls<1||!Number.isSafeInteger(raw.maximum_sample_calls)||raw.maximum_sample_calls<1)throw new Error("服务器返回的方案与样例范围不完整；未执行模型调用");
+        const consent:JourneyConsent={...raw,allow_unknown_cost:true,...(raw.schema_proposal?{schema_proposal:{...raw.schema_proposal,allow_unknown_cost:true}}:{})};
+        this.approvals.set(task.id,{id:c.id,url:`${root}/journey-consents`,body:consent});
+        this.emit({tasks:this.state.tasks.map(t=>t.id===task.id?{...t,approval:{id:c.id,title:"确认这次样例范围",revision:consent.builder_scope_hash,budget:null,scope:[`${consent.images.length} 张图片已冻结；最多 ${consent.maximum_builder_calls} 次规划调用、${consent.maximum_sample_calls} 次样例调用`,p.builder.model_name,p.builder.destination,...models.map(model=>`${model.display_name} → ${model.destination}`),`有效期：${consent.expires_at}`,"保存这一次授权后由服务器连续准备标注规范、生成方案并运行样例；不发布、不批量处理、不写正式标注"]}}:t)});
+        return;
+      }
       const action=task.mainline?.available_actions.find(item=>item.id==="test_pipeline_samples");
       if(action) {
         if(action.state!=="requires_confirmation"||action.method!=="GET"||action.execution_method!=="POST"||!action.requires_confirmation||!action.execution_url)throw new Error("已保存方案的样例范围不可执行；请重新读取任务状态");
