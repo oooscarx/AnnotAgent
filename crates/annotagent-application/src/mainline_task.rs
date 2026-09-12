@@ -1,28 +1,17 @@
 //! Passive Task delivery projection and bounded, server-authorized local advancement.
 use crate::{LocalApplication, PrepareDeliverySchema, require_delivery_schema};
-use annotagent_storage::{ConversationCallStatus, DeliveryPackagePhase};
+use annotagent_storage::{
+    ConversationCallStatus, ConversationJourneyRecord, DeliveryPackagePhase, SampleOperation,
+};
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-fn latest_processing_candidate(journeys: &[Value]) -> Option<Value> {
-    journeys.iter().find_map(|journey| {
-        let sample = journey.get("sample")?;
-        let status = sample.get("status")?.as_str()?;
-        if !matches!(status, "passed" | "human_approved") {
-            return None;
-        }
-        let draft_id = sample.get("draft_id")?.as_str()?;
-        let sample_test_id = sample.get("id")?.as_str()?;
-        let draft_revision = sample.get("draft_revision")?.as_u64()?;
-        let draft_content_hash = sample.get("draft_content_hash")?.as_str()?;
-        Some(json!({
-            "draft_id":draft_id,"draft_revision":draft_revision,
-            "draft_content_hash":draft_content_hash,
-            "sample_test_id":sample_test_id,"sample_status":status
-        }))
-    })
+fn journey_sample_operation(journeys: &[Value]) -> Option<&Value> {
+    journeys
+        .iter()
+        .find_map(|journey| journey.get("sample").filter(|sample| !sample.is_null()))
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -43,6 +32,102 @@ pub struct AdvanceTaskReceipt {
 }
 
 impl LocalApplication {
+    pub(crate) fn latest_processing_candidate(
+        &self,
+        operations: &[SampleOperation],
+    ) -> Result<Option<Value>> {
+        for operation in operations {
+            if operation.status != "succeeded" {
+                continue;
+            }
+            let Some(sample) = self.store.get_workflow_sample_test_by_id(&operation.id)? else {
+                continue;
+            };
+            let current_draft = self.store.get_workflow_draft(&sample.draft_id).ok();
+            if sample.project_id == operation.project_id
+                && sample.draft_id == operation.draft_id
+                && sample.status.allows_publication()
+                && current_draft.as_ref().is_some_and(|draft| {
+                    draft.project_id == sample.project_id
+                        && draft.revision == sample.draft_revision
+                        && draft.content_hash == sample.draft_content_hash
+                })
+            {
+                return Ok(Some(json!({
+                    "draft_id":sample.draft_id,"draft_revision":sample.draft_revision,
+                    "draft_content_hash":sample.draft_content_hash,
+                    "sample_test_id":sample.id,"sample_status":sample.status
+                })));
+            }
+        }
+        Ok(None)
+    }
+
+    pub(crate) fn pending_journey_sample_action(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        journeys: &[Value],
+    ) -> Result<Option<Value>> {
+        for journey in journeys {
+            if journey
+                .get("sample")
+                .is_some_and(|sample| !sample.is_null())
+            {
+                continue;
+            }
+            let Some(builder) = journey.get("builder") else {
+                continue;
+            };
+            let Some(evidence) = builder.get("evidence") else {
+                continue;
+            };
+            if builder["status"] != "completed"
+                || evidence["outcome"] != "draft_ready_for_human_review"
+            {
+                continue;
+            }
+            let record: ConversationJourneyRecord =
+                serde_json::from_value(journey["record"].clone())?;
+            let consent = record.effective_consent();
+            let draft_id = evidence["draft_id"].as_str().unwrap_or_default();
+            let exact_draft = self.store.get_workflow_draft(draft_id).is_ok_and(|draft| {
+                draft.project_id == project
+                    && evidence["draft_revision"].as_u64() == Some(draft.revision)
+                    && evidence["draft_content_hash"].as_str() == Some(draft.content_hash.as_str())
+            });
+            let active = !record.revoked
+                && consent.expires_at > chrono::Utc::now()
+                && exact_draft
+                && self
+                    .validate_conversation_journey_data(project, conversation, consent)
+                    .is_ok();
+            let root = format!(
+                "/api/projects/{project}/conversations/{conversation}/tasks/{task}/journey-consents/{}",
+                record.consent.id
+            );
+            return Ok(Some(json!({
+                "id":"test_pipeline_samples",
+                "state":if active{"requires_confirmation"}else{"blocked"},
+                "method":"GET","url":root.clone(),
+                "execution_method":"POST","execution_url":format!("{root}/execution"),
+                "requires_confirmation":true,
+                "reason":if active{"exact_saved_journey_sample_requires_confirmation"}else{"saved_journey_sample_scope_stale"},
+                "scope":{
+                    "journey_consent_id":record.consent.id,
+                    "sample_operation_id":consent.sample_operation_id,
+                    "draft_id":draft_id,"draft_revision":evidence["draft_revision"],
+                    "draft_content_hash":evidence["draft_content_hash"],
+                    "images":consent.images,"allowed_models":consent.allowed_models,
+                    "maximum_sample_calls":consent.maximum_sample_calls,
+                    "expires_at":consent.expires_at
+                }
+            })));
+        }
+        Ok(None)
+    }
+
     /// Reconciles existing durable records. It never grants permission or dispatches work.
     pub fn mainline_task_read_model(
         &self,
@@ -103,7 +188,12 @@ impl LocalApplication {
             .collect::<Vec<_>>();
         let processing = self.conversation_processing_history(project, conversation, task)?;
         let journeys = self.conversation_journey_history(project, conversation, task)?;
-        let processing_candidate = latest_processing_candidate(&journeys);
+        let sample_operations =
+            self.store
+                .conversation_sample_operations(project, conversation, task)?;
+        let processing_candidate = self.latest_processing_candidate(&sample_operations)?;
+        let pending_journey_sample =
+            self.pending_journey_sample_action(project, conversation, task, &journeys)?;
         let processing_completed = processing.iter().any(|operation| {
             matches!(
                 operation.get("phase").and_then(Value::as_str),
@@ -231,6 +321,22 @@ impl LocalApplication {
                     "preview_freezes_model_bindings_destination_and_cost":true
                 }
             }));
+        } else if processing.is_empty()
+            && let Some(pending_journey_sample) = pending_journey_sample
+        {
+            actions.push(pending_journey_sample);
+        } else if processing.is_empty() && journey_sample_operation(&journeys).is_some() {
+            let sample = journey_sample_operation(&journeys).expect("checked Journey sample");
+            let status = sample["status"].as_str().unwrap_or("unknown");
+            actions.push(json!({
+                "id":"inspect_pipeline_samples",
+                "state":if matches!(status,"queued"|"running"|"cancelling"|"succeeded"){"available"}else{"blocked"},
+                "method":"GET",
+                "url":format!("/api/projects/{project}/sample-operations/{}",sample["id"].as_str().unwrap_or_default()),
+                "requires_confirmation":false,
+                "reason":if matches!(status,"failed"|"interrupted"|"cancelled"){"sample_terminal_without_success_no_automatic_retry"}else{"sample_operation_already_exists"},
+                "scope":{"sample_operation_id":sample["id"],"status":status}
+            }));
         } else if processing.is_empty() {
             actions.push(json!({
                 "id":"build_and_test_pipeline","state":"requires_confirmation","method":"GET",
@@ -334,7 +440,10 @@ impl LocalApplication {
                         "requires_approval":action["requires_confirmation"],
                         "scope_revision":revision,
                         "method":action["method"],
-                        "url":action["url"]
+                        "url":action["url"],
+                        "execution_method":action.get("execution_method").cloned().unwrap_or(Value::Null),
+                        "execution_url":action.get("execution_url").cloned().unwrap_or(Value::Null),
+                        "scope":action.get("scope").cloned().unwrap_or(Value::Null)
                     })
                 })
                 .collect(),
@@ -437,19 +546,19 @@ impl LocalApplication {
 
 #[cfg(test)]
 mod tests {
-    use super::latest_processing_candidate;
+    use super::journey_sample_operation;
     use serde_json::json;
 
     #[test]
-    fn processing_candidate_requires_a_successful_exact_sample() {
-        let hash = "a".repeat(64);
+    fn journey_sample_operation_never_treats_a_missing_sample_as_terminal() {
         let journeys = vec![
-            json!({"sample":{"id":"newer-failed","draft_id":"draft-2","draft_revision":2,"draft_content_hash":hash,"status":"failed"}}),
-            json!({"sample":{"id":"eligible","draft_id":"draft-1","draft_revision":4,"draft_content_hash":hash,"status":"human_approved"}}),
+            json!({"sample":null}),
+            json!({"sample":{"id":"saved-operation","status":"running"}}),
         ];
-        let selected = latest_processing_candidate(&journeys).unwrap();
-        assert_eq!(selected["sample_test_id"], "eligible");
-        assert_eq!(selected["draft_revision"], 4);
-        assert!(latest_processing_candidate(&[json!({"sample":null})]).is_none());
+        assert_eq!(
+            journey_sample_operation(&journeys).unwrap()["id"],
+            "saved-operation"
+        );
+        assert!(journey_sample_operation(&[json!({"sample":null})]).is_none());
     }
 }

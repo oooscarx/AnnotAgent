@@ -281,11 +281,217 @@ mod tests {
         )
         .await;
         assert_eq!(stale.status(), axum::http::StatusCode::CONFLICT);
+        let schemas = app
+            .human_conversation_schema_drafts("TEST-mainline-task", conversation, sent.task_id)
+            .unwrap();
+        assert_eq!(schemas.len(), 1);
+
+        // A completed Builder is still only the first half of the saved Journey.
+        // The Task view must expose that same consent/sample identity over its
+        // registered GET+POST routes instead of offering a new Builder preview.
+        let now = Utc::now();
+        let provider = ProviderProfile {
+            id: ProviderId::new(),
+            display_name: "TEST saved Journey provider".into(),
+            preset_id: Some("mock".into()),
+            adapter: ProviderAdapterKind::Mock,
+            base_url: "http://127.0.0.1:8796/v1".parse().unwrap(),
+            organization: None,
+            workspace: None,
+            credential_ref: None,
+            safe_headers: BTreeMap::new(),
+            connection_policy: ProviderConnectionPolicy::default(),
+            enabled: true,
+            health: ProviderHealthSnapshot {
+                status: ProviderHealthStatus::Available,
+                safe_message: Some("TEST only".into()),
+                checked_at: Some(now),
+            },
+            created_at: now,
+            updated_at: now,
+        };
+        let model = ModelProfile {
+            id: ModelProfileId::new(),
+            revision: 1,
+            provider_id: provider.id,
+            display_name: "TEST saved Journey visual model".into(),
+            remote_model_id: "TEST-not-called-by-read".into(),
+            input_modalities: BTreeSet::from([InputModality::Text, InputModality::Image]),
+            protocol_features: ProtocolFeatures::default(),
+            task_capabilities: BTreeSet::from([ModelCapability::ImageClassification]),
+            capability_source: CapabilityDeclarationSource::UserDeclared,
+            limits: ModelLimits::default(),
+            generation_defaults: GenerationDefaults::default(),
+            pricing: ModelPricing::default(),
+            quality_contracts: vec![],
+            status: ModelProfileStatus::Available,
+            enabled: true,
+            locked: false,
+            created_at: now,
+            updated_at: now,
+        };
+        app.store().save_provider_profile(&provider).unwrap();
+        app.store().save_model_profile(&model).unwrap();
+        let selections = vec![format!("model-profile:{}", model.id)];
+        let scope = app
+            .conversation_journey_data_scope(
+                "TEST-mainline-task",
+                conversation,
+                sent.task_id,
+                schemas[0].id,
+                schemas[0].revision,
+                &selections,
+            )
+            .unwrap();
+        let consent = annotagent_storage::ConversationJourneyConsent {
+            repair_after_answer: None,
+            repair: None,
+            continue_after_clarification: false,
+            schema_proposal: None,
+            id: uuid::Uuid::new_v4(),
+            task_id: sent.task_id,
+            builder_operation_id: uuid::Uuid::new_v4(),
+            builder_model_id: Some(model.id),
+            previous_grant_id: None,
+            sample_operation_id: uuid::Uuid::new_v4(),
+            builder_scope_hash: "a".repeat(64),
+            schema_id: schemas[0].id,
+            schema_revision: schemas[0].revision,
+            schema_digest: scope.schema_digest.clone(),
+            images: scope.images.clone(),
+            allowed_models: scope.models.iter().map(|item| item.scope.clone()).collect(),
+            maximum_builder_calls: 8,
+            maximum_sample_calls: 12,
+            expires_at: now + chrono::Duration::minutes(20),
+            allow_unknown_cost: true,
+        };
+        let owner = stable_project_id(
+            app.project_path("TEST-mainline-task")
+                .unwrap()
+                .parent()
+                .unwrap(),
+        )
+        .to_string();
+        app.store()
+            .save_conversation_journey(&owner, conversation, &consent)
+            .unwrap();
+        let mut draft = app
+            .create_workflow_draft(
+                "TEST-mainline-task",
+                &annotagent_application::load_settings(None).unwrap(),
+                false,
+            )
+            .unwrap();
+        draft.nodes.push(annotagent_core::WorkflowDraftNode {
+            id: "TEST-classifier".into(),
+            node_type: "classification.classify".into(),
+            kind: WorkflowNodeKind::VisionModel,
+            model_profile_binding: Some(annotagent_core::WorkflowModelBinding {
+                model_profile_id: model.id,
+                locked: true,
+            }),
+            ..annotagent_core::WorkflowDraftNode::default()
+        });
+        let draft = app.save_workflow_draft(draft).unwrap();
+        let draft = app
+            .bind_conversation_schema_to_workflow(
+                "TEST-mainline-task",
+                &draft.id,
+                draft.revision,
+                schemas[0].id,
+                schemas[0].revision,
+            )
+            .unwrap();
+        app.store()
+            .reserve_conversation_builder(
+                &owner,
+                sent.task_id,
+                consent.builder_operation_id,
+                &"1".repeat(64),
+            )
+            .unwrap();
+        app.store()
+            .settle_conversation_builder(
+                &owner,
+                sent.task_id,
+                consent.builder_operation_id,
+                true,
+                &json!({
+                    "outcome":"draft_ready_for_human_review",
+                    "draft_id":draft.id,
+                    "draft_revision":draft.revision,
+                    "draft_content_hash":draft.content_hash
+                }),
+            )
+            .unwrap();
+        let continued =
+            response_json(request(&service, Method::GET, &format!("{root}/workspace"), None).await)
+                .await;
+        let action = &continued["mainline"]["available_actions"][0];
+        assert_eq!(action["id"], "test_pipeline_samples");
+        assert_eq!(action["state"], "requires_confirmation");
         assert_eq!(
-            app.human_conversation_schema_drafts("TEST-mainline-task", conversation, sent.task_id,)
+            action["scope"]["sample_operation_id"],
+            consent.sample_operation_id.to_string()
+        );
+        assert_eq!(action["scope"]["draft_id"], draft.id);
+        assert_eq!(
+            action["url"],
+            format!("{root}/journey-consents/{}", consent.id)
+        );
+        assert_eq!(
+            action["execution_url"],
+            format!("{root}/journey-consents/{}/execution", consent.id)
+        );
+        let exact_consent = response_json(
+            request(&service, Method::GET, action["url"].as_str().unwrap(), None).await,
+        )
+        .await;
+        assert_eq!(exact_consent["consent"]["id"], consent.id.to_string());
+        assert_eq!(
+            exact_consent["consent"]["sample_operation_id"],
+            consent.sample_operation_id.to_string()
+        );
+        let execution_url = action["execution_url"].as_str().unwrap();
+        let first_execution =
+            response_json(request(&service, Method::POST, execution_url, Some(json!({}))).await)
+                .await;
+        let repeated_execution =
+            response_json(request(&service, Method::POST, execution_url, Some(json!({}))).await)
+                .await;
+        assert_eq!(
+            first_execution["record"]["consent"]["builder_operation_id"],
+            consent.builder_operation_id.to_string()
+        );
+        assert_eq!(
+            repeated_execution["record"]["consent"]["sample_operation_id"],
+            consent.sample_operation_id.to_string()
+        );
+        for _ in 0..100 {
+            let current =
+                response_json(request(&service, Method::GET, execution_url, None).await).await;
+            if current["dispatch"]["status"] != "running" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(
+            app.conversation_builder_history("TEST-mainline-task", conversation, sent.task_id)
+                .unwrap()["items"]
+                .as_array()
                 .unwrap()
                 .len(),
             1
+        );
+        let sample_operations = app
+            .store()
+            .conversation_sample_operations("TEST-mainline-task", conversation, sent.task_id)
+            .unwrap();
+        assert!(sample_operations.len() <= 1);
+        assert!(
+            sample_operations
+                .iter()
+                .all(|operation| operation.id == consent.sample_operation_id.to_string())
         );
     }
     #[tokio::test]

@@ -537,7 +537,10 @@ impl LocalApplication {
 mod tests {
     use super::*;
     use annotagent_core::*;
-    use annotagent_storage::{BeginConversationTask, ConversationMessageInput};
+    use annotagent_storage::{
+        BeginConversationTask, ConversationMessageInput, SampleOperation, WorkflowSampleTest,
+        WorkflowSampleTestInput, WorkflowSampleTestStatus,
+    };
     use std::collections::BTreeMap;
 
     #[test]
@@ -747,6 +750,23 @@ mod tests {
             )
             .unwrap();
         app.store.settle_conversation_builder(&owner,task,consent.builder_operation_id,true,&serde_json::json!({"outcome":"draft_ready_for_human_review","draft_id":draft.id,"draft_revision":draft.revision,"draft_content_hash":draft.content_hash})).unwrap();
+        let pending = app
+            .pending_journey_sample_action(
+                project,
+                conversation,
+                task,
+                &app.conversation_journey_history(project, conversation, task)
+                    .unwrap(),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(pending["id"], "test_pipeline_samples");
+        assert_eq!(pending["state"], "requires_confirmation");
+        assert_eq!(
+            pending["scope"]["sample_operation_id"],
+            consent.sample_operation_id.to_string()
+        );
+        assert_eq!(pending["scope"]["draft_id"], draft.id);
         let sealed = app
             .seal_conversation_journey_draft(
                 project,
@@ -766,9 +786,106 @@ mod tests {
             sealed.sample.as_ref().unwrap().models,
             consent.allowed_models
         );
+        // Sealing records the exact Draft/model/image scope, but still does not
+        // create or dispatch the Sample Operation. The same saved Journey remains
+        // the only continuation until that operation is durably reserved.
+        assert_eq!(
+            app.pending_journey_sample_action(
+                project,
+                conversation,
+                task,
+                &app.conversation_journey_history(project, conversation, task)
+                    .unwrap(),
+            )
+            .unwrap()
+            .unwrap()["scope"]["sample_operation_id"],
+            consent.sample_operation_id.to_string()
+        );
+        let sample_id = consent.sample_operation_id.to_string();
+        let operation = SampleOperation {
+            id: sample_id.clone(),
+            project_id: project.into(),
+            draft_id: draft.id.clone(),
+            authorization_fingerprint: "2".repeat(64),
+            request: serde_json::json!({
+                "conversation": {
+                    "conversation_id": conversation,
+                    "task_id": task,
+                    "journey_consent_id": consent.id
+                },
+                "image_indices": [0]
+            }),
+            status: "queued".into(),
+            error: None,
+            created_at: now.to_rfc3339(),
+            updated_at: now.to_rfc3339(),
+        };
+        app.store.reserve_sample_operation(&operation).unwrap();
+        let history_with_sample = app
+            .conversation_journey_history(project, conversation, task)
+            .unwrap();
+        assert_eq!(
+            history_with_sample[0]["sample"]["id"],
+            consent.sample_operation_id.to_string()
+        );
+        assert!(
+            app.pending_journey_sample_action(project, conversation, task, &history_with_sample)
+                .unwrap()
+                .is_none()
+        );
+        assert!(!app.store.reserve_sample_operation(&operation).unwrap());
+        app.store.start_sample_operation(&sample_id).unwrap();
+        app.store
+            .save_workflow_sample_test(&WorkflowSampleTest {
+                id: sample_id.clone(),
+                draft_id: draft.id.clone(),
+                project_id: project.into(),
+                draft_revision: draft.revision,
+                request_revision: draft.revision,
+                draft_content_hash: draft.content_hash.clone(),
+                image_set_hash: "3".repeat(64),
+                model_snapshot_hash: "4".repeat(64),
+                status: WorkflowSampleTestStatus::Passed,
+                inputs: vec![WorkflowSampleTestInput {
+                    image_id: scope.images[0].image_id.to_string(),
+                    content_hash: scope.images[0].content_hash.clone(),
+                }],
+                model_bindings: BTreeMap::new(),
+                report: WorkflowDryRunReport {
+                    sandbox: true,
+                    validation: WorkflowValidationReport {
+                        valid: true,
+                        issues: vec![],
+                        execution_order: vec![],
+                    },
+                    samples: vec![],
+                    summary: SampleTestSummary::default(),
+                    total_latency_ms: 0,
+                    estimated_cost: "TEST zero".into(),
+                },
+                started_at: now,
+                completed_at: now,
+            })
+            .unwrap();
+        app.store.finish_sample_operation(&sample_id, None).unwrap();
+        let operations = app
+            .store
+            .conversation_sample_operations(project, conversation, task)
+            .unwrap();
+        assert_eq!(
+            app.latest_processing_candidate(&operations)
+                .unwrap()
+                .unwrap()["sample_test_id"],
+            sample_id
+        );
         let mut edited = draft.clone();
         edited.name = "TEST later edit".into();
         app.save_workflow_draft(edited).unwrap();
+        assert!(
+            app.latest_processing_candidate(&operations)
+                .unwrap()
+                .is_none()
+        );
         assert!(
             app.seal_conversation_journey_draft(
                 project,

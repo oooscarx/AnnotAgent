@@ -270,3 +270,41 @@ and `validate_exact_draft` afterward, with the existing Builder/Sample preview
 URLs. Those previews validate the actual selected nodes/bindings and permissions.
 The setup request does not claim a detector is required, does not auto-select a
 VLM, and does not weaken production eligibility.
+
+## ML-020 saved Journey sample continuation (implemented)
+
+The Task read model now distinguishes the two durable halves of an approved
+Journey. A completed Builder with `outcome:draft_ready_for_human_review` is not a
+completed Sample and does not authorize a new Builder:
+
+- `mainline.available_actions[]` and the G0 `actions[]` return
+  `id:test_pipeline_samples`, `state:requires_confirmation` and the exact saved
+  Journey/Draft/Sample scope. `method:GET` + `url` reads the original consent;
+  `execution_method:POST` + `execution_url` invokes its existing explicit
+  execution boundary with `{}`.
+- The scope includes `journey_consent_id`, `sample_operation_id`, exact Draft
+  ID/revision/content hash, ordered image IDs/hashes, allowed model binding
+  digests, the saved maximum Sample calls and expiry. A revoked, expired, edited
+  Draft, changed image or changed Registry destination returns the same action as
+  `blocked` with `reason:saved_journey_sample_scope_stale`.
+- Once that Sample Operation is durably reserved, refresh returns
+  `inspect_pipeline_samples` with its exact project-owned GET URL. It does not
+  offer another Builder or Sample. Failed/interrupted/cancelled Sample work is not
+  automatically retried.
+- `start_delivery_processing` appears only when the saved operation resolves to a
+  real `WorkflowSampleTest` whose business status is `passed|human_approved` and
+  whose current Draft still matches its exact revision/content hash. Operation
+  transport status `succeeded` alone is insufficient.
+
+The two existing routes used by this projection are:
+
+| Method and URL | Request / response | Side effects |
+|---|---|---|
+| `GET D/journey-consents/K` | Original owned `ConversationJourneyRecord` including frozen consent and optional sealed Sample scope. | None. It does not claim a dispatch or create a Sample. |
+| `POST D/journey-consents/K/execution` | Empty object `{}` → current `ConversationJourneyExecutionStatus`. | Claims one existing Journey dispatch. Existing Builder and Sample IDs are reused; a running or already-created Sample is returned without redispatch. |
+
+Clients must render and confirm the server action, GET its exact consent when a
+review screen is needed, then POST the returned `execution_url`. They must not
+construct new Journey, Builder, or Sample UUIDs for this transition. Repeating GET
+is passive. Repeating the exact POST while dispatch is active or after the Sample
+record exists returns current receipts and cannot create another Builder or Sample.
