@@ -1,0 +1,30 @@
+[
+  {
+    "theme": "light",
+    "width": 1280,
+    "scrollWidth": 1280,
+    "clientWidth": 1280,
+    "brokenImages": []
+  },
+  {
+    "theme": "dark",
+    "width": 1280,
+    "scrollWidth": 1280,
+    "clientWidth": 1280,
+    "brokenImages": []
+  },
+  {
+    "theme": "light",
+    "width": 390,
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "brokenImages": []
+  },
+  {
+    "theme": "dark",
+    "width": 390,
+    "scrollWidth": 390,
+    "clientWidth": 390,
+    "brokenImages": []
+  }
+]

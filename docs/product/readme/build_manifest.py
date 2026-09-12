@@ -1,0 +1,19 @@
+from pathlib import Path
+import hashlib,json,datetime
+P=Path(__file__).parent;R=P.parents[2]
+assets=[]
+for f in sorted(P.iterdir()):
+ if f.suffix not in ['.png','.svg']:continue
+ kind='concept_diagram' if f.name.startswith('flow') else 'brand_art' if f.name.startswith('brand') else 'local_markdown_preview' if f.name.startswith('preview') else 'ui_screenshot'
+ a={'file':str(f.relative_to(R)),'sha256':hashlib.sha256(f.read_bytes()).hexdigest(),'bytes':f.stat().st_size,'type':kind,'source_sha':'eaeae4cf8ee92bded9afb5577d2c9b70bc112de0','captured_at':None,'created_date':'2026-09-12','viewport':None,'theme':'dark' if 'dark' in f.name else 'light','data_source':'Documentation-generated vector using read-only Paper & Graphite tokens and monochrome mark','model_state':'not_applicable','crop_redaction':'none','proves':'Conceptual responsibilities or brand appearance; not execution evidence','does_not_prove':'Model inference, accuracy or completed delivery','public_release':'reviewable; final integration approval pending'}
+ if f.name=='workspace.png':
+  a.update(source_sha=None,captured_at='2026-09-12 (Asia/Shanghai; exact capture second not recorded)',viewport={'width':1600,'height':1000,'dpr':1},data_source='Existing B-Human football sample task; historical server build cef9b4b, runtime static UI build SHA not independently established. Sample execution evidence: provider-recovery 6819b4d.',model_state='real Qwen visual localization and EfficientSAM recorded historically; no inference invoked for capture',proves='Full workspace and saved candidate with human assistance/read-only warning',does_not_prove='Final integrated UI, current-schema inference, accepted formal annotations, training target persistence or ready football ZIP',public_release='Data-source attribution retained; dataset image redistribution rights require maintainer verification')
+ elif f.name in ['review-TEST.png','package-TEST.png']:
+  package=f.name=='package-TEST.png'
+  a.update(source_sha='7d17054274cfd83c93ae8d528ed52b8275622dd3',captured_at=None,created_date='2026-09-10 original evidence; copied 2026-09-12',viewport={'width':1440,'height':960,'dpr':1},data_source='docs/evidence/raw-images-to-dataset/'+('delivery-http/ready-TEST.png' if package else 'object-edit-http/correction-TEST.png'),model_state='TEST synthetic rectangles; scripted external-model-only fixture; actual HTTP UI',proves='Persisted TEST ZIP download receipt' if package else 'Formal object canvas and unresolved whole-image state',does_not_prove='Real visual-model accuracy or the B-Human task; final integrated UI'+('' if package else '; saved edit receipt is not visible in this frame'))
+  a['source_detail']='Ready capture served 7d17054; review capture c52e3c6 plus changes committed as 7d17054. Capture second absent from source record; not inferred from file mtime.'
+ elif kind=='local_markdown_preview':
+  a.update(data_source='Local rendered README with marked + Chromium; not GitHub website',model_state='not_applicable',proves='Local layout, readable body text and image rendering',does_not_prove='Actual GitHub rendering or application behavior',crop_redaction='top 1250 px crop for preview-top only; other previews full page')
+  a['viewport']={'width':390 if '390' in f.name else 1280,'height':900,'dpr':1}
+ assets.append(a)
+(P/'ASSET_MANIFEST.json').write_text(json.dumps({'schema_version':1,'documentation_base_sha':'eaeae4cf8ee92bded9afb5577d2c9b70bc112de0','application_baseline':'d3220cb','integration_snapshot_read':'1b1d9de16d5181e249967d4e8e47b977a4b645d3','final_application_sha':None,'status':'review draft; final source-aligned real screenshots pending','zip_evidence':{'type':'existing TEST browser download, independently read only','sha256':'f3c915950cf679742161e2bf061a67e05938cf148c935966ee31d319185e3fa9','bytes':19527,'entries':28,'crc_check':'passed','included_in_git':False},'assets':assets},ensure_ascii=False,indent=2)+'\n')

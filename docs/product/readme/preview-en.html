@@ -1,0 +1,93 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><base href="../../../"><title>README 本地近似预览</title><style>body{margin:0;background:#fff;color:#20221f;font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif}main{max-width:980px;margin:30px auto;padding:32px}h1,h2{line-height:1.35;border-bottom:1px solid #daddd5;padding-bottom:10px}h1{font-size:32px}h2{font-size:24px;margin-top:32px}img{max-width:100%;height:auto}a{color:#355e8c}pre{background:#f0f1ed;overflow:auto;padding:16px}code{font:14px/1.5 ui-monospace,monospace}blockquote{margin:20px 0;padding-left:16px;border-left:3px solid #daddd5;color:#666a64}table{border-collapse:collapse;width:100%;font-size:15px}td,th{border:1px solid #daddd5;padding:10px;text-align:left}li{margin:10px 0}@media(prefers-color-scheme:dark){body{background:#181a18;color:#edefe8}a{color:#a3bedc}pre{background:#202320}blockquote{color:#a5aba0}td,th{border-color:#484d44}}@media(max-width:500px){main{padding:18px;margin:0}table{font-size:14px}td,th{padding:7px}h1{font-size:28px}}</style><main><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/product/readme/brand-dark.svg">
+  <img src="docs/product/readme/brand-light.svg" alt="AnnotAgent monochrome logo" width="800">
+</picture>
+
+<h1>AnnotAgent</h1>
+<p><strong>A visual data agent, from raw images to training data packages.</strong></p>
+<p>Specify the images, what to annotate, and what you intend to train. An LLM organizes vision models and processing tools; you inspect and correct results when needed, then export the supported format. The model generating annotations need not be the model you plan to train.</p>
+<blockquote>
+<p>Alpha · Local, single-user application. Model setup, sample validation, formal review and delivery checks are required. Complete training packages currently support the Ultralytics YOLO detection preset only. AnnotAgent does not train models.</p>
+</blockquote>
+<p><a href="#get-started">Get started</a> · <a href="#one-task-from-images-to-a-package">Example task</a> · <a href="docs/product/readme/GUIDE.md">Documentation</a> · <a href="README.md">简体中文</a></p>
+<p><img src="docs/product/readme/workspace.png" alt="Real B-Human football sample with project navigation, conversation, a bounding-box candidate and pending human assistance"></p>
+<p><em>Real saved sample, with review warnings and read-only state preserved. This is not evidence of accepted formal annotations or a completed training package. The capture service is not the final integration build. See the <a href="docs/product/readme/ASSET_MANIFEST.json">asset manifest</a>.</em></p>
+<h2>One task: from images to a package</h2>
+<p>Consider detecting <code>ball</code> in match images for Ultralytics YOLO detection. These four steps describe the intended progression of one task. The real screenshot covers the sample stage; later review and delivery mechanisms are supported by code and separately identified TEST evidence.</p>
+<ol>
+<li><strong>Describe the goal.</strong> Select the images, define annotation rules and specify the training target. Fill missing fields in the task. Saving an intent does not authorize external requests.</li>
+<li><strong>Compose and try.</strong> The planning model proposes a workflow using available capabilities. A real football sample executed visual localization and EfficientSAM prompted segmentation. Check execution evidence, not the installed-model list. Inspect samples before approving formal processing.</li>
+<li><strong>Provide human assistance.</strong> Sample feedback helps refine the method. Formal results require object review and separate whole-image decisions for completeness, negatives or exclusions. Accepting one box does not establish image completeness.</li>
+<li><strong>Validate and package.</strong> For the supported preset, Rust produces the ZIP from frozen image scope, class mapping, review records and split policy. Meet readiness conditions and confirm packaging. One successful API call is not a completed dataset.</li>
+</ol>
+<p><a href="docs/product/readme/GUIDE.md">Task and review guide</a> · <a href="docs/product/readme/EVIDENCE.md">Separate TEST review and delivery evidence</a></p>
+<h2>More than one vision API call</h2>
+<ul>
+<li><strong>Compose models and tools for the task.</strong> An LLM proposes steps; Rust checks nodes, data types and bindings before publication. Detection, cropping, local recognition and segmentation can be combined. <a href="docs/WORKFLOW_MODEL.md">Workflow model</a>.</li>
+<li><strong>Inspect origins and revisions.</strong> Candidates reference images, runs, nodes and source artifacts. Sample feedback and formal annotation edits are distinct. Historical tasks and execution records remain inspectable. <a href="docs/product/readme/GUIDE.md">Task and review guide</a>.</li>
+<li><strong>Export deterministically.</strong> Exporters handle coordinates, directories, mappings and validation. Structural validity is not annotation accuracy. <a href="docs/product/readme/GUIDE.md#%E5%AF%BC%E5%87%BA%E8%8C%83%E5%9B%B4">Export scope</a>.</li>
+</ul>
+<p>These are mechanisms specialized for visual annotation, not a claim that general-purpose agents cannot implement them.</p>
+<h2>Get started</h2>
+<p>The recommended route is <strong>building from source</strong>. The repository pins Rust <strong>1.98.0</strong>. Use Node.js <strong>22.12 or later</strong>, npm and the committed lockfile. Native inference also needs compatible platform dependencies and weights.</p>
+<pre><code class="language-bash">npm --prefix web ci
+npm --prefix web run build
+cargo run --locked -p annotagent -- serve --workspace ./workspace --open
+</code></pre>
+<p>Open the <a href="http://127.0.0.1:8787">local workspace</a>. Create a project and task. Configure your Provider endpoint, API key and models in Settings. Supply the image scope, annotation goal and training target; follow the task prompts to confirm samples and formal processing. Resolve missing capabilities and return to the original task.</p>
+<ul>
+<li><strong>Source mode</strong> connects the Rust service and local workspace. Loading the page does not verify inference.</li>
+<li><strong>UI Preview</strong> uses development preview data and is not a real model execution environment. See <a href="docs/DEVELOPMENT.md">development documentation</a>.</li>
+<li><strong>Real inference</strong> requires your configured Provider or compatible local weights, plus confirmation of request scope and costs. Production weights are not all bundled.</li>
+</ul>
+<p>See the <a href="docs/product/readme/VALIDATION.md">validation record</a> for commands actually run for this documentation change.</p>
+<h2>Models and exports</h2>
+<table>
+<thead>
+<tr>
+<th>Role</th>
+<th>Current scope</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Agent planning model</td>
+<td>Configurable model capabilities and OpenAI-compatible Providers. Planning is distinct from visual execution.</td>
+</tr>
+<tr>
+<td>Vision model</td>
+<td>Registered VLM, detection, classification and segmentation implementations, subject to their protocols and bindings.</td>
+</tr>
+<tr>
+<td>Local Plugin / Model Instance</td>
+<td>A Plugin implements execution; an Instance binds weights and contracts. Registered, installed, Ready and actually executed are distinct states.</td>
+</tr>
+<tr>
+<td>Annotation export</td>
+<td>Native, COCO, YOLO and LabelMe, subject to schema compatibility and reported information loss.</td>
+</tr>
+<tr>
+<td>Complete training package</td>
+<td><code>ultralytics_yolo_detection</code>: original images, YOLO TXT, <code>data.yaml</code>, README and provenance, split, exclusion and validation records. Other annotation formats do not imply complete package support.</td>
+</tr>
+</tbody></table>
+<p>EfficientSAM-Ti has real macOS ARM64 CPU evidence. Other models and platforms require separate verification. Ready is not an accuracy guarantee. <a href="docs/PROVIDER_MODEL_REGISTRY.md">Model integration</a> · <a href="docs/REAL_MODEL_RELEASE.md">Local model requirements</a>.</p>
+<h2>Technical responsibilities</h2>
+<picture>
+  <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="docs/product/readme/flow-mobile-dark.svg">
+  <source media="(max-width: 600px)" srcset="docs/product/readme/flow-mobile-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/product/readme/flow-dark.svg">
+  <img src="docs/product/readme/flow-light.svg" alt="Conceptual responsibilities: task inputs, LLM planning, Rust execution, vision tools, human revision and deterministic export" width="100%">
+</picture>
+
+<p><em>Conceptual responsibilities, not the actual pipeline for every image. Rust controls execution, validation and export; React/TypeScript provides interaction; SQLite and local files retain records.</em></p>
+<h2>Limits, privacy and contributing</h2>
+<ul>
+<li>Local, single-user image workflows; no automatic training, video annotation or cloud collaboration. Do not expose the local server directly to the internet.</li>
+<li><strong>Remote Providers receive the images or text required by authorized requests</strong>, even though the workspace is local. Original metadata may contain private information; universal metadata removal is not promised.</li>
+<li>Stopping does not guarantee immediate remote termination or refunds. Unknown outcomes are not successes or grounds for blind retries. Continuation depends on authorization, current state and remaining budget.</li>
+<li>Automatic packaging needs an integrated server-side authorization and trigger path. Delivery immediately after the last review is not currently promised. Mask representation and editing have format limits.</li>
+<li>Validate quality on representative images. Geometry and file checks do not prove the absence of missed or incorrect labels.</li>
+</ul>
+<p><a href="docs/KNOWN_LIMITATIONS.md">Known limitations</a> · <a href="docs/SECURITY.md">Security</a> · <a href="docs/DEVELOPMENT.md">Development and contributions</a> · <a href="https://github.com/oooscarx/AnnotAgent/issues">Issues</a></p>
+<p>License: Cargo metadata declares MIT, but no root LICENSE text was found. Maintainers need to resolve this before redistribution. Model weights and datasets have their own terms.</p>
+</main></html>
