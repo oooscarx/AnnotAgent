@@ -1,4 +1,4 @@
-import type { Task } from "./adapter";
+import type { SchemaClarification, Task } from "./adapter";
 import { taskIsComplete, type IntakeSlot, type MainlineAction } from "./mainline";
 
 export type CurrentTaskAction =
@@ -28,6 +28,7 @@ export type CurrentTaskPresentation = {
   missing?: IntakeSlot[];
   primary?: CurrentTaskAction;
   action?: MainlineAction;
+  clarification?: SchemaClarification;
 };
 
 const missingQuestions: Record<IntakeSlot, string> = {
@@ -77,6 +78,16 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
             url: view.completion.download_url,
           }
         : undefined,
+    };
+  }
+
+  if (task.clarification) {
+    return {
+      kind: "needs_information",
+      title: "只需要确认输出类型",
+      detail:
+        "已记录的图片、标签和授权范围保持不变；这里只补充当前缺失的输出类型。",
+      clarification: task.clarification,
     };
   }
 

@@ -693,6 +693,9 @@ export function AgentPreviewApp({
                           busy={busy || approvalBusy}
                           onPrimary={handleCurrentTaskAction}
                           onEditTask={() => setTaskEditor(taskEditor === task.id ? null : task.id)}
+                          onClarificationChoice={adapter.answerSchemaClarification && currentTask.clarification
+                            ? choice => void act(() => adapter.answerSchemaClarification!(command(task), currentTask.clarification!, choice))
+                            : undefined}
                           details={<>
                             {!!task.receipts?.length && <ExecutionProgress receipts={task.receipts} />}
                             {adapter.taskUsage && !task.id.startsWith("new:") && <TaskUsage projectId={task.project} taskId={task.id} service={adapter.taskUsage} compact/>}

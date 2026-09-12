@@ -347,6 +347,37 @@ it("continues the exact saved Journey into Sample without creating another Journ
   expect(calls.filter(call=>call.method==="POST")).toEqual([{path:executePath,method:"POST",body:{}}]);
   expect(calls.some(call=>call.path.includes("journey-preview")||call.path.endsWith("/journey-consents")&&call.method==="POST")).toBe(false);
 });
+it("answers only the server-owned output choice and replays the exact command after a lost response",async()=>{
+  const storage=memoryStorage(),callId="schema-call",consentId="journey",answerPath=`${root}/t1/calls/${callId}/clarification/answer`,clarificationPath=`${root}/t1/calls/${callId}/clarification`;
+  const capability_readiness={authorization:{active:true,consent_id:consentId,source:"journey_consent"}};
+  const view={...mainline("t1"),capability_readiness};
+  const calls=[{id:callId,task_id:"t1",status:"completed",evidence:{decision:{Ok:{decision:"clarify",question:"框还是分类？",rationale:"只缺输出类型"}}}}];
+  const workspace={project_id:"TEST-alpha",project_owner_id:"owner-a",conversation_id:"conversation-a",task:{input:{id:"t1",schema_revision:"schema-1"}},agent_model:{revision:2,model_profile_id:null},actions:{},queue:[],calls,mainline:view};
+  let applied=false,lost=true;const writes:unknown[]=[];
+  const clarification=()=>({id:callId,task_id:"t1",conversation_id:"conversation-a",status:applied?"applied":"pending",schema_draft_id:applied?"schema-draft":null,question:"需要框出目标、描出轮廓，还是做整图分类？",expected_schema_revision:"empty-schema",choices:[{value:"bounding_box",label:"框住目标",supported:true,unsupported_reason_code:null,unsupported_reason:null},{value:"segmentation",label:"描出轮廓",supported:false,unsupported_reason_code:"not_ready",unsupported_reason:"当前交付路径尚未实现。"}],answer:applied?null:{method:"POST",url:answerPath,required_fields:["command_id","expected_schema_revision","journey_consent_id","choice"]}});
+  const reads=mockTransport({[`${root}/t1/workspace`]:workspace,[clarificationPath]:()=>Promise.resolve(clarification())});
+  const transport:Transport=async<T>(path:string,init?:RequestInit)=>{
+    if(path===answerPath&&init?.method==="POST"){
+      const body=JSON.parse(String(init.body));writes.push(body);
+      if(lost){lost=false;throw new Error("TEST answer receipt lost");}
+      applied=true;
+      return {clarification:{...clarification(),id:callId,status:"applied",schema_draft_id:"schema-draft"},schema:{id:"schema-draft",task_id:"t1"},selected_choice:"bounding_box",journey_resume:{consent_id:consentId}} as T;
+    }
+    return reads.transport<T>(path,init);
+  };
+  const first=new HttpAdapter(transport,storage);await first.refresh();await first.loadTask("TEST-alpha","t1");
+  const presented=first.snapshot().tasks.find(task=>task.id==="t1")!.clarification!;
+  expect(presented.choices).toEqual([{value:"bounding_box",label:"框住目标",supported:true},{value:"segmentation",label:"描出轮廓",supported:false,unsupportedReason:"当前交付路径尚未实现。"}]);
+  const original={id:"original-answer",project:"TEST-alpha",task:"t1",revision:"schema-1"};
+  await expect(first.answerSchemaClarification(original,presented,"bounding_box")).rejects.toThrow("receipt lost");
+  await expect(first.answerSchemaClarification(original,presented,"segmentation")).rejects.toThrow("尚未实现");
+  expect(writes).toHaveLength(1);
+  const restored=new HttpAdapter(transport,storage);await restored.refresh();await restored.loadTask("TEST-alpha","t1");
+  await restored.answerSchemaClarification({id:"replacement",project:"TEST-alpha",task:"t1",revision:"schema-1"},restored.snapshot().tasks.find(task=>task.id==="t1")!.clarification!,"bounding_box");
+  expect(writes).toHaveLength(2);expect(writes[1]).toEqual(writes[0]);
+  expect(writes[0]).toEqual({command_id:"original-answer",expected_schema_revision:"empty-schema",journey_consent_id:consentId,choice:"bounding_box"});
+  expect(restored.snapshot().tasks.find(task=>task.id==="t1")?.clarification).toBeUndefined();
+});
 it("uses the server-derived exact delivery processing action and only prepares confirmation",async()=>{
   const previewPath="/api/projects/TEST-alpha/processing-preview?draft_id=draft-current&sample_test_id=sample-current";
   const view={...mainline("t1"),available_actions:[{id:"start_delivery_processing",state:"requires_confirmation",method:"GET",url:previewPath,requires_confirmation:true,reason:"exact_delivery_processing_scope_requires_confirmation",scope:{delivery_revision:3,delivery_sha256:"frozen-delivery",images:[{image_id:"image-uuid",content_sha256:"pixels"}],draft:{draft_id:"draft-current",draft_revision:7,sample_test_id:"sample-current"}}}]};

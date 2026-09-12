@@ -2,6 +2,20 @@
 export type ImageId = number | string;
 export type Action = { available: boolean; reason: string };
 export type Approval = { id: string; title: string; scope: string[]; revision: string; budget: string | null };
+export type SchemaClarificationChoice = {
+  value: "bounding_box" | "segmentation" | "classification";
+  label: string;
+  supported: boolean;
+  unsupportedReason?: string;
+};
+export type SchemaClarification = {
+  callId: string;
+  question: string;
+  expectedSchemaRevision: string;
+  journeyConsentId: string;
+  answerUrl: string;
+  choices: SchemaClarificationChoice[];
+};
 export type Phase =
   | "idle"
   | "planning"
@@ -82,6 +96,7 @@ export type Task = {
   geometryEvidence?: Record<ImageId,import("./geometryComparison").GeometrySample>;
   excludedCandidates?: Record<ImageId,import("../sampleFeedbackOverlay").ExcludedSampleCandidate[]>;
   approval?: Approval;
+  clarification?: SchemaClarification;
   receipts?: {id:string; title:string; status:string; detail?:string; startedAt?:string; finishedAt?:string; durationMs?:number; stage?:string}[];
   queueEntries?: {id:string;text:string;status:string;canCancel:boolean;canPlan:boolean}[];
   processing?: {id:string;batch:string;status:string;url:string}[];
@@ -205,6 +220,11 @@ export interface WorkspaceAdapter {
   cancelQueue?(command: Command, message: string): Promise<void>;
   prepareQueue?(command: Command, message: string): Promise<void>;
   approveAction(command: Command): Promise<void>;
+  answerSchemaClarification?(
+    command: Command,
+    clarification: SchemaClarification,
+    choice: SchemaClarificationChoice["value"],
+  ): Promise<void>;
   interruptOperation(command: Command): Promise<void>;
   resumeOperation(command: Command, target?:string): Promise<void>;
   selectStop?(command:Command,target:string):Promise<void>;

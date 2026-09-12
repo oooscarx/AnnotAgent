@@ -14,7 +14,7 @@ import {ownedStopSelection} from "./stopSelection";
 import {taskFeedbackService} from "./TaskFeedback";
 import {taskHistoryApi} from "./taskHistory";
 import {stopTargetMatches} from "../conversation-control";
-import type { WorkspaceAdapter, Snapshot, Task, Command, Settings, ImageId, Box, Phase, Action } from "./adapter";
+import type { WorkspaceAdapter, Snapshot, Task, Command, Settings, ImageId, Box, Phase, Action, SchemaClarification, SchemaClarificationChoice } from "./adapter";
 import {readPendingDelivery,rememberPendingDelivery,clearPendingDelivery} from "./pendingDelivery";
 import {projectCallMessages} from "./messageProjection";
 import {createModelPreparationService} from "./modelPreparation";
@@ -42,6 +42,27 @@ type Workspace = {
 };
 type Thread = { id: string; role: "user"; task_id: string; project_owner_id: string; conversation_id: string; message: { input: ConversationMessageInput } };
 type SafeSettings = { revision: string; sections: { data_privacy: { workspace_id: string }; usage_budget: { future_run_budget: Record<string, unknown> & { max_cost?: string } } } };
+type SchemaClarificationView = {
+  id: string;
+  task_id: string;
+  conversation_id: string;
+  status: string;
+  question: string;
+  expected_schema_revision: string;
+  choices: {
+    value: SchemaClarificationChoice["value"];
+    label: string;
+    supported: boolean;
+    unsupported_reason?: string | null;
+  }[];
+  answer: { method: "POST"; url: string; required_fields: string[] } | null;
+};
+type SchemaClarificationAnswer = {
+  command_id: string;
+  expected_schema_revision: string;
+  journey_consent_id: string;
+  choice: SchemaClarificationChoice["value"];
+};
 export type Transport = <T>(path: string, init?: RequestInit) => Promise<T>;
 const persistedReferenceText=(input:ConversationMessageInput)=>input.reference?.scope==="sample_candidate"
   ? `引用：样例图片 ${input.image?.image_id || "未知"} · 候选 ${input.reference.candidate_id}`
@@ -414,7 +435,51 @@ export class HttpAdapter implements WorkspaceAdapter {
       const sampleId = human?.input.sample_test_id || sampleOp?.id;
       const draftId = sampleOp?.draft_id;
       if(human&&!draftId)throw new Error("人工问题的 Sample 未提供所属 Draft 映射；不会把 checkpoint 当作 Draft ID");
-      const result: Partial<Task> = {human:undefined,geometryEvidence:{},excludedCandidates:{}};
+      const result: Partial<Task> = {human:undefined,clarification:undefined,geometryEvidence:{},excludedCandidates:{}};
+      const clarificationCall = [...(ws?.calls || [])].reverse().find(call =>
+        call.status === "completed" && call.evidence?.decision?.Ok?.decision === "clarify",
+      );
+      if (ws && clarificationCall) {
+        const clarification = await this.transport<SchemaClarificationView>(
+          `${this.taskRoot(task)}/calls/${esc(clarificationCall.id)}/clarification`,
+          { signal: ctrl.signal },
+        );
+        if (
+          clarification.id !== clarificationCall.id ||
+          clarification.task_id !== task.id ||
+          clarification.conversation_id !== task.conversationId
+        ) throw new Error("Schema 澄清不属于当前任务；没有显示或提交回答。");
+        if (clarification.status === "pending" && clarification.answer) {
+          const authorization = (ws.mainline?.capability_readiness as {
+            authorization?: { active?: boolean; consent_id?: string };
+          } | undefined)?.authorization;
+          const expectedAnswer = `${this.taskRoot(task)}/calls/${esc(clarification.id)}/clarification/answer`;
+          const expectedFields = ["choice", "command_id", "expected_schema_revision", "journey_consent_id"];
+          if (
+            clarification.answer.method !== "POST" ||
+            clarification.answer.url !== expectedAnswer ||
+            [...clarification.answer.required_fields].sort().join(",") !== expectedFields.join(",") ||
+            !authorization?.active ||
+            !authorization.consent_id ||
+            !clarification.expected_schema_revision ||
+            !clarification.question.trim() ||
+            !clarification.choices.length
+          ) throw new Error("服务器没有提供完整、有效的当前澄清回答范围；没有猜测缺失字段。");
+          result.clarification = {
+            callId: clarification.id,
+            question: clarification.question,
+            expectedSchemaRevision: clarification.expected_schema_revision,
+            journeyConsentId: authorization.consent_id,
+            answerUrl: clarification.answer.url,
+            choices: clarification.choices.map(choice => ({
+              value: choice.value,
+              label: choice.label,
+              supported: choice.supported,
+              ...(choice.unsupported_reason ? { unsupportedReason: choice.unsupported_reason } : {}),
+            })),
+          };
+        }
+      }
       const proposal=ws?.builder_operations?.items.find(item=>item.session?.builder_proposal)?.session?.builder_proposal;
       if(proposal) {
         const steps=proposal.draft.label_pipeline ? [...proposal.draft.label_pipeline.shared_stages.flatMap(s=>s.steps),...proposal.draft.label_pipeline.label_pipelines.flatMap(p=>p.steps)] : [];
@@ -707,6 +772,49 @@ export class HttpAdapter implements WorkspaceAdapter {
     this.approvals.delete(task.id); this.save(`approval.${task.id}`,null);
     this.emit({tasks:this.state.tasks.map(t=>t.id===task.id?{...t,approval:undefined}:t)});
     await this.reloadCurrent(task);
+  }
+  async answerSchemaClarification(c: Command, clarification: SchemaClarification, choice: SchemaClarificationChoice["value"]) {
+    const task = this.checked(c);
+    if (!task.conversationId || task.clarification?.callId !== clarification.callId) throw new Error("当前任务的澄清问题已经变化；请重新读取后回答。");
+    const selected = clarification.choices.find(item => item.value === choice);
+    if (!selected || !selected.supported) throw new Error(selected?.unsupportedReason || "当前输出类型不可用；没有提交回答。");
+    const expectedUrl = `${this.taskRoot(task)}/calls/${esc(clarification.callId)}/clarification/answer`;
+    if (clarification.answerUrl !== expectedUrl) throw new Error("澄清回答地址不属于当前任务；没有提交回答。");
+    const suffix = `clarification-answer.${task.id}.${clarification.callId}`;
+    const stored = this.stored<SchemaClarificationAnswer | null>(suffix, null);
+    const input: SchemaClarificationAnswer = stored || {
+      command_id: c.id,
+      expected_schema_revision: clarification.expectedSchemaRevision,
+      journey_consent_id: clarification.journeyConsentId,
+      choice,
+    };
+    if (
+      input.expected_schema_revision !== clarification.expectedSchemaRevision ||
+      input.journey_consent_id !== clarification.journeyConsentId ||
+      input.choice !== choice
+    ) throw new Error("已保存的澄清回答范围不同；请先核实原请求，不能覆盖重试。");
+    this.save(suffix, input);
+    try {
+      const receipt = await this.transport<{
+        clarification: { id: string; status: string; schema_draft_id: string | null };
+        schema: { id: string; task_id: string };
+        selected_choice: SchemaClarificationChoice["value"];
+        journey_resume: { consent_id: string };
+      }>(clarification.answerUrl, { method: "POST", body: JSON.stringify(input) });
+      if (
+        receipt.clarification.id !== clarification.callId ||
+        receipt.clarification.status !== "applied" ||
+        !receipt.clarification.schema_draft_id ||
+        receipt.schema.task_id !== task.id ||
+        receipt.selected_choice !== choice ||
+        receipt.journey_resume.consent_id !== clarification.journeyConsentId
+      ) throw new Error("澄清回答回执身份不完整；原命令已保留，请核实服务端状态。");
+      this.save(suffix, null);
+      await this.reloadCurrent(task);
+    } catch (error) {
+      if (error instanceof ApiRequestError && error.status === 409 && error.code === "schema_clarification_revision_conflict") this.save(suffix, null);
+      throw error;
+    }
   }
   async interruptOperation(c: Command) {
     const task = this.checked(c); if(!this.workspaces.get(task.id)?.actions.stop?.available) throw new Error("服务端未提供可停止操作");

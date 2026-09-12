@@ -90,6 +90,29 @@ describe("single current-task presentation", () => {
     expect(result.primary).toBeUndefined();
   });
 
+  it("shows one server-owned output choice without reopening the full task form", () => {
+    const clarification = {
+      callId: "call-1",
+      question: "需要框出目标、描出轮廓，还是做整图分类？",
+      expectedSchemaRevision: "schema-empty",
+      journeyConsentId: "journey-1",
+      answerUrl: "/api/TEST/clarification/answer",
+      choices: [
+        { value: "bounding_box" as const, label: "框住目标", supported: true },
+        { value: "segmentation" as const, label: "描出轮廓", supported: false, unsupportedReason: "当前交付路径尚未实现。" },
+      ],
+    };
+    const result = selectCurrentTaskPresentation(task(view(), { clarification }));
+
+    expect(result).toMatchObject({
+      kind: "needs_information",
+      title: "只需要确认输出类型",
+      clarification,
+    });
+    expect(result.primary).toBeUndefined();
+    expect(result.missing).toBeUndefined();
+  });
+
   it("presents one current scope approval for builder plus sample", () => {
     const result = selectCurrentTaskPresentation(
       task(

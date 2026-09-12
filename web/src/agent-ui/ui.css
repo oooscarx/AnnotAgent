@@ -1022,6 +1022,23 @@ caption {
   align-items: center;
   gap: 8px;
 }
+.ui-app .current-task-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  width: 100%;
+}
+.ui-app .current-task-choice {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+}
+.ui-app .current-task-choice > button { justify-content: center; }
+.ui-app .current-task-choice > small {
+  color: var(--aa-text-muted);
+  line-height: 1.45;
+}
 .ui-app .current-task-scope {
   display: grid;
   gap: 6px;

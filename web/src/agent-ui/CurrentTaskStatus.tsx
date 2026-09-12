@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import type { Approval } from "./adapter";
+import type { Approval, SchemaClarificationChoice } from "./adapter";
 import type {
   CurrentTaskAction,
   CurrentTaskPresentation,
@@ -24,6 +24,7 @@ export function CurrentTaskStatus({
   busy,
   onPrimary,
   onEditTask,
+  onClarificationChoice,
   details,
 }: {
   presentation: CurrentTaskPresentation;
@@ -31,6 +32,7 @@ export function CurrentTaskStatus({
   busy: boolean;
   onPrimary: (action: CurrentTaskAction) => void;
   onEditTask: () => void;
+  onClarificationChoice?: (choice: SchemaClarificationChoice["value"]) => void;
   details?: ReactNode;
 }) {
   const [detailsRead, setDetailsRead] = useState(false);
@@ -65,7 +67,26 @@ export function CurrentTaskStatus({
       )}
 
       <div className="current-task-actions">
-        {presentation.kind === "needs_information" && (
+        {presentation.clarification && (
+          <div className="current-task-choices" aria-label="选择标注输出类型">
+            {presentation.clarification.choices.map((choice) => (
+              <div className="current-task-choice" key={choice.value}>
+                <button
+                  className={choice.supported ? "primary" : undefined}
+                  type="button"
+                  disabled={busy || !choice.supported || !onClarificationChoice}
+                  onClick={() => onClarificationChoice?.(choice.value)}
+                >
+                  {choice.label}
+                </button>
+                {!choice.supported && choice.unsupportedReason && (
+                  <small>{choice.unsupportedReason}</small>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        {presentation.kind === "needs_information" && !presentation.clarification && (
           <button type="button" onClick={onEditTask}>
             <Icon name="edit" size={16} />编辑任务信息
           </button>
