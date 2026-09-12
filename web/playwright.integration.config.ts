@@ -1,7 +1,7 @@
 import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "./e2e",
-  testMatch: ["agent-ui-history.spec.ts", "agent-ui-http.spec.ts", "agent-ui-project-management.spec.ts", "agent-ui-delivery.spec.ts", "agent-ui-mainline-integration.spec.ts"],
+  testMatch: ["agent-ui-history.spec.ts", "agent-ui-http.spec.ts", "agent-ui-project-management.spec.ts", "agent-ui-delivery.spec.ts", "agent-ui-mainline-integration.spec.ts", "p0-autonomous-sample.spec.ts"],
   fullyParallel: false,
   workers: 1,
   timeout: 60_000,

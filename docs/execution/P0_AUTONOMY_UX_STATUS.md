@@ -46,9 +46,18 @@ Read-only evidence from `127.0.0.1:8788` also confirms that the existing task re
 - Task usage now defaults to a compact per-task summary, deduplicates physical attempts across owned pages, prevents late pages crossing Task ownership, and reports read failures as unknown rather than zero or raw transport text.
 - Frontend 2's isolated component harness is 5/5 under the Vite UI Preview runner only. It is not production-page evidence and is excluded from P0 acceptance; the same `/@fs` harness cannot run under `annotagent serve` (5/5 fail by construction), so a real packaged-route HTTP E2E is still required.
 - Review focus is now keyed to the stable server work item, human request or Sample instead of the changing read-model revision. Polling no longer repeatedly steals focus, and the visible review action is only a secondary recovery control because the result opens automatically.
-- Real HTTP G1 remains unverified until the isolated upload-to-review trace passes; no production success is claimed from the UI selector or Backend unit tests.
-- The remaining A1 blocker is earlier than Builder: uploaded image identities are not yet frozen into the natural-language Send, and the Backend has not yet delivered automatic DeliveryIntake materialization from a complete request.
-- A fresh isolated HTTP baseline attempt at integration `ee7a6cd` did not pass: the TEST provider-backed Schema request settled `in_doubt` (`provider_request/provider_error`) and the fixture seed timed out before Builder. The preserved trace is under `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-20zqo0g9`; this is tracked as `P0-F1-HTTP-001` and is not reported as a successful run.
+- The earlier `P0-F1-HTTP-001` baseline at `ee7a6cd` remains recorded as a real pre-fix failure: its TEST provider Schema request settled `in_doubt`; it is not counted as passing evidence.
+- A second clean run exposed `P0-F1-HTTP-002`: the scripted Schema response omitted required delivery semantics. Backend fixture commits `046ecd8` and `dbdd753` made the TEST response contract-complete without adding a production fallback or retrying a saved model call.
+
+### G1 real packaged HTTP evidence
+
+- Integration/backend source SHA: `6a1219c58095e2e8e48f97386e9627523912cd2f`.
+- Isolated external-model-only manifest: `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-qm3k95vn/manifest.json`; service `127.0.0.1:8880`, scripted provider `127.0.0.1:8881`. The user service on `8788` was not restarted or mutated.
+- Permanent production-route test: `web/e2e/p0-autonomous-sample.spec.ts` — 1 passed in 5.2s against the built React application and real Rust HTTP/SQLite service.
+- The browser uploaded 6 real demo-pack images. The exact 6 `{image_id, sha256}` receipts were frozen into Send; the server selected exactly 3 Sample inputs.
+- The browser made one `POST .../journey-consents` and zero `POST .../execution` calls. After the page closed, the durable worker completed Schema → Builder → Sample and created exactly 3 pending HumanRequests bound to the same task and Sample operation.
+- Reopening the exact task showed `检查样例结果 · 3 张` and `3 个结果需要人工判断`; reloading retained the same task/result without a mutation.
+- The TEST provider proves orchestration and recovery, not commercial-model accuracy. Formal processing, dataset review and package export remain separately authorized scopes.
 
 ## Safety boundary
 

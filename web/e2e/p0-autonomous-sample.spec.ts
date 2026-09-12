@@ -1,0 +1,120 @@
+import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { expect as baseExpect, test } from "./fixtures";
+
+const expect = baseExpect.configure({ timeout: 75_000 });
+
+test("one bounded approval continues six newly uploaded images to three real Sample reviews", async ({ browser, page, request }) => {
+  test.skip(!process.env.AGENT_UI_TEST_MANIFEST, "Requires the marked isolated Agent UI fixture");
+  test.setTimeout(240_000);
+  const manifest = JSON.parse(readFileSync(process.env.AGENT_UI_TEST_MANIFEST!, "utf8"));
+  expect(manifest.fixture).toBe("external-model-only");
+  const health = await request.get("/api/health");
+  expect(health.headers()["x-annotagent-fixture"]).toBe("external-model-only");
+
+  const project = `TEST-p0-autonomy-${randomUUID()}`;
+  const yaml = `version: 1
+project:
+  name: TEST P0 autonomous sample
+dataset:
+  root: images
+runtime: {}
+tasks: []
+review:
+  auto_accept_confidence: 0.9
+  force_review_below: 0.5
+export:
+  formats: [native]
+`;
+  const created = await request.post("/api/projects", { data: { id: project, yaml } });
+  expect(created.ok(), await created.text()).toBe(true);
+  const bound = await request.put(`/api/projects/${project}/model-bindings`, {
+    data: {
+      bindings: [{
+        capability: "vision_language",
+        role: "primary_inference",
+        match_kind: "capability",
+        model_profile_id: manifest.model_profile_id,
+        locked: false,
+      }],
+    },
+  });
+  expect(bound.ok(), await bound.text()).toBe(true);
+
+  const writes: string[] = [];
+  page.on("request", (event) => {
+    if (!["GET", "HEAD"].includes(event.method())) writes.push(`${event.method()} ${new URL(event.url()).pathname}`);
+  });
+  await page.goto(`/projects/${project}/work`);
+  const files = [1, 2, 3, 4, 5, 6].map((index) => resolve(`../examples/demo-packs/object-detection-review/1.0.0/images/desk_0${index}.png`));
+  await page.locator('input[type="file"]').setInputFiles(files);
+  await expect(page.locator("svg image")).toHaveAttribute("href", /^\/api\//);
+  await page.getByRole("textbox", { name: "给 AnnotAgent 的需求" }).fill("判断每张图片里是否有杯子，用于图像分类。只标注真实杯子，不包含杯子图案。");
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get("task")).not.toBeNull();
+  const task = new URL(page.url()).searchParams.get("task");
+  expect(task).toBeTruthy();
+
+  const navigation = await (await request.get("/api/navigation?limit=100")).json();
+  const owner = navigation.items.find((item: { project_id: string }) => item.project_id === project);
+  expect(owner?.conversation_id).toBeTruthy();
+  const root = `/api/projects/${project}/conversations/${owner.conversation_id}/tasks/${task}`;
+  const before = await (await request.get(`${root}/workspace`)).json();
+  expect(before.mainline.intake.dataset_scope).toHaveLength(6);
+  expect(before.mainline.available_actions.filter((action: { id: string }) => action.id === "build_and_test_pipeline")).toHaveLength(1);
+
+  await page.getByRole("button", { name: "开始标注样例", exact: true }).click();
+  const approval = page.getByRole("dialog");
+  await expect(approval).toContainText("3 张图片已冻结");
+  const consentResponse = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === `${root}/journey-consents`);
+  await approval.getByRole("button", { name: "接受未知费用并执行此范围", exact: true }).click();
+  const accepted = await consentResponse;
+  expect(accepted.ok(), await accepted.text()).toBe(true);
+  const acceptedBody = await accepted.json();
+  expect(acceptedBody.consent.images).toHaveLength(3);
+  expect(writes.filter((write) => write === `POST ${root}/journey-consents`)).toHaveLength(1);
+  expect(writes.some((write) => write.endsWith("/execution"))).toBe(false);
+
+  await page.close();
+  await expect.poll(async () => {
+    const workspace = await (await request.get(`${root}/workspace`)).json();
+    const sample = workspace.sample_operations?.find((operation: { id: string }) => operation.id === acceptedBody.consent.sample_operation_id);
+    return {
+      sampleStatus: sample?.status ?? null,
+      sampleId: sample?.id ?? null,
+      humanRequests: workspace.human_requests?.length ?? 0,
+    };
+  }, { timeout: 90_000 }).toMatchObject({
+    sampleStatus: "succeeded",
+    sampleId: acceptedBody.consent.sample_operation_id,
+    humanRequests: 3,
+  });
+  const completedWorkspace = await (await request.get(`${root}/workspace`)).json();
+  const completedSample = completedWorkspace.sample_operations.find((operation: { id: string }) => operation.id === acceptedBody.consent.sample_operation_id);
+  expect(completedSample).toMatchObject({ id: acceptedBody.consent.sample_operation_id, status: "succeeded" });
+  expect(completedWorkspace.human_requests).toHaveLength(3);
+  expect(completedWorkspace.human_requests.every((item: { input: { sample_test_id: string; task_id: string }; status: string }) =>
+    item.input.sample_test_id === acceptedBody.consent.sample_operation_id &&
+    item.input.task_id === task &&
+    item.status === "pending",
+  )).toBe(true);
+
+  const sampleRecordResponse = await request.get(`/api/workflow-drafts/${completedSample.draft_id}/sample-test?test_id=${acceptedBody.consent.sample_operation_id}`);
+  expect(sampleRecordResponse.ok(), await sampleRecordResponse.text()).toBe(true);
+  const sampleRecord = await sampleRecordResponse.json();
+  expect(sampleRecord.sample_test.inputs).toHaveLength(3);
+
+  const reopened = await browser.newPage();
+  await reopened.goto(`/projects/${project}/work?task=${task}`);
+  await expect(reopened).toHaveURL(new RegExp(`task=${task}`));
+  await expect(reopened.getByRole("region", { name: "当前任务状态", exact: true })).toContainText("需要你的判断");
+  const result = reopened.getByRole("region", { name: "当前任务图片结果", exact: true });
+  await expect(result).toBeVisible();
+  await expect(result.getByRole("heading", { name: "检查样例结果 · 3 张", exact: true })).toBeVisible();
+  await expect(reopened.getByRole("region", { name: "当前任务状态", exact: true })).toContainText("3 个结果需要人工判断");
+  await reopened.reload();
+  await expect(reopened).toHaveURL(new RegExp(`task=${task}`));
+  await expect(reopened.getByRole("region", { name: "当前任务图片结果", exact: true })).toBeVisible();
+  await reopened.close();
+});

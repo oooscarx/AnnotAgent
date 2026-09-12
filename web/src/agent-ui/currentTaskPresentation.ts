@@ -80,8 +80,10 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
     };
   }
 
-  const reviewCount =
-    view.review_summary.current_reviews + view.review_summary.pending_reviews;
+  const activeReviewCount =
+    task.sampleResult?.images.length ||
+    view.review_summary.current_reviews ||
+    (task.human || view.review_work_item_id ? 1 : 0);
   if (
     task.phase === "waiting_for_human" ||
     !!task.human ||
@@ -91,7 +93,7 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
     return {
       kind: "needs_review",
       title: task.humanQuestion || "这一张的目标是否完整、边界是否合适？",
-      detail: `${Math.max(reviewCount, 1)} 个结果需要人工判断；修改只保存到当前候选或正式审核范围。`,
+      detail: `${Math.max(activeReviewCount, 1)} 个结果需要人工判断；修改只保存到当前候选或正式审核范围。`,
       primary: { kind: "open_review", id: view.review_work_item_id },
     };
   }

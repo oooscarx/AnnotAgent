@@ -130,6 +130,42 @@ describe("single current-task presentation", () => {
     });
   });
 
+  it("reports the current sample review scope instead of future whole-image debt", () => {
+    const result = selectCurrentTaskPresentation(
+      task(
+        view({
+          review_summary: {
+            selected_images: 6,
+            saved_review_receipts: 0,
+            current_reviews: 0,
+            pending_reviews: 6,
+          },
+        }),
+        {
+          sampleResult: {
+            project_id: "TEST-project",
+            conversation_id: "TEST-conversation",
+            task_id: "TEST-task",
+            project_schema_revision: "schema-1",
+            draft_id: "draft-1",
+            draft_revision: 1,
+            sample_test_id: "sample-1",
+            images: [
+              { image_id: "image-1", image_sha256: "one", result_revision: "one", candidates: [], annotations: [] },
+              { image_id: "image-2", image_sha256: "two", result_revision: "two", candidates: [], annotations: [] },
+              { image_id: "image-3", image_sha256: "three", result_revision: "three", candidates: [], annotations: [] },
+            ],
+          },
+        },
+      ),
+    );
+
+    expect(result).toMatchObject({
+      kind: "needs_review",
+      detail: "3 个结果需要人工判断；修改只保存到当前候选或正式审核范围。",
+    });
+  });
+
   it("lets the server proposal resolve label and target without another form", () => {
     const result = selectCurrentTaskPresentation(
       task(
