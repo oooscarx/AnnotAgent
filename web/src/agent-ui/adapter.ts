@@ -139,7 +139,15 @@ export type Command = {
   project: string;
   task: string;
   revision: string;
-  selection?: { image: string; candidate: string; revision: string };
+  selection?: import("./mainline").VisualSelection | PreviewSelection;
+};
+/** UI Preview has no server identities. HttpAdapter deliberately rejects this shape. */
+export type PreviewSelection = {
+  preview: true;
+  task: string;
+  image: string;
+  candidate: string;
+  revision: string;
 };
 export interface WorkspaceAdapter {
   /** Mainline read model. Absent means the server contract is unavailable; UI must not simulate it. */

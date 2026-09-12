@@ -16,6 +16,7 @@ import {stopTargetMatches} from "../conversation-control";
 import type { WorkspaceAdapter, Snapshot, Task, Command, Settings, ImageId, Box, Phase, Action } from "./adapter";
 import {readPendingDelivery,rememberPendingDelivery,clearPendingDelivery} from "./pendingDelivery";
 import {projectCallMessages} from "./messageProjection";
+import {assertVisualSelection,selectedMessage,type VisualSelection} from "./mainline";
 
 type Page<T> = { items: T[]; next_cursor: string | number | null };
 type Project = { project_id: string; project_owner_id: string; title: string; conversation_id: string | null };
@@ -333,13 +334,17 @@ export class HttpAdapter implements WorkspaceAdapter {
   }
   async sendMessage(c: Command, text: string, mode: "plan" | "execute", _model: string) {
     const task = this.checked(c);
-    if (c.selection) unsupported("候选引用需要完整样例与 Geometry lineage；不能仅凭 bbox ID 发送");
+    const selection=c.selection;
+    if(selection&&"preview" in selection)unsupported("演示候选没有服务器 lineage，不能发送到真实任务");
+    const frozen=selection?assertVisualSelection(selection as VisualSelection,task.project,task.id):undefined;
     let p = this.projects.get(task.project)!;
     if (!p.conversation_id) { const value = await this.transport<{conversation_id:string}>(`${this.root(task.project)}/conversations`, {method:"POST"}); p = {...p,conversation_id:value.conversation_id};this.projects.set(task.project,p); }
     const root = this.conversation(task.project);
     const pending = this.stored<SendCommand|null>(`send.${task.id}`,null);
     if (pending && (pending.message.text !== text || pending.mode !== mode)) throw new Error("上一条发送结果尚未确认。请保留原内容重试，不能换新命令掩盖未知结果。");
-    const input = pending || {message:{id:c.id,text,image:null},task_id:task.id.startsWith("new:")?null:task.id,schema_revision:(await this.transport<{revision:string}>(`${this.root(task.project)}/goal`)).revision,agent_model:await this.transport<Preference>(`${root}/agent-model`),mode};
+    const currentSchema=(await this.transport<{revision:string}>(`${this.root(task.project)}/goal`)).revision;
+    if(frozen&&frozen.project_schema_revision!==currentSchema)throw new Error("候选引用所用的 Project Schema 已变化；请重新打开当前样例后再发送，未调用模型。");
+    const input = pending || {message:frozen?selectedMessage(c.id,text,frozen):{id:c.id,text,image:null},task_id:task.id.startsWith("new:")?null:task.id,schema_revision:currentSchema,agent_model:await this.transport<Preference>(`${root}/agent-model`),mode};
     this.save(`send.${task.id}`,input);
     let receipt:SendReceipt;
     try { receipt=await this.transport<SendReceipt>(`${root}/send`, {method:"POST",body:JSON.stringify(input)}); }

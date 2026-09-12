@@ -32,4 +32,14 @@ The existing server-backed delivery-intent editor now names the missing slots an
 
 Persisted structured model decisions are projected as Agent replies or clarification messages with the actual call identity/status. Failed, empty or invalid receipts remain operation records and are not converted into assistant prose. The generic completed phase now says “current operation completed”; overall completion remains reserved for Package Ready.
 
-Backend reports the exact processing subset, automatic package consent HTTP and the unified task read model as planned, not implemented at B0. Frontend does not call those routes yet. Candidate feedback still needs the full selection supplied by Frontend 2; the old bare-ID path remains fail-closed until integration.
+Backend reports the exact processing subset, automatic package consent HTTP and the unified task read model as planned, not implemented at B0. Frontend does not call those routes yet.
+
+The HTTP send boundary now accepts only a frozen `VisualSelection`, converts it to the existing `sample_candidate` message reference, verifies the Project Schema is still current before POST, and keeps the same command for uncertain retries. Preview-only/bare candidate identities are rejected before any request. Frontend 2 still needs to supply this selection from the real canvas before the Composer can expose the path.
+
+### Isolated HTTP evidence
+
+- Service: `http://127.0.0.1:8841`, fixture header `external-model-only`, generated TEST workspace only.
+- Source build: `2c4b032bf614a63e26fc56904368d3b050ee315f` before the candidate-send boundary commit.
+- The real Project route restored saved user messages, structured model decision receipts, execution history, a pending HumanRequest, completed Batch metadata and a real download link.
+- Expanding delivery intake displayed only the three server-reported missing items. No Provider request or real workspace write was made.
+- Candidate-reference unit coverage: exact image hash, Schema revision, Draft revision, Sample Test, candidate and source Artifact; stale Schema and Preview identities make zero POSTs.

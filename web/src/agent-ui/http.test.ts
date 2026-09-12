@@ -166,6 +166,29 @@ it("sample consent uses the saved delivery Schema instead of another Schema mode
   expect(reads.paths.some(p=>p.includes("schema-preview"))).toBe(false);
 });
 describe("HTTP UI read boundary (synthetic transport tests, not HTTP E2E)", () => {
+  it("sends an exact frozen SampleCandidate reference and refuses stale Schema before POST",async()=>{
+    const sendPath="/api/projects/TEST-alpha/conversations/conversation-a/send";
+    const reads=mockTransport({"/api/projects/TEST-alpha/goal":{revision:"schema-1"},"/api/projects/TEST-alpha/conversations/conversation-a/agent-model":{revision:2,model_profile_id:null}});
+    const posts:unknown[]=[];
+    const transport:Transport=async<T>(path:string,init?:RequestInit)=>{
+      if(path===sendPath&&init?.method==="POST"){
+        const input=JSON.parse(String(init.body));posts.push(input);
+        return {message:{conversation_id:"conversation-a",input:input.message},task_id:"t1",disposition:"candidate_feedback"} as T;
+      }
+      return reads.transport<T>(path,init);
+    };
+    const adapter=new HttpAdapter(transport,memoryStorage());await adapter.refresh();await adapter.loadTask("TEST-alpha","t1");
+    const selection={project_id:"TEST-alpha",conversation_id:"conversation-a",task_id:"t1",project_schema_revision:"schema-1",image:{image_id:"image-uuid",sha256:"pixels"},sample:{draft_id:"draft",draft_revision:2,sample_test_id:"sample"},candidate:{candidate_id:"candidate",source_artifact_id:"artifact"},annotation:{kind:"bounding_box" as const,label:"cup"},result_revision:"sample:feedback:3"};
+    await adapter.sendMessage({id:"command",project:"TEST-alpha",task:"t1",revision:"schema-1",selection},"这个框太大","execute","");
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toMatchObject({message:{id:"command",text:"这个框太大",image:{image_id:"image-uuid",sha256:"pixels"},reference:{scope:"sample_candidate",task_id:"t1",project_schema_revision:"schema-1",draft_id:"draft",draft_revision:2,sample_test_id:"sample",candidate_id:"candidate",source_artifact_id:"artifact"}},task_id:"t1",schema_revision:"schema-1"});
+    const stale={...selection,project_schema_revision:"schema-old"};
+    await expect(adapter.sendMessage({id:"stale",project:"TEST-alpha",task:"t1",revision:"schema-1",selection:stale},"不要发送","execute","")).rejects.toThrow("Schema 已变化");
+    expect(posts).toHaveLength(1);
+    const preview={preview:true as const,task:"t1",image:"image-uuid",candidate:"candidate",revision:"schema-1"};
+    await expect(adapter.sendMessage({id:"preview",project:"TEST-alpha",task:"t1",revision:"schema-1",selection:preview},"不要发送","execute","")).rejects.toThrow("演示候选");
+    expect(posts).toHaveLength(1);
+  });
   it("freezes a lost stop selection across reload and refuses another target",async()=>{
     const targets=[{kind:"builder",id:"one",task_id:"t1",state:"running",parent_journey_ids:[]},{kind:"call",id:"two",task_id:"t1",state:"running",parent_journey_ids:[]}];
     let record={message:{conversation_id:"conversation-a",input:{id:"stop",text:"停止",image:null,reference:{scope:"stop_request",task_id:"t1"}}},status:"needs_selection",targets,selected_target:null as unknown,normalized_state:null};

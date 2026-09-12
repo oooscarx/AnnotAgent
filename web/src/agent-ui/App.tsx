@@ -51,6 +51,11 @@ export function command(task: Task): Command {
     revision: task.revision,
   };
 }
+function referenceSummary(reference:NonNullable<Command["selection"]>){
+  return "preview" in reference
+    ? {image:reference.image,candidate:reference.candidate}
+    : {image:reference.image.image_id,candidate:reference.candidate.candidate_id};
+}
 export function AgentPreviewApp({
   adapter,
   preview,
@@ -75,6 +80,7 @@ export function AgentPreviewApp({
   >([]);
   const [split, setSplit] = useState(54);
   const [reference, setReference] = useState<{
+    preview: true;
     task: string;
     image: string;
     candidate: string;
@@ -505,8 +511,8 @@ export function AgentPreviewApp({
                             {item.source?.kind==="model_call"&&<><small>真实模型回复 · {item.source.status||"状态未记录"}</small><Disclosure title="查看模型回复来源"><small>{item.source.id}</small></Disclosure></>}
                             {item.reference && (
                               <small>
-                                引用：{fixture ? "示意图片" : "图片"} {item.reference.image} ·{" "}
-                                {item.reference.candidate}
+                                引用：{fixture ? "示意图片" : "图片"} {referenceSummary(item.reference).image} ·{" "}
+                                {referenceSummary(item.reference).candidate}
                               </small>
                             )}
                             {item.role === "user" && (
@@ -646,7 +652,7 @@ export function AgentPreviewApp({
                   >
                     {reference?.task === task.id && (
                       <div className="reference-chip">
-                        引用：{fixture ? "示意图片" : "图片"} {reference.image} · {reference.candidate}
+                        引用：示意图片 {reference.image} · {reference.candidate}
                         <button
                           type="button"
                           aria-label="移除对象引用"
@@ -951,6 +957,7 @@ export function AgentPreviewApp({
                     onImage={(n) => navigate({ image: String(n) })}
                     onReference={(candidate, image) =>
                       fixture && setReference({
+                        preview: true,
                         task: task.id,
                         image: String(image),
                         candidate,
