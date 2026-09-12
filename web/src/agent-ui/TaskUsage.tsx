@@ -37,6 +37,7 @@ export type TaskUsageAttempt = {
   input_tokens: number | null;
   cached_input_tokens: number | null;
   output_tokens: number | null;
+  image_count: number;
   usage_source: string;
   cost: string | null;
   currency: string | null;
@@ -62,10 +63,11 @@ export type TaskUsagePage = {
     known_cost: string | null;
     currency: string | null;
     costs_by_currency: { currency: string; cost: string }[];
-    input_tokens: number;
-    cached_input_tokens: number;
-    output_tokens: number;
-    unknown_attempt_count: number;
+    input_tokens: number | null;
+    cached_input_tokens: number | null;
+    output_tokens: number | null;
+    token_unknown_attempt_count: number;
+    unknown_cost_attempt_count: number;
   };
   attempts: { items: TaskUsageAttempt[]; next_cursor: number | null };
 };
@@ -102,7 +104,8 @@ function tokenValue(value: number | null) {
   return value == null ? "未知" : value.toLocaleString("zh-CN");
 }
 
-function summaryToken(value: number, unknownAttempts: number) {
+function summaryToken(value: number | null, unknownAttempts: number) {
+  if (value == null) return "未知（不是 0）";
   const recorded = value.toLocaleString("zh-CN");
   return unknownAttempts > 0 ? `已记录 ${recorded}，另有未知` : recorded;
 }
@@ -127,6 +130,7 @@ function UsageAttempt({ attempt }: { attempt: TaskUsageAttempt }) {
         <div><dt>输入</dt><dd>{tokenValue(attempt.input_tokens)} tokens</dd></div>
         <div><dt>缓存输入</dt><dd>{tokenValue(attempt.cached_input_tokens)} tokens</dd></div>
         <div><dt>输出</dt><dd>{tokenValue(attempt.output_tokens)} tokens</dd></div>
+        <div><dt>图片</dt><dd>{attempt.image_count}</dd></div>
         <div><dt>费用</dt><dd>{attemptCost(attempt)}</dd></div>
       </dl>
       <p>用量来源：{attempt.usage_source} · Model Profile r{attempt.model_profile_revision}</p>
@@ -165,15 +169,18 @@ export function TaskUsageView({ value, compact = false }: { value: TaskUsagePage
         <div><strong>{stateLabels[value.state]}</strong><p>{value.summary.attempt_count} 次请求尝试</p></div>
         {value.state !== "no_model_requests" && (
           <div>
-            <p>输入 {summaryToken(value.summary.input_tokens, value.summary.unknown_attempt_count)} · 输出 {summaryToken(value.summary.output_tokens, value.summary.unknown_attempt_count)}</p>
+            <p>输入 {summaryToken(value.summary.input_tokens, value.summary.token_unknown_attempt_count)} · 输出 {summaryToken(value.summary.output_tokens, value.summary.token_unknown_attempt_count)}</p>
             {currencyTotals.length > 0
-              ? currencyTotals.map((item) => <p key={item.currency}>{value.summary.unknown_attempt_count > 0 ? "已知费用 " : ""}{item.currency} {item.cost}</p>)
+              ? currencyTotals.map((item) => <p key={item.currency}>{value.summary.unknown_cost_attempt_count > 0 ? "已知费用 " : ""}{item.currency} {item.cost}</p>)
               : <p>总费用未知（不是 0）</p>}
           </div>
         )}
       </div>
       {value.state === "no_model_requests" && <p>此 Task 尚未产生模型请求；Preset 候选不会伪造 Token 或费用。</p>}
-      {value.summary.unknown_attempt_count > 0 && <p role="status">{value.summary.unknown_attempt_count} 次尝试缺少完整 Token、价格或终态；未按 0 处理。</p>}
+      {(value.summary.token_unknown_attempt_count > 0 || value.summary.unknown_cost_attempt_count > 0) && <p role="status">
+        {value.summary.token_unknown_attempt_count > 0 ? `${value.summary.token_unknown_attempt_count} 次尝试缺少完整 Token` : "Token 记录完整"}；
+        {value.summary.unknown_cost_attempt_count > 0 ? `${value.summary.unknown_cost_attempt_count} 次尝试费用未知` : "费用记录完整"}。未知值未按 0 处理。
+      </p>}
       {!compact && taskAttempts.map((attempt) => <UsageAttempt key={attempt.attempt_id} attempt={attempt} />)}
       {compact && taskAttempts.length > 0 && <Disclosure title={`查看 ${taskAttempts.length} 次任务请求`}><div>{taskAttempts.map((attempt) => <UsageAttempt key={attempt.attempt_id} attempt={attempt} />)}</div></Disclosure>}
       {probes.length > 0 && <Disclosure title={`独立的模型探测记录 · ${probes.length}`}><p>探测不是普通 Task 推理，不计入上方任务尝试。</p>{probes.map((attempt) => <UsageAttempt key={attempt.attempt_id} attempt={attempt} />)}</Disclosure>}
