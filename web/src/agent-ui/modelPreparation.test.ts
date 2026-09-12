@@ -12,6 +12,8 @@ import type {
 import {
   createModelPreparationService,
   completeSetupReturn,
+  preparationCardState,
+  preparationContinuation,
   preserveSetupContext,
   restoreSetupContext,
   setupReturnPath,
@@ -258,6 +260,32 @@ function fixture(overrides: {
 }
 
 describe("task-scoped model preparation", () => {
+  it("reduces setup to one blocker without changing server continuation", async () => {
+    const ready = await fixture({ canResume: () => true }).service.inspect(context, new AbortController().signal);
+    expect(preparationCardState(ready)).toMatchObject({
+      state: "ready",
+      unresolved_requirement_ids: [],
+      ready_requirement_ids: ["planner", "vision"],
+    });
+
+    const uncertain = await fixture({
+      models: [
+        model("planner", "text_generation"),
+        model("vision", "image_classification", "unknown"),
+      ],
+    }).service.inspect(context, new AbortController().signal);
+    expect(preparationCardState(uncertain)).toMatchObject({
+      state: "uncertain",
+      unresolved_requirement_ids: ["vision"],
+      uncertain_candidate_count: 1,
+    });
+
+    const stale = structuredClone(ready);
+    stale.context_changes.push("Registry revision 已变化");
+    expect(preparationCardState(stale).state).toBe("stale");
+    expect(preparationContinuation(ready, [], true).state).toBe("server_continuing");
+  });
+
   it("adapts the G0 CapabilitySetupRequest only with a frozen continuation scope", () => {
     const value = setupContextFromCapabilityRequest({
       id: "setup",

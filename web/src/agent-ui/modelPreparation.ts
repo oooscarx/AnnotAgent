@@ -265,6 +265,43 @@ export type PreparationContinuation = {
   reason: string;
 };
 
+export type PreparationCardState =
+  | "ready"
+  | "uncertain"
+  | "setup_required"
+  | "stale";
+
+/** Presentation-only reduction; server-owned continuation remains authoritative. */
+export function preparationCardState(snapshot: PreparationSnapshot): {
+  state: PreparationCardState;
+  unresolved_requirement_ids: string[];
+  ready_requirement_ids: string[];
+  uncertain_candidate_count: number;
+} {
+  const ready = snapshot.requirements.filter(
+    (item) => item.ready_candidate_ids.length > 0,
+  );
+  const unresolved = snapshot.requirements.filter(
+    (item) => item.ready_candidate_ids.length === 0,
+  );
+  const uncertainCount = unresolved.reduce(
+    (count, item) => count + item.uncertain_candidate_ids.length,
+    0,
+  );
+  return {
+    state: snapshot.context_changes.length
+      ? "stale"
+      : unresolved.length === 0
+        ? "ready"
+        : uncertainCount > 0
+          ? "uncertain"
+          : "setup_required",
+    unresolved_requirement_ids: unresolved.map((item) => item.requirement.id),
+    ready_requirement_ids: ready.map((item) => item.requirement.id),
+    uncertain_candidate_count: uncertainCount,
+  };
+}
+
 type TaskWorkspace = {
   project_id: string;
   conversation_id: string;
