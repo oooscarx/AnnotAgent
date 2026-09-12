@@ -155,6 +155,7 @@ export function SetupRequest({
             {context.draft_id ? ` 与 Draft ${context.draft_id.slice(0, 8)}` : ""}。
             打开或取消设置不会重新创建任务，也不会扩大 allowed_models。
           </p>
+          <p>角色 {context.role} · Registry {context.registry_revision}</p>
         </div>
         <button disabled={busy} onClick={() => void cancelAndReturn()}>
           取消并返回任务
@@ -305,6 +306,8 @@ export function SetupRequest({
               draft_id: context.draft_id,
               draft_revision: snapshot.guard.draft_revision,
               allowed_models: context.allowed_models,
+              registry_revision: context.registry_revision,
+              compatible_model_ids: context.compatible_model_ids,
               authorization: snapshot.authorization,
               context_changes: snapshot.context_changes,
               requirements: context.requirements.map((item) => ({

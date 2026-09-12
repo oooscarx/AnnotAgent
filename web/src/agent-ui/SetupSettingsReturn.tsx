@@ -33,7 +33,7 @@ export function SetupSettingsReturn({ search = location.search }: { search?: str
         <p>
           Task {context.task_id.slice(0, 8)}
           {context.draft_id ? ` · Draft ${context.draft_id.slice(0, 8)}` : ""}。
-          返回后重新检查版本、兼容能力和授权；不会自动继续收费操作。
+          {` ${context.role}`}。返回后重新检查版本、兼容能力和授权；不会自动继续收费操作。
         </p>
       </div>
       <div className="actions">

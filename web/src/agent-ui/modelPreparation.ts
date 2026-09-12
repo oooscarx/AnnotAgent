@@ -35,12 +35,42 @@ export type FrozenAllowedModel = {
   binding_digest: string;
 };
 
+/** Structural mirror of Frontend 1's G0 seam. Keep this module independent of App/Adapter. */
+export type MainlineCapabilitySetupRequest = {
+  id: string;
+  project_id: string;
+  task_id: string;
+  task_revision: string;
+  registry_revision: string;
+  role: string;
+  required_capabilities: string[];
+  compatible_model_ids: string[];
+  status: "required" | "ready" | "cancelled" | "stale";
+  return_path: string;
+};
+
+/** Identity and authorization fields not carried by the G0 seam; never infer these from the URL. */
+export type SetupContinuationScope = {
+  conversation_id: string;
+  draft_id?: string;
+  draft_revision?: number;
+  draft_content_hash?: string;
+  authorization_fingerprint?: string;
+  allowed_models: FrozenAllowedModel[];
+  requirements: SetupRequirement[];
+  created_at: string;
+};
+
 export type SetupContext = {
   id: string;
   project_id: string;
   conversation_id: string;
   task_id: string;
   task_revision: string;
+  registry_revision: string;
+  role: string;
+  compatible_model_ids: string[];
+  setup_status: MainlineCapabilitySetupRequest["status"];
   draft_id?: string;
   draft_revision?: number;
   draft_content_hash?: string;
@@ -106,6 +136,8 @@ export type BundleCandidate = {
 
 export type SetupGuard = {
   task_revision: string;
+  registry_revision: string;
+  compatible_model_ids: string[];
   draft_revision?: number;
   draft_content_hash?: string;
   agent_model_revision: number;
@@ -129,6 +161,8 @@ export type PreparationSnapshot = {
   }[];
   authorization: "recheck_required";
 };
+
+export type CapabilityReadiness = PreparationSnapshot;
 
 export type PreparationRecheck = {
   snapshot: PreparationSnapshot;
@@ -170,6 +204,43 @@ function stable<T>(value: T): T {
 
 function same(a: unknown, b: unknown) {
   return JSON.stringify(stable(a)) === JSON.stringify(stable(b));
+}
+
+function sortedUnique(values: string[]) {
+  return [...new Set(values)].sort((left, right) => left.localeCompare(right));
+}
+
+export function setupContextFromCapabilityRequest(
+  request: MainlineCapabilitySetupRequest,
+  continuation: SetupContinuationScope,
+): SetupContext {
+  const required = sortedUnique(request.required_capabilities);
+  const supplied = sortedUnique(continuation.requirements.map((item) => item.capability));
+  if (!same(required, supplied))
+    throw new Error("Capability Setup 的 requirements 与服务器请求不一致");
+  if (request.compatible_model_ids.length !== new Set(request.compatible_model_ids).size)
+    throw new Error("Capability Setup 含重复兼容模型 ID");
+  const context: SetupContext = {
+    id: request.id,
+    project_id: request.project_id,
+    conversation_id: continuation.conversation_id,
+    task_id: request.task_id,
+    task_revision: request.task_revision,
+    registry_revision: request.registry_revision,
+    role: request.role,
+    compatible_model_ids: [...request.compatible_model_ids],
+    setup_status: request.status,
+    draft_id: continuation.draft_id,
+    draft_revision: continuation.draft_revision,
+    draft_content_hash: continuation.draft_content_hash,
+    authorization_fingerprint: continuation.authorization_fingerprint,
+    allowed_models: continuation.allowed_models,
+    return_to: request.return_path,
+    requirements: continuation.requirements,
+    created_at: continuation.created_at,
+  };
+  assertContext(context);
+  return context;
 }
 
 function requirementMatchesModel(
@@ -291,6 +362,12 @@ function assertContext(context: SetupContext) {
     throw new Error("模型准备请求缺少 Project、Conversation 或 Task 身份");
   if (!context.requirements.length)
     throw new Error("模型准备请求没有具体 capability");
+  if (!context.registry_revision || !context.role)
+    throw new Error("模型准备请求缺少 Registry revision 或模型角色");
+  if (!(["required", "ready", "cancelled", "stale"] as string[]).includes(context.setup_status))
+    throw new Error("模型准备请求状态无效");
+  if (context.compatible_model_ids.length !== new Set(context.compatible_model_ids).size)
+    throw new Error("模型准备请求包含重复兼容模型 ID");
   if (new Set(context.requirements.map((item) => item.id)).size !== context.requirements.length)
     throw new Error("模型准备请求包含重复 requirement ID");
   if (new Set(context.allowed_models.map((item) => item.model_id)).size !== context.allowed_models.length)
@@ -487,10 +564,19 @@ export function createModelPreparationService(
       .filter((item): item is BundleCandidate => !!item);
 
     const allCandidates = [...providerModels, ...pluginCandidates, ...modelInstances];
+    const liveCompatibleIds = sortedUnique([
+      ...compatibleRows.flatMap(([, ids]) => [...ids]),
+      ...pluginCandidates.filter((item) => item.state === "ready").map((item) => item.id),
+      ...modelInstances.filter((item) => item.state === "ready").map((item) => item.id),
+    ]);
+    if (!same(liveCompatibleIds, sortedUnique(context.compatible_model_ids)))
+      contextChanges.push("兼容模型集合已变化");
     return {
       context,
       guard: {
         task_revision: workspace.task.input.schema_revision,
+        registry_revision: context.registry_revision,
+        compatible_model_ids: liveCompatibleIds,
         draft_revision: draft?.revision,
         draft_content_hash: draft?.content_hash,
         agent_model_revision: preference.revision,
