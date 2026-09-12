@@ -23,8 +23,8 @@ Frontend 1 owns `App.tsx`, `http.ts`, `adapter.ts`, public routes and shared API
   component. It does not edit `App.tsx`, `http.ts`, `adapter.ts`, routes or shared types.
 - Backend owns all Rust, persistence, migrations, demo catalog/bootstrap, R3 request
   enforcement and R6 usage projections.
-- Product owns the redistributable demo pack. P0 is fixed as
-  `tabletop-cup-bottle@1.0.0`; the UI reads it from the server catalog and does not
+- Product owns the redistributable demo pack. P0 is fixed by the Backend catalog as
+  `object-detection-review@1.0.0`; the UI reads it from the server catalog and does not
   hard-code asset paths.
 
 ## Baseline capability audit
@@ -44,7 +44,7 @@ Frontend 1 owns `App.tsx`, `http.ts`, `adapter.ts`, public routes and shared API
   HTTP contracts.
 - `DEMO-SEAM-F2-001` fixed the review/delivery component boundary.
 - `DEMO-SEAM-F3-001` fixed the model-readiness and task-usage component boundary.
-- Product P0 identity fixed to `tabletop-cup-bottle@1.0.0`; P1 is intentionally
+- Product P0 identity fixed to `object-detection-review@1.0.0`; P1 is intentionally
   deferred until a second licensed pack actually exists.
 
 ## Verification status

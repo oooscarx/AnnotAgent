@@ -1074,6 +1074,19 @@ caption {
 .ui-app .lifecycle-impact div { min-width: 0; }
 .ui-app .lifecycle-impact dd { margin: 4px 0 0; font-weight: 600; }
 .ui-app .native-project-manager > .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-block: 20px; }
+.ui-app .demo-onboarding { width: min(100%, 880px); margin: 28px auto 0; text-align: left; }
+.ui-app .demo-onboarding > header { max-width: 620px; }
+.ui-app .demo-onboarding > header h2 { margin: 4px 0 6px; }
+.ui-app .demo-onboarding > header p { margin: 0; color: var(--aa-text-muted); }
+.ui-app .demo-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,320px),1fr)); gap: 16px; margin-top: 18px; }
+.ui-app .demo-card { min-width: 0; border: 1px solid var(--aa-border); border-radius: 12px; overflow: hidden; background: var(--aa-surface); }
+.ui-app .demo-card > img { display: block; width: 100%; aspect-ratio: 16/9; object-fit: cover; background: var(--aa-surface-muted); }
+.ui-app .demo-card-copy { display: grid; gap: 8px; padding: 16px; }
+.ui-app .demo-card-copy h2, .ui-app .demo-card-copy p { margin: 0; }
+.ui-app .demo-mode-summary { display: grid; gap: 3px; padding: 10px 0; border-block: 1px solid var(--aa-border); color: var(--aa-text-muted); font-size: 12px; line-height: 1.5; }
+.ui-app .demo-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.ui-app .demo-actions button { justify-content: center; }
+.ui-app .demo-onboarding > .subtle { margin-top: 12px; }
 .ui-app .native-project-manager input[type="checkbox"] { width: auto; }
 .ui-app .native-history label:has(> input[type="checkbox"]) { display: inline-flex; align-items: center; gap: 8px; }
 .ui-app .native-history .settings-row { display: flex; align-items: center; justify-content: flex-start; flex-wrap: wrap; gap: 12px; padding-block: 16px; }

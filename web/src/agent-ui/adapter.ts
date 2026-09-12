@@ -180,6 +180,8 @@ export interface WorkspaceAdapter {
   readonly modelProfileManagement?: import("./ModelProfiles").ModelProfileService;
   readonly pluginManagement?: import("./pluginManagement").PluginManagement;
   readonly visionWorkerManagement?: import("./VisionWorkers").VisionWorkerService;
+  /** Production Demo catalog/bootstrap. Optional until the server contract is available; never backed by Fixture in the formal app. */
+  readonly demoOnboarding?: import("./demoOnboardingService").DemoOnboardingService;
   readonly kind: "fixture" | "http";
   snapshot(): Snapshot;
   subscribe(listener: () => void): () => void;
