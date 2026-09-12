@@ -22,6 +22,7 @@ mod replay_commands;
 mod sample_operations;
 mod security;
 mod task_delivery;
+mod task_model_usage;
 mod training_delivery;
 mod workspace_routes;
 
@@ -39,8 +40,9 @@ use std::{
 use annotagent_application::{
     ActiveRunExists, AnnotAgentApplication, ApplyPipelineImprovementRequest,
     CreatePipelineImprovementRequest, DatasetCoordinator, DetectionWorkerSettings,
-    GeometryCalibrationRequest, LocalApplication, ModelBinding, ProjectSummary, RunResultSummary,
-    Settings, WorkflowVersion, stable_project_id, validate_settings,
+    GeometryCalibrationRequest, LocalApplication, ModelBinding, PipelineBuilderModelRuntime,
+    ProjectSummary, RunResultSummary, Settings, WorkflowVersion, stable_project_id,
+    validate_settings,
 };
 use annotagent_core::{
     Annotation, AnnotationId, AnnotationValue, ArtifactId, ArtifactKind, ArtifactRef,
@@ -53,8 +55,8 @@ use annotagent_core::{
     GeometryQualitySummary, GeometrySemantics, GeometrySnapshot, GlobalModelDefaults,
     ImageArtifact, ImageId, InputModality, LabelId, ManagementObjectKind, ManagementPreview,
     ManagementReceipt, ManagementRequest, ModelAvailability, ModelBindingId, ModelBindingMatch,
-    ModelBindingRole, ModelCapability, ModelCapabilityQualityContract, ModelInputTrace,
-    ModelLimits, ModelPricing, ModelProfile, ModelProfileId, ModelProfileSnapshot,
+    ModelBindingRole, ModelBindingSource, ModelCapability, ModelCapabilityQualityContract,
+    ModelInputTrace, ModelLimits, ModelPricing, ModelProfile, ModelProfileId, ModelProfileSnapshot,
     ModelProfileStatus, ModelRequirements, NodeId, NormalizedRect, PipelineArtifact,
     PipelineBuilderConstraints, PipelineImprovementId, PipelineImprovementPolicy,
     PipelineInferenceRequest, PipelineModelBackend, ProjectGeometryPolicy, ProjectId,
@@ -684,6 +686,10 @@ pub fn router(state: ServerState, web_dist: Option<&Path>) -> Router {
         .route(
             "/api/model-profiles/{model_id}/usage",
             get(get_model_profile_usage),
+        )
+        .route(
+            "/api/model-profiles/{model_id}/effective-request",
+            get(get_model_profile_effective_request),
         )
         .route(
             "/api/model-profiles/{model_id}/quality-contracts",
@@ -2141,6 +2147,32 @@ async fn get_model_profile_usage(
     Ok(Json(
         json!({"model_profile_id": model_id, "active_probes": usage}),
     ))
+}
+
+async fn get_model_profile_effective_request(
+    State(state): State<ServerState>,
+    AxumPath(model_id): AxumPath<String>,
+) -> ApiResult<Json<annotagent_application::EffectiveModelRequest>> {
+    let model_id = parse_model_profile_id(&model_id)?;
+    let model = state
+        .application
+        .store()
+        .get_model_profile(model_id, None)
+        .map_err(ApiError::not_found)?;
+    let provider = state
+        .application
+        .store()
+        .get_provider_profile(model.provider_id)
+        .map_err(ApiError::not_found)?;
+    PipelineBuilderModelRuntime {
+        provider,
+        model,
+        binding_source: ModelBindingSource::GlobalDefault,
+        locked: false,
+    }
+    .effective_request()
+    .map(Json)
+    .map_err(ApiError::bad_request)
 }
 
 #[derive(Debug, Default, Deserialize)]

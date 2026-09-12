@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, time::Duration};
+use std::{collections::BTreeMap, future::Future, sync::Arc, time::Duration};
 
 use annotagent_core::{
     CoreError, CoreResult, ModelCapabilities, ModelMessage, ModelRequest, ModelResponse, ModelRole,
@@ -73,6 +73,46 @@ pub struct OpenAiCompatibleProvider {
     config: OpenAiCompatibleConfig,
     client: Client,
     temporary_api_key: Option<String>,
+    attempt_observer: Option<Arc<dyn ModelAttemptObserver>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModelAttemptOutcome {
+    pub status: ModelAttemptOutcomeStatus,
+    pub request_id: Option<String>,
+    pub usage: TokenUsage,
+    pub cached_input_tokens: Option<u64>,
+    pub completed_at: chrono::DateTime<chrono::Utc>,
+    pub failure: Option<annotagent_core::ModelFailure>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelAttemptOutcomeStatus {
+    Succeeded,
+    Failed,
+    InDoubt,
+}
+
+pub trait ModelAttemptObserver: Send + Sync {
+    /// Must persist before transport begins. Returning an error prevents the HTTP request.
+    fn begin(
+        &self,
+        call_id: Option<&str>,
+        request: &ModelRequest,
+        attempt_number: u32,
+        started_at: chrono::DateTime<chrono::Utc>,
+    ) -> CoreResult<String>;
+    fn finish(&self, attempt_id: &str, outcome: &ModelAttemptOutcome) -> CoreResult<()>;
+}
+
+tokio::task_local! {
+    static MODEL_CALL_ID: String;
+}
+
+/// Carries an already-admitted logical call identity to a concrete Provider transport.
+/// The value is task-local, never serialized into the external request.
+pub async fn within_model_call<T>(call_id: String, future: impl Future<Output = T>) -> T {
+    MODEL_CALL_ID.scope(call_id, future).await
 }
 
 impl OpenAiCompatibleProvider {
@@ -93,7 +133,14 @@ impl OpenAiCompatibleProvider {
             config,
             client,
             temporary_api_key,
+            attempt_observer: None,
         })
+    }
+
+    #[must_use]
+    pub fn with_attempt_observer(mut self, observer: Arc<dyn ModelAttemptObserver>) -> Self {
+        self.attempt_observer = Some(observer);
+        self
     }
 
     #[must_use]
@@ -378,6 +425,15 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
             ));
         }
         for attempt in 0..=self.config.max_retries {
+            let started_at = chrono::Utc::now();
+            let attempt_id = self
+                .attempt_observer
+                .as_ref()
+                .map(|observer| {
+                    let call_id = MODEL_CALL_ID.try_with(Clone::clone).ok();
+                    observer.begin(call_id.as_deref(), &request, attempt + 1, started_at)
+                })
+                .transpose()?;
             let mut builder = self
                 .client
                 .post(self.endpoint_url())
@@ -405,11 +461,18 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
             builder = builder.headers(headers);
             let response = tokio::select! {
                 () = cancellation.cancelled() => {
-                    return Err(safe_failure(annotagent_core::ModelFailureStage::ProviderRequest, annotagent_core::ModelFailureCategory::Cancelled, None));
+                    let failure=annotagent_core::ModelFailure{stage:annotagent_core::ModelFailureStage::ProviderRequest,category:annotagent_core::ModelFailureCategory::Cancelled,http_status:None};
+                    self.finish_observed_attempt(attempt_id.as_deref(),ModelAttemptOutcomeStatus::InDoubt,None,TokenUsage{input_tokens:None,output_tokens:None,total_tokens:None,source:UsageSource::Unknown},None,Some(failure.clone()))?;
+                    return Err(CoreError::ModelFailure(failure));
                 }
-                result = builder.send() => result.map_err(|error| {
-                    transport_failure(&error, annotagent_core::ModelFailureStage::ProviderRequest)
-                })?,
+                result = builder.send() => match result {
+                    Ok(response)=>response,
+                    Err(error)=>{
+                        let failure=model_failure_for_transport(&error,annotagent_core::ModelFailureStage::ProviderRequest);
+                        self.finish_observed_attempt(attempt_id.as_deref(),ModelAttemptOutcomeStatus::InDoubt,None,TokenUsage{input_tokens:None,output_tokens:None,total_tokens:None,source:UsageSource::Unknown},None,Some(failure.clone()))?;
+                        return Err(CoreError::ModelFailure(failure));
+                    }
+                },
             };
             let status = response.status();
             let request_id = response
@@ -418,6 +481,24 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
                 .and_then(|value| value.to_str().ok())
                 .map(str::to_owned);
             if is_retriable(status) && attempt < self.config.max_retries {
+                let failure = annotagent_core::ModelFailure {
+                    stage: annotagent_core::ModelFailureStage::ProviderRequest,
+                    category: annotagent_core::ModelFailureCategory::HttpStatus,
+                    http_status: Some(status.as_u16()),
+                };
+                self.finish_observed_attempt(
+                    attempt_id.as_deref(),
+                    ModelAttemptOutcomeStatus::Failed,
+                    request_id.clone(),
+                    TokenUsage {
+                        input_tokens: None,
+                        output_tokens: None,
+                        total_tokens: None,
+                        source: UsageSource::Unknown,
+                    },
+                    None,
+                    Some(failure),
+                )?;
                 let delay = retry_delay(&self.config, response.headers(), attempt);
                 tokio::select! {
                     () = cancellation.cancelled() => {
@@ -428,54 +509,168 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
                 continue;
             }
             if !status.is_success() {
-                return Err(safe_failure(
-                    annotagent_core::ModelFailureStage::ProviderRequest,
-                    annotagent_core::ModelFailureCategory::HttpStatus,
-                    Some(status.as_u16()),
-                ));
+                let failure = annotagent_core::ModelFailure {
+                    stage: annotagent_core::ModelFailureStage::ProviderRequest,
+                    category: annotagent_core::ModelFailureCategory::HttpStatus,
+                    http_status: Some(status.as_u16()),
+                };
+                self.finish_observed_attempt(
+                    attempt_id.as_deref(),
+                    ModelAttemptOutcomeStatus::Failed,
+                    request_id,
+                    TokenUsage {
+                        input_tokens: None,
+                        output_tokens: None,
+                        total_tokens: None,
+                        source: UsageSource::Unknown,
+                    },
+                    None,
+                    Some(failure.clone()),
+                )?;
+                return Err(CoreError::ModelFailure(failure));
             }
             let bytes = tokio::select! {
-                () = cancellation.cancelled() => return Err(safe_failure(annotagent_core::ModelFailureStage::ResponseBody, annotagent_core::ModelFailureCategory::Cancelled, None)),
-                result = response.bytes() => result.map_err(|error| transport_failure(&error, annotagent_core::ModelFailureStage::ResponseBody))?,
+                () = cancellation.cancelled() => {
+                    let failure=annotagent_core::ModelFailure{stage:annotagent_core::ModelFailureStage::ResponseBody,category:annotagent_core::ModelFailureCategory::Cancelled,http_status:None};
+                    self.finish_observed_attempt(attempt_id.as_deref(),ModelAttemptOutcomeStatus::InDoubt,request_id.clone(),TokenUsage{input_tokens:None,output_tokens:None,total_tokens:None,source:UsageSource::Unknown},None,Some(failure.clone()))?;
+                    return Err(CoreError::ModelFailure(failure));
+                },
+                result = response.bytes() => match result {
+                    Ok(bytes)=>bytes,
+                    Err(error)=>{
+                        let failure=model_failure_for_transport(&error,annotagent_core::ModelFailureStage::ResponseBody);
+                        self.finish_observed_attempt(attempt_id.as_deref(),ModelAttemptOutcomeStatus::InDoubt,request_id.clone(),TokenUsage{input_tokens:None,output_tokens:None,total_tokens:None,source:UsageSource::Unknown},None,Some(failure.clone()))?;
+                        return Err(CoreError::ModelFailure(failure));
+                    }
+                },
             };
-            let value: Value = serde_json::from_slice(&bytes).map_err(|_| {
-                safe_failure(
-                    annotagent_core::ModelFailureStage::ResponseDecode,
-                    annotagent_core::ModelFailureCategory::InvalidResponse,
+            let Ok(value): Result<Value, _> = serde_json::from_slice(&bytes) else {
+                let failure = annotagent_core::ModelFailure {
+                    stage: annotagent_core::ModelFailureStage::ResponseDecode,
+                    category: annotagent_core::ModelFailureCategory::InvalidResponse,
+                    http_status: None,
+                };
+                self.finish_observed_attempt(
+                    attempt_id.as_deref(),
+                    ModelAttemptOutcomeStatus::Failed,
+                    request_id.clone(),
+                    TokenUsage {
+                        input_tokens: None,
+                        output_tokens: None,
+                        total_tokens: None,
+                        source: UsageSource::Unknown,
+                    },
                     None,
-                )
-            })?;
-            let mut parsed = parse_chat_response(&value, request_id).map_err(|_| {
-                safe_failure(
-                    annotagent_core::ModelFailureStage::ResponseDecode,
-                    annotagent_core::ModelFailureCategory::InvalidResponse,
+                    Some(failure.clone()),
+                )?;
+                return Err(CoreError::ModelFailure(failure));
+            };
+            let Ok(mut parsed) = parse_chat_response(&value, request_id.clone()) else {
+                let failure = annotagent_core::ModelFailure {
+                    stage: annotagent_core::ModelFailureStage::ResponseDecode,
+                    category: annotagent_core::ModelFailureCategory::InvalidResponse,
+                    http_status: None,
+                };
+                self.finish_observed_attempt(
+                    attempt_id.as_deref(),
+                    ModelAttemptOutcomeStatus::Failed,
+                    request_id,
+                    TokenUsage {
+                        input_tokens: None,
+                        output_tokens: None,
+                        total_tokens: None,
+                        source: UsageSource::Unknown,
+                    },
                     None,
-                )
-            })?;
+                    Some(failure.clone()),
+                )?;
+                return Err(CoreError::ModelFailure(failure));
+            };
             parsed
                 .provider_metadata
                 .insert("retry_count".to_owned(), attempt.to_string());
             if self.config.supports_tool_calls {
-                try_promote_json_action(&mut parsed, &request.tools).map_err(|_| {
-                    safe_failure(
-                        annotagent_core::ModelFailureStage::StructuredOutput,
-                        annotagent_core::ModelFailureCategory::InvalidStructuredOutput,
-                        None,
-                    )
-                })?;
-            } else {
-                promote_json_action(&mut parsed, &request.tools).map_err(|_| {
-                    safe_failure(
-                        annotagent_core::ModelFailureStage::StructuredOutput,
-                        annotagent_core::ModelFailureCategory::InvalidStructuredOutput,
-                        None,
-                    )
-                })?;
+                if try_promote_json_action(&mut parsed, &request.tools).is_err() {
+                    let failure = annotagent_core::ModelFailure {
+                        stage: annotagent_core::ModelFailureStage::StructuredOutput,
+                        category: annotagent_core::ModelFailureCategory::InvalidStructuredOutput,
+                        http_status: None,
+                    };
+                    let cached = cached_input_tokens(&parsed);
+                    self.finish_observed_attempt(
+                        attempt_id.as_deref(),
+                        ModelAttemptOutcomeStatus::Failed,
+                        parsed.request_id.clone(),
+                        parsed.usage.clone(),
+                        cached,
+                        Some(failure.clone()),
+                    )?;
+                    return Err(CoreError::ModelFailure(failure));
+                }
+            } else if promote_json_action(&mut parsed, &request.tools).is_err() {
+                let failure = annotagent_core::ModelFailure {
+                    stage: annotagent_core::ModelFailureStage::StructuredOutput,
+                    category: annotagent_core::ModelFailureCategory::InvalidStructuredOutput,
+                    http_status: None,
+                };
+                let cached = cached_input_tokens(&parsed);
+                self.finish_observed_attempt(
+                    attempt_id.as_deref(),
+                    ModelAttemptOutcomeStatus::Failed,
+                    parsed.request_id.clone(),
+                    parsed.usage.clone(),
+                    cached,
+                    Some(failure.clone()),
+                )?;
+                return Err(CoreError::ModelFailure(failure));
             }
+            let cached = cached_input_tokens(&parsed);
+            self.finish_observed_attempt(
+                attempt_id.as_deref(),
+                ModelAttemptOutcomeStatus::Succeeded,
+                parsed.request_id.clone(),
+                parsed.usage.clone(),
+                cached,
+                None,
+            )?;
             return Ok(parsed);
         }
         Err(CoreError::Provider("provider retries exhausted".to_owned()))
     }
+}
+
+impl OpenAiCompatibleProvider {
+    fn finish_observed_attempt(
+        &self,
+        attempt_id: Option<&str>,
+        status: ModelAttemptOutcomeStatus,
+        request_id: Option<String>,
+        usage: TokenUsage,
+        cached_input_tokens: Option<u64>,
+        failure: Option<annotagent_core::ModelFailure>,
+    ) -> CoreResult<()> {
+        if let (Some(observer), Some(attempt_id)) = (&self.attempt_observer, attempt_id) {
+            observer.finish(
+                attempt_id,
+                &ModelAttemptOutcome {
+                    status,
+                    request_id,
+                    usage,
+                    cached_input_tokens,
+                    completed_at: chrono::Utc::now(),
+                    failure,
+                },
+            )?;
+        }
+        Ok(())
+    }
+}
+
+fn cached_input_tokens(response: &ModelResponse) -> Option<u64> {
+    response
+        .provider_metadata
+        .get("cached_input_tokens")
+        .and_then(|value| value.parse().ok())
 }
 
 fn is_retriable(status: StatusCode) -> bool {
@@ -509,22 +704,22 @@ fn safe_failure(
         http_status,
     })
 }
-fn transport_failure(
+fn model_failure_for_transport(
     error: &reqwest::Error,
     stage: annotagent_core::ModelFailureStage,
-) -> CoreError {
+) -> annotagent_core::ModelFailure {
     use annotagent_core::ModelFailureCategory as C;
-    safe_failure(
+    annotagent_core::ModelFailure {
         stage,
-        if error.is_timeout() {
+        category: if error.is_timeout() {
             C::Timeout
         } else if error.is_connect() {
             C::Connection
         } else {
             C::Transport
         },
-        None,
-    )
+        http_status: None,
+    }
 }
 
 fn json_action_schema(tools: &[annotagent_core::ToolDefinition]) -> Value {
@@ -659,6 +854,18 @@ fn parse_chat_response(value: &Value, request_id: Option<String>) -> CoreResult<
         _ if input.is_some() || output.is_some() => UsageSource::Actual,
         _ => UsageSource::Unknown,
     };
+    let mut provider_metadata = BTreeMap::new();
+    if let Some(cached) = value
+        .pointer("/usage/prompt_tokens_details/cached_tokens")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            value
+                .pointer("/usage/cached_tokens")
+                .and_then(Value::as_u64)
+        })
+    {
+        provider_metadata.insert("cached_input_tokens".to_owned(), cached.to_string());
+    }
     Ok(ModelResponse {
         content,
         tool_calls,
@@ -669,7 +876,7 @@ fn parse_chat_response(value: &Value, request_id: Option<String>) -> CoreResult<
             source,
         },
         request_id,
-        provider_metadata: BTreeMap::new(),
+        provider_metadata,
     })
 }
 
@@ -727,7 +934,7 @@ pub fn redact_secrets(value: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use std::sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     };
 
@@ -823,6 +1030,34 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct RecordingAttemptObserver {
+        begins: Mutex<Vec<(Option<String>, u32)>>,
+        finishes: Mutex<Vec<ModelAttemptOutcome>>,
+    }
+    impl ModelAttemptObserver for RecordingAttemptObserver {
+        fn begin(
+            &self,
+            call_id: Option<&str>,
+            _request: &ModelRequest,
+            attempt_number: u32,
+            _started_at: chrono::DateTime<chrono::Utc>,
+        ) -> CoreResult<String> {
+            self.begins
+                .lock()
+                .expect("begins")
+                .push((call_id.map(str::to_owned), attempt_number));
+            Ok(format!("attempt-{attempt_number}"))
+        }
+        fn finish(&self, _attempt_id: &str, outcome: &ModelAttemptOutcome) -> CoreResult<()> {
+            self.finishes
+                .lock()
+                .expect("finishes")
+                .push(outcome.clone());
+            Ok(())
+        }
+    }
+
     #[tokio::test]
     async fn retries_transient_gateway_failures_and_records_attempt_count() {
         let (endpoint, calls) = spawn_retry_fixture(2).await;
@@ -839,6 +1074,51 @@ mod tests {
 
         assert_eq!(calls.load(Ordering::SeqCst), 3);
         assert_eq!(response.provider_metadata["retry_count"], "2");
+    }
+
+    #[tokio::test]
+    async fn reports_each_physical_retry_under_the_admitted_call_identity() {
+        let (endpoint, calls) = spawn_retry_fixture(2).await;
+        let observer = Arc::new(RecordingAttemptObserver::default());
+        let provider = OpenAiCompatibleProvider::new_with_api_key(
+            retry_test_config(endpoint, 2),
+            Some("fixture-secret".to_owned()),
+        )
+        .expect("provider")
+        .with_attempt_observer(observer.clone());
+
+        let response = within_model_call(
+            "00000000-0000-0000-0000-000000000123".to_owned(),
+            provider.complete(retry_test_request(), CancellationToken::new()),
+        )
+        .await
+        .expect("third attempt succeeds");
+
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert_eq!(response.usage.input_tokens, Some(2));
+        assert_eq!(
+            *observer.begins.lock().expect("begins"),
+            vec![
+                (Some("00000000-0000-0000-0000-000000000123".into()), 1),
+                (Some("00000000-0000-0000-0000-000000000123".into()), 2),
+                (Some("00000000-0000-0000-0000-000000000123".into()), 3),
+            ]
+        );
+        let statuses = observer
+            .finishes
+            .lock()
+            .expect("finishes")
+            .iter()
+            .map(|outcome| outcome.status)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            statuses,
+            vec![
+                ModelAttemptOutcomeStatus::Failed,
+                ModelAttemptOutcomeStatus::Failed,
+                ModelAttemptOutcomeStatus::Succeeded,
+            ]
+        );
     }
 
     #[tokio::test]

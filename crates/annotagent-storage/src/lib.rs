@@ -69,6 +69,7 @@ pub use delivery_package::{
 };
 pub use delivery_package_consent::{DeliveryPackageConsent, DeliveryPackageConsentInput};
 mod task_delivery;
+mod task_model_usage;
 pub use conversation_calls::{
     ConversationCallAdmission, ConversationCallBudget, ConversationCallGrant,
     ConversationCallReceipt, ConversationCallStatus, ConversationSchemaAuthorization,
@@ -89,6 +90,10 @@ pub use delivery_image_review::{
     DeliveryObjectCreate, DeliveryObjectEdit, DeliveryRunSource,
 };
 pub use task_delivery::TaskDeliveryRevision;
+pub use task_model_usage::{
+    BeginTaskModelAttempt, FinishTaskModelAttempt, TaskModelAttempt, TaskModelAttemptKind,
+    TaskModelAttemptStatus,
+};
 pub mod context_archives;
 mod conversations;
 pub use conversation_tasks::{BeginConversationTask, ConversationTask};
@@ -747,6 +752,7 @@ impl SqliteStore {
             transaction.execute_batch(include_str!("../../../migrations/0066_delivery_image_reviews.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0067_delivery_export_snapshots.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0068_delivery_package_consents.sql"))?;
+            transaction.execute_batch(include_str!("../../../migrations/0069_task_model_attempts.sql"))?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(68,'delivery_package_consents',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(67,'delivery_export_snapshots',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(66,'delivery_image_reviews',?1)",[Utc::now().to_rfc3339()])?;

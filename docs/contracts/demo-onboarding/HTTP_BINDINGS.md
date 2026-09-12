@@ -64,77 +64,97 @@ source with `review_status:needs_review`; they are not a Mock Provider call, do 
 create model usage and are never marked human accepted. Live mode creates no preset
 candidate rows and must pass current readiness/authorization before inference.
 
-## R3 effective model request — existing fields and additions
+## R3 effective model request — implemented
 
-Existing `ModelProfile` wire fields are:
+Model Profile create/PATCH/GET persists revisioned `limits`, `generation_defaults`
+and `pricing`. `generation_defaults` now also accepts
+`reasoning_wire_parameter:"reasoning_effort"|"enable_thinking"` and
+`supported_reasoning_modes:string[]`. A configured mode must belong to the declared
+set. `enable_thinking` accepts only `enabled|disabled`; any reasoning setting requires
+`protocol_features.reasoning_controls=true`.
+
+`GET /api/model-profiles/{id}/effective-request` is passive and returns:
 
 ```json
 {
-  "revision":7,
-  "limits":{"context_tokens":32768,"maximum_output_tokens":2048,
-    "maximum_images_per_request":3,"maximum_image_pixels":12000000},
-  "generation_defaults":{"temperature":"0.1","top_p":"0.9",
-    "maximum_output_tokens":1024,"structured_output_mode":"tool",
-    "reasoning_mode":"medium","image_detail":"high",
-    "system_prompt_version":"demo-v1"},
-  "pricing":{"currency":"USD","input_per_million_tokens":"2",
-    "output_per_million_tokens":"8","cached_input_per_million_tokens":null,
-    "per_image":null,"per_request":null,"source":"user_configured",
-    "updated_at":"RFC3339"}
+  "model_profile_id":"UUID","model_profile_revision":7,
+  "provider_id":"UUID","provider_adapter":"open_ai_compatible",
+  "endpoint_summary":"https://provider.example/v1","remote_model_id":"TEST-model",
+  "context_tokens":32768,"requested_maximum_output_tokens":4096,
+  "effective_maximum_output_tokens":2048,"maximum_input_context_tokens":30720,
+  "temperature":0.1,"top_p":"0.9","structured_output_mode":"tool",
+  "image_detail":"high","system_prompt_version":"demo-v1",
+  "reasoning":{"requested_mode":"enabled","supported_modes":["disabled","enabled"],
+    "support_known":true,"wire_parameter":"enable_thinking","wire_value":true},
+  "pricing_snapshot":{"model_profile_id":"UUID","model_profile_revision":7,
+    "pricing":{"currency":"USD","input_per_million_tokens":"2",
+      "output_per_million_tokens":"8","cached_input_per_million_tokens":null,
+      "per_image":null,"per_request":null,"source":"user_configured",
+      "updated_at":"RFC3339"},"captured_at":"RFC3339"},
+  "snapshot_sha256":"64-lowercase-hex"
 }
 ```
 
-Model Profile create/PATCH/GET already persists those values. Builder configuration
-already derives max output, temperature and context compaction from the selected
-revision and freezes model/provider/config in its authorization digest. Published
-Run setup already derives max output, temperature and reasoning from the frozen
-`ModelProfileSnapshot`.
+The request assembler caps output tokens by the Model limit, reserves that output
+budget from the context window before Builder compaction, maps `top_p`, and maps the
+reasoning control to exactly one Provider field. `enable_thinking` is a boolean and
+is never also emitted as `reasoning_effort`. The effective snapshot is frozen before
+an admitted call; editing a Profile cannot relabel an in-flight attempt.
 
-Delivery adds passive `GET /api/model-profiles/{id}/effective-request` and an explicit
-confirmed TEST request/receipt. The response carries requested/effective values,
-Provider-specific mapped fields, supported/rejected reasoning mode, context policy,
-model/profile revision and a redacted digest. In-flight calls keep their frozen
-snapshot when the Profile is edited. No prompt, credential, raw response or hidden
-reasoning is exposed.
+## R6 physical attempt usage — implemented for conversation text Providers
 
-## R6 attempt usage — delivery contract
-
-`GET T/model-usage?cursor=&limit=50` returns:
+`GET T/model-usage?cursor=0&limit=50` returns an owner-checked page. Cursor is the
+exclusive integer `sequence`; limit is `1..100`.
 
 ```json
 {
   "scope":{"project_id":"P","conversation_id":"UUID","task_id":"UUID"},
   "state":"complete",
   "summary":{"attempt_count":1,"known_cost":"0.007","currency":"USD",
+    "costs_by_currency":[{"currency":"USD","cost":"0.007"}],
     "input_tokens":1500,"cached_input_tokens":0,"output_tokens":500,
-    "unknown_attempt_count":0},
-  "attempts":{"items":[{"attempt_id":"UUID","call_id":"UUID",
-    "attempt_number":1,"kind":"task","status":"succeeded",
-    "model_profile_id":"model-profile-id","model_profile_revision":7,
-    "provider_id":"provider-id","provider_name":"TEST provider",
+    "token_unknown_attempt_count":0,"unknown_cost_attempt_count":0},
+  "attempts":{"items":[{
+    "sequence":1,"attempt_id":"UUID","call_id":"UUID","attempt_number":1,
+    "kind":"task","status":"succeeded","model_profile_id":"UUID",
+    "model_profile_revision":7,"provider_id":"UUID","provider_name":"TEST Provider",
     "request_id":"TEST-request","input_tokens":1500,"cached_input_tokens":0,
-    "output_tokens":500,"usage_source":"actual","cost":"0.007",
-    "currency":"USD","pricing_snapshot":{"input_per_million_tokens":"2",
-      "output_per_million_tokens":"8","cached_input_per_million_tokens":null,
-      "per_request":null,"captured_at":"RFC3339"},"started_at":"RFC3339",
-    "completed_at":"RFC3339","duration_ms":4,"failure":null}],
-    "next_cursor":null}
+    "output_tokens":500,"image_count":0,"usage_source":"actual",
+    "cost":"0.007","currency":"USD",
+    "pricing_snapshot":{"model_profile_id":"UUID","model_profile_revision":7,
+      "pricing":{"currency":"USD","input_per_million_tokens":"2",
+        "output_per_million_tokens":"8","cached_input_per_million_tokens":"1",
+        "per_image":null,"per_request":null,"source":"user_configured",
+        "updated_at":"RFC3339"},"captured_at":"RFC3339"},
+    "effective_request":{"snapshot_sha256":"64-lowercase-hex","runtime_request":{}},
+    "started_at":"RFC3339","completed_at":"RFC3339","duration_ms":4,
+    "failure":null
+  }],"next_cursor":null}
 }
 ```
 
-Every physical OpenAI-compatible HTTP attempt gets a durable row before/after the
-attempt. Retries have distinct `attempt_id` and `attempt_number`. Unknown tokens or
-price produce `cost:null`, never zero. Failed/in-doubt attempts remain visible;
-cached input is priced separately when reported. Mixed currencies are returned as
-per-currency summary buckets and never added. Pricing is a Decimal string snapshot
-from the exact Model Profile revision and is never recomputed after edits. States are
-`no_model_requests|complete|partial|unknown`. Owner checks and SQL pagination precede
-the limit. `GET T/model-usage/attempts/{attempt_id}` returns one exact owned row.
+`GET T/model-usage/attempts/{attempt_id}` returns one exact owned row. Status is
+`started|succeeded|failed|in_doubt`; failure is the safe typed `ModelFailure` and
+never contains a raw Provider body. Each physical OpenAI-compatible HTTP attempt is
+inserted before transport. Retries share the admitted `call_id` and have distinct
+monotonic `attempt_number` and `attempt_id`. Logical call settlement remains in the
+existing conversation ledger.
 
-Active Provider probes remain `kind:probe` under Model Profile usage and do not count
-as Task usage unless a new explicitly Task-bound test command says so. Preset mode
-returns `no_model_requests`, zero attempts and known zero tokens; it never fabricates
-a zero-cost model attempt.
+Cost uses Decimal values from the attempt's nested price snapshot: ordinary input,
+reported cached input, output, image count, and per-request components. The fixture
+case is `1500*2/1_000_000 + 500*8/1_000_000 = 0.007`. Missing tokens, missing cached
+count, or a required price yields `cost:null`; it is never coerced to zero. Summary
+token totals are null when any included attempt lacks that token count. Mixed
+currencies remain separate in `costs_by_currency`, with top-level cost/currency null.
+States are `no_model_requests|complete|partial|unknown`.
+
+The OpenAI-compatible Schema, Builder, queued planning, feedback, and future-rule
+routes install this observer after their existing authorization checks; the outer
+conversation adapter supplies the reserved call identity without serializing it to
+the Provider. Preset candidates produce `no_model_requests` and zero rows. Active
+Provider probes retain their separate Model Profile usage list. Published/sample
+vision Provider attachment and the explicit confirmed TEST request remain tracked
+acceptance gaps; those paths must not claim complete R6 evidence yet.
 
 ## Errors and compatibility
 

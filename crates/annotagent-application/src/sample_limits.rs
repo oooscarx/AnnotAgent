@@ -166,7 +166,15 @@ impl VisionModelProvider for LimitedProvider {
         cancellation: CancellationToken,
     ) -> CoreResult<ModelResponse> {
         let receipt = self.calls.begin(&request, &cancellation)?;
-        let result = self.inner.complete(request, cancellation).await;
+        let result = if let Some(receipt) = receipt.as_ref() {
+            annotagent_provider::within_model_call(
+                receipt.id().to_string(),
+                self.inner.complete(request, cancellation),
+            )
+            .await
+        } else {
+            self.inner.complete(request, cancellation).await
+        };
         if let Some(receipt) = receipt {
             receipt.finish(result.is_ok())?;
         }

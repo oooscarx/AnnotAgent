@@ -355,11 +355,16 @@ async fn propose_owned(
         .map_err(ApiError::bad_request)?;
     config.max_retries = 0;
     config.max_output_tokens = config.max_output_tokens.min(2048);
+    let attempt_observer = state
+        .application
+        .task_model_attempt_observer(&project, conversation, task, &selected)
+        .map_err(ApiError::bad_request)?;
     let provider = OpenAiCompatibleProvider::new_with_api_key(
         config,
         Some(credential.expose_secret().to_owned()),
     )
-    .map_err(ApiError::bad_request)?;
+    .map_err(ApiError::bad_request)?
+    .with_attempt_observer(attempt_observer);
     state
         .application
         .authorize_conversation_schema_request(&project, conversation, task, &consent)
