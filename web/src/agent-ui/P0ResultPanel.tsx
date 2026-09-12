@@ -66,13 +66,13 @@ export function P0ResultPanel({service,projectId,taskId,view,onSelection,onSampl
   if(view.kind==="sample_feedback")return <DeliveryReview
     key={`sample:${view.sample_result.sample_test_id}:${view.sample_result.draft_revision}`}
     service={service} project={projectId} task={taskId} images={view.images} labels={view.labels}
-    sampleResult={view.sample_result} formalResult={null} preferredMode="sample" focus={view.focus}
+    sampleResult={view.sample_result} formalResult={null} preferredMode="sample" fixedMode="sample" focus={view.focus}
     permissions={permissions(view.actions)} onVisualSelection={onSelection} onSampleIssue={onSampleIssue}
   />;
   if(view.kind==="formal_review")return <DeliveryReview
     key={`formal:${view.formal_result.processing_operation_id}:${view.formal_result.batch_id}`}
     service={service} project={projectId} task={taskId} images={view.images} labels={view.labels}
-    sampleResult={null} formalResult={view.formal_result} preferredMode="formal" focus={view.focus}
+    sampleResult={null} formalResult={view.formal_result} preferredMode="formal" fixedMode="formal" focus={view.focus}
     permissions={permissions(view.actions)} onFormalSelection={onSelection}
   />;
   if(view.kind==="diagnostic")return <section className="p0-result-diagnostic" aria-label="结果诊断">
