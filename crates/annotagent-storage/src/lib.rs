@@ -58,11 +58,16 @@ mod conversation_schema;
 mod conversation_send;
 pub use conversation_agent_model::{ConversationAgentModel, SelectConversationAgentModel};
 pub use conversation_message_queue::{ConversationQueuedMessage, ConversationQueuedMessageStatus};
+pub use demo_onboarding::{
+    DemoImageSeed, DemoPresetAnnotationSeed, DemoPresetObjectReviewInput, DemoSourceMode,
+    DemoSourceProvenance, DemoStartReceipt, DemoStartScope, DemoStartSeed, DemoStartStatus,
+};
 mod conversation_task_selection;
 mod conversation_tasks;
 mod delivery_image_review;
 mod delivery_package;
 mod delivery_package_consent;
+mod demo_onboarding;
 pub use delivery_package::{
     DeliveryPackageInput, DeliveryPackageJob, DeliveryPackagePhase, DeliveryPackageSnapshot,
     FrozenDeliveryImage,
@@ -755,6 +760,8 @@ impl SqliteStore {
             transaction.execute_batch(include_str!("../../../migrations/0067_delivery_export_snapshots.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0068_delivery_package_consents.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0069_task_model_attempts.sql"))?;
+            transaction.execute_batch(include_str!("../../../migrations/0071_demo_onboarding.sql"))?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(71,'demo_onboarding',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(68,'delivery_package_consents',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(67,'delivery_export_snapshots',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(66,'delivery_image_reviews',?1)",[Utc::now().to_rfc3339()])?;

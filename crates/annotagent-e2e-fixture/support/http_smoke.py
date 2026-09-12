@@ -211,6 +211,52 @@ def seed_and_verify(manifest, root):
         evidence.write_text(json.dumps({"fixture": "TEST external-model-only; real application HTTP and database", "requests": c.trace}, indent=2, ensure_ascii=False) + "\n")
 
 
+def verify_demo_onboarding(c, model_profile_id):
+    catalog = c.get("/api/demo-catalog?limit=1")
+    assert catalog["contract_version"] == "demo-catalog-v1" and len(catalog["items"]) == 1, catalog
+    entry = catalog["items"][0]
+    assert entry["demo_id"] == "object-detection-review" and entry["image_count"] == 6, entry
+    manifest = c.get("/api/demo-catalog/object-detection-review/versions/1.0.0")
+    assert manifest["manifest_sha256"] == entry["manifest_sha256"], manifest
+    assert all("path" not in asset and asset["download_url"].startswith("/api/demo-catalog/") for asset in manifest["assets"]), manifest
+    thumbnail = c.request("GET", entry["thumbnail_url"], raw=True)
+    assert thumbnail["bytes"] > 0 and thumbnail["content_type"] == "image/png", thumbnail
+
+    preset_command = uid()
+    preset_request = {"command_id": preset_command, "demo_id": entry["demo_id"], "demo_version": entry["version"], "source_mode": "preset_candidates", "model_profile_id": None}
+    preset = c.post("/api/demos/start", preset_request)
+    assert preset["status"] == "ready" and preset["source_provenance"]["review_status"] == "needs_review", preset
+    assert preset["source_provenance"]["live_inference_occurred"] is False, preset
+    replay = c.post("/api/demos/start", preset_request)
+    assert replay["replayed"] is True and replay["project_id"] == preset["project_id"] and replay["task_id"] == preset["task_id"], replay
+    conflict = c.request("POST", "/api/demos/start", {**preset_request, "source_mode": "live_model", "model_profile_id": model_profile_id}, expected=[409])
+    assert conflict["code"] == "demo_command_conflict", conflict
+    recovered = c.get("/api/demos/start/" + preset_command)
+    assert recovered["task_id"] == preset["task_id"] and recovered["replayed"] is True, recovered
+    preset_task = f"/api/projects/{preset['project_id']}/conversations/{preset['conversation_id']}/tasks/{preset['task_id']}"
+    assert c.get(preset_task + "/model-usage")["attempts"]["items"] == [], preset
+    delivery = c.get(preset_task + "/delivery-intent")
+    assert len(delivery["saved"]["intent"]["dataset_scope"]) == 6, delivery
+    preset_workspace = c.get(preset_task + "/workspace")["mainline"]
+    assert preset_workspace["task_id"] == preset["task_id"]
+    assert preset_workspace["available_actions"][0]["id"] == "review_delivery_images", preset_workspace
+    assert preset_workspace["formal_source"] == {"kind": "preset_candidate_import", "status": "needs_review", "live_inference_occurred": False, "model_run_id": None}, preset_workspace
+    review = c.get(preset_task + "/delivery-review-items?limit=6")
+    assert review["summary"] == {"selected": 6, "positive": 0, "negative": 0, "excluded": 0, "unreviewed": 6}, review
+    first = review["items"][0]
+    assert first["child_run_id"] is None and first["annotations"][0]["origin"] == "preset_candidate", first
+    assert first["annotations"][0]["review_status"] == "needs_review" and first["annotations"][0]["source_artifact_id"], first
+
+    live_command = uid()
+    live = c.post("/api/demos/start", {"command_id": live_command, "demo_id": entry["demo_id"], "demo_version": entry["version"], "source_mode": "live_model", "model_profile_id": model_profile_id})
+    assert live["source_provenance"] == {"kind": "live_model", "live_inference_occurred": False, "review_status": None, "source_asset_id": None, "source_asset_sha256": None}, live
+    live_task = f"/api/projects/{live['project_id']}/conversations/{live['conversation_id']}/tasks/{live['task_id']}"
+    assert c.get(live_task + "/model-usage")["attempts"]["items"] == [], live
+    assert c.get(live_task + "/calls") == [], live
+    assert c.get(f"/api/projects/{live['project_id']}/conversations/{live['conversation_id']}/agent-model")["model_profile_id"] == model_profile_id
+    return {"catalog_revision": catalog["catalog_revision"], "manifest_sha256": entry["manifest_sha256"], "preset": preset, "live": live, "preset_task_root": preset_task, "live_task_root": live_task}
+
+
 def verify_diagnostic_scenes(c, manifest):
     seeded = json.loads((Path(manifest["workspace"]) / "P0_DIAGNOSTIC_SCENES.json").read_text())
     assert seeded["contract_version"] == "p0-diagnostic-scenes-v1", seeded
@@ -424,7 +470,8 @@ def verify(c, manifest, root):
     assert len(consent_posts) == 1, consent_posts
     assert execution_posts == [], execution_posts
     diagnostic_scenes = verify_diagnostic_scenes(c, manifest)
-    return {"project": project, "conversation_id": conversation, "task_id": task, "task_root": tr, "model_profile_id": model["id"], "provider_id": provider["id"], "execution_url": execution, "p0_autonomy": {"task_images": task_images, "task_image_count": len(task_images), "sample_image_count": len(record["inputs"]), "unavoidable_user_decisions": 1, "technical_relay_clicks": 0, "consent_post_count": len(consent_posts), "execution_post_count": len(execution_posts), "consent_response_ms": consent_response_ms, "journey_duration_ms": journey_duration_ms, "first_observation": first_observation, "consent_id": consent["id"], "schema_call_id": consent["schema_proposal"]["call_id"], "builder_operation_id": consent["builder_operation_id"], "sample_operation_id": consent["sample_operation_id"], "draft_id": record["draft_id"], "sample_status": record["status"], "delivery_schema_id": delivery_schema["schema"]["id"], "review_work_item_id": review_workspace["review_work_item_id"], "review_action": review_workspace["available_actions"][0], "automatic_review_request_ids": [item["input"]["id"] for item in automatic_reviews], "processing_review_gate": {"preview_code": blocked_preview["code"], "confirm_code": blocked_processing["code"], "receipt_count_before_reviews": 0, "unresolved_before": len(blocked_preview["sample_review"]["unresolved"]), "applied_after": len(approval["sample_review"]["applied_request_ids"]), "ready_after": approval["sample_review"]["ready"]}, "execution_dispatch": finished["dispatch"], "formal_delivery": package_evidence}, "describe_before_upload": describe_before_upload, "ambiguous_goal": ambiguous_goal, "export": export, "run_id": run_id, "stop": stop, "answered_request_id": human["id"], "pending_request_id": pending["id"], "plan_task_id": plan["task_id"], "controls": controls, "saved_plan": saved_plan, "bbox": bbox, "manual_stop": manual_stop, "diagnostic_scenes": diagnostic_scenes, "trace": str(Path(manifest["workspace"]) / "HTTP_TRACE.json")}
+    demo_onboarding = verify_demo_onboarding(c, model["id"])
+    return {"project": project, "conversation_id": conversation, "task_id": task, "task_root": tr, "model_profile_id": model["id"], "provider_id": provider["id"], "execution_url": execution, "p0_autonomy": {"task_images": task_images, "task_image_count": len(task_images), "sample_image_count": len(record["inputs"]), "unavoidable_user_decisions": 1, "technical_relay_clicks": 0, "consent_post_count": len(consent_posts), "execution_post_count": len(execution_posts), "consent_response_ms": consent_response_ms, "journey_duration_ms": journey_duration_ms, "first_observation": first_observation, "consent_id": consent["id"], "schema_call_id": consent["schema_proposal"]["call_id"], "builder_operation_id": consent["builder_operation_id"], "sample_operation_id": consent["sample_operation_id"], "draft_id": record["draft_id"], "sample_status": record["status"], "delivery_schema_id": delivery_schema["schema"]["id"], "review_work_item_id": review_workspace["review_work_item_id"], "review_action": review_workspace["available_actions"][0], "automatic_review_request_ids": [item["input"]["id"] for item in automatic_reviews], "processing_review_gate": {"preview_code": blocked_preview["code"], "confirm_code": blocked_processing["code"], "receipt_count_before_reviews": 0, "unresolved_before": len(blocked_preview["sample_review"]["unresolved"]), "applied_after": len(approval["sample_review"]["applied_request_ids"]), "ready_after": approval["sample_review"]["ready"]}, "execution_dispatch": finished["dispatch"], "formal_delivery": package_evidence}, "describe_before_upload": describe_before_upload, "ambiguous_goal": ambiguous_goal, "export": export, "run_id": run_id, "stop": stop, "answered_request_id": human["id"], "pending_request_id": pending["id"], "plan_task_id": plan["task_id"], "controls": controls, "saved_plan": saved_plan, "bbox": bbox, "manual_stop": manual_stop, "diagnostic_scenes": diagnostic_scenes, "demo_onboarding": demo_onboarding, "trace": str(Path(manifest["workspace"]) / "HTTP_TRACE.json")}
 
 
 def verify_describe_before_upload(c, project_root, schema_revision, png):
@@ -623,4 +670,15 @@ def restart_snapshot(c, manifest):
         snapshot["bbox"] = {"requests": c.get(bbox["task_root"] + "/human-requests"), "feedback": c.get(bbox["feedback_url"])}
     if manifest.get("diagnostic_scenes"):
         snapshot["diagnostic_scenes"] = verify_diagnostic_scenes(c, manifest)
+    if manifest.get("demo_onboarding"):
+        demo = manifest["demo_onboarding"]
+        snapshot["demo_onboarding"] = {
+            "preset_receipt": c.get("/api/demos/start/" + demo["preset"]["command_id"]),
+            "live_receipt": c.get("/api/demos/start/" + demo["live"]["command_id"]),
+            "preset_workspace": c.get(demo["preset_task_root"] + "/workspace"),
+            "preset_review": c.get(demo["preset_task_root"] + "/delivery-review-items?limit=6"),
+            "live_workspace": c.get(demo["live_task_root"] + "/workspace"),
+            "preset_usage": c.get(demo["preset_task_root"] + "/model-usage"),
+            "live_usage": c.get(demo["live_task_root"] + "/model-usage"),
+        }
     return snapshot

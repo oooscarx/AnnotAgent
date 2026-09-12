@@ -137,18 +137,33 @@ pub(crate) fn snapshot(
             ));
         }
     }
-    let mut stmt = db.prepare("SELECT a.annotation_json FROM annotations a LEFT JOIN runs r ON r.id=a.run_id LEFT JOIN run_provenance_tombstones p ON p.run_id=a.run_id WHERE COALESCE(r.project_id,p.project_id)=?1 AND a.image_id=?2 AND (?3 IS NULL OR a.run_id=?3) ORDER BY a.id")?;
-    let rows = stmt.query_map(
-        params![
-            saved.intent.project_id,
-            image.to_string(),
-            run.map(|r| r.to_string())
-        ],
-        |r| r.get::<_, String>(0),
-    )?;
-    let annotations: Vec<Annotation> = rows
-        .map(|r| Ok(serde_json::from_str(&r?)?))
-        .collect::<Result<_, StorageError>>()?;
+    let preset_source: bool = run.is_none()
+        && db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM demo_preset_candidate_imports WHERE project_owner_id=?1 AND conversation_id=?2 AND task_id=?3)",
+            params![saved.intent.project_id,saved.intent.conversation_id.to_string(),saved.intent.task_id.to_string()],
+            |row| row.get(0),
+        )?;
+    let annotations: Vec<Annotation> = if preset_source {
+        SqliteStore::demo_preset_annotations(
+            db,
+            &saved.intent.project_id,
+            saved.intent.conversation_id,
+            saved.intent.task_id,
+            image,
+        )?
+    } else {
+        let mut stmt = db.prepare("SELECT a.annotation_json FROM annotations a LEFT JOIN runs r ON r.id=a.run_id LEFT JOIN run_provenance_tombstones p ON p.run_id=a.run_id WHERE COALESCE(r.project_id,p.project_id)=?1 AND a.image_id=?2 AND (?3 IS NULL OR a.run_id=?3) ORDER BY a.id")?;
+        let rows = stmt.query_map(
+            params![
+                saved.intent.project_id,
+                image.to_string(),
+                run.map(|r| r.to_string())
+            ],
+            |r| r.get::<_, String>(0),
+        )?;
+        rows.map(|r| Ok(serde_json::from_str(&r?)?))
+            .collect::<Result<_, StorageError>>()?
+    };
     if annotations.iter().any(|a| a.image_id != image) {
         return Err(invalid("annotation image identity is inconsistent"));
     }
@@ -411,8 +426,9 @@ impl SqliteStore {
             if snapshot.sha256 != input.expected_snapshot_sha256 { return Err(invalid("image annotations changed; inspect the latest image before confirming")); }
             let accepted = snapshot.annotations.iter().filter(|a| a.review_status == ReviewStatus::HumanAccepted).count();
             let unresolved = snapshot.annotations.iter().any(|a| !matches!(a.review_status,ReviewStatus::HumanAccepted | ReviewStatus::Rejected));
+            let preset_source:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM demo_preset_candidate_imports WHERE project_owner_id=?1 AND conversation_id=?2 AND task_id=?3)",params![saved.intent.project_id,conversation.to_string(),task.to_string()],|row|row.get(0))?;
             match input.decision {
-                DeliveryImageDecision::PositiveComplete if input.source_run_id.is_none() || accepted == 0 || unresolved => return Err(invalid("positive image requires an explicit source Run and resolved accepted objects")),
+                DeliveryImageDecision::PositiveComplete if (input.source_run_id.is_none() && !preset_source) || accepted == 0 || unresolved => return Err(invalid("positive image requires an explicit formal or preset source and resolved accepted objects")),
                 DeliveryImageDecision::NegativeConfirmed if accepted != 0 || unresolved => return Err(invalid("negative image still contains accepted or unresolved objects")),
                 DeliveryImageDecision::Excluded if input.reason.as_ref().is_none_or(|s| s.trim().is_empty()) => return Err(invalid("excluding an image requires a reason")),
                 _ => {}

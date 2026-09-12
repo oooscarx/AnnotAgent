@@ -43,6 +43,7 @@ pub(super) fn routes() -> Router<ServerState> {
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/delivery-images/{image_id}", get(super::task_delivery::image).post(super::task_delivery::confirm_image))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/delivery-images/{image_id}/missing-objects", post(super::task_delivery::create_object))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/delivery-images/{image_id}/objects", post(super::task_delivery::edit_object))
+        .route("/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id}/delivery-images/{image_id}/preset-objects", post(super::task_delivery::review_preset_object))
         .route("/api/projects/{project_id}/conversations/{conversation_id}/context-archive", get(super::context_archives::export))
         .route("/api/projects/{project_id}/context-imports/preview", post(super::context_archives::preview))
         .route("/api/projects/{project_id}/context-imports", post(super::context_archives::confirm))

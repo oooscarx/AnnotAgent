@@ -137,6 +137,23 @@ pub(super) async fn edit_object(
         .map_err(ApiError::conversation)
 }
 
+pub(super) async fn review_preset_object(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task, image)): AxumPath<(
+        String,
+        uuid::Uuid,
+        uuid::Uuid,
+        annotagent_core::ImageId,
+    )>,
+    Json(input): Json<annotagent_storage::DemoPresetObjectReviewInput>,
+) -> ApiResult<Json<annotagent_core::AnnotationRevision>> {
+    state
+        .application
+        .review_task_demo_preset_object(&project, conversation, task, image, &input)
+        .map(Json)
+        .map_err(ApiError::conversation)
+}
+
 pub(super) async fn create_object(
     State(state): State<ServerState>,
     AxumPath((project, conversation, task, image)): AxumPath<(

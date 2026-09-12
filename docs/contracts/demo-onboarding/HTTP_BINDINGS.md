@@ -15,7 +15,7 @@ Let `T=/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id
 |---|---|---|
 | Task read model | `GET T/workspace` -> `workspace.mainline: MainlineTaskView` | `completion.status=package_ready` is the only whole-task completion. A completed model call is only a step receipt. |
 | Readiness | `GET T/capability-readiness` -> `CapabilityReadiness` | Passive Registry snapshot. `setup_requests[].return_path` is server-owned. |
-| Formal source | `GET T/formal-result`; `GET T/delivery-review-items`; `GET T/delivery-images/{image_id}?source_run_id=...` | Sources remain exact Task processing operation -> Batch -> child Run. Project-global Runs are excluded. |
+| Formal/review source | `GET T/formal-result`; `GET T/delivery-review-items`; `GET T/delivery-images/{image_id}?source_run_id=...` | Live sources remain exact Task processing operation -> Batch -> child Run. Preset mode is projected as an imported review source with `child_run_id:null`; it is never represented as a model Run. Project-global Runs are excluded. |
 | Human review | `POST T/delivery-images/{image_id}`, `/objects`, `/missing-objects` | Existing image/snapshot/review CAS; no candidate is accepted by import or GET. |
 | Package | `GET/POST T/delivery-package-consents`; `GET/POST T/delivery-packages` | Readiness and the one-shot admission transaction remain server-owned. |
 | Stop and events | existing conversation stop requests, Run/Batch controls and Run SSE | Remote uncertainty remains `in_doubt`/unknown; no automatic retry. |
@@ -29,6 +29,41 @@ Let `T=/api/projects/{project_id}/conversations/{conversation_id}/tasks/{task_id
 | `GET /api/demo-catalog?cursor=&limit=50` | `DemoCatalogPage {catalog_revision,items:[DemoCatalogEntry],next_cursor}` |
 | `GET /api/demo-catalog/{demo_id}/versions/{version}` | Exact allowlisted `DemoManifest`; no local path fields |
 | `GET /api/demo-catalog/{demo_id}/versions/{version}/assets/{asset_id}` | Bytes for an asset named and hashed by that exact manifest; immutable ETag is the manifest SHA-256 |
+
+Implemented page shape (all fields are required except `next_cursor`):
+
+```json
+{
+  "contract_version":"demo-catalog-v1",
+  "catalog_revision":"64-lowercase-hex",
+  "items":[{
+    "demo_id":"object-detection-review",
+    "version":"1.0.0",
+    "manifest_sha256":"64-lowercase-hex",
+    "title":"标注桌面物品",
+    "summary":"6 张原创合成图片 · cup / bottle · YOLO 检测数据包",
+    "learning_objectives":["区分本次模型结果与预置候选","检查边界并完成逐图审核后再打包"],
+    "image_count":6,
+    "labels":["cup","bottle"],
+    "delivery_format":"ultralytics_yolo_detection",
+    "thumbnail_asset_id":"thumbnail",
+    "thumbnail_url":"/api/demo-catalog/object-detection-review/versions/1.0.0/assets/thumbnail",
+    "license":{"spdx_id":"CC0-1.0","source_url":"https://creativecommons.org/publicdomain/zero/1.0/legalcode","attribution_asset_id":"attribution"},
+    "modes":[
+      {"source_mode":"preset_candidates","status":"ready","reason":null,"required_capabilities":[]},
+      {"source_mode":"live_model","status":"setup_required","reason":"Select a compatible available vision-language Model Profile when starting","required_capabilities":["vision_language"]}
+    ]
+  }],
+  "next_cursor":null
+}
+```
+
+The manifest response repeats `contract_version`, `catalog_revision` and
+`manifest_sha256`, then returns the validated manifest. Asset entries omit repository
+`path` and add `download_url`; clients cannot construct a filesystem path. The asset
+response includes the declared `Content-Type`, `ETag: "{manifest_sha256}"` and
+`Cache-Control: public, max-age=31536000, immutable`. Cursor is a zero-based exclusive
+offset encoded as a decimal string; limit is `1..100`.
 
 Catalog sources are repository-owned `examples/demo-packs/{demo_id}/{version}`
 directories compiled/validated at startup. IDs use lowercase ASCII letters, digits and
@@ -61,8 +96,108 @@ The transaction allocates a new independent Project owner, Conversation, Task,
 imports exact manifest images, saves delivery intake and records source provenance.
 It then exposes existing mainline actions. Preset candidates enter a dedicated import
 source with `review_status:needs_review`; they are not a Mock Provider call, do not
-create model usage and are never marked human accepted. Live mode creates no preset
-candidate rows and must pass current readiness/authorization before inference.
+create model usage and are never marked human accepted. `GET T/workspace` immediately
+returns `available_actions[0].id=review_delivery_images`, with
+`formal_source.kind=preset_candidate_import`, `model_run_id:null` and
+`live_inference_occurred:false`. It does not send the user through Schema or Builder.
+Live mode creates no preset candidate rows and must pass current
+readiness/authorization before inference.
+
+The implemented success receipt is:
+
+```json
+{
+  "contract_version":"demo-start-v1",
+  "command_id":"f64ab33a-d248-47bc-a4ab-d7e08ea7bf19",
+  "demo_id":"object-detection-review",
+  "demo_version":"1.0.0",
+  "source_mode":"preset_candidates",
+  "catalog_revision":"64-lowercase-hex",
+  "manifest_sha256":"64-lowercase-hex",
+  "status":"ready",
+  "project_id":"demo-object-detection-review-f64ab33ad24847bca4abd7e08ea7bf19",
+  "project_owner_id":"9ae80257-112e-5737-8cf6-7e7ceec239c7",
+  "conversation_id":"UUID",
+  "task_id":"UUID",
+  "work_route":"/projects/demo-object-detection-review-f64ab33ad24847bca4abd7e08ea7bf19/work?conversation=UUID&task=UUID",
+  "source_provenance":{
+    "kind":"preset_candidates",
+    "live_inference_occurred":false,
+    "review_status":"needs_review",
+    "source_asset_id":"preset-candidates",
+    "source_asset_sha256":"64-lowercase-hex"
+  },
+  "replayed":false,
+  "retry_safe":true,
+  "detail":null
+}
+```
+
+`project_id` is the URL route ID; `project_owner_id` is the stable UUID used by the
+existing storage ownership boundary. `conversation_id` and `task_id` are deterministic
+children of `command_id`. A 200 POST replay and recovery GET set `replayed:true`; all
+other identities and frozen hashes remain unchanged. A Live receipt has
+`source_provenance.kind:live_model`, null review/source asset fields and
+`live_inference_occurred:false` because StartDemo never performs inference.
+
+Database initialization is one SQLite transaction after repository files have been
+copied into a command-marked independent Project directory. A crash before the SQLite
+commit is recoverable only for that exact command marker. The transaction writes the
+Conversation, original user goal, Task, stable image identities, revision-1 delivery
+intent, optional Live next-request Model Profile preference, command receipt and optional
+Preset import. It does not write Schema/Draft/Sample/Run/canonical `annotations`/grant/
+model-attempt rows. Preset candidate records live in the isolated
+`demo_preset_annotations` source and start as `AnnotationSource::Imported` plus
+`ReviewStatus::NeedsReview`; callers must not present them as accepted annotations.
+
+### Preset review bridge
+
+The existing Task route is authoritative. No Demo-only runtime is introduced:
+
+| Method and URL | Meaning |
+|---|---|
+| `GET T/delivery-review-items?cursor=0&limit=50` | Paged six-image review projection. In preset mode each item has `child_run_id:null`, stable image URL/thumbnail URL, snapshot hash and candidates with `origin:preset_candidate`, original `source_artifact_id`, `review_status:needs_review`. |
+| `GET T/delivery-images/{image_id}` | Exact current imported candidate snapshot and current whole-image receipt. `source_run_id` remains null. |
+| `POST T/delivery-images/{image_id}/preset-objects` | Human accept/reject or geometry/label revision for one exact imported candidate. Uses intent + snapshot CAS and durable `command_id`; it cannot target a model Run. |
+| `POST T/delivery-images/{image_id}` | Existing whole-image decision. Preset positive completion is allowed only after at least one candidate is human accepted and no candidate is unresolved. Empty preset images use `negative_confirmed`. |
+| Existing package consent/package routes | Require a current whole-image receipt for every one of the six frozen images, including exclusions. The frozen package carries the preset manifest/source hash and human revision IDs. |
+
+Preset object review request:
+
+```json
+{
+  "command_id":"UUID",
+  "intent_revision":1,
+  "intent_sha256":"64-lowercase-hex",
+  "annotation_id":"UUID",
+  "expected_snapshot_sha256":"64-lowercase-hex",
+  "label":"cup",
+  "value":{"kind":"bounding_box","rect":{"x":0.400391,"y":0.416667,"width":0.336914,"height":0.384115}},
+  "review_status":"human_accepted",
+  "reason":"边界已检查"
+}
+```
+
+`review_status` is exactly `human_accepted|rejected`. The response is the existing
+`AnnotationRevision`, with `actor:human`, `before`, `after`, `reason` and timestamp.
+An exact command replay returns the original revision. Changed reuse, stale intent,
+stale snapshot, wrong project/task/image, unknown candidate, invalid geometry or an
+out-of-Schema label is rejected before any write. GET performs no review write.
+
+Start validation and errors:
+
+- `live_model` requires an enabled, `available` Model Profile with image input and
+  `vision_language`; no credential is resolved and no Provider is contacted.
+- `preset_candidates` forbids `model_profile_id`.
+- unknown JSON fields and malformed UUIDs are 422 from the JSON extractor. Semantic
+  mode/profile failures are 422 with a typed code such as `model_profile_required`,
+  `model_forbidden_for_preset`, `model_profile_unavailable` or
+  `model_profile_incompatible`.
+- an unknown/non-allowlisted Demo, asset or recovery command is 404.
+- changed reuse of a persisted command is 409 `demo_command_conflict` and never changes
+  or deletes the original Project.
+- POST uses the existing session/CSRF middleware. GET catalog, asset, manifest and
+  receipt routes are passive.
 
 ## R3 effective model request — implemented
 
@@ -165,4 +300,3 @@ alone must not be presented as a transport proof.
   created. Once transport may have received bytes, outcome may be unknown.
 - Additions are versioned and additive. Existing Task, archive, review, Run and
   package URLs are reused rather than wrapped in a Demo-only Runtime.
-
