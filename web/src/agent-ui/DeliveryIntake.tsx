@@ -4,7 +4,8 @@ import { DeliveryReview } from "./DeliveryReview";
 import type { DeliveryService } from "./deliveryService";
 import { Disclosure } from "./Disclosure";
 import { DeliveryPackage } from "./DeliveryPackage";
-import type { DeliveryFormalResult, DeliverySampleResult, FormalReviewSelection, SampleVisualSelection } from "./deliveryVisualSelection";
+import type { DeliveryFormalResult, DeliverySampleResult, SampleVisualSelection } from "./deliveryVisualSelection";
+import type { FormalVisualSelection } from "./mainline";
 
 export type DeliveryLabel = { stable_id: string; display_name: string; aliases: string[]; include: string; exclude: string };
 type Target = { annotation_kind: string; framework: string; export_profile: string; profile_revision: number };
@@ -51,7 +52,7 @@ export function DeliveryIntake({
   locked?: boolean;
   onVisualSelection?: (selection: SampleVisualSelection) => void;
   onSampleIssue?: (selection: SampleVisualSelection) => void;
-  onFormalSelection?: (selection: FormalReviewSelection) => void;
+  onFormalSelection?: (selection: FormalVisualSelection) => void;
 }) {
   const [view, setView] = useState<IntakeView>();
   const [ids, setIds] = useState<string[]>([]);

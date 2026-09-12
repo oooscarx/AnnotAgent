@@ -44,7 +44,7 @@ export type DeliveryPackageStart = { job: DeliveryPackageStatus; active: boolean
 export type DeliveryReviewSummary = {
   intent_revision:number;intent_sha256:string;formal_result:DeliveryFormalResult|null;
   counts:{total:number;complete:number;positive:number;negative:number;excluded:number;unresolved:number;failed:number};
-  items:{image_id:string;state:"positive_complete"|"negative_confirmed"|"excluded"|"unresolved"|"failed";review_revision:number|null;child_run_id:string|null;error:string|null}[];
+  items:{image_id:string;image_sha256:string;state:"positive_complete"|"negative_confirmed"|"excluded"|"unresolved"|"failed";review_revision:number|null;child_run_id:string|null;error:string|null;formal_selections:Record<string,import("./mainline").FormalVisualSelection>}[];
   next_cursor:string|null;
 };
 export type PackageConsent = {input:{id:string;intent_revision:number;intent_sha256:string;confirmed:true};state:"armed"|"consumed"|"cancelled"};

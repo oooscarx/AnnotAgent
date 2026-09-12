@@ -52,6 +52,7 @@ export type ThreadItem = {
   details?: string[];
   source?: {kind:"message"|"model_call"|"operation";id:string;status?:string};
   reference?: Command["selection"];
+  referenceText?: string;
 };
 export type Task = {
   id: string;

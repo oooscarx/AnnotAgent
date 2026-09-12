@@ -3,13 +3,12 @@ import { AnnotationCanvas } from "../components/AnnotationCanvas";
 import type { Annotation } from "../types";
 import type { DeliveryImageView, DeliveryReviewInput, DeliveryReviewSummary, DeliveryService } from "./deliveryService";
 import {
-  formalVisualSelection,
   sampleVisualSelection,
   type DeliveryFormalResult,
   type DeliverySampleResult,
-  type FormalReviewSelection,
   type SampleVisualSelection,
 } from "./deliveryVisualSelection";
+import type { FormalVisualSelection } from "./mainline";
 
 type Image = { id: string; name: string; src?: string };
 type Mode = "sample" | "formal";
@@ -27,7 +26,7 @@ export type DeliveryReviewProps = {
   onEditingState?: (active: boolean) => void;
   onVisualSelection?: (selection: SampleVisualSelection) => void;
   onSampleIssue?: (selection: SampleVisualSelection) => void;
-  onFormalSelection?: (selection: FormalReviewSelection) => void;
+  onFormalSelection?: (selection: FormalVisualSelection) => void;
 };
 
 const fromUrl = (images: Image[], hasSample: boolean): Selection => {
@@ -214,12 +213,9 @@ export function DeliveryReview({
 
   const emitFormal = (annotation?: Annotation, imageDecision = false) => {
     try {
-      const next = formalResult && view && formalVisualSelection(formalResult, selection.image, {
-          sha256: view.snapshot.sha256,
-          intent_revision: view.intent_revision,
-          intent_sha256: view.intent_sha256,
-          review_revision: view.review?.revision ?? null,
-        }, imageDecision ? undefined : annotation);
+      if(imageDecision)return undefined;
+      const next=annotation&&summaryItems.find(item=>item.image_id===selection.image)?.formal_selections[annotation.id];
+      if(annotation&&!next)throw new Error("正式标注的当前会话引用仍未读取或已经失效，未附加到输入框。");
       if (next) onFormalSelection?.(next);
       return next || undefined;
     } catch (cause) {

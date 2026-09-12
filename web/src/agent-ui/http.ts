@@ -1,5 +1,5 @@
 import { api, ApiRequestError, request, type JourneyPreview, type JourneyConsent, type ProcessingAuthorization, type ProcessingReceipt } from "../api";
-import type { ImageItem, ProviderProfile, RegistryModelProfile, GlobalModelDefaults, ExpertPluginRegistry, InstalledModelInstance, ConversationSchemaPreview, ConversationCallReceipt, ConversationBuilderItem, WorkflowSampleTestRecord, SampleFeedbackRevision, ExportReadiness, ProjectExportResult } from "../types";
+import type { Annotation, ConversationFormalReference, ConversationMessageInput, ImageItem, ProviderProfile, RegistryModelProfile, GlobalModelDefaults, ExpertPluginRegistry, InstalledModelInstance, ConversationSchemaPreview, ConversationCallReceipt, ConversationBuilderItem, WorkflowSampleTestRecord, SampleFeedbackRevision, ExportReadiness, ProjectExportResult } from "../types";
 import { terminalSampleAnnotations } from "../sampleAnnotations";
 import { historyScopeApi } from "./historyScope";
 import { historyManagementApi } from "./HistoryManagement";
@@ -16,7 +16,7 @@ import {stopTargetMatches} from "../conversation-control";
 import type { WorkspaceAdapter, Snapshot, Task, Command, Settings, ImageId, Box, Phase, Action } from "./adapter";
 import {readPendingDelivery,rememberPendingDelivery,clearPendingDelivery} from "./pendingDelivery";
 import {projectCallMessages} from "./messageProjection";
-import {assertVisualSelection,deliverySampleResultFromCanonical,selectedMessage,type CanonicalVisualSelectionItem,type CanonicalVisualSelectionPage,type MainlineAdvanceReceipt,type MainlineTaskView,type VisualSelection} from "./mainline";
+import {assertVisualSelection,deliverySampleResultFromCanonical,formalVisualSelectionFromCanonical,selectedMessage,type CanonicalVisualSelectionItem,type CanonicalVisualSelectionPage,type MainlineAdvanceReceipt,type MainlineTaskView,type VisualSelection} from "./mainline";
 
 type Page<T> = { items: T[]; next_cursor: string | number | null };
 type Project = { project_id: string; project_owner_id: string; title: string; conversation_id: string | null };
@@ -37,9 +37,14 @@ type Workspace = {
   read_model_revision?:string;
   mainline?:MainlineTaskView;
 };
-type Thread = { id: string; role: "user"; task_id: string; project_owner_id: string; conversation_id: string; message: { input: { text: string; reference?:{scope:string} } } };
+type Thread = { id: string; role: "user"; task_id: string; project_owner_id: string; conversation_id: string; message: { input: ConversationMessageInput } };
 type SafeSettings = { revision: string; sections: { data_privacy: { workspace_id: string }; usage_budget: { future_run_budget: Record<string, unknown> & { max_cost?: string } } } };
 export type Transport = <T>(path: string, init?: RequestInit) => Promise<T>;
+const persistedReferenceText=(input:ConversationMessageInput)=>input.reference?.scope==="sample_candidate"
+  ? `引用：样例图片 ${input.image?.image_id || "未知"} · 候选 ${input.reference.candidate_id}`
+  : input.reference?.scope==="formal_annotation"
+    ? `引用：正式图片 ${input.image?.image_id || "未知"} · 标注 ${input.reference.annotation_id}`
+    : input.reference?.scope==="stop_request" ? "引用：停止请求" : undefined;
 const esc = encodeURIComponent;
 const nativeTrashService = {...api, historyScope:historyScopeApi};
 const unsupported = (detail: string): never => { throw new Error(`尚未接通：${detail}。没有执行操作，也没有回退到演示结果。`); };
@@ -114,7 +119,7 @@ export class HttpAdapter implements WorkspaceAdapter {
       const page=await this.transport<{
         project_id:string;task_id:string;intent_revision:number;intent_sha256:string;
         summary:{selected:number;positive:number;negative:number;excluded:number;unreviewed:number};
-        items:{image_id:string;child_run_id:string|null;execution_error:string|null;review_revision:number;review_decision:string|null;confirmation_current:boolean}[];
+        items:{image_id:string;content_sha256:string;processing_operation_id:string|null;batch_id:string|null;child_run_id:string|null;execution_error:string|null;review_revision:number;review_decision:string|null;confirmation_current:boolean;snapshot_sha256:string;annotations:{annotation_id:string;label:string|null;value:Annotation["value"];annotation_revision_id:string|null;feedback_available:boolean;conversation_reference:ConversationFormalReference|null}[]}[];
         next_cursor:string|null;
       }>(`${root}/delivery-review-items?cursor=${esc(cursor||"0")}&limit=50`,{signal});
       if(page.project_id!==project||page.task_id!==task)throw new Error("审核摘要不属于当前 Project/Task。");
@@ -130,7 +135,16 @@ export class HttpAdapter implements WorkspaceAdapter {
                 : item.review_decision==="excluded"
                   ? "excluded" as const
                   : "unresolved" as const;
-        return {image_id:item.image_id,state,review_revision:item.review_revision||null,child_run_id:item.child_run_id,error:item.execution_error||null};
+        const entries=item.annotations.flatMap(annotation=>{
+          if(!annotation.feedback_available||!annotation.conversation_reference)return [];
+          const selection=formalVisualSelectionFromCanonical({project_id:project,conversation_id:this.task(task).conversationId!,task_id:task,image_id:item.image_id,image_sha256:item.content_sha256,annotation});
+          const reference=selection.reference;
+          if(reference.intent_revision!==page.intent_revision||reference.intent_sha256!==page.intent_sha256||reference.processing_operation_id!==item.processing_operation_id||reference.batch_id!==item.batch_id||reference.source_run_id!==item.child_run_id||reference.expected_snapshot_sha256!==item.snapshot_sha256)throw new Error("正式标注引用与当前审核项的冻结范围不一致。");
+          return [[annotation.annotation_id,selection]];
+        });
+        if(new Set(entries.map(([id])=>id)).size!==entries.length)throw new Error("正式审核项包含重复的 Annotation ID，未创建对象引用。");
+        const formal_selections=Object.fromEntries(entries);
+        return {image_id:item.image_id,image_sha256:item.content_sha256,state,review_revision:item.review_revision||null,child_run_id:item.child_run_id,error:item.execution_error||null,formal_selections};
       });
       const failed=items.filter(item=>item.state==="failed").length;
       const complete=page.summary.positive+page.summary.negative+page.summary.excluded;
@@ -438,7 +452,7 @@ export class HttpAdapter implements WorkspaceAdapter {
       const edits=this.stored<{revision?:string;boxes?:Record<ImageId,Box[]>}>(`edits.${id}`,{});
       const mainline=ws?.mainline?this.assertMainline(ws,task):undefined;
       this.emit({ error: undefined, artifacts, tasks: this.state.tasks.map(t => t.id !== id ? t : { ...t,
-        items: [...thread.map(t => ({ id: t.id, role: "user" as const, kind:"input" as const, text: t.message.input.text,source:{kind:"message" as const,id:t.id} })),...projectCallMessages(ws?.calls||[])],
+        items: [...thread.map(t => {const referenceText=persistedReferenceText(t.message.input);return { id: t.id, role: "user" as const, kind:"input" as const, text: t.message.input.text,source:{kind:"message" as const,id:t.id},...(referenceText?{referenceText}:{}) };}),...projectCallMessages(ws?.calls||[])],
         ...result, approval:pendingApproval?.view || t.approval, actions: {...ws?.actions || t.actions,answer:{available:!!result.human && ["classification","bounding_box"].includes(result.human.kind),reason:"仅保存当前人工作答的样例修正"}}, model: ws?.agent_model.model_profile_id || this.defaults.pipeline_builder || t.model,
         loaded:true, image: human?.input.image_id || artifacts[0]?.id || "", editBoxes: edits.revision===result.resultRevision ? edits.boxes || {} : {},
         phase, receipts, humanQuestion:human?.input.question,mainline,
@@ -500,13 +514,20 @@ export class HttpAdapter implements WorkspaceAdapter {
     if(this.stored(`approval.${task.id}`,null)) throw new Error("上次批准的结果待核对；请读取原回执，不能自动发起新的付费操作");
     const root = this.taskRoot(task);
     if(kind === "process") {
-      if(!task.sample) throw new Error("需要当前任务已保存的样例测试");
-      const selection={draft_id:task.sample.draft,sample_test_id:task.sample.id};
-      const p=await this.transport<ProcessingAuthorization>(`${this.root(task.project)}/processing-preview?${new URLSearchParams(selection)}`);
-      if(p.revision!==task.sample.revision)throw new Error("样例对应的草稿版本已变化，需要重新测试后确认");
+      const action=task.mainline?.available_actions.find(item=>item.id==="start_delivery_processing"&&item.state==="requires_confirmation");
+      if(!action||action.method!=="GET"||!action.requires_confirmation)throw new Error("服务器尚未提供当前交付版本的正式处理确认范围");
+      const parsed=new URL(action.url,"http://annotagent.local");
+      const allowedPath=`${this.root(task.project)}/processing-preview`;
+      const keys=[...parsed.searchParams.keys()];
+      if(parsed.origin!=="http://annotagent.local"||parsed.pathname!==allowedPath||keys.length!==2||!keys.includes("draft_id")||!keys.includes("sample_test_id"))throw new Error("服务器返回的正式处理预览地址不属于当前项目或范围不完整");
+      const selection={draft_id:parsed.searchParams.get("draft_id")!,sample_test_id:parsed.searchParams.get("sample_test_id")!};
+      const p=await this.transport<ProcessingAuthorization>(action.url);
+      const scope=action.scope as {delivery_revision?:number;delivery_sha256?:string;draft?:{draft_id?:string;draft_revision?:number;sample_test_id?:string};images?:{image_id:string;content_sha256:string}[]} | undefined;
+      if(!scope||scope.draft?.draft_id!==selection.draft_id||scope.draft.sample_test_id!==selection.sample_test_id||scope.draft.draft_revision!==p.revision||!Number.isSafeInteger(scope.delivery_revision)||!scope.delivery_sha256||!Array.isArray(scope.images))throw new Error("正式处理预览与任务冻结范围不一致；未创建处理操作");
+      const frozenImageCount=scope.images.length;
       const body={request_id:c.id,selection,expected_revision:p.revision,authorization_fingerprint:p.authorization_fingerprint};
       this.approvals.set(task.id,{id:c.id,url:`${this.root(task.project)}/processing-operations`,body});
-      this.emit({tasks:this.state.tasks.map(t=>t.id===task.id?{...t,approval:{id:c.id,title:"确认方案并开始处理",revision:String(p.revision),budget:null,scope:[p.plan_name,`${p.image_count} 张图片；最多 ${p.maximum_model_calls} 次模型调用`,...p.models.map(m=>`${m.remote_model_id} → ${m.provider_base_url}`),...(p.native_models||[]).map(m=>`${m.name} → ${m.destination}`),"发布不可变版本并启动一次 Dataset Run；需审核结果不自动接受"]}}:t)});
+      this.emit({tasks:this.state.tasks.map(t=>t.id===task.id?{...t,approval:{id:c.id,title:"确认方案并开始处理",revision:`交付 ${scope.delivery_revision} · Draft ${p.revision}`,budget:null,scope:[p.plan_name,`${p.image_count} 张图片（服务器冻结 ${frozenImageCount} 个内容哈希）；最多 ${p.maximum_model_calls} 次模型调用`,...p.models.map(m=>`${m.remote_model_id} → ${m.provider_base_url}`),...(p.native_models||[]).map(m=>`${m.name} → ${m.destination}`),"发布不可变版本并启动一次 Dataset Run；需审核结果不自动接受"]}}:t)});
     } else if(kind === "export") {
       const p=await this.transport<ExportReadiness>(`${this.root(task.project)}/export-readiness`);
       if(p.project_id!==task.project || !p.ready || !p.formats.some(f=>f.format==="native"&&f.supported)) throw new Error("当前正式标注尚未满足 Native 导出要求；请先处理或审核。样例通过不等于正式标注。 "+JSON.stringify(p.blocking_issues));

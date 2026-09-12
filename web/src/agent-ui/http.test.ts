@@ -92,7 +92,8 @@ it("formal delivery reads never dispatch and commands retain frozen scope across
 });
 it("adapts exact task formal review and package consent reads without starting work",async()=>{
   const formal={project_id:"TEST-alpha",task_id:"t1",processing_operation_id:"process",batch_id:"batch",workflow_version:"7",status:"completed",images:[{image_id:"image-uuid",child_run_id:"run"}]};
-  const reviewPage={project_id:"TEST-alpha",task_id:"t1",intent_revision:3,intent_sha256:"frozen-delivery",summary:{selected:2,positive:1,negative:0,excluded:0,unreviewed:1},items:[{image_id:"image-uuid",child_run_id:"run",execution_error:null,review_revision:4,review_decision:"positive_complete",confirmation_current:true},{image_id:"other",child_run_id:null,execution_error:"TEST child failed",review_revision:0,review_decision:null,confirmation_current:false}],next_cursor:null};
+  const reference={scope:"formal_annotation",task_id:"t1",project_schema_revision:"schema-1",intent_revision:3,intent_sha256:"frozen-delivery",processing_operation_id:"process",batch_id:"batch",source_run_id:"run",annotation_id:"annotation",annotation_revision_id:"annotation-revision",expected_snapshot_sha256:"snapshot"};
+  const reviewPage={project_id:"TEST-alpha",task_id:"t1",intent_revision:3,intent_sha256:"frozen-delivery",summary:{selected:2,positive:1,negative:0,excluded:0,unreviewed:1},items:[{image_id:"image-uuid",content_sha256:"pixels",processing_operation_id:"process",batch_id:"batch",child_run_id:"run",execution_error:null,review_revision:4,review_decision:"positive_complete",confirmation_current:true,snapshot_sha256:"snapshot",annotations:[{annotation_id:"annotation",label:"cup",value:{kind:"bounding_box",rect:[.1,.2,.3,.4]},annotation_revision_id:"annotation-revision",feedback_available:true,conversation_reference:reference}]},{image_id:"other",content_sha256:"other-pixels",processing_operation_id:"process",batch_id:"batch",child_run_id:null,execution_error:"TEST child failed",review_revision:0,review_decision:null,confirmation_current:false,snapshot_sha256:"other-snapshot",annotations:[]}],next_cursor:null};
   const consent={input:{id:"package",intent_revision:3,intent_sha256:"frozen-delivery",confirmed:true as const},state:"armed",effective_state:"blocked",readiness:{ready:false,selected_images:2,confirmed_images:1,blocked_images:1,reasons:["whole_image_review_missing_or_stale"]},job:null};
   const calls:{path:string;method:string}[]=[];
   const reads=mockTransport({
@@ -104,7 +105,7 @@ it("adapts exact task formal review and package consent reads without starting w
   const adapter=new HttpAdapter(transport,memoryStorage());await adapter.refresh();await adapter.loadTask("TEST-alpha","t1");calls.length=0;
   expect(await adapter.delivery.formalResult!("TEST-alpha","t1")).toEqual(formal);
   const summary=await adapter.delivery.reviewSummary!("TEST-alpha","t1");
-  expect(summary).toMatchObject({counts:{total:2,complete:1,unresolved:1,failed:1},items:[{image_id:"image-uuid",state:"positive_complete",review_revision:4},{image_id:"other",state:"failed",error:"TEST child failed"}]});
+  expect(summary).toMatchObject({counts:{total:2,complete:1,unresolved:1,failed:1},items:[{image_id:"image-uuid",image_sha256:"pixels",state:"positive_complete",review_revision:4,formal_selections:{annotation:{image:{image_id:"image-uuid",sha256:"pixels"},reference}}},{image_id:"other",state:"failed",error:"TEST child failed"}]});
   const readiness=await adapter.delivery.packageReadiness!("TEST-alpha","t1");
   expect(readiness).toMatchObject({intent_revision:3,intent_sha256:"frozen-delivery",ready:false,consent:{input:{id:"package"},state:"armed"},package:null,blockers:[{code:"whole_image_review_missing_or_stale"}]});
   expect(calls.every(call=>call.method==="GET")).toBe(true);
@@ -222,6 +223,21 @@ it("sample consent uses the saved delivery Schema instead of another Schema mode
   expect(JSON.parse(query.get("allowed_models")!)).toEqual(["model-profile:vision","model-instance:ready-local"]);
   expect(reads.paths.some(p=>p.includes("schema-preview"))).toBe(false);
 });
+it("uses the server-derived exact delivery processing action and only prepares confirmation",async()=>{
+  const previewPath="/api/projects/TEST-alpha/processing-preview?draft_id=draft-current&sample_test_id=sample-current";
+  const view={...mainline("t1"),available_actions:[{id:"start_delivery_processing",state:"requires_confirmation",method:"GET",url:previewPath,requires_confirmation:true,reason:"exact_delivery_processing_scope_requires_confirmation",scope:{delivery_revision:3,delivery_sha256:"frozen-delivery",images:[{image_id:"image-uuid",content_sha256:"pixels"}],draft:{draft_id:"draft-current",draft_revision:7,sample_test_id:"sample-current"}}}]};
+  const workspace={project_id:"TEST-alpha",project_owner_id:"owner-a",conversation_id:"conversation-a",task:{input:{id:"t1",schema_revision:"schema-1"}},agent_model:{revision:2,model_profile_id:null},actions:{},queue:[],calls:[],mainline:view};
+  const preview={revision:7,authorization_fingerprint:"authorization",image_count:1,available_images:1,maximum_model_calls:2,sample_feedback_count:0,plan_name:"TEST exact plan",goal:{},models:[{model_profile_id:"vision",remote_model_id:"vision-remote",provider_base_url:"https://TEST.invalid"}],native_models:[]};
+  const calls:{path:string;method:string}[]=[];
+  const reads=mockTransport({[`${root}/t1/workspace`]:workspace,[previewPath]:preview});
+  const transport:Transport=async<T>(path:string,init?:RequestInit)=>{calls.push({path,method:init?.method||"GET"});return reads.transport<T>(path,init);};
+  const adapter=new HttpAdapter(transport,memoryStorage());await adapter.refresh();await adapter.loadTask("TEST-alpha","t1");calls.length=0;
+  await adapter.prepareAction({id:"process-command",project:"TEST-alpha",task:"t1",revision:"schema-1"},"process");
+  expect(calls).toEqual([{path:previewPath,method:"GET"}]);
+  const approval=adapter.snapshot().tasks.find(item=>item.id==="t1")?.approval;
+  expect(approval).toMatchObject({title:"确认方案并开始处理",revision:"交付 3 · Draft 7"});
+  expect(approval?.scope).toEqual(expect.arrayContaining(["TEST exact plan",expect.stringContaining("服务器冻结 1 个内容哈希")]));
+});
 describe("HTTP UI read boundary (synthetic transport tests, not HTTP E2E)", () => {
   it("sends an exact frozen SampleCandidate reference and refuses stale Schema before POST",async()=>{
     const sendPath="/api/projects/TEST-alpha/conversations/conversation-a/send";
@@ -245,6 +261,23 @@ describe("HTTP UI read boundary (synthetic transport tests, not HTTP E2E)", () =
     const preview={preview:true as const,task:"t1",image:"image-uuid",candidate:"candidate",revision:"schema-1"};
     await expect(adapter.sendMessage({id:"preview",project:"TEST-alpha",task:"t1",revision:"schema-1",selection:preview},"不要发送","execute","")).rejects.toThrow("演示候选");
     expect(posts).toHaveLength(1);
+  });
+  it("sends the canonical formal annotation reference as context without inventing geometry",async()=>{
+    const sendPath="/api/projects/TEST-alpha/conversations/conversation-a/send";
+    const reads=mockTransport({"/api/projects/TEST-alpha/goal":{revision:"schema-1"},"/api/projects/TEST-alpha/conversations/conversation-a/agent-model":{revision:2,model_profile_id:null}});
+    const posts:unknown[]=[];
+    const transport:Transport=async<T>(path:string,init?:RequestInit)=>{
+      if(path===sendPath&&init?.method==="POST"){
+        const input=JSON.parse(String(init.body));posts.push(input);
+        return {message:{conversation_id:"conversation-a",input:input.message},task_id:"t1",disposition:"formal_feedback"} as T;
+      }
+      return reads.transport<T>(path,init);
+    };
+    const adapter=new HttpAdapter(transport,memoryStorage());await adapter.refresh();await adapter.loadTask("TEST-alpha","t1");
+    const reference={scope:"formal_annotation" as const,task_id:"t1",project_schema_revision:"schema-1",intent_revision:3,intent_sha256:"intent",processing_operation_id:"operation",batch_id:"batch",source_run_id:"run",annotation_id:"annotation",annotation_revision_id:"annotation-revision",expected_snapshot_sha256:"snapshot"};
+    const selection={project_id:"TEST-alpha",conversation_id:"conversation-a",task_id:"t1",project_schema_revision:"schema-1",image:{image_id:"image-uuid",sha256:"pixels"},reference,annotation:{kind:"bounding_box" as const,label:"cup"},result_revision:"annotation-revision"};
+    await adapter.sendMessage({id:"formal-message",project:"TEST-alpha",task:"t1",revision:"schema-1",selection},"这个正式框右边太宽","execute","");
+    expect(posts).toEqual([expect.objectContaining({message:{id:"formal-message",text:"这个正式框右边太宽",image:{image_id:"image-uuid",sha256:"pixels"},reference}})]);
   });
   it("freezes a lost stop selection across reload and refuses another target",async()=>{
     const targets=[{kind:"builder",id:"one",task_id:"t1",state:"running",parent_journey_ids:[]},{kind:"call",id:"two",task_id:"t1",state:"running",parent_journey_ids:[]}];

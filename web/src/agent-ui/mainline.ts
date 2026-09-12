@@ -1,4 +1,4 @@
-import type {Annotation,ConversationMessageInput} from "../types";
+import type {Annotation,ConversationFormalReference,ConversationMessageInput} from "../types";
 import type {DeliverySampleResult} from "./deliveryVisualSelection";
 
 export type IntakeSlot="dataset_scope"|"label_spec"|"training_target";
@@ -8,7 +8,7 @@ export type MainlineMessage={
   text:string; created_at:string; source:{kind:string;id:string};
 };
 export type MainlineStep={id:string;kind:string;title:string;status:"blocked"|"ready"|"awaiting_approval"|"running"|"waiting_for_human"|"completed"|"failed"|"outcome_unknown";detail?:string};
-export type MainlineAction={id:string;state:"authorized"|"available"|"requires_confirmation"|"blocked";method:"GET"|"POST";url:string;requires_confirmation:boolean;reason:string|null};
+export type MainlineAction={id:string;state:"authorized"|"available"|"requires_confirmation"|"blocked";method:"GET"|"POST";url:string;requires_confirmation:boolean;reason:string|null;scope?:unknown};
 export type MainlineTaskView={
   contract_version:"mainline-task-v1";project_id:string;project_owner_id:string;conversation_id:string;task_id:string;read_model_revision:string;
   delivery:unknown;schema:unknown;
@@ -22,7 +22,7 @@ export type MainlineAdvanceInput={command_id:string;expected_read_model_revision
 export type MainlineAdvanceReceipt={command_id:string;action_id:string;replayed:boolean;result:unknown;workspace:MainlineTaskView};
 
 /** Frozen at selection time. Display names and current canvas state are never identities. */
-export type VisualSelection={
+export type SampleVisualSelection={
   project_id:string;conversation_id:string;task_id:string;project_schema_revision:string;
   image:{image_id:string;sha256:string};
   sample:{draft_id:string;draft_revision:number;sample_test_id:string};
@@ -30,6 +30,12 @@ export type VisualSelection={
   annotation:{kind:"bounding_box"|"classification"|"semantic_mask"|"instance_mask";label?:string};
   result_revision:string;
 };
+export type FormalVisualSelection={
+  project_id:string;conversation_id:string;task_id:string;project_schema_revision:string;
+  image:{image_id:string;sha256:string};reference:ConversationFormalReference;
+  annotation:{kind:Annotation["value"]["kind"];label?:string};result_revision:string;
+};
+export type VisualSelection=SampleVisualSelection|FormalVisualSelection;
 
 export type CapabilitySetupRequest={
   id:string;project_id:string;task_id:string;task_revision:string;registry_revision:string;
@@ -54,12 +60,27 @@ export interface MainlineTaskService {
 
 const present=(value:string)=>typeof value==="string"&&value.length>0;
 export function assertVisualSelection(value:VisualSelection,project:string,task:string):VisualSelection{
-  if(value.project_id!==project||value.task_id!==task||![value.conversation_id,value.project_schema_revision,value.image.image_id,value.image.sha256,value.sample.draft_id,value.sample.sample_test_id,value.candidate.candidate_id,value.candidate.source_artifact_id,value.result_revision].every(present)||!Number.isSafeInteger(value.sample.draft_revision)||value.sample.draft_revision<1)throw new Error("候选引用不完整或不属于当前任务；没有发送反馈");
+  const base=value.project_id===project&&value.task_id===task&&[value.conversation_id,value.project_schema_revision,value.image.image_id,value.image.sha256,value.result_revision].every(present);
+  if(!base)throw new Error("对象引用不完整或不属于当前任务；没有发送反馈");
+  if("sample" in value){
+    if(![value.sample.draft_id,value.sample.sample_test_id,value.candidate.candidate_id,value.candidate.source_artifact_id].every(present)||!Number.isSafeInteger(value.sample.draft_revision)||value.sample.draft_revision<1)throw new Error("样例候选引用不完整；没有发送反馈");
+  }else{
+    const reference=value.reference;
+    if(reference.scope!=="formal_annotation"||reference.task_id!==task||reference.project_schema_revision!==value.project_schema_revision||![reference.intent_sha256,reference.processing_operation_id,reference.batch_id,reference.source_run_id,reference.annotation_id,reference.annotation_revision_id,reference.expected_snapshot_sha256].every(present)||!Number.isSafeInteger(reference.intent_revision)||reference.intent_revision<1)throw new Error("正式标注引用不完整；没有发送反馈");
+  }
   return structuredClone(value);
 }
 export function selectedMessage(id:string,text:string,value:VisualSelection):ConversationMessageInput{
   const frozen=assertVisualSelection(value,value.project_id,value.task_id);
+  if("reference" in frozen)return {id,text,image:{image_id:frozen.image.image_id,sha256:frozen.image.sha256},reference:frozen.reference};
   return {id,text,image:{image_id:frozen.image.image_id,sha256:frozen.image.sha256},reference:{scope:"sample_candidate",task_id:frozen.task_id,project_schema_revision:frozen.project_schema_revision,draft_id:frozen.sample.draft_id,draft_revision:frozen.sample.draft_revision,sample_test_id:frozen.sample.sample_test_id,candidate_id:frozen.candidate.candidate_id,source_artifact_id:frozen.candidate.source_artifact_id}};
+}
+
+export function formalVisualSelectionFromCanonical(input:{project_id:string;conversation_id:string;task_id:string;image_id:string;image_sha256:string;annotation:{annotation_id:string;label:string|null;value:Annotation["value"];annotation_revision_id:string|null;feedback_available:boolean;conversation_reference:ConversationFormalReference|null}}):FormalVisualSelection{
+  const {annotation,project_id,conversation_id,task_id,image_id,image_sha256}=input;
+  const reference=annotation.conversation_reference;
+  if(!annotation.feedback_available||!reference||reference.annotation_id!==annotation.annotation_id||reference.annotation_revision_id!==annotation.annotation_revision_id||reference.task_id!==task_id)throw new Error("正式标注没有可验证的当前会话引用");
+  return assertVisualSelection({project_id,conversation_id,task_id,project_schema_revision:reference.project_schema_revision,image:{image_id,sha256:image_sha256},reference,annotation:{kind:annotation.value.kind,...(annotation.label?{label:annotation.label}:{})},result_revision:reference.annotation_revision_id},project_id,task_id) as FormalVisualSelection;
 }
 export function taskIsComplete(view:MainlineTaskView){return view.completion.task_completed&&view.completion.package_ready&&view.package.jobs.some(job=>job.phase==="ready");}
 

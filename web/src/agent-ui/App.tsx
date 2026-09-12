@@ -54,7 +54,9 @@ export function command(task: Task): Command {
 function referenceSummary(reference:NonNullable<Command["selection"]>){
   return "preview" in reference
     ? {image:reference.image,candidate:reference.candidate}
-    : {image:reference.image.image_id,candidate:reference.candidate.candidate_id};
+    : "sample" in reference
+      ? {image:reference.image.image_id,candidate:reference.candidate.candidate_id}
+      : {image:reference.image.image_id,candidate:reference.reference.annotation_id};
 }
 export function AgentPreviewApp({
   adapter,
@@ -511,6 +513,7 @@ export function AgentPreviewApp({
                                 {referenceSummary(item.reference).candidate}
                               </small>
                             )}
+                            {item.referenceText && <small>{item.referenceText}</small>}
                             {item.role === "user" && (
                               <small>
                                 {fixture ? "演示输入" : "已保存输入"} ·{" "}
@@ -534,12 +537,15 @@ export function AgentPreviewApp({
                           )}
                         </div>
                         {!fixture && !!task.receipts?.length && <ExecutionProgress receipts={task.receipts} />}
-                        {!fixture && adapter.deliveryIntake && !task.id.startsWith("new:") && <DeliveryIntake key={task.id} service={adapter.deliveryIntake} delivery={adapter.delivery} project={task.project} task={task.id} locked={active} sampleResult={task.sampleResult} onVisualSelection={selection=>setReference(selection)} onSampleIssue={selection=>{setReference(selection);requestAnimationFrame(()=>compose.current?.focus());}} images={state.artifacts.filter(i => i.project === task.project).map(i => ({id:String(i.id),name:i.name,src:i.src}))} />}
+                        {!fixture && adapter.deliveryIntake && !task.id.startsWith("new:") && <DeliveryIntake key={task.id} service={adapter.deliveryIntake} delivery={adapter.delivery} project={task.project} task={task.id} locked={active} sampleResult={task.sampleResult} onVisualSelection={selection=>setReference(selection)} onSampleIssue={selection=>{setReference(selection);requestAnimationFrame(()=>compose.current?.focus());}} onFormalSelection={selection=>{setReference(selection);requestAnimationFrame(()=>compose.current?.focus());}} images={state.artifacts.filter(i => i.project === task.project).map(i => ({id:String(i.id),name:i.name,src:i.src}))} />}
                         {!fixture && !active && !task.approval && adapter.prepareAction && task.items.length > 0 && task.mainline?.available_actions.some(action=>action.id==="build_and_test_pipeline"&&action.state==="requires_confirmation") && <div className="task-next-actions">
                           {(() => {
                             const action={kind:"sample" as const,label:"构建方案并测试样例…",icon:"image" as const};
                             return <button className="primary" disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),action.kind))}><Icon name={action.icon} size={16} />{action.label}</button>;
                           })()}
+                        </div>}
+                        {!fixture && !active && !task.approval && adapter.prepareAction && task.mainline?.available_actions.some(action=>action.id==="start_delivery_processing"&&action.state==="requires_confirmation") && <div className="task-next-actions">
+                          <button className="primary" disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),"process"))}><Icon name="play" size={16} />确认范围并开始全量处理…</button>
                         </div>}
                         {!fixture && task.resumeTargets?.map(r=><p key={r.id}>{r.reason}<button onClick={()=>void act(()=>adapter.resumeOperation(command(task),r.id))}>继续 {r.label}</button></p>)}
                         {!fixture && !!task.stopTargets?.length && <div className="notice"><strong>请选择停止哪一项</strong>{task.stopTargets.map(t=><button key={t.id} onClick={()=>void act(()=>adapter.selectStop!(command(task),t.id))}>{t.label}</button>)}</div>}
