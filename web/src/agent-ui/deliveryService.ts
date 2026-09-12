@@ -29,6 +29,35 @@ export type DeliveryImageView = {
   review: DeliveryReview | null; confirmation_current: boolean;
   accepted_objects: number; unresolved_objects: number; notice: string;
 };
+export type DemoAnnotationOrigin = {
+  kind:"preset_candidate"|"live_model_prediction"|"human_revision";
+  source_id:string;
+  source_artifact_id:string|null;
+  model_display_name:string|null;
+  actor_display_name:string|null;
+  created_at:string|null;
+};
+export type DemoImageReviewState = "pending"|"review_required"|"positive_complete"|"negative_confirmed"|"excluded"|"failed";
+export type DemoReviewPanelRead = {
+  contract_version:"demo-review-v1";
+  project_id:string;
+  task_id:string;
+  review_id:string|null;
+  read_model_revision:string;
+  demo:{id:string;version:string;source_mode:"preset_candidates"|"live_model";live_inference_occurred:boolean};
+  images:{
+    image_id:string;
+    name:string;
+    url:string;
+    thumbnail_url:string|null;
+    state:DemoImageReviewState;
+    source_artifact_id:string|null;
+    annotation_origins:Record<string,DemoAnnotationOrigin>;
+  }[];
+  labels:{stable_id:string;display_name:string}[];
+  sample_result:import("./deliveryVisualSelection").DeliverySampleResult|null;
+  formal_result:import("./deliveryVisualSelection").DeliveryFormalResult|null;
+};
 export type DeliveryPackageInput = {
   command_id: string; intent_revision: number; intent_sha256: string;
   image_reviews: Record<string, number>; confirmed: boolean;
@@ -36,7 +65,17 @@ export type DeliveryPackageInput = {
 export type DeliveryPackageStatus = {
   id: string; phase: "preparing" | "exporting" | "validating" | "ready" | "failed" | "cancelled";
   intent_revision: number; snapshot_sha256: string;
-  result: { sha256: string; bytes: number; images: number; objects: number; negatives: number; excluded: number; summary?:{labels:string[];splits:Partial<Record<"train"|"val"|"test",number>>;warnings:string[];exclusions:Record<string,string>}|null } | null;
+  result: { sha256: string; bytes: number; images: number; objects: number; negatives: number; excluded: number; summary?:{
+    labels:string[];
+    splits:Partial<Record<"train"|"val"|"test",number>>;
+    warnings:string[];
+    exclusions:Record<string,string>;
+    demo?:{id:string;version:string;data_sha256:string}|null;
+    source_mode?:"preset_candidates"|"live_model"|null;
+    live_inference_occurred?:boolean|null;
+    source_counts?:Partial<Record<DemoAnnotationOrigin["kind"],number>>|null;
+    review_sources?:string[]|null;
+  }|null } | null;
   error: string | null;
 };
 export type DeliveryPackageRead = { job: DeliveryPackageStatus; active: boolean; interrupted: boolean };
@@ -61,6 +100,15 @@ export type FormalReviewWorkPage = {
   items:FormalReviewWorkItem[];
   next_cursor:string|null;
 };
+export type DemoDeliveryPanelRead = {
+  contract_version:"demo-delivery-v1";
+  project_id:string;
+  task_id:string;
+  delivery_id:string|null;
+  read_model_revision:string;
+  scope:{revision:number;content_sha256:string;image_ids:string[]};
+  demo:{id:string;version:string;source_mode:"preset_candidates"|"live_model";live_inference_occurred:boolean};
+};
 
 /** Explicit commands retain caller-owned idempotency keys; reads never start jobs. */
 export interface DeliveryService {
@@ -81,4 +129,12 @@ export interface DeliveryService {
   packageReadiness?(project:string,task:string,signal?:AbortSignal):Promise<DeliveryPackageReadiness>;
   authorizePackage?(project:string,task:string,input:DeliveryPackageConsent["input"]):Promise<DeliveryPackageConsent>;
   cancelPackageAuthorization?(project:string,task:string,id:string):Promise<DeliveryPackageConsent>;
+}
+
+export interface DemoReviewPanelService extends DeliveryService {
+  demoReviewPanel(project:string,task:string,reviewId?:string,signal?:AbortSignal):Promise<DemoReviewPanelRead>;
+}
+
+export interface DemoDeliveryPanelService extends DeliveryService {
+  demoDeliveryPanel(project:string,task:string,deliveryId?:string,signal?:AbortSignal):Promise<DemoDeliveryPanelRead>;
 }
