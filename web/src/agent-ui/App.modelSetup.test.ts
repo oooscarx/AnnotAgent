@@ -45,6 +45,8 @@ function readiness(
       allowed_models: [],
       active: false,
       can_resume_without_authorization: false,
+      continuation_state: "not_authorized",
+      continuation_reason: "no_active_journey_consent",
     },
     budget: null,
     task_cost: {
