@@ -1,0 +1,175 @@
+{
+  "format": "annotagent.demo-reference-evaluation",
+  "version": 1,
+  "demo_id": "object-detection-review",
+  "demo_version": "1.0.0",
+  "usage": "offline_evaluation_only",
+  "forbidden_uses": [
+    "live_model_prompt",
+    "live_model_input",
+    "live_model_cache"
+  ],
+  "images": [
+    {
+      "image_asset_id": "image-01",
+      "image_sha256": "62aa0c2f59c496c7dde0f7a362cbc01cc63cfcf6b79de863d5d512e8b0fd7d21",
+      "split": "train",
+      "source_group": "scene-01",
+      "expected_objects": [
+        {
+          "id": "cup-01",
+          "label_id": "cup",
+          "value": {
+            "x": 0.400391,
+            "y": 0.416667,
+            "width": 0.336914,
+            "height": 0.384115
+          },
+          "reference_state": "reference_checked",
+          "review_issue": null
+        }
+      ],
+      "review_note": "Large single cup with a clearly visible handle."
+    },
+    {
+      "image_asset_id": "image-02",
+      "image_sha256": "e8ed6af0fd12ed9ededc14f0327a8edcc65302cc705e34068e2d9b44b4eeaa8b",
+      "split": "train",
+      "source_group": "scene-02",
+      "expected_objects": [
+        {
+          "id": "bottle-01",
+          "label_id": "bottle",
+          "value": {
+            "x": 0.395508,
+            "y": 0.283854,
+            "width": 0.185547,
+            "height": 0.536458
+          },
+          "reference_state": "reference_checked",
+          "review_issue": null
+        }
+      ],
+      "review_note": "Large single bottle with cap and full body visible."
+    },
+    {
+      "image_asset_id": "image-03",
+      "image_sha256": "7e1c79d3eb5d42a06597a0f70fab660c1019bbde5dc8b4d56c27a8c1898e0f8f",
+      "split": "train",
+      "source_group": "scene-03",
+      "expected_objects": [
+        {
+          "id": "cup-02",
+          "label_id": "cup",
+          "value": {
+            "x": 0.019531,
+            "y": 0.46224,
+            "width": 0.27832,
+            "height": 0.3125
+          },
+          "reference_state": "reference_checked",
+          "review_issue": null
+        },
+        {
+          "id": "bottle-02",
+          "label_id": "bottle",
+          "value": {
+            "x": 0.454102,
+            "y": 0.290365,
+            "width": 0.146484,
+            "height": 0.471354
+          },
+          "reference_state": "reference_checked",
+          "review_issue": null
+        },
+        {
+          "id": "bottle-03",
+          "label_id": "bottle",
+          "value": {
+            "x": 0.703125,
+            "y": 0.394531,
+            "width": 0.12207,
+            "height": 0.380208
+          },
+          "reference_state": "reference_checked",
+          "review_issue": null
+        }
+      ],
+      "review_note": "Multi-object scene with both classes and distinct scales."
+    },
+    {
+      "image_asset_id": "image-04",
+      "image_sha256": "313d7033ccebb2bffe614d4d4db9933d08ec34c0fec93e1fc91ec15bf3a7b510",
+      "split": "train",
+      "source_group": "scene-04",
+      "expected_objects": [],
+      "review_note": "Clear negative image: books and a plant, with no cup or bottle."
+    },
+    {
+      "image_asset_id": "image-05",
+      "image_sha256": "5773d04086086d6dbfa9ebafdaf764e865d5ce0a09cfc4f86848354cd17fae05",
+      "split": "validation",
+      "source_group": "scene-05",
+      "expected_objects": [
+        {
+          "id": "cup-03",
+          "label_id": "cup",
+          "value": {
+            "x": 0.170898,
+            "y": 0.46224,
+            "width": 0.263672,
+            "height": 0.30599
+          },
+          "reference_state": "reference_checked",
+          "review_issue": null
+        },
+        {
+          "id": "bottle-04",
+          "label_id": "bottle",
+          "value": {
+            "x": 0.634766,
+            "y": 0.342448,
+            "width": 0.141602,
+            "height": 0.438802
+          },
+          "reference_state": "reference_checked",
+          "review_issue": null
+        }
+      ],
+      "review_note": "Validation scene covers both classes with clear separation."
+    },
+    {
+      "image_asset_id": "image-06",
+      "image_sha256": "7e58b1fbb12cd4cb18ce9863cc6ae3c8227e745d064e2f535e6da495982187f5",
+      "split": "validation",
+      "source_group": "scene-06",
+      "expected_objects": [
+        {
+          "id": "cup-04",
+          "label_id": "cup",
+          "value": {
+            "x": 0.322266,
+            "y": 0.429688,
+            "width": 0.336914,
+            "height": 0.364583
+          },
+          "reference_state": "needs_user_review",
+          "review_issue": "Preset candidate includes the cup's cast shadow and neighboring bottle area; tighten it to the physical cup and handle."
+        },
+        {
+          "id": "bottle-05",
+          "label_id": "bottle",
+          "value": {
+            "x": 0.683594,
+            "y": 0.394531,
+            "width": 0.117188,
+            "height": 0.380208
+          },
+          "reference_state": "reference_checked",
+          "review_issue": null
+        }
+      ],
+      "review_note": "Boundary teaching case: the loose cup candidate includes its shadow and neighboring bottle area; the bottle reference is straightforward."
+    }
+  ]
+}

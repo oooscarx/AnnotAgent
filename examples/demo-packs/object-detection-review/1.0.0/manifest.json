@@ -1,0 +1,234 @@
+{
+  "schema_version": 1,
+  "demo_id": "object-detection-review",
+  "version": "1.0.0",
+  "display": {
+    "title": "标注桌面物品",
+    "summary": "6 张原创合成图片 · cup / bottle · YOLO 检测数据包",
+    "learning_objectives": [
+      "区分本次模型结果与预置候选",
+      "检查边界并完成逐图审核后再打包"
+    ]
+  },
+  "project": {
+    "display_name": "桌面物品检测示例",
+    "goal": "请标出这 6 张图片里的杯子和瓶子，准备 Ultralytics YOLO 检测数据。边界不确定时让我确认，审核齐全后打包。"
+  },
+  "assets": [
+    {
+      "id": "thumbnail",
+      "kind": "thumbnail",
+      "path": "thumbnail.png",
+      "sha256": "4633a2dc88eff2370eb302d3662048c00496cb2277d0d0322ebe86f9d3533145",
+      "mime_type": "image/png",
+      "bytes": 34297,
+      "width": 640,
+      "height": 360
+    },
+    {
+      "id": "image-01",
+      "kind": "image",
+      "path": "images/desk_01.png",
+      "sha256": "62aa0c2f59c496c7dde0f7a362cbc01cc63cfcf6b79de863d5d512e8b0fd7d21",
+      "mime_type": "image/png",
+      "bytes": 90468,
+      "width": 1024,
+      "height": 768,
+      "split": "train",
+      "source_group": "scene-01"
+    },
+    {
+      "id": "thumbnail-image-01",
+      "kind": "thumbnail",
+      "path": "thumbnails/desk_01.png",
+      "sha256": "445ed94741346021f3a284bee7f1d5eca6503b88f48b652daf899a3369e6725a",
+      "mime_type": "image/png",
+      "bytes": 13640,
+      "width": 384,
+      "height": 288
+    },
+    {
+      "id": "image-02",
+      "kind": "image",
+      "path": "images/desk_02.png",
+      "sha256": "e8ed6af0fd12ed9ededc14f0327a8edcc65302cc705e34068e2d9b44b4eeaa8b",
+      "mime_type": "image/png",
+      "bytes": 91108,
+      "width": 1024,
+      "height": 768,
+      "split": "train",
+      "source_group": "scene-02"
+    },
+    {
+      "id": "thumbnail-image-02",
+      "kind": "thumbnail",
+      "path": "thumbnails/desk_02.png",
+      "sha256": "b4cbf9bcdd60a224a917c41e48769efc8f20b051aab83555d2483e6755543aad",
+      "mime_type": "image/png",
+      "bytes": 9895,
+      "width": 384,
+      "height": 288
+    },
+    {
+      "id": "image-03",
+      "kind": "image",
+      "path": "images/desk_03.png",
+      "sha256": "7e1c79d3eb5d42a06597a0f70fab660c1019bbde5dc8b4d56c27a8c1898e0f8f",
+      "mime_type": "image/png",
+      "bytes": 98613,
+      "width": 1024,
+      "height": 768,
+      "split": "train",
+      "source_group": "scene-03"
+    },
+    {
+      "id": "thumbnail-image-03",
+      "kind": "thumbnail",
+      "path": "thumbnails/desk_03.png",
+      "sha256": "55e4bf029318c8759c95841118d5844eef3c6b4e2aac2b898655c10e32f90056",
+      "mime_type": "image/png",
+      "bytes": 19846,
+      "width": 384,
+      "height": 288
+    },
+    {
+      "id": "image-04",
+      "kind": "image",
+      "path": "images/desk_04.png",
+      "sha256": "313d7033ccebb2bffe614d4d4db9933d08ec34c0fec93e1fc91ec15bf3a7b510",
+      "mime_type": "image/png",
+      "bytes": 85949,
+      "width": 1024,
+      "height": 768,
+      "split": "train",
+      "source_group": "scene-04"
+    },
+    {
+      "id": "thumbnail-image-04",
+      "kind": "thumbnail",
+      "path": "thumbnails/desk_04.png",
+      "sha256": "ef6ab2f4966c857d62761531d25b3dae226edc8dad0dfc7f7c0d6a31d48e4c32",
+      "mime_type": "image/png",
+      "bytes": 11434,
+      "width": 384,
+      "height": 288
+    },
+    {
+      "id": "image-05",
+      "kind": "image",
+      "path": "images/desk_05.png",
+      "sha256": "5773d04086086d6dbfa9ebafdaf764e865d5ce0a09cfc4f86848354cd17fae05",
+      "mime_type": "image/png",
+      "bytes": 97005,
+      "width": 1024,
+      "height": 768,
+      "split": "validation",
+      "source_group": "scene-05"
+    },
+    {
+      "id": "thumbnail-image-05",
+      "kind": "thumbnail",
+      "path": "thumbnails/desk_05.png",
+      "sha256": "e756547d3a9c13906d7495b8e966e982bfc8f8d956d01f542eb5420d8955fa80",
+      "mime_type": "image/png",
+      "bytes": 15750,
+      "width": 384,
+      "height": 288
+    },
+    {
+      "id": "image-06",
+      "kind": "image",
+      "path": "images/desk_06.png",
+      "sha256": "7e58b1fbb12cd4cb18ce9863cc6ae3c8227e745d064e2f535e6da495982187f5",
+      "mime_type": "image/png",
+      "bytes": 104641,
+      "width": 1024,
+      "height": 768,
+      "split": "validation",
+      "source_group": "scene-06"
+    },
+    {
+      "id": "thumbnail-image-06",
+      "kind": "thumbnail",
+      "path": "thumbnails/desk_06.png",
+      "sha256": "db4ff585adb69a96284298267562e5ed6ed21be7d22832e27d181795e13380cf",
+      "mime_type": "image/png",
+      "bytes": 18762,
+      "width": 384,
+      "height": 288
+    },
+    {
+      "id": "attribution",
+      "kind": "attribution",
+      "path": "ATTRIBUTION.md",
+      "sha256": "9522307d842b166a61ed6833bef6cc51eb284bec5c6a0dfed34544d997b52f2f",
+      "mime_type": "text/markdown",
+      "bytes": 2872,
+      "width": null,
+      "height": null
+    },
+    {
+      "id": "preset-candidates",
+      "kind": "preset_candidates",
+      "path": "references/candidates.json",
+      "sha256": "8fb72ae6edb95592bb77d04af6ad03b264e736bdb4e8d87d36ac215d6aba457c",
+      "mime_type": "application/json",
+      "bytes": 4588,
+      "width": null,
+      "height": null
+    }
+  ],
+  "task": {
+    "source_image_asset_ids": [
+      "image-01",
+      "image-02",
+      "image-03",
+      "image-04",
+      "image-05",
+      "image-06"
+    ],
+    "labels": [
+      {
+        "id": "cup",
+        "name": "cup",
+        "annotation_kind": "bounding_box",
+        "color": "#355E8C"
+      },
+      {
+        "id": "bottle",
+        "name": "bottle",
+        "annotation_kind": "bounding_box",
+        "color": "#286448"
+      }
+    ],
+    "training_target": {
+      "framework": "ultralytics",
+      "task": "ultralytics_yolo_detection",
+      "format_revision": 1
+    },
+    "split_policy": {
+      "train": 0.666667,
+      "validation": 0.333333,
+      "test": 0.0,
+      "seed": 42
+    },
+    "review_policy": "human_whole_image"
+  },
+  "modes": {
+    "preset_candidates": {
+      "enabled": true,
+      "asset_id": "preset-candidates"
+    },
+    "live_model": {
+      "enabled": true,
+      "required_capabilities": [
+        "vision_language"
+      ]
+    }
+  },
+  "license": {
+    "spdx_id": "CC0-1.0",
+    "source_url": "https://creativecommons.org/publicdomain/zero/1.0/legalcode",
+    "attribution_asset_id": "attribution"
+  }
+}

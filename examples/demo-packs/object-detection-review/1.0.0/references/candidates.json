@@ -1,0 +1,160 @@
+{
+  "format": "annotagent.demo-candidates",
+  "version": 1,
+  "demo_id": "object-detection-review",
+  "demo_version": "1.0.0",
+  "images": [
+    {
+      "image_asset_id": "image-01",
+      "image_sha256": "62aa0c2f59c496c7dde0f7a362cbc01cc63cfcf6b79de863d5d512e8b0fd7d21",
+      "candidates": [
+        {
+          "id": "preset-image-01-cup-01",
+          "label_id": "cup",
+          "annotation_kind": "bounding_box",
+          "value": {
+            "x": 0.400391,
+            "y": 0.416667,
+            "width": 0.336914,
+            "height": 0.384115
+          },
+          "score": null,
+          "source_artifact_id": "preset-artifact-image-01-cup-01"
+        }
+      ]
+    },
+    {
+      "image_asset_id": "image-02",
+      "image_sha256": "e8ed6af0fd12ed9ededc14f0327a8edcc65302cc705e34068e2d9b44b4eeaa8b",
+      "candidates": [
+        {
+          "id": "preset-image-02-bottle-01",
+          "label_id": "bottle",
+          "annotation_kind": "bounding_box",
+          "value": {
+            "x": 0.395508,
+            "y": 0.283854,
+            "width": 0.185547,
+            "height": 0.536458
+          },
+          "score": null,
+          "source_artifact_id": "preset-artifact-image-02-bottle-01"
+        }
+      ]
+    },
+    {
+      "image_asset_id": "image-03",
+      "image_sha256": "7e1c79d3eb5d42a06597a0f70fab660c1019bbde5dc8b4d56c27a8c1898e0f8f",
+      "candidates": [
+        {
+          "id": "preset-image-03-cup-02",
+          "label_id": "cup",
+          "annotation_kind": "bounding_box",
+          "value": {
+            "x": 0.019531,
+            "y": 0.46224,
+            "width": 0.27832,
+            "height": 0.3125
+          },
+          "score": null,
+          "source_artifact_id": "preset-artifact-image-03-cup-02"
+        },
+        {
+          "id": "preset-image-03-bottle-02",
+          "label_id": "bottle",
+          "annotation_kind": "bounding_box",
+          "value": {
+            "x": 0.454102,
+            "y": 0.290365,
+            "width": 0.146484,
+            "height": 0.471354
+          },
+          "score": null,
+          "source_artifact_id": "preset-artifact-image-03-bottle-02"
+        },
+        {
+          "id": "preset-image-03-bottle-03",
+          "label_id": "bottle",
+          "annotation_kind": "bounding_box",
+          "value": {
+            "x": 0.703125,
+            "y": 0.394531,
+            "width": 0.12207,
+            "height": 0.380208
+          },
+          "score": null,
+          "source_artifact_id": "preset-artifact-image-03-bottle-03"
+        }
+      ]
+    },
+    {
+      "image_asset_id": "image-04",
+      "image_sha256": "313d7033ccebb2bffe614d4d4db9933d08ec34c0fec93e1fc91ec15bf3a7b510",
+      "candidates": []
+    },
+    {
+      "image_asset_id": "image-05",
+      "image_sha256": "5773d04086086d6dbfa9ebafdaf764e865d5ce0a09cfc4f86848354cd17fae05",
+      "candidates": [
+        {
+          "id": "preset-image-05-cup-03",
+          "label_id": "cup",
+          "annotation_kind": "bounding_box",
+          "value": {
+            "x": 0.170898,
+            "y": 0.46224,
+            "width": 0.263672,
+            "height": 0.30599
+          },
+          "score": null,
+          "source_artifact_id": "preset-artifact-image-05-cup-03"
+        },
+        {
+          "id": "preset-image-05-bottle-04",
+          "label_id": "bottle",
+          "annotation_kind": "bounding_box",
+          "value": {
+            "x": 0.634766,
+            "y": 0.342448,
+            "width": 0.141602,
+            "height": 0.438802
+          },
+          "score": null,
+          "source_artifact_id": "preset-artifact-image-05-bottle-04"
+        }
+      ]
+    },
+    {
+      "image_asset_id": "image-06",
+      "image_sha256": "7e58b1fbb12cd4cb18ce9863cc6ae3c8227e745d064e2f535e6da495982187f5",
+      "candidates": [
+        {
+          "id": "preset-image-06-cup-04",
+          "label_id": "cup",
+          "annotation_kind": "bounding_box",
+          "value": {
+            "x": 0.322266,
+            "y": 0.429688,
+            "width": 0.478516,
+            "height": 0.423177
+          },
+          "score": null,
+          "source_artifact_id": "preset-artifact-image-06-cup-04"
+        },
+        {
+          "id": "preset-image-06-bottle-05",
+          "label_id": "bottle",
+          "annotation_kind": "bounding_box",
+          "value": {
+            "x": 0.683594,
+            "y": 0.394531,
+            "width": 0.117188,
+            "height": 0.380208
+          },
+          "score": null,
+          "source_artifact_id": "preset-artifact-image-06-bottle-05"
+        }
+      ]
+    }
+  ]
+}
