@@ -3,6 +3,7 @@ import { BundleInstaller, type BundleInstallerService } from "./BundleInstaller"
 import { Disclosure } from "./Disclosure";
 import {
   clearSetupContext,
+  completeSetupReturn,
   preserveSetupContext,
   setupSettingsPath,
   type ModelPreparationService,
@@ -47,7 +48,6 @@ export function SetupRequest({
   onCancel,
 }: SetupRequestProps) {
   const [snapshot, setSnapshot] = useState<PreparationSnapshot>();
-  const [recheck, setRecheck] = useState<PreparationRecheck>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [generation, setGeneration] = useState(0);
@@ -60,7 +60,6 @@ export function SetupRequest({
     const current = ++live.current;
     const controller = new AbortController();
     setSnapshot(undefined);
-    setRecheck(undefined);
     setError("");
     void service
       .inspect(context, controller.signal)
@@ -103,11 +102,10 @@ export function SetupRequest({
       const current = live.current;
       const result = await service.recheck(snapshot, controller.signal);
       if (controller.signal.aborted || current !== live.current) return;
-      setRecheck(result);
-      if (!result.changed.length) {
-        clearSetupContext(sessionStorage, context.id);
-        onReturn(result);
-      }
+      // Return immediately after the passive recheck. The task workspace owns
+      // the one current approval or real server progress; Setup never dispatches
+      // Builder/Sample work and never adds an extra "continue" relay click.
+      onReturn(completeSetupReturn(sessionStorage, context, result));
     } catch (reason) {
       setError((reason as Error).message);
     } finally {
@@ -149,13 +147,10 @@ export function SetupRequest({
     <section className="setup-request" aria-label="任务模型准备">
       <header>
         <div>
-          <h2>准备此任务需要的模型能力</h2>
+          <h2>连接此任务需要的模型</h2>
           <p>
-            保留 Task {context.task_id.slice(0, 8)}
-            {context.draft_id ? ` 与 Draft ${context.draft_id.slice(0, 8)}` : ""}。
-            打开或取消设置不会重新创建任务，也不会扩大 allowed_models。
+            配置或取消后都会回到原任务；不会重建任务、扩大模型范围或自动调用模型。
           </p>
-          <p>角色 {context.role} · Registry {context.registry_revision}</p>
         </div>
         <button disabled={busy} onClick={() => void cancelAndReturn()}>
           取消并返回任务
@@ -169,9 +164,11 @@ export function SetupRequest({
         <>
           {snapshot.context_changes.length > 0 && <div role="alert"><strong>任务上下文已变化</strong>{snapshot.context_changes.map((item) => <p key={item}>{item}</p>)}<p>可以继续配置，但返回后必须重新读取并确认授权。</p></div>}
           <div className="setup-requirements">
-            {snapshot.requirements.map(({ requirement, ready_candidate_ids, uncertain_candidate_ids, alternatives }) => (
+            {snapshot.requirements.map(({ requirement, ready_candidate_ids, uncertain_candidate_ids, alternatives }) => {
+              const visibleAlternatives = alternatives.slice(0, 3);
+              return (
               <article key={requirement.id}>
-                <strong>{requirement.capability}</strong>
+                <strong>当前缺少模型能力</strong>
                 <p>{requirement.purpose}</p>
                 <p>
                   {ready_candidate_ids.length
@@ -183,11 +180,10 @@ export function SetupRequest({
                 {alternatives.length > 0 ? (
                   <div className="setup-alternatives" aria-label={`${requirement.capability} 可选准备方式`}>
                     <p>选择其中一种即可满足此能力，不需要全部配置。</p>
-                    {alternatives.map((candidate) => (
+                    {visibleAlternatives.map((candidate) => (
                       <div className="setup-alternative" key={candidate.id}>
                         <div>
                           <strong>{targetLabels[candidate.target]}</strong>
-                          <p>{candidate.id}</p>
                           {candidate.reasons.map((reason) => <p key={reason}>{reason}</p>)}
                         </div>
                         <div className="actions">
@@ -201,6 +197,9 @@ export function SetupRequest({
                         </div>
                       </div>
                     ))}
+                    {alternatives.length > visibleAlternatives.length && (
+                      <p>另有 {alternatives.length - visibleAlternatives.length} 个兼容候选，可在下方详情中查看。</p>
+                    )}
                   </div>
                 ) : (
                   <div className="actions">
@@ -215,9 +214,11 @@ export function SetupRequest({
                   </div>
                 )}
               </article>
-            ))}
+              );
+            })}
           </div>
 
+          <Disclosure className="setup-technical-details" title="查看模型、费用与版本详情">
           <div className="setup-visual-boundary">
             <strong>视觉模型将在方案确定后校验</strong>
             <p>
@@ -322,26 +323,14 @@ export function SetupRequest({
             <p>范围仅为当前 conversation task，不是全系统统计。兼容候选的 Registry 单价见各候选；未自动运行收费探测、模型调用或安装。</p>
           </div>
 
-          {recheck?.changed.length ? (
-            <div role="alert">
-              <strong>原任务上下文在设置期间发生变化</strong>
-              {recheck.changed.map((item) => <p key={item}>{item}</p>)}
-              <p>未复用旧授权。返回后由任务页重新读取 Draft、模型范围和费用授权。</p>
-              <button onClick={() => {
-                clearSetupContext(sessionStorage, context.id);
-                onReturn(recheck);
-              }}>返回原任务并查看变化</button>
-            </div>
-          ) : (
-            <div className="actions">
-              <button disabled={busy} onClick={() => setGeneration((value) => value + 1)}>
-                重新读取候选
-              </button>
-              <button className="primary" disabled={busy} onClick={() => void checkAndReturn()}>
-                {busy ? "重新检查任务与授权…" : "配置完成，检查并返回原任务"}
-              </button>
-            </div>
-          )}
+          <div className="actions">
+            <button disabled={busy} onClick={() => setGeneration((value) => value + 1)}>
+              重新读取候选
+            </button>
+            <button className="primary" disabled={busy} onClick={() => void checkAndReturn()}>
+              {busy ? "检查能力与原任务范围…" : "完成设置并返回任务"}
+            </button>
+          </div>
 
           <Disclosure title="冻结的回流范围">
             <pre>{JSON.stringify({
@@ -363,6 +352,7 @@ export function SetupRequest({
                 purpose: requirementById.get(item.id)?.purpose,
               })),
             }, null, 2)}</pre>
+          </Disclosure>
           </Disclosure>
         </>
       )}

@@ -39,6 +39,10 @@
   gap: 12px;
 }
 
+.ui-app .setup-technical-details > :not(summary) {
+  margin-top: 12px;
+}
+
 .ui-app .setup-requirements article,
 .ui-app .setup-cost-note,
 .ui-app .setup-visual-boundary,

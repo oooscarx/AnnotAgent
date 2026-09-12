@@ -1,0 +1,39 @@
+.ui-app .capability-setup-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--aa-border);
+  border-radius: 12px;
+  background: var(--aa-surface);
+}
+
+.ui-app .capability-setup-card > div {
+  min-width: 0;
+}
+
+.ui-app .capability-setup-card h3,
+.ui-app .capability-setup-card p {
+  margin: 0;
+}
+
+.ui-app .capability-setup-card p {
+  margin-top: 4px;
+}
+
+.ui-app .capability-setup-note {
+  color: var(--aa-text-muted);
+  font-size: 13px;
+}
+
+.ui-app .capability-setup-card button {
+  flex: none;
+}
+
+@media (max-width: 560px) {
+  .ui-app .capability-setup-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

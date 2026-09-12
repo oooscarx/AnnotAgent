@@ -194,7 +194,8 @@ export type CapabilityReadiness = {
     permission_digest: string | null;
     allowed_models: FrozenAllowedModel[];
     active: boolean;
-    can_resume_without_authorization: false;
+    /** Server authority only. The frontend must never infer or dispatch continuation. */
+    can_resume_without_authorization: boolean;
   };
   budget: unknown;
   task_cost: {
@@ -239,11 +240,18 @@ export type PreparationRecheck = {
   snapshot: PreparationSnapshot;
   changed: string[];
   capability_prepared: boolean;
-  can_resume_without_authorization: false;
+  can_resume_without_authorization: boolean;
+  continuation: PreparationContinuation;
   task_reused: true;
   draft_reused: true;
   allowed_models_expanded: false;
   authorization: "recheck_required";
+};
+
+export type PreparationContinuation = {
+  state: "setup_required" | "approval_required" | "server_continuing";
+  consent_id: string | null;
+  reason: string;
 };
 
 type TaskWorkspace = {
@@ -258,6 +266,46 @@ export type ModelPreparationService = {
   inspect(context: SetupContext, signal: AbortSignal): Promise<PreparationSnapshot>;
   recheck(previous: PreparationSnapshot, signal: AbortSignal): Promise<PreparationRecheck>;
 };
+
+/**
+ * Converts the passive server snapshot into display-only return guidance.
+ * This function never starts a Journey. `server_continuing` is possible only
+ * when the authoritative read model explicitly says the existing grant may
+ * continue and every frozen setup guard is unchanged.
+ */
+export function preparationContinuation(
+  snapshot: PreparationSnapshot,
+  changed: string[],
+  capabilityPrepared: boolean,
+): PreparationContinuation {
+  const authorization = snapshot.readiness.authorization;
+  if (!capabilityPrepared) {
+    return {
+      state: "setup_required",
+      consent_id: authorization.consent_id,
+      reason: "required_capability_is_not_ready",
+    };
+  }
+  if (changed.length > 0) {
+    return {
+      state: "approval_required",
+      consent_id: authorization.consent_id,
+      reason: "task_registry_or_authorization_scope_changed",
+    };
+  }
+  if (authorization.active && authorization.can_resume_without_authorization) {
+    return {
+      state: "server_continuing",
+      consent_id: authorization.consent_id,
+      reason: "server_confirmed_existing_scope_continuation",
+    };
+  }
+  return {
+    state: "approval_required",
+    consent_id: authorization.consent_id,
+    reason: "current_scope_requires_one_task_approval",
+  };
+}
 
 const esc = encodeURIComponent;
 
@@ -540,6 +588,7 @@ export function createModelPreparationService(
       readiness.setup_recheck_only !== true ||
       readiness.auto_expands_allowed_models !== false ||
       readiness.consistency !== "server_composed_versioned_snapshot" ||
+      typeof readiness.authorization.can_resume_without_authorization !== "boolean" ||
       readiness.project_id !== context.project_id ||
       readiness.conversation_id !== context.conversation_id ||
       readiness.task_id !== context.task_id ||
@@ -756,11 +805,14 @@ export function createModelPreparationService(
       if (!same(snapshot.context.allowed_models, previous.context.allowed_models))
         throw new Error("设置回流不得扩大 allowed_models");
       const uniqueChanges = [...new Set(changed)];
+      const capabilityPrepared = snapshot.requirements.every((item) => item.ready_candidate_ids.length > 0);
+      const continuation = preparationContinuation(snapshot, uniqueChanges, capabilityPrepared);
       return {
         snapshot,
         changed: uniqueChanges,
-        capability_prepared: uniqueChanges.length === 0 && snapshot.requirements.every((item) => item.ready_candidate_ids.length > 0),
-        can_resume_without_authorization: false,
+        capability_prepared: capabilityPrepared,
+        can_resume_without_authorization: continuation.state === "server_continuing",
+        continuation,
         task_reused: true,
         draft_reused: true,
         allowed_models_expanded: false,
@@ -789,6 +841,19 @@ export function restoreSetupContext(storage: Storage, id: string) {
 
 export function clearSetupContext(storage: Storage, id: string) {
   storage.removeItem(`${setupPrefix}${id}`);
+}
+
+/** Clears only the local return token after a passive server recheck. */
+export function completeSetupReturn(
+  storage: Storage,
+  context: SetupContext,
+  result: PreparationRecheck,
+) {
+  assertContext(context);
+  if (result.snapshot.context.id !== context.id)
+    throw new Error("模型准备回流不属于当前 SetupRequest");
+  clearSetupContext(storage, context.id);
+  return result;
 }
 
 export function setupSettingsPath(
