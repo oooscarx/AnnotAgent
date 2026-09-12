@@ -10109,6 +10109,7 @@ impl LocalApplication {
                         .map(|image| image.image_id.parse())
                         .collect::<Result<Vec<ImageId>, _>>()?,
                 ),
+                task_images: None,
                 label_spec: None,
                 training_target: None,
                 split_policy: annotagent_core::dataset_delivery::DeliverySplitPolicy::default(),

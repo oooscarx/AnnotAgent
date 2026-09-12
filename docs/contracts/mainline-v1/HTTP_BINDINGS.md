@@ -61,7 +61,7 @@ Base URL `D=/api/projects/P/conversations/C/tasks/T`.
 | Method and URL | Exact meaning |
 |---|---|
 | `GET D/delivery-intent` | `TaskDeliveryView {saved,missing_slots,blockers,maximum_sample_images:3,execution_authorized:false,proposals}`. |
-| `POST D/delivery-intent` | Saves `SaveTaskDeliveryIntent`; owner, image hashes and CAS checked. It never calls a model. |
+| `POST D/delivery-intent` | Saves `SaveTaskDeliveryIntent`; owner, image hashes and CAS checked. New upload flows use `task_images:[{image_id,sha256}]`; legacy `image_ids` remains accepted, and the two fields are mutually exclusive. It never calls a model. |
 | `GET D/delivery-schema` | Current human Schema matching exact delivery revision/hash, or null. |
 | `POST D/delivery-schema` | `{command_id,expected_revision,expected_sha256}`; deterministically creates the existing human Schema Draft. No LLM, publication or execution. |
 | `GET D/formal-result` | Current exact delivery revision's processing operation, Batch, Published Workflow version and ordered image→child Run/status/error projection; null before an exact processing operation exists. |
@@ -361,6 +361,32 @@ ordinary Task, must contain distinct same-Project current identities, and is fro
 in the original Send command. `POST /api/projects/P/image-upload?name=...` and
 `POST /api/projects/P/import` return additive `images[]` entries containing
 `image_id`, `relative_path`, `content_hash`, `width`, `height` and format.
+
+For describe-before-upload, keep the original Task ID and user message, then submit the exact
+upload receipts through the existing delivery CAS:
+
+```json
+{
+  "command_id":"COMMAND_UUID",
+  "expected_revision":0,
+  "image_ids":null,
+  "task_images":[{"image_id":"IMAGE_UUID","sha256":"64_HEX"}],
+  "label_spec":null,
+  "training_target":null,
+  "split_policy":{"train_percent":80,"seed":0,"preserve_existing":true,"keep_known_groups_together":true},
+  "image_metadata":{}
+}
+```
+
+The Application checks every ID/hash against the current Project before the existing storage
+transaction checks Task ownership and revision. Exact command replay returns the original
+delivery revision. Reusing a command with a changed valid scope returns
+`409 delivery_command_conflict`; a different command with stale `expected_revision` returns
+`409 delivery_revision_conflict` with safe `expected_revision`, `current_revision`, `command_id`
+and `suggested_action:reload_delivery_intent`. Changed content, a duplicate identity or a foreign
+Project image is rejected before a revision is created. The resulting partial intake preserves
+the original description and exposes the same parameterless combined Journey preview; it starts
+no model or execution. GET and mount never attach images.
 
 `GET D/journey-preview` needs no query for the new primary action. Missing/ambiguous
 Project visual binding returns:

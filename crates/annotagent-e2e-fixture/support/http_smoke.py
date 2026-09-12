@@ -242,6 +242,7 @@ def verify(c, manifest, root):
     bbox = seed_bbox(c, root, provider)
     from http_stop_scene import prepare_stop
     manual_stop = prepare_stop(c, cr, schema_revision, provider["id"], model["id"])
+    describe_before_upload = verify_describe_before_upload(c, p, schema_revision, png)
     first_page = c.get(cr + "/task-navigation?limit=1")
     assert first_page["next_cursor"] is not None
     second_page = c.get(cr + "/task-navigation?limit=1&cursor=" + str(first_page["next_cursor"]))
@@ -250,7 +251,36 @@ def verify(c, manifest, root):
     execution_posts = [entry for entry in c.trace if entry["method"] == "POST" and entry["path"] == execution]
     assert len(consent_posts) == 1, consent_posts
     assert execution_posts == [], execution_posts
-    return {"project": project, "conversation_id": conversation, "task_id": task, "task_root": tr, "model_profile_id": model["id"], "provider_id": provider["id"], "execution_url": execution, "p0_autonomy": {"task_images": task_images, "task_image_count": len(task_images), "sample_image_count": len(record["inputs"]), "unavoidable_user_decisions": 1, "technical_relay_clicks": 0, "consent_post_count": len(consent_posts), "execution_post_count": len(execution_posts), "consent_response_ms": consent_response_ms, "journey_duration_ms": journey_duration_ms, "first_observation": first_observation, "consent_id": consent["id"], "schema_call_id": consent["schema_proposal"]["call_id"], "builder_operation_id": consent["builder_operation_id"], "sample_operation_id": consent["sample_operation_id"], "draft_id": record["draft_id"], "sample_status": record["status"], "delivery_schema_id": delivery_schema["schema"]["id"], "review_work_item_id": review_workspace["review_work_item_id"], "review_action": review_workspace["available_actions"][0], "automatic_review_request_ids": [item["input"]["id"] for item in automatic_reviews], "execution_dispatch": finished["dispatch"]}, "export": export, "run_id": run_id, "stop": stop, "answered_request_id": human["id"], "pending_request_id": pending["id"], "plan_task_id": plan["task_id"], "controls": controls, "saved_plan": saved_plan, "bbox": bbox, "manual_stop": manual_stop, "trace": str(Path(manifest["workspace"]) / "HTTP_TRACE.json")}
+    return {"project": project, "conversation_id": conversation, "task_id": task, "task_root": tr, "model_profile_id": model["id"], "provider_id": provider["id"], "execution_url": execution, "p0_autonomy": {"task_images": task_images, "task_image_count": len(task_images), "sample_image_count": len(record["inputs"]), "unavoidable_user_decisions": 1, "technical_relay_clicks": 0, "consent_post_count": len(consent_posts), "execution_post_count": len(execution_posts), "consent_response_ms": consent_response_ms, "journey_duration_ms": journey_duration_ms, "first_observation": first_observation, "consent_id": consent["id"], "schema_call_id": consent["schema_proposal"]["call_id"], "builder_operation_id": consent["builder_operation_id"], "sample_operation_id": consent["sample_operation_id"], "draft_id": record["draft_id"], "sample_status": record["status"], "delivery_schema_id": delivery_schema["schema"]["id"], "review_work_item_id": review_workspace["review_work_item_id"], "review_action": review_workspace["available_actions"][0], "automatic_review_request_ids": [item["input"]["id"] for item in automatic_reviews], "execution_dispatch": finished["dispatch"]}, "describe_before_upload": describe_before_upload, "export": export, "run_id": run_id, "stop": stop, "answered_request_id": human["id"], "pending_request_id": pending["id"], "plan_task_id": plan["task_id"], "controls": controls, "saved_plan": saved_plan, "bbox": bbox, "manual_stop": manual_stop, "trace": str(Path(manifest["workspace"]) / "HTTP_TRACE.json")}
+
+
+def verify_describe_before_upload(c, project_root, schema_revision, png):
+    conversation = c.post(project_root + "/conversations")["conversation_id"]
+    cr = project_root + "/conversations/" + conversation
+    sent = c.post(cr + "/send", {"message": {"id": uid(), "text": "标注杯子和瓶子，用于 Ultralytics YOLO 目标检测；图片稍后上传。", "image": None}, "schema_revision": schema_revision, "mode": "plan"})
+    task = sent["task_id"]
+    tr = cr + "/tasks/" + task
+    before = c.get(tr + "/workspace")["mainline"]
+    assert [action["id"] for action in before["available_actions"]] == ["save_delivery_intake"], before
+    receipts = []
+    for index in range(3):
+        chunk = b"tEXt" + f"TEST\x00describe-first-{index}".encode()
+        image = png[:-12] + struct.pack(">I", len(chunk) - 4) + chunk + struct.pack(">I", zlib.crc32(chunk)) + png[-12:]
+        imported = c.request("POST", project_root + f"/image-upload?name=TEST-describe-first-{index}.png", image)
+        receipts.append({"image_id": imported["images"][0]["image_id"], "sha256": imported["images"][0]["content_hash"]})
+    command_id = uid()
+    attach = {"command_id": command_id, "expected_revision": 0, "image_ids": None, "task_images": receipts, "label_spec": None, "training_target": None, "split_policy": {"train_percent": 80, "seed": 0, "preserve_existing": True, "keep_known_groups_together": True}, "image_metadata": {}}
+    saved = c.post(tr + "/delivery-intent", attach)
+    assert c.post(tr + "/delivery-intent", attach) == saved
+    assert [(image["image_id"], image["content_sha256"]) for image in saved["saved"]["intent"]["dataset_scope"]] == [(image["image_id"], image["sha256"]) for image in receipts]
+    changed = {**attach, "task_images": [{**receipts[0], "sha256": "f" * 64}, *receipts[1:]]}
+    c.request("POST", tr + "/delivery-intent", changed, expected=[400, 409])
+    after = c.get(tr + "/workspace")["mainline"]
+    assert [action["id"] for action in after["available_actions"]] == ["build_and_test_pipeline"], after
+    preview = c.get(tr + "/journey-preview")
+    assert [(image["image_id"], image["content_hash"]) for image in preview["consent"]["images"]] == [(image["image_id"], image["sha256"]) for image in receipts]
+    assert c.get(tr + "/thread?limit=10")["items"][0]["message"]["input"]["text"] == "标注杯子和瓶子，用于 Ultralytics YOLO 目标检测；图片稍后上传。"
+    return {"conversation_id": conversation, "task_id": task, "task_root": tr, "delivery_revision": saved["saved"]["revision"], "delivery_sha256": saved["saved"]["content_sha256"], "task_images": receipts, "preview_consent_id": preview["consent"]["id"], "model_calls": 0, "execution_started": False}
 
 
 def verify_stop(c, cr, schema_revision, provider, normal_model):

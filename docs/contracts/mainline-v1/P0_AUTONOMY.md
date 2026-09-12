@@ -37,6 +37,12 @@ payload restores the original Task/receipt; a changed image scope conflicts. The
 report now returns `images[]` with the stable IDs and hashes for exactly the valid files in that
 request, so clients never infer attachment identity from list order.
 
+If the description creates the Task before its files arrive, the later explicit upload action
+uses the existing `POST .../delivery-intent` CAS with `task_images:[{image_id,sha256}]` and that
+same Task URL. The original message remains the goal. The exact command is restart-safe and a
+changed hash, stale revision, duplicate identity or foreign image is rejected before storage.
+This attachment-only revision still grants nothing and leads to the same combined preview.
+
 When that intake has an exact image scope and is missing only label rules/training target,
 `GET .../workspace` exposes one `build_and_test_pipeline` action. Its URL is parameterless
 `GET .../journey-preview`. The preview derives stable consent/Schema-call/Builder/Sample IDs,
