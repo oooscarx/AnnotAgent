@@ -101,10 +101,11 @@ G1 is complete under the isolated TEST-provider boundary. This proves orchestrat
 - `cargo test -p annotagent-export -p annotagent-storage -p annotagent-application -p annotagent-server --lib` — Export 2/2; Storage 202/202; Application 167 passed / 1 ignored; Server 79 passed / 2 ignored.
 - `cargo clippy -p annotagent-export -p annotagent-storage -p annotagent-application -p annotagent-server --all-targets --all-features -- -D warnings` — passed.
 
-### Acceptance status after G2
+### Acceptance status after the G2 delivery slice
 
-- A6: passed. Formal processing is impossible until every exact Sample decision is applied; no UI hiding is used as the gate.
-- A7: passed. Exactly one processing operation covers the six frozen images, and reopening uses the same receipt.
+- A4: partially covered. This route proves exact uploaded-image ownership and immutable Sample/formal scope, but the separate 10-project-images / 3-current-images browser matrix and every scope-expansion invalidation case were not rerun here.
+- A6: not complete. Structured `sample_reviews_pending` is distinguished from execution failure, and the existing result diagnostics retain separate UI categories, but the full six-error production-route matrix (missing weight, not received, unknown, invalid structure, legal empty and projection failure) was not rerun in this slice.
+- A7: partially covered. Browser closure/reopen reaches the same Sample result, processing is locally idempotent, and package admission/recovery has focused Rust coverage. The complete stop, expiry and exhausted-budget browser matrix remains outside this slice.
 - A8: passed under TEST. Six formal image decisions lead to one server-owned package authorization, one restart-safe package job and a real downloadable ZIP.
 - A9: current-application evidence now includes ready, approval, running, Sample review, Sample-confirmed, formal review and package-ready states. Dark theme and 390×844 are covered at Sample review. Native browser 200% remains unverified and is not claimed.
 - Commercial-provider accuracy and real-person novice usability remain unverified. The deterministic external TEST provider proves state progression, ownership, persistence and delivery semantics only.
