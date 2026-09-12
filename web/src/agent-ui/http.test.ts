@@ -91,16 +91,16 @@ it("formal delivery reads never dispatch and commands retain frozen scope across
   await expect(adapter.delivery.confirmImage("TEST-alpha","t1",confirmation)).rejects.toThrow("stale whole-image snapshot");
 });
 it("reads only task-owned physical usage attempts and preserves the server Decimal strings",async()=>{
-  const page={scope:{project_id:"TEST-alpha",conversation_id:"conversation-a",task_id:"t1"},state:"complete" as const,summary:{attempt_count:1,known_cost:"0.007",currency:"USD",input_tokens:1500,cached_input_tokens:0,output_tokens:500,unknown_attempt_count:0},attempts:{items:[],next_cursor:"next/attempt"}};
+  const page={scope:{project_id:"TEST-alpha",conversation_id:"conversation-a",task_id:"t1"},state:"complete" as const,summary:{attempt_count:1,known_cost:"0.007",currency:"USD",costs_by_currency:[{currency:"USD",cost:"0.007"}],input_tokens:1500,cached_input_tokens:0,output_tokens:500,unknown_attempt_count:0},attempts:{items:[],next_cursor:50}};
   const second={...page,attempts:{items:[],next_cursor:null}};
   const reads=mockTransport({
     [`${root}/t1/model-usage?limit=50`]:page,
-    [`${root}/t1/model-usage?limit=50&cursor=next%2Fattempt`]:second,
+    [`${root}/t1/model-usage?limit=50&cursor=50`]:second,
   });
   const adapter=new HttpAdapter(reads.transport,memoryStorage());await adapter.refresh();await adapter.loadTask("TEST-alpha","t1");reads.paths.length=0;
   expect(await adapter.taskUsage.getTaskUsage("TEST-alpha","t1")).toEqual(page);
-  expect(await adapter.taskUsage.getTaskUsage("TEST-alpha","t1","next/attempt")).toEqual(second);
-  expect(reads.paths).toEqual([`${root}/t1/model-usage?limit=50`,`${root}/t1/model-usage?limit=50&cursor=next%2Fattempt`]);
+  expect(await adapter.taskUsage.getTaskUsage("TEST-alpha","t1",50)).toEqual(second);
+  expect(reads.paths).toEqual([`${root}/t1/model-usage?limit=50`,`${root}/t1/model-usage?limit=50&cursor=50`]);
   await expect(adapter.taskUsage.getTaskUsage("OTHER","t1")).rejects.toThrow("任务不属于此项目");
 });
 it("adapts exact task formal review and package consent reads without starting work",async()=>{

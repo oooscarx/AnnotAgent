@@ -206,7 +206,7 @@ export class HttpAdapter implements WorkspaceAdapter {
   };
   readonly taskUsage: import("./TaskUsage").TaskUsageService = {
     getTaskUsage: async(project,id,cursor,signal) => this.transport<import("./TaskUsage").TaskUsagePage>(
-      `${this.deliveryRoot(project,id)}/model-usage?limit=50${cursor?`&cursor=${esc(cursor)}`:""}`,
+      `${this.deliveryRoot(project,id)}/model-usage?limit=50${cursor == null ? "" : `&cursor=${esc(cursor)}`}`,
       {signal},
     ),
     subscribeTaskUsage: (_project,_id,onChange) => {
