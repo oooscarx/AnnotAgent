@@ -3,6 +3,7 @@ import { BundleInstaller, type BundleInstallerService } from "./BundleInstaller"
 import { Disclosure } from "./Disclosure";
 import {
   clearSetupContext,
+  preparationCardState,
   preserveSetupContext,
   setupSettingsPath,
   type ModelPreparationService,
@@ -27,6 +28,19 @@ const stateLabels = {
   blocked: "不可使用",
 };
 
+const capabilityLabels: Record<string, string> = {
+  text_generation: "规划并生成标注方案",
+  vision_language: "理解图片并定位目标",
+  image_classification: "图片分类",
+  object_detection: "目标框定位",
+  open_vocabulary_detection: "开放词汇目标定位",
+  phrase_grounding: "文字指代定位",
+  semantic_segmentation: "语义区域分割",
+  prompted_segmentation: "按提示精修区域",
+  instance_segmentation: "实例区域分割",
+  keypoint_detection: "关键点定位",
+};
+
 export type SetupRequestProps = {
   context: SetupContext;
   service: ModelPreparationService;
@@ -47,7 +61,6 @@ export function SetupRequest({
   onCancel,
 }: SetupRequestProps) {
   const [snapshot, setSnapshot] = useState<PreparationSnapshot>();
-  const [recheck, setRecheck] = useState<PreparationRecheck>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [generation, setGeneration] = useState(0);
@@ -60,10 +73,8 @@ export function SetupRequest({
     const current = ++live.current;
     const controller = new AbortController();
     setSnapshot(undefined);
-    setRecheck(undefined);
     setError("");
-    void service
-      .inspect(context, controller.signal)
+    void service.inspect(context, controller.signal)
       .then((value) => {
         if (current === live.current) setSnapshot(value);
       })
@@ -74,14 +85,31 @@ export function SetupRequest({
     return () => {
       controller.abort();
       actionController.current?.abort();
-      live.current++;
+      live.current += 1;
     };
-  }, [context.id, service, generation]);
+  }, [context.id, generation, service]);
 
   const requirementById = useMemo(
     () => new Map(context.requirements.map((item) => [item.id, item])),
     [context.requirements],
   );
+  const card = snapshot ? preparationCardState(snapshot) : undefined;
+
+  const candidateName = (candidateId: string, target: SetupTarget) => {
+    if (!snapshot) return targetLabels[target];
+    const provider = snapshot.provider_models.find(
+      (item) => item.id === candidateId || `model-profile:${item.id}` === candidateId,
+    );
+    if (provider) return provider.display_name;
+    const instance = snapshot.model_instances.find(
+      (item) => item.id === candidateId || `model-instance:${item.id}` === candidateId,
+    );
+    if (instance) return instance.display_name;
+    const plugin = snapshot.plugins.find(
+      (item) => item.id === candidateId || candidateId.includes(item.id),
+    );
+    return plugin?.display_name ?? targetLabels[target];
+  };
 
   const open = (target: SetupTarget, candidateId?: string) => {
     try {
@@ -97,22 +125,20 @@ export function SetupRequest({
     pending.current = true;
     setBusy(true);
     setError("");
+    const controller = new AbortController();
+    actionController.current = controller;
+    const current = live.current;
     try {
-      const controller = new AbortController();
-      actionController.current = controller;
-      const current = live.current;
       const result = await service.recheck(snapshot, controller.signal);
       if (controller.signal.aborted || current !== live.current) return;
-      setRecheck(result);
-      if (!result.changed.length) {
-        clearSetupContext(sessionStorage, context.id);
-        onReturn(result);
-      }
+      clearSetupContext(sessionStorage, context.id);
+      onReturn(result);
     } catch (reason) {
-      setError((reason as Error).message);
+      if (!controller.signal.aborted && current === live.current)
+        setError((reason as Error).message);
     } finally {
       pending.current = false;
-      setBusy(false);
+      if (current === live.current) setBusy(false);
     }
   };
 
@@ -149,86 +175,130 @@ export function SetupRequest({
     <section className="setup-request" aria-label="任务模型准备">
       <header>
         <div>
-          <h2>准备此任务需要的模型能力</h2>
-          <p>
-            保留 Task {context.task_id.slice(0, 8)}
-            {context.draft_id ? ` 与 Draft ${context.draft_id.slice(0, 8)}` : ""}。
-            打开或取消设置不会重新创建任务，也不会扩大 allowed_models。
-          </p>
-          <p>角色 {context.role} · Registry {context.registry_revision}</p>
+          <h2>
+            {!snapshot
+              ? "检查此任务需要的模型"
+              : card?.state === "ready"
+                ? "所需模型已经可用"
+                : card?.state === "stale"
+                  ? "任务在配置期间发生了变化"
+                  : "完成一次模型准备后继续"}
+          </h2>
+          <p>设置完成或取消都会回到原任务、原图片和原视图，不会重新创建任务。</p>
         </div>
-        <button disabled={busy} onClick={() => void cancelAndReturn()}>
-          取消并返回任务
-        </button>
       </header>
 
-      {error && <p role="alert">{error}</p>}
+      {error && (
+        <div role="alert">
+          <p>{error}</p>
+          <button type="button" disabled={busy} onClick={() => setGeneration((value) => value + 1)}>重新读取</button>
+        </div>
+      )}
       {!snapshot && !error && <p role="status">读取任务版本与模型 Registry…</p>}
 
-      {snapshot && (
+      {snapshot && card && (
         <>
-          {snapshot.context_changes.length > 0 && <div role="alert"><strong>任务上下文已变化</strong>{snapshot.context_changes.map((item) => <p key={item}>{item}</p>)}<p>可以继续配置，但返回后必须重新读取并确认授权。</p></div>}
-          <div className="setup-requirements">
-            {snapshot.requirements.map(({ requirement, ready_candidate_ids, uncertain_candidate_ids, alternatives }) => (
-              <article key={requirement.id}>
-                <strong>{requirement.capability}</strong>
-                <p>{requirement.purpose}</p>
+          {snapshot.context_changes.length > 0 && (
+            <div className="setup-context-change" role="alert">
+              <strong>原任务范围已经变化</strong>
+              <p>返回后会重新检查图片、模型集合、Registry revision 与授权；旧许可不会自动复活。</p>
+            </div>
+          )}
+
+          <article className="setup-current-blocker" data-state={card.state}>
+            <div className="setup-current-heading">
+              <div>
+                <strong>
+                  {card.state === "ready"
+                    ? "可以返回原任务继续"
+                    : card.state === "uncertain"
+                      ? "有兼容候选，但可用性尚未验证"
+                      : card.state === "stale"
+                        ? "返回原任务后重新核验"
+                        : "当前缺少任务所需能力"}
+                </strong>
                 <p>
-                  {ready_candidate_ids.length
-                    ? `${ready_candidate_ids.length} 个已准备候选`
-                    : uncertain_candidate_ids.length
-                      ? `${uncertain_candidate_ids.length} 个候选尚未验证；这不等于必然失败`
-                      : "没有可继续的兼容候选"}
+                  {card.state === "ready"
+                    ? "已有配置满足当前 capability，不需要重新设置或逐节点绑定。"
+                    : card.state === "uncertain"
+                      ? "Unknown 不等于失败。选择候选只打开既有设置，不会自动探测、安装或收费。"
+                      : card.state === "stale"
+                        ? "上下文变化后不能沿用旧授权继续模型调用。"
+                        : "只需完成下面当前缺失的一项；不会把所有候选都当成必选。"}
                 </p>
-                {alternatives.length > 0 ? (
-                  <div className="setup-alternatives" aria-label={`${requirement.capability} 可选准备方式`}>
-                    <p>选择其中一种即可满足此能力，不需要全部配置。</p>
-                    {alternatives.map((candidate) => (
-                      <div className="setup-alternative" key={candidate.id}>
-                        <div>
-                          <strong>{targetLabels[candidate.target]}</strong>
-                          <p>{candidate.id}</p>
-                          {candidate.reasons.map((reason) => <p key={reason}>{reason}</p>)}
-                        </div>
-                        <div className="actions">
-                          <span data-state={candidate.state}>{stateLabels[candidate.state]}</span>
-                          <button
-                            title={`服务器设置接口：${candidate.setup_api_url}`}
-                            onClick={() => open(candidate.target, candidate.id)}
-                          >
-                            {candidate.state === "ready" ? "查看配置" : "配置此方案"}
-                          </button>
-                        </div>
+              </div>
+              <span data-state={card.state}>
+                {card.state === "ready" ? "已准备" : card.state === "uncertain" ? "待核实" : card.state === "stale" ? "需复核" : "被阻塞"}
+              </span>
+            </div>
+
+            <div className="setup-capability-list">
+              {snapshot.requirements.map(({ requirement, ready_candidate_ids, uncertain_candidate_ids, alternatives }) => {
+                const ready = ready_candidate_ids.length > 0;
+                const visibleAlternatives = alternatives
+                  .filter((candidate) => candidate.state !== "blocked")
+                  .slice(0, 3);
+                return (
+                  <section key={requirement.id}>
+                    <div className="setup-capability-heading">
+                      <div>
+                        <strong>{capabilityLabels[requirement.capability] ?? requirement.capability}</strong>
+                        <p>{requirement.purpose}</p>
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="actions">
-                    {requirement.capability === "text_generation" ? (
-                      <button onClick={() => open("agent_model")}>配置 Agent 模型</button>
-                    ) : (
-                      <>
-                        <button onClick={() => open("provider_model")}>配置远程视觉模型</button>
-                        <button onClick={() => open("plugin")}>查看 Plugin 与本地模型</button>
-                      </>
+                      <span data-state={ready ? "ready" : uncertain_candidate_ids.length ? "uncertain" : "setup_required"}>
+                        {ready ? "已有可用模型" : uncertain_candidate_ids.length ? "可核实候选" : "需要配置"}
+                      </span>
+                    </div>
+                    {!ready && visibleAlternatives.length > 0 && (
+                      <div className="setup-choice-list" aria-label={`${requirement.capability} 兼容候选`}>
+                        {visibleAlternatives.map((candidate) => (
+                          <button type="button" key={candidate.id} onClick={() => open(candidate.target, candidate.id)}>
+                            <span>
+                              <strong>{candidateName(candidate.id, candidate.target)}</strong>
+                              <small>{candidate.reasons[0] ?? targetLabels[candidate.target]}</small>
+                            </span>
+                            <span data-state={candidate.state}>{stateLabels[candidate.state]}</span>
+                          </button>
+                        ))}
+                      </div>
                     )}
-                  </div>
-                )}
-              </article>
-            ))}
-          </div>
+                    {!ready && visibleAlternatives.length === 0 && (
+                      <div className="actions">
+                        {requirement.capability === "text_generation" ? (
+                          <button type="button" onClick={() => open("agent_model")}>连接规划模型</button>
+                        ) : (
+                          <>
+                            <button type="button" onClick={() => open("provider_model")}>连接视觉模型</button>
+                            <button type="button" onClick={() => open("plugin")}>准备本地模型</button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </section>
+                );
+              })}
+            </div>
 
-          <div className="setup-visual-boundary">
-            <strong>视觉模型将在方案确定后校验</strong>
-            <p>
-              {snapshot.readiness.visual_readiness_boundary.status === "awaiting_frozen_draft"
-                ? "当前还没有冻结的 Draft，不能从“框出目标”直接推断必须使用某一种检测模型。"
-                : "已有 Draft；视觉节点、模型绑定和权限由实际 Builder 与 Sample Preview 校验。"}
-            </p>
-            <p>{snapshot.readiness.visual_readiness_boundary.reason}</p>
-          </div>
+            <div className="setup-scope-summary">
+              <p>
+                <strong>本任务费用：</strong>{snapshot.readiness.task_cost.known
+                  ? snapshot.readiness.task_cost.receipt_count === 0
+                    ? "无本次模型请求"
+                    : `${snapshot.readiness.task_cost.receipt_count} 次调用 · ${snapshot.readiness.task_cost.amount ?? "金额未知"}${snapshot.readiness.task_cost.currency ? ` ${snapshot.readiness.task_cost.currency}` : ""}`
+                  : `未知 · ${snapshot.readiness.task_cost.reason ?? "现有回执不足"}`}
+              </p>
+              <p>读取候选不会收费；新增接收方、安装权重或扩大模型集合仍需单独确认。</p>
+            </div>
+          </article>
 
-          <Disclosure title={`Provider Model Profiles · ${snapshot.provider_models.length}`}>
+          <Disclosure title="查看兼容候选、模型来源与任务范围">
+            <div className="setup-visual-boundary">
+              <strong>视觉能力在冻结方案后按实际节点校验</strong>
+              <p>输出 bbox 不会被强制解释为必须安装 specialist detector 或 SAM；已有合规 VLM 可以走强制人工审核路径。</p>
+              <p>{snapshot.readiness.visual_readiness_boundary.reason}</p>
+            </div>
+
+            <h3>Provider Model Profiles · {snapshot.provider_models.length}</h3>
             <p>Agent 规划模型与视觉模型按具体输入、capability 和协议要求分开匹配。</p>
             {snapshot.provider_models.length === 0 && <p>没有兼容 Model Profile。</p>}
             {snapshot.provider_models.map((model) => (
@@ -243,9 +313,8 @@ export function SetupRequest({
                 <span data-state={model.state}>{stateLabels[model.state]}</span>
               </article>
             ))}
-          </Disclosure>
 
-          <Disclosure title={`Plugins · ${snapshot.plugins.length}`}>
+            <h3>Plugins · {snapshot.plugins.length}</h3>
             <p>Plugin 是执行代码，不等于模型权重或 Ready Model Instance。</p>
             {snapshot.plugins.length === 0 && <p>没有声明所需 capability 的已安装 Plugin。</p>}
             {snapshot.plugins.map((plugin) => (
@@ -258,16 +327,13 @@ export function SetupRequest({
                 <div className="actions">
                   <span data-state={plugin.state}>{stateLabels[plugin.state]}</span>
                   {plugin.state !== "ready" && bundleInstallerService && (
-                    <button onClick={() => setInstaller({ id: plugin.id, version: plugin.version })}>
-                      查看兼容 Model Bundle…
-                    </button>
+                    <button type="button" onClick={() => setInstaller({ id: plugin.id, version: plugin.version })}>查看兼容 Model Bundle…</button>
                   )}
                 </div>
               </article>
             ))}
-          </Disclosure>
 
-          <Disclosure title={`Model Instances · ${snapshot.model_instances.length}`}>
+            <h3>Model Instances · {snapshot.model_instances.length}</h3>
             <p>只有 Plugin、Bundle、能力契约和实例状态共同就绪，实例才标为已准备。</p>
             {snapshot.model_instances.length === 0 && <p>没有匹配的 Model Instance。</p>}
             {snapshot.model_instances.map((instance) => (
@@ -281,9 +347,8 @@ export function SetupRequest({
                 <span data-state={instance.state}>{stateLabels[instance.state]}</span>
               </article>
             ))}
-          </Disclosure>
 
-          <Disclosure title={`可用 Model Bundles · ${snapshot.model_bundles.length}`}>
+            <h3>Model Bundles · {snapshot.model_bundles.length}</h3>
             {snapshot.model_bundles.length === 0 && <p>目录中没有匹配 capability 的包。</p>}
             {snapshot.model_bundles.map((bundle) => (
               <article className="setup-candidate" key={`${bundle.id}:${bundle.version}`}>
@@ -295,55 +360,8 @@ export function SetupRequest({
                 </div>
               </article>
             ))}
-          </Disclosure>
 
-          {installer && bundleInstallerService && (
-            <section className="setup-installer" aria-label="任务所需模型安装">
-              <div className="actions">
-                <strong>为 {installer.id}@{installer.version} 准备模型</strong>
-                <button onClick={() => setInstaller(undefined)}>关闭安装区</button>
-              </div>
-              <BundleInstaller
-                service={bundleInstallerService}
-                pluginId={installer.id}
-                version={installer.version}
-                workspaceId={workspaceId}
-              />
-            </section>
-          )}
-
-          <div className="setup-cost-note">
-            <strong>当前 Task 费用</strong>
-            <p>
-              {snapshot.readiness.task_cost.known
-                ? `${snapshot.readiness.task_cost.receipt_count} 条模型调用回执 · ${snapshot.readiness.task_cost.amount ?? "金额未知"}${snapshot.readiness.task_cost.currency ? ` ${snapshot.readiness.task_cost.currency}` : ""}`
-                : `费用未知 · ${snapshot.readiness.task_cost.reason ?? "现有回执无法形成可比较金额"}`}
-            </p>
-            <p>范围仅为当前 conversation task，不是全系统统计。兼容候选的 Registry 单价见各候选；未自动运行收费探测、模型调用或安装。</p>
-          </div>
-
-          {recheck?.changed.length ? (
-            <div role="alert">
-              <strong>原任务上下文在设置期间发生变化</strong>
-              {recheck.changed.map((item) => <p key={item}>{item}</p>)}
-              <p>未复用旧授权。返回后由任务页重新读取 Draft、模型范围和费用授权。</p>
-              <button onClick={() => {
-                clearSetupContext(sessionStorage, context.id);
-                onReturn(recheck);
-              }}>返回原任务并查看变化</button>
-            </div>
-          ) : (
-            <div className="actions">
-              <button disabled={busy} onClick={() => setGeneration((value) => value + 1)}>
-                重新读取候选
-              </button>
-              <button className="primary" disabled={busy} onClick={() => void checkAndReturn()}>
-                {busy ? "重新检查任务与授权…" : "配置完成，检查并返回原任务"}
-              </button>
-            </div>
-          )}
-
-          <Disclosure title="冻结的回流范围">
+            <h3>冻结的回流范围</h3>
             <pre>{JSON.stringify({
               project_id: context.project_id,
               conversation_id: context.conversation_id,
@@ -364,6 +382,23 @@ export function SetupRequest({
               })),
             }, null, 2)}</pre>
           </Disclosure>
+
+          {installer && bundleInstallerService && (
+            <section className="setup-installer" aria-label="任务所需模型安装">
+              <div className="actions">
+                <strong>为 {installer.id}@{installer.version} 准备模型</strong>
+                <button type="button" onClick={() => setInstaller(undefined)}>关闭安装区</button>
+              </div>
+              <BundleInstaller service={bundleInstallerService} pluginId={installer.id} version={installer.version} workspaceId={workspaceId} />
+            </section>
+          )}
+
+          <div className="actions setup-return-actions">
+            <button type="button" disabled={busy} onClick={() => void cancelAndReturn()}>取消并返回</button>
+            <button type="button" className="primary" disabled={busy} onClick={() => void checkAndReturn()}>
+              {busy ? "重新检查任务与授权…" : card.state === "ready" ? "返回原任务继续" : card.state === "stale" ? "返回原任务重新核验" : "配置完成，重新检查并返回"}
+            </button>
+          </div>
         </>
       )}
     </section>

@@ -48,3 +48,25 @@ ML-015 Backend commit `07925834bf401a411e94245fa545f1b7640a4924` narrows the pre
 - Unit tests cover role separation, unknown availability, mixed Provider/Plugin/Instance alternatives, one-of readiness, exact server request ownership, unchanged `allowed_models`, candidate-aware Settings return, and Settings scope filtering.
 - Typecheck and production build cover component integration.
 - The component is not mounted in public `App` by this branch, as required. Frontend 1 owns that integration and task-side `SetupContext` construction.
+
+## P0 necessary-setup convergence
+
+The model-preparation surface is now one task-scoped blocking card rather than a second setup journey:
+
+- `preparationCardState` reduces the passive readiness snapshot to `ready`, `uncertain`, `setup_required`, or `stale`. `unknown` candidates remain uncertain and are never collapsed into a hard failure.
+- A Ready candidate means the user returns to the original task; the card does not ask them to configure the same model again or bind individual Workflow nodes.
+- An unresolved capability shows at most three server-compatible alternatives. Full Provider/Profile/Plugin/Bundle/Instance evidence and frozen identifiers remain in one collapsed detail area.
+- The normal card hides Task IDs, Registry hashes, candidate IDs, and authorization digests. It keeps the current task cost state, external/installation boundary, and the fact that passive reads do not charge.
+- Bbox intent does not synthesize a specialist-detector or SAM requirement before the Draft is frozen. A compliant VLM remains eligible for the existing forced-human-review path.
+- Completing setup performs one passive `recheck`, clears the temporary return context, and returns once. Changed Registry, Draft, task, binding, or allowed-model scope is returned to the task as stale evidence; the UI does not reuse or expand the old authorization.
+- Cancelling performs the same passive recheck where possible and returns to the same Project/Task without creating another task.
+
+R3/R6 domain components are also present on this branch:
+
+- `ModelProfileEditor` edits context/output limits, Generation Defaults, actual declared/verified reasoning choices, currency, and immutable revision pricing. `reasoning_controls` remains only a protocol capability declaration.
+- `ModelRequestEvidence` distinguishes saved fields from the effective next-request mapping and from an explicit test receipt.
+- `TaskUsage` reports physical attempts with input/output/cached tokens, Provider/Model revision, usage source, frozen pricing, currency, cost, status, and separate probe records. Missing usage is unknown, never zero, and currencies are not combined.
+
+Frontend 1 must register the existing service seams in the public Adapter/App. This branch intentionally does not modify those files. Settings reads and setup rechecks are passive; proving a setting reached a Provider still requires an explicit authorized test request and its receipt.
+
+Focused validation: 26 tests passed across setup preparation, Settings return, Model Profile limits, effective request evidence, and Task usage. Full Web regression: 107 files / 354 tests passed. Typecheck, token check, and production build passed. Live Provider calls and the public-App return path were not run from this branch.

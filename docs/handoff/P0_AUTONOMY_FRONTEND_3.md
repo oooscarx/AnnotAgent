@@ -1,5 +1,7 @@
 # P0 Frontend 3
 
+> Historical P0 evidence was imported into `codex/mainline-frontend-3`. The current integration boundary and latest validation live in `docs/handoff/FRONTEND_3_MODEL_PREPARATION.md`.
+
 Baseline: `a7bee2ca6e4908d6cb1eff3ed820a6c7ce51653e`; worktree branch `codex/p0-autonomy-f3`.
 
 ## P0-PM-G0-004 — task usage read failure
