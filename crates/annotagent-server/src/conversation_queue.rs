@@ -99,6 +99,7 @@ fn scope(
         .application
         .resolve_conversation_message_model(project, conversation, message, model)
         .map_err(ApiError::bad_request)?;
+    let (config, request_config) = super::conversation_schema::schema_stage_config(&selected)?;
     let request_hash = state
         .application
         .queued_schema_request_hash(
@@ -107,6 +108,7 @@ fn scope(
             task,
             message,
             &selected.model.remote_model_id,
+            &request_config,
         )
         .map_err(ApiError::bad_request)?;
     let budget = state
@@ -125,17 +127,14 @@ fn scope(
             }),
         )
     };
-    let mut config = selected
-        .openai_compatible_config()
-        .map_err(ApiError::bad_request)?;
-    config.max_retries = 0;
-    config.max_output_tokens = config.max_output_tokens.min(2048);
-    let scope_hash=annotagent_image_tools::sha256(&serde_json::to_vec(&json!({"contract":"queued-schema-consent-v1","request_hash":request_hash,"model":selected.model,"provider":selected.provider,"config":config,"previous_grant_id":previous,"maximum_calls":maximum})).map_err(ApiError::internal)?);
+    let scope_hash=annotagent_image_tools::sha256(&serde_json::to_vec(&json!({"contract":"queued-schema-consent-v1","request_hash":request_hash,"model":selected.model,"provider":selected.provider,"config":config,"request_config":request_config,"previous_grant_id":previous,"maximum_calls":maximum})).map_err(ApiError::internal)?);
     let preview = json!({
         "message_id":message,"task_id":task,"model_id":selected.model.id,"model_name":selected.model.display_name,
         "destination":selected.provider.endpoint_summary(),"scope_hash":scope_hash,"request_hash":request_hash,
         "previous_grant_id":previous,"maximum_calls":maximum,"used_calls":budget.map_or(0,|v|v.used_calls),
         "new_request_limit":1,"image_count":0,"estimated_cost":null,"expires_at":Utc::now()+Duration::minutes(30),
+        "maximum_output_tokens":request_config.maximum_output_tokens,"response_mode":request_config.response_mode,
+        "thinking":{"parameter":request_config.thinking_parameter,"value":request_config.thinking_value},
         "data_scope":"Original goal and this saved supplement, plus existing Project Schema. No image pixels or other conversation history.",
         "operation":"Propose a new semantic Schema Draft; does not modify the Workflow, publish, infer on images or accept annotations."
     });
@@ -219,11 +218,7 @@ pub(super) async fn propose(
         .ok_or_else(|| {
             ApiError::bad_request("Provider credential is missing; no request was sent")
         })?;
-    let mut config = selected
-        .openai_compatible_config()
-        .map_err(ApiError::bad_request)?;
-    config.max_retries = 0;
-    config.max_output_tokens = config.max_output_tokens.min(2048);
+    let (config, request_config) = super::conversation_schema::schema_stage_config(&selected)?;
     let attempt_observer = state
         .application
         .task_model_attempt_observer(&project, conversation, task, &selected)
@@ -250,9 +245,10 @@ pub(super) async fn propose(
     tokio::spawn(async move {
         let _permit = permit;
         application
-            .execute_conversation_schema(
+            .execute_conversation_schema_with_config(
                 &project,
                 &execution,
+                &request_config,
                 &provider,
                 CancellationToken::default(),
             )

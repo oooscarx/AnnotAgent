@@ -21,6 +21,18 @@ pub enum OpenAiProtocol {
     ChatCompletions,
 }
 
+/// Wire-level constrained-output mode selected before an admitted request is sent.
+/// `Automatic` preserves the legacy capability-driven behavior for non-Schema callers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenAiResponseMode {
+    #[default]
+    Automatic,
+    NativeTool,
+    JsonObject,
+    JsonSchema,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OpenAiCompatibleConfig {
@@ -40,6 +52,8 @@ pub struct OpenAiCompatibleConfig {
     pub supports_tool_calls: bool,
     #[serde(default)]
     pub supports_json_schema: bool,
+    #[serde(default)]
+    pub response_mode: OpenAiResponseMode,
     #[serde(default)]
     pub custom_headers: BTreeMap<String, String>,
     #[serde(default)]
@@ -121,6 +135,18 @@ pub async fn within_model_call<T>(call_id: String, future: impl Future<Output = 
 }
 
 impl OpenAiCompatibleProvider {
+    fn effective_response_mode(&self) -> OpenAiResponseMode {
+        match self.config.response_mode {
+            OpenAiResponseMode::Automatic if self.config.supports_tool_calls => {
+                OpenAiResponseMode::NativeTool
+            }
+            OpenAiResponseMode::Automatic if self.config.supports_json_schema => {
+                OpenAiResponseMode::JsonSchema
+            }
+            mode => mode,
+        }
+    }
+
     pub fn new(config: OpenAiCompatibleConfig) -> CoreResult<Self> {
         Self::new_with_api_key(config, None)
     }
@@ -208,12 +234,26 @@ impl OpenAiCompatibleProvider {
                 messages.push(json!({"role": "user", "content": content}));
             }
         }
+        // Extras are extensions, never authority to replace the resolved model, limit,
+        // messages, thinking control or constrained-output mode.
         let mut body = serde_json::Map::new();
+        for (key, value) in &self.config.extra_request_fields {
+            body.insert(key.clone(), value.clone());
+        }
+        for (key, value) in &request.extra {
+            body.insert(key.clone(), value.clone());
+        }
         body.insert("model".to_owned(), json!(request.model));
         body.insert("messages".to_owned(), Value::Array(messages));
         body.insert("max_tokens".to_owned(), json!(request.max_output_tokens));
         body.insert("temperature".to_owned(), json!(request.temperature));
-        let native_tool_mode = self.config.supports_tool_calls && !request.tools.is_empty();
+        body.remove("tools");
+        body.remove("tool_choice");
+        body.remove("response_format");
+        let response_mode = self.effective_response_mode();
+        let native_tool_mode = response_mode == OpenAiResponseMode::NativeTool
+            && self.config.supports_tool_calls
+            && !request.tools.is_empty();
         if native_tool_mode {
             body.insert(
                 "tools".to_owned(),
@@ -234,8 +274,16 @@ impl OpenAiCompatibleProvider {
                         .collect(),
                 ),
             );
+            // The common OpenAI-compatible auto-only subset accepts this value. We
+            // never emit `required` or a named-tool selector.
+            body.insert("tool_choice".to_owned(), json!("auto"));
         }
-        if self.config.supports_json_schema && !native_tool_mode {
+        if response_mode == OpenAiResponseMode::JsonObject {
+            body.insert("response_format".to_owned(), json!({"type": "json_object"}));
+        } else if response_mode == OpenAiResponseMode::JsonSchema
+            && self.config.supports_json_schema
+            && !native_tool_mode
+        {
             body.insert(
                 "response_format".to_owned(),
                 json!({
@@ -250,14 +298,18 @@ impl OpenAiCompatibleProvider {
         }
         if let Some(mode) = &self.config.reasoning_mode
             && !request.extra.contains_key("enable_thinking")
+            && !self.config.extra_request_fields.contains_key("thinking")
         {
             body.insert("reasoning_effort".to_owned(), json!(mode));
         }
-        for (key, value) in &self.config.extra_request_fields {
-            body.insert(key.clone(), value.clone());
-        }
-        for (key, value) in &request.extra {
-            body.insert(key.clone(), value.clone());
+        // A typed provider/profile setting wins over request extras for thinking.
+        if let Some(thinking) = self.config.extra_request_fields.get("thinking") {
+            body.insert("thinking".to_owned(), thinking.clone());
+            body.remove("reasoning_effort");
+            body.remove("enable_thinking");
+        } else if let Some(enable) = self.config.extra_request_fields.get("enable_thinking") {
+            body.insert("enable_thinking".to_owned(), enable.clone());
+            body.remove("reasoning_effort");
         }
         Value::Object(body)
     }
@@ -605,30 +657,43 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
             parsed
                 .provider_metadata
                 .insert("retry_count".to_owned(), attempt.to_string());
-            if self.config.supports_tool_calls {
-                if try_promote_json_action(&mut parsed, &request.tools).is_err() {
-                    let failure = annotagent_core::ModelFailure {
-                        stage: annotagent_core::ModelFailureStage::StructuredOutput,
-                        category: annotagent_core::ModelFailureCategory::InvalidStructuredOutput,
-                        http_status: None,
-                    };
-                    let cached = cached_input_tokens(&parsed);
-                    self.finish_observed_attempt(
-                        attempt_id.as_deref(),
-                        ModelAttemptOutcomeStatus::Failed,
-                        parsed.request_id.clone(),
-                        parsed.usage.clone(),
-                        cached,
-                        Some(failure.clone()),
-                    )?;
-                    return Err(CoreError::ModelFailure(failure));
+            let response_mode = self.effective_response_mode();
+            parsed.provider_metadata.insert(
+                "response_mode".to_owned(),
+                serde_json::to_value(response_mode)
+                    .ok()
+                    .and_then(|value| value.as_str().map(str::to_owned))
+                    .unwrap_or_else(|| "automatic".to_owned()),
+            );
+            let before = parsed.tool_calls.len();
+            let promotion = match response_mode {
+                OpenAiResponseMode::NativeTool => {
+                    try_promote_json_action(&mut parsed, &request.tools).map(|_| ())
                 }
-            } else if promote_json_action(&mut parsed, &request.tools).is_err() {
+                OpenAiResponseMode::JsonObject | OpenAiResponseMode::JsonSchema => {
+                    promote_json_action(&mut parsed, &request.tools)
+                }
+                OpenAiResponseMode::Automatic => Ok(()),
+            };
+            if parsed.tool_calls.len() > before {
+                parsed
+                    .provider_metadata
+                    .insert("action_source".to_owned(), "json_adapter".to_owned());
+            } else if !parsed.tool_calls.is_empty() {
+                parsed
+                    .provider_metadata
+                    .insert("action_source".to_owned(), "native_tool".to_owned());
+            }
+            if let Err(error) = promotion {
                 let failure = annotagent_core::ModelFailure {
                     stage: annotagent_core::ModelFailureStage::StructuredOutput,
                     category: annotagent_core::ModelFailureCategory::InvalidStructuredOutput,
                     http_status: None,
                 };
+                parsed.provider_metadata.insert(
+                    "structured_output_error".to_owned(),
+                    safe_structured_output_error(&error),
+                );
                 let cached = cached_input_tokens(&parsed);
                 self.finish_observed_attempt(
                     attempt_id.as_deref(),
@@ -638,7 +703,10 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
                     cached,
                     Some(failure.clone()),
                 )?;
-                return Err(CoreError::ModelFailure(failure));
+                // The HTTP request completed and usage is known. Preserve the response
+                // for the phase-specific strict validator instead of converting it to
+                // an indeterminate transport result or retrying.
+                return Ok(parsed);
             }
             let cached = cached_input_tokens(&parsed);
             self.finish_observed_attempt(
@@ -652,6 +720,23 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
             return Ok(parsed);
         }
         Err(CoreError::Provider("provider retries exhausted".to_owned()))
+    }
+}
+
+fn safe_structured_output_error(error: &CoreError) -> String {
+    let text = error.to_string();
+    if text.contains("invalid JSON-only action") {
+        "invalid_json".to_owned()
+    } else if text.contains("unregistered tool") {
+        "wrong_action_name".to_owned()
+    } else if text.contains("lacks object field `arguments`") {
+        "arguments_not_object".to_owned()
+    } else if text.contains("lacks string field `name`") {
+        "action_name_missing".to_owned()
+    } else if text.contains("no constrained action") {
+        "no_action".to_owned()
+    } else {
+        "invalid_action_envelope".to_owned()
     }
 }
 
@@ -876,6 +961,41 @@ fn parse_chat_response(value: &Value, request_id: Option<String>) -> CoreResult<
         _ => UsageSource::Unknown,
     };
     let mut provider_metadata = BTreeMap::new();
+    if let Some(finish_reason) = value
+        .pointer("/choices/0/finish_reason")
+        .and_then(Value::as_str)
+    {
+        provider_metadata.insert("finish_reason".to_owned(), finish_reason.to_owned());
+    }
+    provider_metadata.insert("content_present".to_owned(), content.is_some().to_string());
+    provider_metadata.insert(
+        "content_length".to_owned(),
+        content.as_ref().map_or(0, String::len).to_string(),
+    );
+    provider_metadata.insert("tool_call_count".to_owned(), tool_calls.len().to_string());
+    let reasoning_content = message
+        .get("reasoning_content")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty());
+    provider_metadata.insert(
+        "reasoning_content_present".to_owned(),
+        reasoning_content.is_some().to_string(),
+    );
+    provider_metadata.insert(
+        "reasoning_content_length".to_owned(),
+        reasoning_content.map_or(0, str::len).to_string(),
+    );
+    if let Some(reasoning_tokens) = value
+        .pointer("/usage/completion_tokens_details/reasoning_tokens")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            value
+                .pointer("/usage/reasoning_tokens")
+                .and_then(Value::as_u64)
+        })
+    {
+        provider_metadata.insert("reasoning_tokens".to_owned(), reasoning_tokens.to_string());
+    }
     if let Some(cached) = value
         .pointer("/usage/prompt_tokens_details/cached_tokens")
         .and_then(Value::as_u64)
@@ -974,6 +1094,43 @@ mod tests {
         failures: usize,
     }
 
+    #[derive(Clone)]
+    struct CaptureFixture {
+        bodies: Arc<Mutex<Vec<Value>>>,
+        response: Value,
+    }
+
+    async fn capture_completion(
+        State(state): State<CaptureFixture>,
+        Json(body): Json<Value>,
+    ) -> Json<Value> {
+        state.bodies.lock().expect("bodies").push(body);
+        Json(state.response)
+    }
+
+    async fn spawn_capture_fixture(response: Value) -> (String, Arc<Mutex<Vec<Value>>>) {
+        let bodies = Arc::new(Mutex::new(Vec::new()));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let address = listener.local_addr().expect("address");
+        let state = CaptureFixture {
+            bodies: Arc::clone(&bodies),
+            response,
+        };
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new()
+                    .route("/v1/chat/completions", post(capture_completion))
+                    .with_state(state),
+            )
+            .await
+            .expect("fixture server");
+        });
+        (format!("http://{address}/v1"), bodies)
+    }
+
     async fn retrying_completion(State(state): State<RetryFixture>) -> Response {
         let call = state.calls.fetch_add(1, Ordering::SeqCst);
         if call < state.failures {
@@ -1025,6 +1182,7 @@ mod tests {
             reasoning_mode: None,
             supports_tool_calls: true,
             supports_json_schema: false,
+            response_mode: OpenAiResponseMode::Automatic,
             custom_headers: BTreeMap::new(),
             extra_request_fields: BTreeMap::new(),
             max_retries,
@@ -1331,6 +1489,112 @@ mod tests {
     }
 
     #[test]
+    fn preserves_safe_completion_diagnostics_without_reasoning_text() {
+        let response = parse_chat_response(
+            &json!({
+                "choices": [{
+                    "finish_reason":"length",
+                    "message": {"content":null,"reasoning_content":"private chain"}
+                }],
+                "usage": {
+                    "prompt_tokens":1639,"completion_tokens":2048,"total_tokens":3687,
+                    "completion_tokens_details":{"reasoning_tokens":1900}
+                }
+            }),
+            Some("TEST-length".to_owned()),
+        )
+        .expect("response");
+        assert_eq!(response.provider_metadata["finish_reason"], "length");
+        assert_eq!(response.provider_metadata["content_present"], "false");
+        assert_eq!(response.provider_metadata["content_length"], "0");
+        assert_eq!(response.provider_metadata["tool_call_count"], "0");
+        assert_eq!(
+            response.provider_metadata["reasoning_content_present"],
+            "true"
+        );
+        assert_eq!(response.provider_metadata["reasoning_content_length"], "13");
+        assert_eq!(response.provider_metadata["reasoning_tokens"], "1900");
+        assert!(!format!("{:?}", response.provider_metadata).contains("private chain"));
+        assert_eq!(response.usage.output_tokens, Some(2048));
+    }
+
+    #[tokio::test]
+    async fn json_object_http_request_freezes_mode_limit_and_thinking_after_extra_merge() {
+        let (endpoint, bodies) = spawn_capture_fixture(json!({
+            "id":"TEST-json-object",
+            "choices":[{"finish_reason":"stop","message":{"content":
+                "{\"name\":\"submit\",\"arguments\":{}}"}}],
+            "usage":{"prompt_tokens":12,"completion_tokens":8,"total_tokens":20}
+        }))
+        .await;
+        let provider = OpenAiCompatibleProvider::new_with_api_key(
+            OpenAiCompatibleConfig {
+                endpoint,
+                api_key_env: "UNUSED_TEST_KEY".to_owned(),
+                model: "TEST-structured".to_owned(),
+                protocol: OpenAiProtocol::ChatCompletions,
+                request_timeout_seconds: 5,
+                max_output_tokens: 4_096,
+                temperature: 0.0,
+                reasoning_mode: Some("high".to_owned()),
+                supports_tool_calls: true,
+                supports_json_schema: true,
+                response_mode: OpenAiResponseMode::JsonObject,
+                custom_headers: BTreeMap::new(),
+                extra_request_fields: BTreeMap::from([
+                    ("max_tokens".to_owned(), json!(99_999)),
+                    ("response_format".to_owned(), json!({"type":"json_schema"})),
+                    ("tool_choice".to_owned(), json!("required")),
+                    ("thinking".to_owned(), json!({"type":"disabled"})),
+                ]),
+                max_retries: 0,
+                minimum_retry_delay_ms: 0,
+                maximum_retry_delay_ms: 0,
+            },
+            Some("TEST-only".to_owned()),
+        )
+        .expect("provider");
+        let request = ModelRequest {
+            model: "ignored".to_owned(),
+            task_id: annotagent_core::TaskId::from("schema"),
+            messages: vec![ModelMessage {
+                role: ModelRole::User,
+                content: "return JSON".to_owned(),
+                tool_call_id: None,
+                tool_calls: Vec::new(),
+            }],
+            images: Vec::new(),
+            tools: vec![annotagent_core::ToolDefinition {
+                name: "submit".to_owned(),
+                description: "submit".to_owned(),
+                parameters: json!({"type":"object","additionalProperties":false}),
+                read_only: false,
+            }],
+            max_output_tokens: 4_096,
+            temperature: 0.0,
+            extra: BTreeMap::from([
+                ("max_tokens".to_owned(), json!(1)),
+                ("thinking".to_owned(), json!({"type":"enabled"})),
+                ("tools".to_owned(), json!([{"unsafe":true}])),
+            ]),
+        };
+        let response = provider
+            .complete(request, CancellationToken::new())
+            .await
+            .expect("completed response");
+        assert_eq!(response.tool_calls.len(), 1);
+        assert_eq!(response.provider_metadata["action_source"], "json_adapter");
+        let body = &bodies.lock().expect("bodies")[0];
+        assert_eq!(body["model"], "TEST-structured");
+        assert_eq!(body["max_tokens"], 4_096);
+        assert_eq!(body["thinking"], json!({"type":"disabled"}));
+        assert_eq!(body["response_format"], json!({"type":"json_object"}));
+        assert!(body.get("tools").is_none());
+        assert!(body.get("tool_choice").is_none());
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
     fn parses_openai_content_part_arrays() {
         let response = parse_chat_response(
             &json!({
@@ -1381,6 +1645,7 @@ mod tests {
                 reasoning_mode: None,
                 supports_tool_calls: true,
                 supports_json_schema: false,
+                response_mode: OpenAiResponseMode::Automatic,
                 custom_headers: BTreeMap::new(),
                 extra_request_fields: BTreeMap::new(),
                 max_retries: 0,
@@ -1443,6 +1708,7 @@ mod tests {
                 reasoning_mode: Some("medium".to_owned()),
                 supports_tool_calls: true,
                 supports_json_schema: false,
+                response_mode: OpenAiResponseMode::Automatic,
                 custom_headers: BTreeMap::new(),
                 extra_request_fields: BTreeMap::new(),
                 max_retries: 0,
@@ -1492,6 +1758,7 @@ mod tests {
             reasoning_mode: None,
             supports_tool_calls: true,
             supports_json_schema: false,
+            response_mode: OpenAiResponseMode::Automatic,
             custom_headers: BTreeMap::new(),
             extra_request_fields: BTreeMap::new(),
             max_retries: 0,
@@ -1533,6 +1800,7 @@ mod tests {
                 reasoning_mode: None,
                 supports_tool_calls: false,
                 supports_json_schema: true,
+                response_mode: OpenAiResponseMode::Automatic,
                 custom_headers: BTreeMap::new(),
                 extra_request_fields: BTreeMap::new(),
                 max_retries: 0,
@@ -1613,6 +1881,7 @@ mod tests {
                 reasoning_mode: None,
                 supports_tool_calls: true,
                 supports_json_schema: true,
+                response_mode: OpenAiResponseMode::Automatic,
                 custom_headers: BTreeMap::new(),
                 extra_request_fields: BTreeMap::new(),
                 max_retries: 0,
@@ -1644,7 +1913,7 @@ mod tests {
             extra: BTreeMap::new(),
         });
         assert!(body["tools"].is_array());
-        assert!(body.get("tool_choice").is_none());
+        assert_eq!(body["tool_choice"], "auto");
         assert!(body.get("response_format").is_none());
 
         let mut response = ModelResponse {

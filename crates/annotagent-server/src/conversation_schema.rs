@@ -1,6 +1,8 @@
 //! Explicit consent boundary for one text-only Schema proposal. No publish/start.
 use super::*;
-use annotagent_application::{ConversationSchemaExecution, PipelineBuilderModelRuntime};
+use annotagent_application::{
+    ConversationSchemaExecution, ConversationSchemaRequestConfig, PipelineBuilderModelRuntime,
+};
 use annotagent_storage::ConversationCallReceipt;
 use chrono::{Duration, Utc};
 
@@ -363,6 +365,139 @@ pub(super) struct ModelSelection {
 
 pub(super) type SchemaConsent = annotagent_storage::ConversationSchemaAuthorization;
 
+fn official_zhipu_chat_endpoint(selected: &PipelineBuilderModelRuntime) -> bool {
+    selected
+        .provider
+        .base_url
+        .host_str()
+        .is_some_and(|host| host == "open.bigmodel.cn" || host.ends_with(".bigmodel.cn"))
+}
+
+pub(super) fn schema_stage_config(
+    selected: &PipelineBuilderModelRuntime,
+) -> ApiResult<(
+    annotagent_provider::OpenAiCompatibleConfig,
+    ConversationSchemaRequestConfig,
+)> {
+    let mut provider = selected
+        .openai_compatible_config()
+        .map_err(ApiError::bad_request)?;
+    provider.max_retries = 0;
+    let mode = selected
+        .model
+        .generation_defaults
+        .structured_output_mode
+        .as_deref();
+    let response_mode = match mode {
+        Some("json_object") => {
+            if !selected.model.protocol_features.structured_output {
+                return Err(ApiError::bad_request(
+                    "Model Profile selects json_object without structured-output support",
+                ));
+            }
+            annotagent_provider::OpenAiResponseMode::JsonObject
+        }
+        Some("json_schema") => {
+            if !selected.model.protocol_features.json_schema {
+                return Err(ApiError::bad_request(
+                    "Model Profile selects json_schema without JSON Schema support",
+                ));
+            }
+            annotagent_provider::OpenAiResponseMode::JsonSchema
+        }
+        Some("tool" | "native_tool") => {
+            if !selected.model.protocol_features.tool_calls {
+                return Err(ApiError::bad_request(
+                    "Model Profile selects native tools without tool-call support",
+                ));
+            }
+            annotagent_provider::OpenAiResponseMode::NativeTool
+        }
+        Some(other) => {
+            return Err(ApiError::bad_request(format!(
+                "Unsupported Schema structured-output mode {other:?}"
+            )));
+        }
+        None if official_zhipu_chat_endpoint(selected)
+            && selected.model.protocol_features.structured_output =>
+        {
+            annotagent_provider::OpenAiResponseMode::JsonObject
+        }
+        None if selected.model.protocol_features.tool_calls => {
+            annotagent_provider::OpenAiResponseMode::NativeTool
+        }
+        None if selected.model.protocol_features.structured_output => {
+            annotagent_provider::OpenAiResponseMode::JsonObject
+        }
+        None => {
+            return Err(ApiError::bad_request(
+                "Schema planning needs a declared native-tool or JSON Object capability",
+            ));
+        }
+    };
+    provider.response_mode = response_mode;
+
+    // Schema extraction defaults to non-thinking only when the saved capability or
+    // the official endpoint dialect defines an exact wire representation.
+    let (thinking_parameter, thinking_value) =
+        if selected.model.protocol_features.reasoning_controls {
+            use annotagent_core::ReasoningWireParameter as Wire;
+            let wire = selected.model.generation_defaults.reasoning_wire_parameter;
+            match wire {
+                Some(Wire::Thinking) => {
+                    provider.reasoning_mode = None;
+                    provider.extra_request_fields.remove("enable_thinking");
+                    provider
+                        .extra_request_fields
+                        .insert("thinking".to_owned(), json!({"type":"disabled"}));
+                    (Some(Wire::Thinking), Some(json!({"type":"disabled"})))
+                }
+                None if official_zhipu_chat_endpoint(selected) => {
+                    provider.reasoning_mode = None;
+                    provider.extra_request_fields.remove("enable_thinking");
+                    provider
+                        .extra_request_fields
+                        .insert("thinking".to_owned(), json!({"type":"disabled"}));
+                    (Some(Wire::Thinking), Some(json!({"type":"disabled"})))
+                }
+                Some(Wire::EnableThinking) => {
+                    provider.reasoning_mode = None;
+                    provider.extra_request_fields.remove("thinking");
+                    provider
+                        .extra_request_fields
+                        .insert("enable_thinking".to_owned(), json!(false));
+                    (Some(Wire::EnableThinking), Some(json!(false)))
+                }
+                Some(Wire::ReasoningEffort)
+                    if selected
+                        .model
+                        .generation_defaults
+                        .supported_reasoning_modes
+                        .contains("none") =>
+                {
+                    provider.reasoning_mode = Some("none".to_owned());
+                    provider.extra_request_fields.remove("thinking");
+                    provider.extra_request_fields.remove("enable_thinking");
+                    (Some(Wire::ReasoningEffort), Some(json!("none")))
+                }
+                Some(Wire::ReasoningEffort) => (
+                    Some(Wire::ReasoningEffort),
+                    provider.reasoning_mode.clone().map(Value::String),
+                ),
+                None => (None, None),
+            }
+        } else {
+            (None, None)
+        };
+    let request = ConversationSchemaRequestConfig {
+        maximum_output_tokens: provider.max_output_tokens,
+        response_mode,
+        thinking_parameter,
+        thinking_value,
+    };
+    Ok((provider, request))
+}
+
 pub(super) async fn pending_authorization(
     State(state): State<ServerState>,
     AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
@@ -410,15 +545,12 @@ pub(super) fn preview_scope(
             model_id,
         )
         .map_err(ApiError::bad_request)?;
-    let mut config = selected
-        .openai_compatible_config()
-        .map_err(ApiError::bad_request)?;
-    config.max_retries = 0;
-    config.max_output_tokens = config.max_output_tokens.min(2048);
+    let (config, request_config) = schema_stage_config(&selected)?;
     // Hash complete server-resolved configuration; never include credentials in public output.
     let mut consent_scope = json!({
         "contract":"conversation-schema-consent-v1", "task":task_record,
         "model":selected.model, "provider":selected.provider, "config":config,
+        "request_config":request_config,
         "maximum_calls":1, "image_count":0,
     });
     if let Some(saved) = &delivery.saved {
@@ -433,6 +565,8 @@ pub(super) fn preview_scope(
         "remote_model":selected.model.remote_model_id,"destination":selected.provider.endpoint_summary(),
         "scope_hash":scope_hash,"maximum_calls":1,"image_count":0,"estimated_cost":null,
         "maximum_output_tokens":config.max_output_tokens,"expires_at":Utc::now()+Duration::minutes(30),
+        "response_mode":request_config.response_mode,
+        "thinking":{"parameter":request_config.thinking_parameter,"value":request_config.thinking_value},
         "data_scope":"Saved goal text, saved delivery labels/rules/training target and existing schema definitions only. No image pixels.",
         "operation":"Propose annotation Schema only; does not publish, run the dataset or accept annotations.",
     });
@@ -500,11 +634,7 @@ async fn propose_owned(
         .ok_or_else(|| {
             ApiError::bad_request("Provider credential is missing. No Schema request was sent.")
         })?;
-    let mut config = selected
-        .openai_compatible_config()
-        .map_err(ApiError::bad_request)?;
-    config.max_retries = 0;
-    config.max_output_tokens = config.max_output_tokens.min(2048);
+    let (config, request_config) = schema_stage_config(&selected)?;
     let attempt_observer = state
         .application
         .task_model_attempt_observer(&project, conversation, task, &selected)
@@ -529,9 +659,10 @@ async fn propose_owned(
     if !detach {
         return state
             .application
-            .execute_conversation_schema(
+            .execute_conversation_schema_with_config(
                 &project,
                 &execution,
+                &request_config,
                 &provider,
                 CancellationToken::default(),
             )
@@ -549,9 +680,10 @@ async fn propose_owned(
     tokio::spawn(async move {
         let _permit = permit;
         application
-            .execute_conversation_schema(
+            .execute_conversation_schema_with_config(
                 &project,
                 &execution,
+                &request_config,
                 &provider,
                 CancellationToken::default(),
             )
@@ -619,4 +751,113 @@ pub(super) async fn cancellations(
         .conversation_schema_cancellations(&project, conversation, task)
         .map(Json)
         .map_err(ApiError::bad_request)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use annotagent_core::{
+        CapabilityDeclarationSource, GenerationDefaults, InputModality, ModelBindingSource,
+        ModelCapability, ModelLimits, ModelPricing, ModelProfile, ModelProfileStatus,
+        ProtocolFeatures, ProviderAdapterKind, ProviderConnectionPolicy, ProviderHealthSnapshot,
+        ProviderId, ProviderProfile, ReasoningWireParameter,
+    };
+    use std::collections::{BTreeMap, BTreeSet};
+
+    fn runtime(endpoint: &str, maximum_output_tokens: u32) -> PipelineBuilderModelRuntime {
+        let provider_id = ProviderId::new();
+        let now = chrono::Utc::now();
+        PipelineBuilderModelRuntime {
+            provider: ProviderProfile {
+                id: provider_id,
+                display_name: "TEST provider".to_owned(),
+                preset_id: None,
+                adapter: ProviderAdapterKind::OpenAiCompatible,
+                base_url: endpoint.parse().unwrap(),
+                organization: None,
+                workspace: None,
+                credential_ref: None,
+                safe_headers: BTreeMap::new(),
+                connection_policy: ProviderConnectionPolicy::default(),
+                enabled: true,
+                health: ProviderHealthSnapshot::default(),
+                created_at: now,
+                updated_at: now,
+            },
+            model: ModelProfile {
+                id: annotagent_core::ModelProfileId::new(),
+                revision: 3,
+                provider_id,
+                display_name: "TEST model".to_owned(),
+                remote_model_id: "TEST-remote".to_owned(),
+                input_modalities: BTreeSet::from([InputModality::Text]),
+                protocol_features: ProtocolFeatures {
+                    tool_calls: true,
+                    structured_output: true,
+                    usage_reporting: true,
+                    reasoning_controls: true,
+                    ..ProtocolFeatures::default()
+                },
+                task_capabilities: BTreeSet::from([ModelCapability::TextGeneration]),
+                capability_source: CapabilityDeclarationSource::UserDeclared,
+                limits: ModelLimits {
+                    context_tokens: Some(32_768),
+                    maximum_output_tokens: Some(8_192),
+                    maximum_images_per_request: None,
+                    maximum_image_pixels: None,
+                },
+                generation_defaults: GenerationDefaults {
+                    maximum_output_tokens: Some(u64::from(maximum_output_tokens)),
+                    structured_output_mode: Some("json_object".to_owned()),
+                    reasoning_mode: Some("enabled".to_owned()),
+                    reasoning_wire_parameter: Some(ReasoningWireParameter::Thinking),
+                    supported_reasoning_modes: BTreeSet::from([
+                        "enabled".to_owned(),
+                        "disabled".to_owned(),
+                    ]),
+                    ..GenerationDefaults::default()
+                },
+                pricing: ModelPricing::default(),
+                quality_contracts: Vec::new(),
+                status: ModelProfileStatus::Available,
+                enabled: true,
+                locked: false,
+                created_at: now,
+                updated_at: now,
+            },
+            binding_source: ModelBindingSource::GlobalDefault,
+            locked: false,
+        }
+    }
+
+    #[test]
+    fn schema_stage_preserves_explicit_caps_and_uses_zhipu_json_object_thinking_wire() {
+        for cap in [1_024, 2_048, 4_096] {
+            let selected = runtime("https://open.bigmodel.cn/api/paas/v4", cap);
+            let (provider, request) = schema_stage_config(&selected).unwrap();
+            assert_eq!(provider.max_output_tokens, cap);
+            assert_eq!(request.maximum_output_tokens, cap);
+            assert_eq!(
+                request.response_mode,
+                annotagent_provider::OpenAiResponseMode::JsonObject
+            );
+            assert_eq!(
+                request.thinking_parameter,
+                Some(ReasoningWireParameter::Thinking)
+            );
+            assert_eq!(request.thinking_value, Some(json!({"type":"disabled"})));
+            assert_eq!(
+                provider.extra_request_fields["thinking"],
+                json!({"type":"disabled"})
+            );
+            assert!(provider.reasoning_mode.is_none());
+        }
+    }
+
+    #[test]
+    fn schema_stage_rejects_output_mode_without_saved_capability() {
+        let mut selected = runtime("https://provider.invalid/v1", 4_096);
+        selected.model.protocol_features.structured_output = false;
+        assert!(schema_stage_config(&selected).is_err());
+    }
 }

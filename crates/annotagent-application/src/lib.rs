@@ -47,7 +47,8 @@ pub use conversation_stop::ConversationStopObservation;
 mod guidance;
 pub use conversation_schema::{
     ConversationOutputKind, ConversationSchemaAttempt, ConversationSchemaDecision,
-    ConversationSchemaExecution, SchemaClarificationChoice, SchemaOutputChoice,
+    ConversationSchemaDiagnostic, ConversationSchemaExecution, ConversationSchemaFailureCode,
+    ConversationSchemaRequestConfig, SchemaClarificationChoice, SchemaOutputChoice,
     parse_conversation_schema_response, propose_conversation_schema,
 };
 mod export_delivery;
@@ -358,6 +359,9 @@ fn effective_reasoning(model: &ModelProfile) -> EffectiveReasoningRequest {
         Some(annotagent_core::ReasoningWireParameter::EnableThinking) => {
             serde_json::Value::Bool(mode == "enabled")
         }
+        Some(annotagent_core::ReasoningWireParameter::Thinking) => {
+            json!({"type":mode})
+        }
         _ => serde_json::Value::String(mode.clone()),
     });
     EffectiveReasoningRequest {
@@ -419,6 +423,15 @@ impl PipelineBuilderModelRuntime {
                     .unwrap_or(serde_json::Value::Null),
             );
         }
+        if reasoning.wire_parameter == Some(annotagent_core::ReasoningWireParameter::Thinking) {
+            extra_request_fields.insert(
+                "thinking".to_owned(),
+                reasoning
+                    .wire_value
+                    .clone()
+                    .unwrap_or(serde_json::Value::Null),
+            );
+        }
         Ok(OpenAiCompatibleConfig {
             endpoint: self.provider.base_url.to_string(),
             api_key_env: "ANNOTAGENT_PIPELINE_BUILDER_API_KEY".to_owned(),
@@ -434,6 +447,7 @@ impl PipelineBuilderModelRuntime {
             supports_tool_calls: self.model.protocol_features.tool_calls,
             supports_json_schema: self.model.protocol_features.structured_output
                 || self.model.protocol_features.json_schema,
+            response_mode: annotagent_provider::OpenAiResponseMode::Automatic,
             custom_headers: self.provider.safe_headers.clone(),
             extra_request_fields,
             max_retries: self.provider.connection_policy.maximum_retries,

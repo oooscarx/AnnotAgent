@@ -245,6 +245,15 @@ impl PublishedWorkflowRuntime {
                                 ),
                             );
                         }
+                        Some(annotagent_core::ReasoningWireParameter::Thinking) => {
+                            config.reasoning_mode = None;
+                            config.extra_request_fields.insert(
+                                "thinking".to_owned(),
+                                serde_json::json!({
+                                    "type":profile.generation_defaults.reasoning_mode
+                                }),
+                            );
+                        }
                         _ => config
                             .reasoning_mode
                             .clone_from(&profile.generation_defaults.reasoning_mode),

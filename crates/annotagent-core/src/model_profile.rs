@@ -111,6 +111,9 @@ pub struct GenerationDefaults {
 pub enum ReasoningWireParameter {
     ReasoningEffort,
     EnableThinking,
+    /// OpenAI-compatible endpoints that implement the object form
+    /// `thinking: {"type":"enabled"|"disabled"}`.
+    Thinking,
 }
 
 impl GenerationDefaults {
@@ -166,11 +169,13 @@ impl GenerationDefaults {
                     "reasoning_mode is not present in supported_reasoning_modes".to_owned(),
                 ));
             }
-            if self.reasoning_wire_parameter == Some(ReasoningWireParameter::EnableThinking)
-                && !matches!(mode.as_str(), "enabled" | "disabled")
+            if matches!(
+                self.reasoning_wire_parameter,
+                Some(ReasoningWireParameter::EnableThinking | ReasoningWireParameter::Thinking)
+            ) && !matches!(mode.as_str(), "enabled" | "disabled")
             {
                 return Err(ModelProfileValidationError::InvalidGenerationDefaults(
-                    "enable_thinking reasoning mode must be enabled or disabled".to_owned(),
+                    "boolean/object thinking reasoning mode must be enabled or disabled".to_owned(),
                 ));
             }
         } else if self.reasoning_wire_parameter.is_some() {
