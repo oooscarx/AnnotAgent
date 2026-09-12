@@ -33,6 +33,7 @@ destinations and budget fingerprint.
 - `mainline_task::tests::call_diagnostics_separate_not_sent_unknown_and_invalid_structure`
 - `mainline_task::tests::sample_diagnostics_keep_legal_empty_separate_from_projection_failure`
 - `mainline_capability::tests::capability_diagnostics_separate_missing_weights_from_missing_capability`
+- `p0_diagnostic_fixture::tests::seed_is_idempotent_and_persists_eight_real_read_model_scenes`
 - `conversation_human_requests::tests::reference_trigger_requires_quality_evidence_not_normal_empty_or_transport_failure`
 - `conversation_journey::tests::unknown_or_invalid_child_result_stops_without_fictional_sample`
 
@@ -59,6 +60,9 @@ result remains unaccepted; a projection failure does not erase another candidate
   exercises the production HTTP stop routes and verifies `stopping` to
   `outcome_unknown`, a persisted `in_doubt` call, disabled resume and unchanged
   spent budget on replay.
+- `mainline_task::tests::authorization_diagnostics_keep_expiry_and_exhaustion_explicit`
+  verifies stable expired/exhausted blocker codes, exact grant scope, read-only
+  budget routing, retained results and disabled automatic retry.
 
 The isolated fixture manifest records browser-independent execution and restart:
 `p0_autonomy.technical_relay_clicks=0`, one Journey consent, three Sample images,
@@ -66,6 +70,12 @@ The isolated fixture manifest records browser-independent execution and restart:
 `restart_verified`, and `seed_snapshot_unchanged`. Fixture startup is explicitly
 TEST-only; it uses isolated SQLite/workspace paths and an external-model-only
 loopback Provider.
+
+The same manifest now includes eight browser-selectable scenes under
+`diagnostic_scenes.scenes.<code>`. Each contains a project-owned `task_url`, the
+production `workspace_url`, stable Task ID and the exact diagnostic observed from
+`mainline.result_diagnostics[]`. The seed exists only in the explicitly opted-in
+ignored test server; production startup and every GET remain side-effect free.
 
 ## Focused commands
 
@@ -76,6 +86,7 @@ cargo test -p annotagent-application server_derived_journey_scope_detects_data_r
 cargo test -p annotagent-storage reject_scope_expansion_and_invalid_limits_before_sealing
 cargo test -p annotagent-application mainline_task::tests::
 cargo test -p annotagent-server capability_diagnostics_separate_missing_weights_from_missing_capability
+cargo test -p annotagent-server p0_diagnostic_fixture::tests::seed_is_idempotent_and_persists_eight_real_read_model_scenes
 cargo test -p annotagent-server stop_http_trace_keeps_unknown_receipt_and_spent_budget_on_retry
 cargo test -p annotagent-storage --test persistent_batches
 ```

@@ -17,6 +17,8 @@ mod event_replay;
 mod export_jobs;
 mod image_previews;
 mod mainline_capability;
+#[cfg(test)]
+mod p0_diagnostic_fixture;
 mod processing_operations;
 mod replay_commands;
 mod sample_operations;
@@ -11314,6 +11316,7 @@ mod tests {
             .purge_provider_adapter(ProviderAdapterKind::Mock)
             .unwrap();
         application.store().purge_mock_agent_sessions().unwrap();
+        let diagnostic_scenes = p0_diagnostic_fixture::seed(&application).unwrap();
         let web_dist = input["web_dist"].as_str().map(Path::new);
         let app = router(state.clone(), web_dist).layer(axum::middleware::map_response(
             |mut response: Response| async move {
@@ -11329,9 +11332,12 @@ mod tests {
             .unwrap();
         tokio::spawn(conversation_journey::recover_answers(state));
         println!(
-            "TEST HTTP fixture: {} workspace={} external models only",
+            "TEST HTTP fixture: {} workspace={} external models only; diagnostic_scenes={}",
             listener.local_addr().unwrap(),
-            workspace.display()
+            workspace.display(),
+            diagnostic_scenes["scenes"]
+                .as_object()
+                .map_or(0, serde_json::Map::len)
         );
         axum::serve(listener, app)
             .with_graceful_shutdown(shutdown_signal())
