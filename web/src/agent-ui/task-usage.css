@@ -1,0 +1,68 @@
+.ui-app .task-usage,
+.ui-app .task-usage-view {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.ui-app .task-usage-title,
+.ui-app .task-usage-summary,
+.ui-app .task-usage-attempt-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.ui-app .task-usage-title h3,
+.ui-app .task-usage-summary p,
+.ui-app .task-usage-attempt-heading p,
+.ui-app .task-usage-attempt > p {
+  margin: 0;
+}
+
+.ui-app .task-usage-attempt {
+  display: grid;
+  gap: 10px;
+  padding: 14px 0;
+  border-top: 1px solid var(--aa-border);
+}
+
+.ui-app .task-usage-attempt dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.ui-app .task-usage-attempt dl > div {
+  min-width: 0;
+}
+
+.ui-app .task-usage-attempt dt,
+.ui-app .task-usage-attempt > p,
+.ui-app .task-usage-attempt-heading p {
+  color: var(--aa-text-muted);
+  font-size: 12px;
+}
+
+.ui-app .task-usage-attempt dd {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.ui-app .task-usage-attempt [data-status="failed"],
+.ui-app .task-usage-attempt [data-status="in_doubt"] {
+  color: var(--aa-warning, var(--aa-text));
+}
+
+@media (max-width: 640px) {
+  .ui-app .task-usage-summary,
+  .ui-app .task-usage-attempt-heading {
+    flex-direction: column;
+  }
+
+  .ui-app .task-usage-attempt dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
