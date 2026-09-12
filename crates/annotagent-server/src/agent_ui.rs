@@ -310,6 +310,138 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn described_task_accepts_exact_later_upload_receipts_through_delivery_cas() {
+        let temp = tempfile::tempdir().unwrap();
+        let app = Arc::new(LocalApplication::new(temp.path()).unwrap());
+        let project = "TEST-describe-before-upload";
+        app.create_project(project,"version: 1\nproject:\n  name: TEST describe before upload\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n").unwrap();
+        let incoming = temp.path().join("TEST-later-upload");
+        std::fs::create_dir(&incoming).unwrap();
+        for value in 1..=3 {
+            image::RgbImage::from_pixel(32, 24, image::Rgb([value, value + 1, value + 2]))
+                .save(incoming.join(format!("later-{value}.png")))
+                .unwrap();
+        }
+        let imported = app.import_images_with_report(project, &incoming).unwrap();
+        let conversation = app.create_project_conversation(project).unwrap();
+        let service = router(
+            test_state(app.clone(), Arc::new(InMemorySecretStore::default())).await,
+            None,
+        );
+        let send_url = format!("/api/projects/{project}/conversations/{conversation}/send");
+        let sent = response_json(
+            request(
+                &service,
+                Method::POST,
+                &send_url,
+                Some(json!({
+                    "message":{"id":uuid::Uuid::new_v4(),"text":"标注杯子，用于 YOLO；图片稍后上传","image":null},
+                    "task_id":null,
+                    "schema_revision":app.project_goal(project).unwrap()["revision"],
+                    "mode":"plan"
+                })),
+            )
+            .await,
+        )
+        .await;
+        let task = sent["task_id"].as_str().unwrap();
+        let root = format!("/api/projects/{project}/conversations/{conversation}/tasks/{task}");
+        let command = uuid::Uuid::new_v4();
+        let task_images = imported
+            .images
+            .iter()
+            .map(|image| json!({"image_id":image.image_id,"sha256":image.content_hash}))
+            .collect::<Vec<_>>();
+        let attach = json!({
+            "command_id":command,"expected_revision":0,"image_ids":null,
+            "task_images":task_images,"label_spec":null,"training_target":null,
+            "split_policy":{"train_percent":80,"seed":0,"preserve_existing":true,"keep_known_groups_together":true},
+            "image_metadata":{}
+        });
+        let delivery_url = format!("{root}/delivery-intent");
+        let first = response_json(
+            request(&service, Method::POST, &delivery_url, Some(attach.clone())).await,
+        )
+        .await;
+        let replay = response_json(
+            request(&service, Method::POST, &delivery_url, Some(attach.clone())).await,
+        )
+        .await;
+        assert_eq!(replay, first);
+        assert_eq!(first["saved"]["revision"], 1);
+        assert_eq!(
+            first["saved"]["intent"]["dataset_scope"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+        assert_eq!(
+            first["missing_slots"],
+            json!(["label_spec", "training_target"])
+        );
+        let workspace =
+            response_json(request(&service, Method::GET, &format!("{root}/workspace"), None).await)
+                .await;
+        assert_eq!(
+            workspace["mainline"]["available_actions"][0]["id"],
+            "build_and_test_pipeline"
+        );
+        assert_eq!(
+            workspace["mainline"]["available_actions"][0]["scope"]["images"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+
+        let mut reused_command = attach.clone();
+        reused_command["task_images"] = json!([task_images[0].clone()]);
+        let reused_command =
+            request(&service, Method::POST, &delivery_url, Some(reused_command)).await;
+        assert_eq!(reused_command.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            response_json(reused_command).await["code"],
+            "delivery_command_conflict"
+        );
+
+        let mut stale = attach.clone();
+        stale["command_id"] = json!(uuid::Uuid::new_v4());
+        let stale = request(&service, Method::POST, &delivery_url, Some(stale)).await;
+        assert_eq!(stale.status(), StatusCode::CONFLICT);
+        let stale = response_json(stale).await;
+        assert_eq!(stale["code"], "delivery_revision_conflict");
+        assert_eq!(stale["expected_revision"], 0);
+        assert_eq!(stale["current_revision"], 1);
+
+        let mut changed = attach.clone();
+        changed["task_images"][0]["sha256"] = json!("f".repeat(64));
+        let changed = request(&service, Method::POST, &delivery_url, Some(changed)).await;
+        assert_eq!(changed.status(), StatusCode::BAD_REQUEST);
+
+        let foreign = "TEST-foreign-upload";
+        app.create_project(foreign,"version: 1\nproject:\n  name: TEST foreign\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n").unwrap();
+        let foreign_source = temp.path().join("TEST-foreign-source");
+        std::fs::create_dir(&foreign_source).unwrap();
+        image::RgbImage::from_pixel(32, 24, image::Rgb([9, 8, 7]))
+            .save(foreign_source.join("foreign.png"))
+            .unwrap();
+        let foreign_image = app
+            .import_images_with_report(foreign, &foreign_source)
+            .unwrap()
+            .images
+            .remove(0);
+        let mut cross_project = attach;
+        cross_project["command_id"] = json!(uuid::Uuid::new_v4());
+        cross_project["expected_revision"] = json!(1);
+        cross_project["task_images"] =
+            json!([{"image_id":foreign_image.image_id,"sha256":foreign_image.content_hash}]);
+        let cross_project =
+            request(&service, Method::POST, &delivery_url, Some(cross_project)).await;
+        assert_eq!(cross_project.status(), StatusCode::BAD_REQUEST);
+    }
+
     #[test]
     fn contract_examples_decode_with_current_http_dtos() {
         let examples: Value = serde_json::from_str(include_str!(

@@ -19,7 +19,11 @@ use uuid::Uuid;
 pub struct SaveTaskDeliveryIntent {
     pub command_id: Uuid,
     pub expected_revision: u32,
+    /// Legacy same-Project identities. New upload flows should send
+    /// `task_images` so the upload-observed content hash is part of the command.
     pub image_ids: Option<Vec<ImageId>>,
+    #[serde(default)]
+    pub task_images: Option<Vec<annotagent_storage::ConversationImageRef>>,
     pub label_spec: Option<Vec<DeliveryLabel>>,
     pub training_target: Option<TrainingTarget>,
     pub split_policy: DeliverySplitPolicy,
@@ -234,6 +238,7 @@ impl LocalApplication {
                 command_id: call,
                 expected_revision: saved.revision,
                 image_ids: Some(image_ids),
+                task_images: None,
                 label_spec: Some(saved.intent.label_spec.clone().unwrap_or(proposed_labels)),
                 training_target: Some(saved.intent.training_target.clone().unwrap_or(target)),
                 split_policy: saved.intent.split_policy,
@@ -748,8 +753,36 @@ impl LocalApplication {
         let previous = self
             .store
             .task_delivery_intent(&owner, conversation, task)?;
+        ensure!(
+            input.image_ids.is_none() || input.task_images.is_none(),
+            "Choose image_ids or task_images, not both"
+        );
+        let requested_images = input.task_images.as_ref().map(|images| {
+            images
+                .iter()
+                .map(|image| {
+                    Ok((
+                        image
+                            .image_id
+                            .parse::<ImageId>()
+                            .context("Task attachment contains an invalid image ID")?,
+                        Some(image.sha256.as_str()),
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()
+        });
+        let requested_images = match requested_images {
+            Some(images) => Some(images?),
+            None => input
+                .image_ids
+                .as_ref()
+                .map(|ids| ids.iter().copied().map(|id| (id, None)).collect()),
+        };
         for (id, metadata) in &input.image_metadata {
-            if !input.image_ids.as_ref().is_some_and(|ids| ids.contains(id)) {
+            if !requested_images
+                .as_ref()
+                .is_some_and(|images| images.iter().any(|(selected, _)| selected == id))
+            {
                 bail!("Image metadata must belong to the explicitly selected scope");
             }
             if metadata.group_ids.len() > 32
@@ -760,18 +793,32 @@ impl LocalApplication {
                 bail!("Invalid source group metadata");
             }
         }
-        let dataset_scope = if let Some(ids) = input.image_ids {
-            if ids.len() > 100_000 {
+        let dataset_scope = if let Some(images) = requested_images {
+            if images.len() > 100_000 {
                 bail!("Delivery image scope is too large");
             }
+            if images
+                .iter()
+                .map(|(id, _)| id)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                != images.len()
+            {
+                bail!("Delivery image scope contains duplicate identities");
+            }
             let current = self.list_project_image_summaries(project)?;
-            let mut images = Vec::with_capacity(ids.len());
-            for id in ids {
+            let mut selected = Vec::with_capacity(images.len());
+            for (id, expected_hash) in images {
                 let image = current
                     .iter()
-                    .find(|image| image.image_id == id)
+                    .find(|image| {
+                        image.image_id == id
+                            && expected_hash.is_none_or(|hash| hash == image.content_hash)
+                    })
                     .ok_or_else(|| {
-                        anyhow::anyhow!("Selected image does not belong to this Project")
+                        anyhow::anyhow!(
+                            "Selected image is missing, changed or belongs to another Project"
+                        )
                     })?;
                 let saved_metadata = previous
                     .as_ref()
@@ -782,7 +829,7 @@ impl LocalApplication {
                             .find(|i| i.image_id == id && i.content_sha256 == image.content_hash)
                     });
                 let metadata = input.image_metadata.get(&id);
-                images.push(DeliveryImage {
+                selected.push(DeliveryImage {
                     image_id: id,
                     content_sha256: image.content_hash.clone(),
                     content_revision: image.content_hash.clone(),
@@ -796,7 +843,7 @@ impl LocalApplication {
                         .unwrap_or_default(),
                 });
             }
-            Some(images)
+            Some(selected)
         } else {
             None
         };

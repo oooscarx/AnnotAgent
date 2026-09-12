@@ -170,11 +170,45 @@ pub(super) async fn save(
     AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
     Json(input): Json<SaveTaskDeliveryIntent>,
 ) -> ApiResult<Json<TaskDeliveryView>> {
-    state
+    let command_id = input.command_id;
+    let expected_revision = input.expected_revision;
+    match state
         .application
         .save_task_delivery_intent(&project, conversation, task, input)
-        .map(Json)
-        .map_err(ApiError::conversation)
+    {
+        Ok(view) => Ok(Json(view)),
+        Err(error)
+            if error
+                .to_string()
+                .contains("delivery intent changed; reload before saving")
+                || error
+                    .to_string()
+                    .contains("delivery retry cannot change its revision or content") =>
+        {
+            let current_revision = state
+                .application
+                .task_delivery_intent(&project, conversation, task)
+                .ok()
+                .and_then(|view| view.saved.map(|saved| saved.revision))
+                .unwrap_or(0);
+            let command_conflict = error
+                .to_string()
+                .contains("delivery retry cannot change its revision or content");
+            Err(ApiError {
+                status: StatusCode::CONFLICT,
+                body: json!({
+                    "status":StatusCode::CONFLICT.as_u16(),
+                    "code":if command_conflict{"delivery_command_conflict"}else{"delivery_revision_conflict"},
+                    "error":error.to_string(),
+                    "command_id":command_id,
+                    "expected_revision":expected_revision,
+                    "current_revision":current_revision,
+                    "suggested_action":"reload_delivery_intent"
+                }),
+            })
+        }
+        Err(error) => Err(ApiError::conversation(error)),
+    }
 }
 
 #[cfg(test)]

@@ -1034,6 +1034,7 @@ mod tests {
                 command_id: Uuid::new_v4(),
                 expected_revision: 0,
                 image_ids: None,
+                task_images: None,
                 label_spec: Some(vec![annotagent_core::dataset_delivery::DeliveryLabel {
                     stable_id: "cup".into(),
                     display_name: "杯子".into(),
