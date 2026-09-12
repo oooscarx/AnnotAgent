@@ -8,7 +8,7 @@ import { callStage, failureDetail } from "./ExecutionProgress";
 import type { HumanRequest } from "../conversation-human-api";
 import { canCancelQueuedMessage, isPendingQueuedMessage, type QueuedMessage } from "../conversation-queue-state";
 import type { QueueConsent, QueuePreview } from "../conversation-queue-api";
-import type { SendCommand, SendReceipt } from "../conversation-send";
+import type { ConversationTaskImage, SendCommand, SendReceipt } from "../conversation-send";
 import type { StopRequestRecord } from "../conversation-stop-api";
 import {ownedStopSelection} from "./stopSelection";
 import {taskFeedbackService} from "./TaskFeedback";
@@ -497,11 +497,18 @@ export class HttpAdapter implements WorkspaceAdapter {
   async createTask(project: string) { this.root(project); return `new:${project}`; }
   async uploadImages(c:Command, files:File[]) {
     const task=this.checked(c);
+    if(this.stored(`send.${task.id}`,null))throw new Error("上一条发送结果尚未确认，不能改变它冻结的图片范围");
+    const uploaded=task.id.startsWith("new:")?this.stored<ConversationTaskImage[]>(`uploads.${task.id}`,[]):[];
     for (const file of files) {
-      const receipt=await api.uploadImage(task.project,file);
+      const receipt=await this.transport<{imported:number;duplicates:number;corrupt:{name:string;message:string}[];images:{image_id:string;content_hash:string}[]}>(`${this.root(task.project)}/image-upload?name=${esc(file.name)}`,{method:"POST",headers:{"content-type":"application/octet-stream"},body:file});
       if(receipt.corrupt.length) throw new Error(receipt.corrupt.map(e=>`${e.name}: ${e.message}`).join("；"));
       if(!receipt.imported&&!receipt.duplicates) throw new Error(`${file.name} 未被服务器导入`);
+      if(task.id.startsWith("new:")) {
+        if(!Array.isArray(receipt.images)||!receipt.images.length||receipt.images.some(image=>!image.image_id||!/^[a-f\d]{64}$/i.test(image.content_hash)))throw new Error(`${file.name} 的上传回执缺少稳定图片身份；不会猜测任务范围`);
+        for(const image of receipt.images)if(!uploaded.some(current=>current.image_id===image.image_id))uploaded.push({image_id:image.image_id,sha256:image.content_hash});
+      }
     }
+    if(task.id.startsWith("new:"))this.save(`uploads.${task.id}`,uploaded);
     await this.reloadCurrent(task);
   }
   saveDraft(id: string, text: string) { this.task(id); this.save(`draft.${id}`, text); this.emit({ tasks: this.state.tasks.map(t => t.id === id ? { ...t, draft: text } : t) }); }
@@ -525,7 +532,9 @@ export class HttpAdapter implements WorkspaceAdapter {
     if (pending && (pending.message.text !== text || pending.mode !== mode)) throw new Error("上一条发送结果尚未确认。请保留原内容重试，不能换新命令掩盖未知结果。");
     const currentSchema=(await this.transport<{revision:string}>(`${this.root(task.project)}/goal`)).revision;
     if(frozen&&frozen.project_schema_revision!==currentSchema)throw new Error("候选引用所用的 Project Schema 已变化；请重新打开当前样例后再发送，未调用模型。");
-    const input = pending || {message:frozen?selectedMessage(c.id,text,frozen):{id:c.id,text,image:null},task_id:task.id.startsWith("new:")?null:task.id,schema_revision:currentSchema,agent_model:await this.transport<Preference>(`${root}/agent-model`),mode};
+    const creating=task.id.startsWith("new:");
+    const taskImages=creating?this.stored<ConversationTaskImage[]>(`uploads.${task.id}`,[]):[];
+    const input = pending || {message:frozen?selectedMessage(c.id,text,frozen):{id:c.id,text,image:null},...(taskImages.length?{task_images:taskImages}:{}),task_id:creating?null:task.id,schema_revision:currentSchema,agent_model:await this.transport<Preference>(`${root}/agent-model`),mode};
     this.save(`send.${task.id}`,input);
     let receipt:SendReceipt;
     try { receipt=await this.transport<SendReceipt>(`${root}/send`, {method:"POST",body:JSON.stringify(input)}); }
@@ -537,7 +546,7 @@ export class HttpAdapter implements WorkspaceAdapter {
       throw error;
     }
     if (receipt.message.input.id !== input.message.id) throw new Error("发送回执 ID 不匹配");
-    this.save(`send.${task.id}`,null); this.saveDraft(task.id, "");
+    this.save(`send.${task.id}`,null); if(creating)this.save(`uploads.${task.id}`,[]); this.saveDraft(task.id, "");
     await this.refresh(); if(this.viewedTask===task.id)await this.loadTask(task.project,receipt.task_id); return receipt.task_id;
   }
   async prepareAction(c: Command, kind: "plan" | "sample" | "process" | "export") {

@@ -33,3 +33,12 @@ it("retains an observed model choice and rejects corrupt recovery metadata",()=>
     expect(parsePendingSend(JSON.stringify({...pending,input:{...pending.input,agent_model:invalid}}))).toBeUndefined();
   }
 });
+it("restores an exact new-task image scope and rejects changed or foreign scope",()=>{
+  const image={image_id:"00000000-0000-4000-8000-000000000003",sha256:"b".repeat(64)};
+  const value={...pending,input:{...pending.input,task_images:[image]}};
+  expect(parsePendingSend(JSON.stringify(value))).toEqual(value);
+  expect(sameSendCommand(value.input,{...value.input,task_images:[{...image,sha256:"c".repeat(64)}]})).toBe(false);
+  expect(parsePendingSend(JSON.stringify({...value,input:{...value.input,task_id:"00000000-0000-4000-8000-000000000004"}}))).toBeUndefined();
+  expect(parsePendingSend(JSON.stringify({...value,input:{...value.input,task_images:[image,image]}}))).toBeUndefined();
+  expect(parsePendingSend(JSON.stringify({...value,input:{...value.input,task_images:[{...image,sha256:"not-a-hash"}]}}))).toBeUndefined();
+});

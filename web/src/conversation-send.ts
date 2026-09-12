@@ -1,7 +1,8 @@
 import type { ConversationMessage, ConversationMessageInput } from "./types";
 export type SendModel = {revision:number;model_profile_id:string|null};
 export type SendMode = "plan" | "execute";
-export type SendCommand = { message: ConversationMessageInput; task_id: string | null; schema_revision: string; agent_model?:SendModel; mode?:SendMode };
+export type ConversationTaskImage = {image_id:string;sha256:string};
+export type SendCommand = { message: ConversationMessageInput; task_images?:ConversationTaskImage[]; task_id: string | null; schema_revision: string; agent_model?:SendModel; mode?:SendMode };
 export type SendReceipt = { message: ConversationMessage; task_id: string; disposition: "new_task" | "task_message" | "candidate_feedback"; agent_model?:SendModel; mode?:SendMode };
 export type PendingSend = { conversation: string; input: SendCommand };
 const uuid = (value: unknown): value is string => typeof value === "string" && /^[a-f\d]{8}(-[a-f\d]{4}){3}-[a-f\d]{12}$/i.test(value);
@@ -17,6 +18,7 @@ export function parsePendingSend(raw: string | null): PendingSend | undefined {
     const input = value?.input, message = input?.message;
     if (!uuid(value?.conversation) || !uuid(message?.id) || typeof message.text !== "string" || !message.text.trim() || message.text.length > 65_536 || (input.task_id !== null && !uuid(input.task_id)) || typeof input.schema_revision !== "string" || !/^[a-f\d]{64}$/i.test(input.schema_revision)) return;
     if (message.image && (typeof message.image.image_id !== "string" || typeof message.image.sha256 !== "string")) return;
+    if (input.task_images !== undefined && (!Array.isArray(input.task_images) || input.task_id !== null || input.task_images.length > 100_000 || new Set(input.task_images.map((image:ConversationTaskImage)=>image.image_id)).size !== input.task_images.length || input.task_images.some((image:ConversationTaskImage)=>typeof image.image_id !== "string" || !uuid(image.image_id) || typeof image.sha256 !== "string" || !/^[a-f\d]{64}$/i.test(image.sha256)))) return;
     if (message.reference && (message.reference.scope !== "sample_candidate" || message.reference.task_id !== input.task_id || message.reference.project_schema_revision !== input.schema_revision)) return;
     if (input.agent_model !== undefined && (!input.agent_model || !Number.isSafeInteger(input.agent_model.revision) || input.agent_model.revision < 0 || (input.agent_model.model_profile_id !== null && !uuid(input.agent_model.model_profile_id)))) return;
     if (input.mode !== undefined && input.mode !== "plan" && input.mode !== "execute") return;

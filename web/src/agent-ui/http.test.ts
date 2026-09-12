@@ -17,6 +17,33 @@ it("delivery labels display names without rewriting IDs and ignore older name re
   const after=adapter.snapshot().tasks.find(t=>t.id==="t1")!;
   expect(after.labelNames).toEqual({"stable-label":"足球"});expect(after.boxes).toEqual(before);
 });
+it("freezes exact upload receipt identities into one new Task Send",async()=>{
+  const storage=memoryStorage();
+  const image={image_id:"00000000-0000-4000-8000-000000000009",content_hash:"b".repeat(64)};
+  const reads=mockTransport({
+    "/api/projects/TEST-alpha/goal":{revision:"schema-1"},
+    "/api/projects/TEST-alpha/conversations/conversation-a/agent-model":{revision:2,model_profile_id:null},
+  });
+  const writes:{path:string;body:unknown}[]=[];
+  const transport:Transport=async<T>(path:string,init?:RequestInit)=>{
+    if(path.includes("/image-upload?")&&init?.method==="POST")return {imported:1,duplicates:0,corrupt:[],images:[image]} as T;
+    if(path.endsWith("/send")&&init?.method==="POST"){
+      const body=JSON.parse(String(init.body));writes.push({path,body});
+      return {message:{conversation_id:"conversation-a",sequence:1,input:body.message},task_id:"t1",disposition:"new_task",agent_model:body.agent_model,mode:body.mode} as T;
+    }
+    return reads.transport<T>(path,init);
+  };
+  const adapter=new HttpAdapter(transport,storage);await adapter.refresh();await adapter.loadTask("TEST-alpha","new:TEST-alpha");
+  const command={id:"00000000-0000-4000-8000-000000000008",project:"TEST-alpha",task:"new:TEST-alpha",revision:""};
+  await adapter.uploadImages(command,[new File(["TEST pixels"],"sample.png",{type:"image/png"})]);
+  await adapter.sendMessage(command,"框出黄色物块","execute","");
+  expect(writes).toHaveLength(1);
+  expect(writes[0]?.body).toMatchObject({
+    task_id:null,
+    task_images:[{image_id:image.image_id,sha256:image.content_hash}],
+    message:{id:command.id,text:"框出黄色物块",image:null},
+  });
+});
 function memoryStorage():Storage {
   const values=new Map<string,string>();
   return {get length(){return values.size;},clear:()=>values.clear(),getItem:key=>values.get(key)??null,setItem:(key,value)=>{values.set(key,String(value));},removeItem:key=>{values.delete(key);},key:index=>[...values.keys()][index]??null};

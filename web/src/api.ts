@@ -695,7 +695,7 @@ export const api = {
     request<{ removed: string }>(`/api/projects/${projectId}/images/${imageId}?expected_content_hash=${encodeURIComponent(expectedContentHash)}`, {
       method: "DELETE",
     }),
-  uploadImage: (projectId: string, file: File) => upload<{ imported: number; duplicates: number; corrupt: { name: string; message: string }[] }>(`/api/projects/${encodeURIComponent(projectId)}/image-upload?name=${encodeURIComponent(file.name)}`, file),
+  uploadImage: (projectId: string, file: File) => upload<{ imported: number; duplicates: number; corrupt: { name: string; message: string }[]; images:{image_id:string;content_hash:string}[] }>(`/api/projects/${encodeURIComponent(projectId)}/image-upload?name=${encodeURIComponent(file.name)}`, file),
   sampleFeedback: (testId: string, imageId: string) => request<{ revisions: import("./types").SampleFeedbackRevision[] }>(`/api/workflow-sample-tests/${encodeURIComponent(testId)}/images/${encodeURIComponent(imageId)}/feedback`),
   copySamplePlan: (projectId: string, copyId: string, testId: string) => request<WorkflowDraft>(`/api/projects/${encodeURIComponent(projectId)}/sample-plan-copies/${encodeURIComponent(copyId)}`, { method: "POST", body: JSON.stringify({ sample_test_id: testId }) }),
   samplePlanEvidence: (projectId: string, copyId: string) => request<{project_id:string; sample_test_id:string; baseline_draft_id:string; feedback:import("./types").SampleFeedbackRevision[]}>(`/api/projects/${encodeURIComponent(projectId)}/sample-plan-copies/${encodeURIComponent(copyId)}`),
