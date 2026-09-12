@@ -183,7 +183,8 @@ export function SetupRequest({
                     {visibleAlternatives.map((candidate) => (
                       <div className="setup-alternative" key={candidate.id}>
                         <div>
-                          <strong>{targetLabels[candidate.target]}</strong>
+                          <strong>{candidate.display_name}</strong>
+                          <p>{targetLabels[candidate.target]}</p>
                           {candidate.reasons.map((reason) => <p key={reason}>{reason}</p>)}
                         </div>
                         <div className="actions">
