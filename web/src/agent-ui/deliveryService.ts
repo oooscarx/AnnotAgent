@@ -1,5 +1,5 @@
 import type { Annotation } from "../types";
-import type { DeliveryFormalResult } from "./deliveryVisualSelection";
+import type { DeliveryFormalResult, FormalReviewWorkItem } from "./deliveryVisualSelection";
 
 /** Formal annotations only. Sample overlays are never whole-image review receipts. */
 export type DeliveryReviewInput = {
@@ -47,12 +47,19 @@ export type DeliveryReviewSummary = {
   items:{image_id:string;state:"positive_complete"|"negative_confirmed"|"excluded"|"unresolved"|"failed";review_revision:number|null;child_run_id:string|null;error:string|null}[];
   next_cursor:string|null;
 };
-export type DeliveryPackageConsent = {input:{id:string;intent_revision:number;intent_sha256:string;confirmed:true};state:"armed"|"consumed"|"cancelled"};
-export type DeliveryPackageReadiness = {
+export type PackageConsent = {input:{id:string;intent_revision:number;intent_sha256:string;confirmed:true};state:"armed"|"consumed"|"cancelled"};
+export type PackageReady = {
   intent_revision:number;intent_sha256:string;ready:boolean;
   counts:DeliveryReviewSummary["counts"];review_revisions:Record<string,number>;
   blockers:{code:string;message:string;image_ids:string[]}[];
-  consent:DeliveryPackageConsent|null;package:DeliveryPackageRead|null;
+  consent:PackageConsent|null;package:DeliveryPackageRead|null;
+};
+export type DeliveryPackageConsent = PackageConsent;
+export type DeliveryPackageReadiness = PackageReady;
+export type FormalReviewWorkPage = {
+  formal_result:DeliveryFormalResult;
+  items:FormalReviewWorkItem[];
+  next_cursor:string|null;
 };
 
 /** Explicit commands retain caller-owned idempotency keys; reads never start jobs. */
@@ -69,6 +76,7 @@ export interface DeliveryService {
   downloadUrl(project: string, task: string, id: string): string;
   /** Server-derived task lineage. Never substitute project-latest Runs. */
   formalResult?(project:string,task:string,signal?:AbortSignal):Promise<DeliveryFormalResult|null>;
+  reviewWorkItems?(project:string,task:string,cursor?:string,signal?:AbortSignal):Promise<FormalReviewWorkPage>;
   reviewSummary?(project:string,task:string,cursor?:string,signal?:AbortSignal):Promise<DeliveryReviewSummary>;
   packageReadiness?(project:string,task:string,signal?:AbortSignal):Promise<DeliveryPackageReadiness>;
   authorizePackage?(project:string,task:string,input:DeliveryPackageConsent["input"]):Promise<DeliveryPackageConsent>;
