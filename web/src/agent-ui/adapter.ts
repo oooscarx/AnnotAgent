@@ -229,7 +229,12 @@ export interface WorkspaceAdapter {
   resumeOperation(command: Command, target?:string): Promise<void>;
   selectStop?(command:Command,target:string):Promise<void>;
   selectAgentModel(command: Command, model: string): Promise<void>;
-  answerHumanRequest(command: Command, boxes: Box[], classification?:string): Promise<void>;
+  answerHumanRequest(
+    command: Command,
+    boxes: Box[],
+    classification?: string,
+    reason?: "correct" | "poor_boundary" | "wrong_target",
+  ): Promise<void>;
   updateSettings(revision: string, settings: Settings): Promise<void>;
   testProvider(
     id: string,

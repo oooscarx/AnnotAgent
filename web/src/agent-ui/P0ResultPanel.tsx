@@ -25,7 +25,7 @@ export type P0DiagnosticCategory="capability_missing"|"provider_not_received"|"o
 export type P0ResultPanelView=
   |{kind:"preparing";stage:string;message:string;elapsed_ms:number|null}
   |{kind:"sample_feedback";images:ResultImage[];labels:{stable_id:string;display_name:string}[];sample_result:DeliverySampleResult;focus:DeliveryReviewFocus|null;actions:P0ResultAction[]}
-  |{kind:"formal_review";images:ResultImage[];labels:{stable_id:string;display_name:string}[];formal_result:DeliveryFormalResult;focus:DeliveryReviewFocus|null;actions:P0ResultAction[]}
+  |{kind:"formal_review";images:ResultImage[];labels:{stable_id:string;display_name:string}[];formal_result?:DeliveryFormalResult;focus:DeliveryReviewFocus|null;actions:P0ResultAction[]}
   |{kind:"diagnostic";category:P0DiagnosticCategory;message:string;image:ResultImage|null;annotations:Annotation[];focus_candidate_id:string|null}
   |{kind:"package";scope:{revision:number;content_sha256:string;image_ids:string[]};package_id:string|null};
 
@@ -36,6 +36,7 @@ export type P0ResultPanelProps={
   view:P0ResultPanelView;
   onSelection?:(selection:SampleVisualSelection|FormalVisualSelection)=>void;
   onSampleIssue?:(selection:SampleVisualSelection)=>void;
+  onSampleConfirm?:(selection:SampleVisualSelection)=>Promise<void>;
   onPackageReady?:(packageId:string)=>void;
 };
 
@@ -68,7 +69,7 @@ function DiagnosticPanel({view}:{view:Extract<P0ResultPanelView,{kind:"diagnosti
 }
 
 /** The single result surface. Rust owns all progression; this component only renders the current read model. */
-export function P0ResultPanel({service,projectId,taskId,view,onSelection,onSampleIssue,onPackageReady}:P0ResultPanelProps){
+export function P0ResultPanel({service,projectId,taskId,view,onSelection,onSampleIssue,onSampleConfirm,onPackageReady}:P0ResultPanelProps){
   if(view.kind==="preparing")return <section className="p0-result-status" aria-label="当前处理状态">
     <strong>{view.stage}</strong><p role="status">{view.message}</p>{view.elapsed_ms!==null&&<small>已用时 {Math.max(0,Math.round(view.elapsed_ms/1000))} 秒</small>}
   </section>;
@@ -89,12 +90,12 @@ export function P0ResultPanel({service,projectId,taskId,view,onSelection,onSampl
         key={`sample:${projection.result.sample_test_id}:${projection.result.draft_revision}`}
         service={service} project={projectId} task={taskId} images={view.images} labels={view.labels}
         sampleResult={projection.result} formalResult={null} preferredMode="sample" fixedMode="sample" focus={view.focus}
-        permissions={permissions(view.actions)} guided onVisualSelection={onSelection} onSampleIssue={onSampleIssue}
+        permissions={permissions(view.actions)} guided onVisualSelection={onSelection} onSampleIssue={onSampleIssue} onSampleConfirm={onSampleConfirm}
       />
     </>;
   }
   if(view.kind==="formal_review")return <DeliveryReview
-    key={`formal:${view.formal_result.processing_operation_id}:${view.formal_result.batch_id}`}
+    key={view.formal_result?`formal:${view.formal_result.processing_operation_id}:${view.formal_result.batch_id}`:"formal:loading"}
     service={service} project={projectId} task={taskId} images={view.images} labels={view.labels}
     sampleResult={null} formalResult={view.formal_result} preferredMode="formal" fixedMode="formal" focus={view.focus}
     permissions={permissions(view.actions)} guided onFormalSelection={onSelection}

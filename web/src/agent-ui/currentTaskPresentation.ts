@@ -95,11 +95,16 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
     task.sampleResult?.images.length ||
     view.review_summary.current_reviews ||
     (task.human || view.review_work_item_id ? 1 : 0);
+  const formalProcessingAction = action(
+    task,
+    "start_delivery_processing",
+    "requires_confirmation",
+  );
   if (
     task.phase === "waiting_for_human" ||
     !!task.human ||
     !!view.review_work_item_id ||
-    !!task.sampleResult?.images.length
+    (!!task.sampleResult?.images.length && !formalProcessingAction)
   ) {
     return {
       kind: "needs_review",
@@ -230,11 +235,7 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
     };
   }
 
-  const processing = action(
-    task,
-    "start_delivery_processing",
-    "requires_confirmation",
-  );
+  const processing = formalProcessingAction;
   if (processing) {
     return {
       kind: "ready_to_process",

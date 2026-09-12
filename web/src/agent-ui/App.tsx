@@ -306,8 +306,16 @@ export function AgentPreviewApp({
     : undefined;
   const currentTask = !fixture && task ? selectCurrentTaskPresentation(task) : undefined;
   const taskAssets = task ? state.artifacts.filter(asset => !asset.project || asset.project === task.project) : [];
-  const p0ResultView: P0ResultPanelView | undefined = !fixture && task?.sampleResult && currentTask?.kind === "needs_review"
+  const formalReview = !!task?.processing?.length && currentTask?.kind === "needs_review";
+  const p0ResultView: P0ResultPanelView | undefined = !fixture && task && formalReview
     ? {
+        kind:"formal_review",
+        images:taskAssets.map(asset=>({id:String(asset.id),name:asset.name,src:asset.src})),
+        labels:Object.entries(task.labelNames||{}).map(([stable_id,display_name])=>({stable_id,display_name})),
+        focus:null,
+        actions:["formal_edit_object","formal_create_object","formal_accept_object","formal_reject_object","formal_confirm_positive","formal_confirm_negative","formal_exclude_image"].map(id=>({id:id as import("./P0ResultPanel").P0ResultAction["id"],available:true,reason:null})),
+      }
+    : !fixture && task?.sampleResult && currentTask?.kind === "needs_review" ? {
         kind: "sample_feedback",
         images: task.sampleResult.images.flatMap(image => {
           const asset = taskAssets.find(candidate => String(candidate.id) === image.image_id);
@@ -327,8 +335,7 @@ export function AgentPreviewApp({
           available: task.sampleResult.images.some(image => image.candidates.some(candidate => candidate.selection !== null)),
           reason: "仅对服务端签发了完整候选引用的样例开放反馈。",
         }],
-      }
-    : undefined;
+      } : undefined;
   const reviewAutoKey = currentTask?.kind === "needs_review" && task
     ? `${task.id}:${task.mainline?.review_work_item_id || task.human?.id || task.sample?.id || "review"}`
     : "";
@@ -1131,6 +1138,11 @@ export function AgentPreviewApp({
                       onSampleIssue={selection => {
                         setReference(selection);
                         requestAnimationFrame(() => compose.current?.focus());
+                      }}
+                      onSampleConfirm={async selection => {
+                        if(!task.human||String(task.human.image)!==selection.image.image_id||task.human.candidate!==selection.candidate.candidate_id)throw new Error("当前人工问题已经变化；请重新读取后再确认。");
+                        const boxes=task.boxesByImage?.[selection.image.image_id]||[];
+                        await adapter.answerHumanRequest(command(task),boxes,task.human.kind==="classification"?task.human.label:undefined,"correct");
                       }}
                     />
                   </aside>}

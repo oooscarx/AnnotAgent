@@ -189,6 +189,23 @@ describe("single current-task presentation", () => {
     });
   });
 
+  it("does not reopen completed Sample evidence after the server offers formal processing", () => {
+    const sampleResult = {
+      project_id: "TEST-project",
+      conversation_id: "TEST-conversation",
+      task_id: "TEST-task",
+      project_schema_revision: "schema-1",
+      draft_id: "draft-1",
+      draft_revision: 1,
+      sample_test_id: "sample-1",
+      images: [{ image_id: "image-1", image_sha256: "one", result_revision: "one", candidates: [], annotations: [] }],
+    };
+    const result = selectCurrentTaskPresentation(task(view({
+      available_actions: [action("start_delivery_processing", "requires_confirmation")],
+    }), { sampleResult }));
+    expect(result).toMatchObject({kind:"ready_to_process",primary:{kind:"prepare_processing"}});
+  });
+
   it("lets the server proposal resolve label and target without another form", () => {
     const result = selectCurrentTaskPresentation(
       task(

@@ -41,6 +41,7 @@ export type DeliveryReviewProps = {
   onEditingState?: (active: boolean) => void;
   onVisualSelection?: (selection: SampleVisualSelection) => void;
   onSampleIssue?: (selection: SampleVisualSelection) => void;
+  onSampleConfirm?: (selection: SampleVisualSelection) => Promise<void>;
   onFormalSelection?: (selection: FormalVisualSelection) => void;
   annotationOrigins?:Record<string,Record<string,DemoAnnotationOrigin>>;
   preferredMode?:Mode;
@@ -63,7 +64,7 @@ const fromUrl = (images: Image[], hasSample: boolean, preferredMode?:Mode, fixed
 export function DeliveryReview({
   service, project, task, images, labels = [], sampleResult = null,
   formalResult: formalResultProp, locked = false, onEditingState,
-  onVisualSelection, onSampleIssue, onFormalSelection, annotationOrigins = {},
+  onVisualSelection, onSampleIssue, onSampleConfirm, onFormalSelection, annotationOrigins = {},
   preferredMode, fixedMode, focus, permissions, guided = false,
 }: DeliveryReviewProps) {
   const [formalResult, setFormalResult] = useState<DeliveryFormalResult | null | undefined>(
@@ -426,6 +427,15 @@ export function DeliveryReview({
       {Object.entries(annotationOrigins[image.id]).map(([annotationId,origin])=><span key={annotationId}>{annotationId===selected?"当前对象 · ":""}{demoOriginLabel(origin)}</span>)}
     </div>}
     {selection.mode === "sample" && sampleResult && <div className="actions">
+      <button className="primary" type="button" disabled={busy || !sampleSelectionAvailable || !onSampleConfirm} onClick={() => {
+        const annotation=sampleImage?.annotations.find(item=>item.id===selected);
+        const next=annotation&&emitSample(annotation);
+        if(!next||!onSampleConfirm)return;
+        pending.current=true;setBusy(true);setError("");setMessage("");
+        void onSampleConfirm(next).then(()=>setMessage("当前样例判断已保存；这仍是 Sandbox 反馈，不是正式标注。"))
+          .catch(cause=>setError((cause as Error).message))
+          .finally(()=>{pending.current=false;setBusy(false);});
+      }}>这个样例结果正确</button>
       <button type="button" disabled={!sampleSelectionAvailable || permissions?.sampleFeedback===false} onClick={() => {
         const annotation = sampleImage?.annotations.find((item) => item.id === selected);
         const next = annotation && emitSample(annotation);
