@@ -28,6 +28,8 @@ import { SettingsView } from "./Settings";
 import { ArtifactPane } from "./ArtifactPane";
 import { ExecutionProgress } from "./ExecutionProgress";
 import { DeliveryIntake } from "./DeliveryIntake";
+import { SetupRequest } from "./SetupRequest";
+import { setupContextFromReadiness, type CapabilityReadiness, type SetupRequirement } from "./modelPreparation";
 import { routeProject, taskLocation, settingsTaskReturn } from "./routes";
 import { parseAgentRoute } from "./navigationContract";
 export const phaseNames: Record<Phase, string> = {
@@ -57,6 +59,38 @@ function referenceSummary(reference:NonNullable<Command["selection"]>){
     : "sample" in reference
       ? {image:reference.image.image_id,candidate:reference.candidate.candidate_id}
       : {image:reference.image.image_id,candidate:reference.reference.annotation_id};
+}
+export function modelSetupContext(task:Task,url:URL){
+  const readiness=task.mainline?.capability_readiness as CapabilityReadiness|null|undefined;
+  if(!readiness||readiness.contract_version!=="mainline-capability-v1"||!task.mainline?.available_actions.some(action=>action.id==="build_and_test_pipeline"&&action.state==="requires_confirmation"))return undefined;
+  const usable=(candidate:CapabilityReadiness["candidates"][number])=>candidate.readiness==="ready"&&candidate.production_eligible&&!candidate.test_fixture;
+  const readyAgent=readiness.candidates.some(candidate=>usable(candidate)&&candidate.roles.includes("agent")&&candidate.selected_for_next_agent_request);
+  const visual=(candidate:CapabilityReadiness["candidates"][number])=>candidate.roles.some(role=>["vision_language","detection","classification","segmentation","visual"].includes(role));
+  const readyVisual=readiness.candidates.some(candidate=>usable(candidate)&&visual(candidate)&&(candidate.candidate_type!=="model_profile"||candidate.project_bindings.length>0));
+  const requirements:SetupRequirement[]=[];
+  if(!readyAgent)requirements.push({id:"task-agent",target:"agent_model",capability:"text_generation",input_modalities:["text"],purpose:"构造并校验当前任务的标注方案"});
+  if(!readyVisual){
+    const candidates=readiness.candidates.filter(candidate=>visual(candidate));
+    const selected=candidates.find(candidate=>candidate.candidate_type==="model_instance")||candidates.find(candidate=>candidate.candidate_type==="model_profile")||candidates[0];
+    const preferred=["object_detection","open_vocabulary_detection","phrase_grounding","vision_language","image_classification","prompted_segmentation"] as const;
+    const capability=preferred.find(value=>candidates.some(candidate=>candidate.capabilities.includes(value)))||"object_detection";
+    const target=selected?.candidate_type==="model_instance"?"model_instance":selected?.candidate_type==="plugin_model"?"plugin":"provider_model";
+    requirements.push({id:"task-vision",target,capability,input_modalities:target==="provider_model"?["text","image"]:["image"],purpose:"在当前图片范围内生成可审核的目标标注"});
+  }
+  if(!requirements.length)return undefined;
+  const matches=(candidate:CapabilityReadiness["candidates"][number],requirement:SetupRequirement)=>candidate.capabilities.includes(requirement.capability)
+    && (requirement.target==="agent_model"?candidate.candidate_type==="model_profile"&&candidate.roles.includes("agent")
+      :requirement.target==="provider_model"?candidate.candidate_type==="model_profile"
+        :requirement.target==="plugin"?candidate.candidate_type==="plugin_model"
+          :candidate.candidate_type==="model_instance");
+  const compatible_model_ids=[...new Set(readiness.candidates.filter(candidate=>requirements.some(requirement=>matches(candidate,requirement))).filter(candidate=>candidate.production_eligible||(candidate.readiness==="unknown"&&!candidate.test_fixture)).map(candidate=>candidate.id))].sort();
+  const returnUrl=taskLocation(url,task.project);returnUrl.searchParams.set("task",task.id);returnUrl.searchParams.delete("setup_request");returnUrl.searchParams.delete("setup_outcome");
+  return setupContextFromReadiness({
+    id:`setup-${task.id}-${readiness.registry_revision.slice(0,12)}`,project_id:task.project,task_id:task.id,
+    task_revision:readiness.task_schema_revision,registry_revision:readiness.registry_revision,
+    role:requirements.map(requirement=>requirement.target).join("+"),required_capabilities:requirements.map(requirement=>requirement.capability),
+    compatible_model_ids,status:"required",return_path:`${returnUrl.pathname}${returnUrl.search}`,
+  },readiness,requirements,new Date().toISOString());
 }
 export function AgentPreviewApp({
   adapter,
@@ -279,6 +313,15 @@ export function AgentPreviewApp({
   const managementTitle = managementPage ? ({data:"图片数据",labels:"标签定义",pipelines:"自动化方案",runs:"处理记录",batches:"批量处理",review:"审核标注",export:"导出",trash:"回收站"})[managementPage.page] : undefined;
   const active =
     task && ["running", "planning", "stopping"].includes(task.phase);
+  let setupContext:ReturnType<typeof modelSetupContext>;
+  let setupContextError="";
+  if(!fixture&&task)try{setupContext=modelSetupContext(task,url);}catch(cause){setupContextError=(cause as Error).message;}
+  const returnFromSetup=()=>{
+    if(!setupContext)return;
+    const next=new URL(setupContext.return_to,location.origin);
+    history.pushState(null,"",next);setUrl(next);
+    void adapter.loadTask?.(setupContext.project_id,setupContext.task_id).catch(cause=>setError((cause as Error).message));
+  };
   return (
     <div
       className="ui-app"
@@ -537,8 +580,34 @@ export function AgentPreviewApp({
                           )}
                         </div>
                         {!fixture && !!task.receipts?.length && <ExecutionProgress receipts={task.receipts} />}
+                        {setupContextError&&<p role="alert" className="error">模型准备范围无效：{setupContextError}</p>}
+                        {!fixture && setupContext && adapter.modelPreparation && (
+                          <SetupRequest
+                            context={setupContext}
+                            service={adapter.modelPreparation}
+                            workspaceId={state.workspaceId}
+                            bundleInstallerService={adapter.bundleInstaller}
+                            onOpenSettings={(path) => {
+                              if (!canNavigate()) return;
+                              const next = new URL(path, location.origin);
+                              if (
+                                next.origin !== location.origin ||
+                                !/^\/settings\/(agent-models|vision-models|plugins)$/.test(
+                                  next.pathname,
+                                )
+                              ) {
+                                setError("模型设置返回地址不是受控站内页面");
+                                return;
+                              }
+                              history.pushState(null, "", next);
+                              setUrl(next);
+                            }}
+                            onReturn={returnFromSetup}
+                            onCancel={returnFromSetup}
+                          />
+                        )}
                         {!fixture && adapter.deliveryIntake && !task.id.startsWith("new:") && <DeliveryIntake key={task.id} service={adapter.deliveryIntake} delivery={adapter.delivery} project={task.project} task={task.id} locked={active} sampleResult={task.sampleResult} onVisualSelection={selection=>setReference(selection)} onSampleIssue={selection=>{setReference(selection);requestAnimationFrame(()=>compose.current?.focus());}} onFormalSelection={selection=>{setReference(selection);requestAnimationFrame(()=>compose.current?.focus());}} images={state.artifacts.filter(i => i.project === task.project).map(i => ({id:String(i.id),name:i.name,src:i.src}))} />}
-                        {!fixture && !active && !task.approval && adapter.prepareAction && task.items.length > 0 && task.mainline?.available_actions.some(action=>action.id==="build_and_test_pipeline"&&action.state==="requires_confirmation") && <div className="task-next-actions">
+                        {!fixture && !setupContext && !active && !task.approval && adapter.prepareAction && task.items.length > 0 && task.mainline?.available_actions.some(action=>action.id==="build_and_test_pipeline"&&action.state==="requires_confirmation") && <div className="task-next-actions">
                           {(() => {
                             const action={kind:"sample" as const,label:"构建方案并测试样例…",icon:"image" as const};
                             return <button className="primary" disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),action.kind))}><Icon name={action.icon} size={16} />{action.label}</button>;

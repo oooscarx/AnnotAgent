@@ -160,6 +160,8 @@ export interface WorkspaceAdapter {
   readonly mainlineSeams?: import("./mainline").MainlineDomainSeams;
   readonly deliveryIntake?: import("./DeliveryIntake").DeliveryIntakeService;
   readonly delivery?: import("./deliveryService").DeliveryService;
+  readonly modelPreparation?: import("./modelPreparation").ModelPreparationService;
+  readonly bundleInstaller?: import("./BundleInstaller").BundleInstallerService;
   readonly taskFeedback?: import("./TaskFeedback").TaskFeedbackService;
   readonly providerControls?: import("./ProviderControls").ProviderControlService;
   readonly historyManagement?: import("./HistoryManagement").HistoryService;

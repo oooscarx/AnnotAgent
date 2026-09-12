@@ -16,6 +16,7 @@ import {stopTargetMatches} from "../conversation-control";
 import type { WorkspaceAdapter, Snapshot, Task, Command, Settings, ImageId, Box, Phase, Action } from "./adapter";
 import {readPendingDelivery,rememberPendingDelivery,clearPendingDelivery} from "./pendingDelivery";
 import {projectCallMessages} from "./messageProjection";
+import {createModelPreparationService} from "./modelPreparation";
 import {assertVisualSelection,deliverySampleResultFromCanonical,formalVisualSelectionFromCanonical,selectedMessage,type CanonicalVisualSelectionItem,type CanonicalVisualSelectionPage,type MainlineAdvanceReceipt,type MainlineTaskView,type VisualSelection} from "./mainline";
 
 type Page<T> = { items: T[]; next_cursor: string | number | null };
@@ -52,6 +53,8 @@ const initialSettings: Settings = { revision: "", theme: "system", language: "zh
 
 /** Only this boundary knows HTTP routes. Reads never create conversations, tasks or execution. */
 export class HttpAdapter implements WorkspaceAdapter {
+  readonly modelPreparation:import("./modelPreparation").ModelPreparationService;
+  readonly bundleInstaller:import("./BundleInstaller").BundleInstallerService|undefined;
   readonly mainlineTask:import("./mainline").MainlineTaskService={
     read:async(project,conversation,task,signal)=>{
       const owned=this.task(task);
@@ -223,7 +226,10 @@ export class HttpAdapter implements WorkspaceAdapter {
     }));
     return this.dimensions.get(src)!;
   }
-  constructor(private transport: Transport = request, private storage?: Storage) {}
+  constructor(private transport: Transport = request, private storage?: Storage) {
+    this.modelPreparation=createModelPreparationService(transport as import("./modelPreparation").ModelPreparationTransport);
+    this.bundleInstaller=transport===request?api:undefined;
+  }
   get pluginManagement() { return this.transport === request ? api : undefined; }
   get visionWorkerManagement() { return this.transport === request ? api : undefined; }
   get modelProfileManagement() { return this.transport === request ? api : undefined; }
