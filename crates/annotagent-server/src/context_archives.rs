@@ -96,6 +96,7 @@ mod tests {
     use super::*;
     use crate::tests::{request, response_json, test_state};
     use annotagent_provider::InMemorySecretStore;
+    use annotagent_storage::context_archives::archive_payload_hash;
     #[tokio::test]
     async fn context_archive_http_owned_preview_confirm_recovery_and_no_dispatch() {
         let temp = tempfile::tempdir().unwrap();
@@ -133,11 +134,18 @@ mod tests {
         )
         .await;
         assert_eq!(archive_response.status(), StatusCode::OK);
-        let archive = response_json(archive_response).await;
+        let mut archive = response_json(archive_response).await;
         assert_eq!(
             archive["payload"]["records"][0]["data"]["input"]["text"],
             "TEST actual user text"
         );
+        // Add fixture-only observable numeric data, hash its Rust f64 representation, then
+        // submit the browser JSON.stringify representation through the real HTTP parser.
+        archive["payload"]["resources"] = json!([{"kind":"TEST_numeric","id":"TEST-numeric","embedded":false,"availability":"not_verified","values":[-0.0,0.0,1.0,0.25]}]);
+        let payload: annotagent_storage::context_archives::ArchivePayload =
+            serde_json::from_value(archive["payload"].clone()).unwrap();
+        archive["archive_hash"] = json!(archive_payload_hash(&payload).unwrap());
+        archive["payload"]["resources"][0]["values"] = json!([0, 0, 1, 0.25]);
         let wrong = request(
             &router,
             get.clone(),
@@ -153,8 +161,9 @@ mod tests {
             Some(json!({"archive":archive})),
         )
         .await;
-        assert_eq!(preview_response.status(), StatusCode::OK);
+        let preview_status = preview_response.status();
         let preview = response_json(preview_response).await;
+        assert_eq!(preview_status, StatusCode::OK, "{preview}");
         assert_eq!(preview["continuation"]["can_resume"], false);
         let list = response_json(
             request(

@@ -67,3 +67,11 @@ mapping: UIAPI-018_CONTEXT_ARCHIVE.md. Execution-state restoration remains expli
 unsupported: existing storage has one live Conversation per project; v1 archives do
 not recreate live Task/authorization/queue rows. Raw model HTTP transcripts absent
 from existing persistence cannot be reconstructed. No hidden reasoning fabricated.
+
+### ML-022 browser JSON hash stability
+
+Context archive v1 hashes normalize finite exactly-integral float spellings in the
+JavaScript safe-integer range, including negative zero, before SHA-256. Save/load through browser `JSON.parse`/`JSON.stringify`
+therefore preserves the archive digest. Exact legacy v1 hashes remain readable; new
+exports use the stable form. Integrity, sensitive-field, size, archive-only and
+idempotent confirmation checks are unchanged.

@@ -42,8 +42,14 @@ records. Export over cap FAILS, never silently returns a truncated document.
 ```
 
 Canonical hash: recursively sorted object keys, compact JSON UTF-8, preserve array
-order. Server computes it; retain returned archive unchanged. It is integrity, not
-provenance/authenticity. Imported content is **untrusted historical evidence**.
+order, and normalize finite exactly-integral JSON floats in the JavaScript safe-integer
+range to integer form (`-0.0`, `0.0`, `1.0` become `0`, `0`, `1`). This keeps the digest stable when a browser
+performs `JSON.parse` followed by `JSON.stringify`; non-integral numbers retain their
+value. Server computes it. It is integrity, not provenance/authenticity. Imported
+content is **untrusted historical evidence**. Exact legacy v1 documents whose stored
+digest used the earlier number-spelling-sensitive canonicalizer remain accepted;
+new exports always use the browser-stable digest. Semantic value changes still return
+`archive_hash_mismatch`.
 `integrity.truncated:false` means no export pagination/truncation; existing bounded
 tool results remain as persisted (including their original truncation flags). It
 does not assert that the original runtime recorded unlimited model/tool content.

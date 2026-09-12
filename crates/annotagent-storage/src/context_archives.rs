@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 const MAX_BYTES: usize = 1_048_576;
 const MAX_RECORDS: usize = 10_000;
+const MAX_SAFE_JSON_INTEGER: f64 = 9_007_199_254_740_991.0;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContextArchive {
@@ -65,13 +66,63 @@ fn canonical(value: &Value) -> Value {
             serde_json::to_value(sorted).expect("JSON map")
         }
         Value::Array(a) => Value::Array(a.iter().map(canonical).collect()),
+        Value::Number(number) => {
+            // Browsers parse every JSON number as an IEEE-754 Number. JSON.stringify therefore
+            // writes 0.0, 1.0, and -0.0 as 0, 1, and 0. Treat those spellings as the same
+            // semantic value before hashing so an exported archive survives a browser
+            // parse/stringify round trip. Existing integer values are already canonical.
+            if number.as_i64().is_some() || number.as_u64().is_some() {
+                return value.clone();
+            }
+            let Some(float) = number.as_f64() else {
+                return value.clone();
+            };
+            if float == 0.0 {
+                return Value::Number(0.into());
+            }
+            if !float.is_finite() || float.fract() != 0.0 {
+                return value.clone();
+            }
+            // Stay inside the common exact integer domain of serde_json and JavaScript Number.
+            // Outside this range a browser may already have lost integer identity while parsing.
+            if (-MAX_SAFE_JSON_INTEGER..=MAX_SAFE_JSON_INTEGER).contains(&float) {
+                return Value::Number((float as i64).into());
+            }
+            value.clone()
+        }
         other => other.clone(),
     }
 }
+
+fn legacy_canonical(value: &Value) -> Value {
+    match value {
+        Value::Object(object) => {
+            let sorted: BTreeMap<_, _> = object
+                .iter()
+                .map(|(key, value)| (key.clone(), legacy_canonical(value)))
+                .collect();
+            serde_json::to_value(sorted).expect("JSON map")
+        }
+        Value::Array(items) => Value::Array(items.iter().map(legacy_canonical).collect()),
+        other => other.clone(),
+    }
+}
+
 fn hash(value: &impl Serialize) -> Result<String, StorageError> {
     Ok(annotagent_image_tools::sha256(&serde_json::to_vec(
         &canonical(&serde_json::to_value(value)?),
     )?))
+}
+
+fn legacy_hash(value: &impl Serialize) -> Result<String, StorageError> {
+    Ok(annotagent_image_tools::sha256(&serde_json::to_vec(
+        &legacy_canonical(&serde_json::to_value(value)?),
+    )?))
+}
+
+/// Integrity digest used by the version-1 archive envelope.
+pub fn archive_payload_hash(payload: &ArchivePayload) -> Result<String, StorageError> {
+    hash(payload)
 }
 fn continuation() -> Value {
     json!({"can_resume":false,"available_actions":["view","export"],"reasons":["imported_history_is_inert","new_live_task_and_fresh_authorization_required"]})
@@ -578,7 +629,7 @@ impl SqliteStore {
                 captured_at:chrono::Utc::now().to_rfc3339(),records,resources,
                 integrity:json!({"snapshot":"sqlite_transaction","all_messages":true,"all_tasks":true,"truncated":false,"redacted_fields":redacted,"missing_resources":missing.iter().map(|(kind,id)|json!({"kind":kind,"id":id,"reason":"missing_or_not_owned"})).collect::<Vec<_>>(),"limitations":["raw_model_http_transcripts_not_persisted","hidden_reasoning_not_exported","external_resources_not_embedded","historical_authority_not_transferable"]}),
             };
-            let archive=ContextArchive{format:"annotagent.context".into(),version:1,archive_hash:hash(&payload)?,payload};
+            let archive=ContextArchive{format:"annotagent.context".into(),version:1,archive_hash:archive_payload_hash(&payload)?,payload};
             validate(&archive)?;
             tx.commit()?;
             Ok(archive)
@@ -690,7 +741,9 @@ fn validate(archive: &ContextArchive) -> Result<(), StorageError> {
             "Archive exceeds 1 MiB or 10000 records",
         ));
     }
-    if hash(&archive.payload)? != archive.archive_hash {
+    if archive_payload_hash(&archive.payload)? != archive.archive_hash
+        && legacy_hash(&archive.payload)? != archive.archive_hash
+    {
         return Err(error(
             "archive_hash_mismatch",
             "Archive payload integrity check failed",
@@ -810,6 +863,83 @@ fn validate(archive: &ContextArchive) -> Result<(), StorageError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn browser_number_round_trip(value: &Value) -> Value {
+        match value {
+            Value::Object(object) => Value::Object(
+                object
+                    .iter()
+                    .map(|(key, value)| (key.clone(), browser_number_round_trip(value)))
+                    .collect(),
+            ),
+            Value::Array(items) => {
+                Value::Array(items.iter().map(browser_number_round_trip).collect())
+            }
+            Value::Number(number) => {
+                let Some(float) = number.as_f64() else {
+                    return value.clone();
+                };
+                if float == 0.0 {
+                    Value::Number(0.into())
+                } else if number.as_i64().is_none()
+                    && number.as_u64().is_none()
+                    && float.is_finite()
+                    && float.fract() == 0.0
+                    && (-MAX_SAFE_JSON_INTEGER..=MAX_SAFE_JSON_INTEGER).contains(&float)
+                {
+                    Value::Number((float as i64).into())
+                } else {
+                    value.clone()
+                }
+            }
+            _ => value.clone(),
+        }
+    }
+
+    #[test]
+    fn archive_hash_is_stable_across_browser_integral_number_round_trip() {
+        let rust = json!({
+            "bounds": [-0.0, 0.0, 1.0, -2.0, 0.25],
+            "nested": {"revision": 3.0, "unchanged": 4},
+        });
+        let browser = browser_number_round_trip(&rust);
+        assert_eq!(browser["bounds"], json!([0, 0, 1, -2, 0.25]));
+        assert_eq!(browser["nested"]["revision"], 3);
+        assert_eq!(hash(&rust).unwrap(), hash(&browser).unwrap());
+
+        let mut changed = browser;
+        changed["bounds"][4] = json!(0.5);
+        assert_ne!(hash(&rust).unwrap(), hash(&changed).unwrap());
+    }
+
+    #[test]
+    fn archive_validation_keeps_exact_legacy_v1_float_hash_compatible() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let (owner, conversation, _) = seed(&store);
+        let mut archive = store
+            .export_context_archive(&owner, "TEST-P", conversation)
+            .unwrap();
+        archive.payload.resources.push(json!({
+            "kind": "TEST_numeric",
+            "id": "TEST-legacy",
+            "embedded": false,
+            "availability": "not_verified",
+            "values": [-0.0, 0.0, 1.0, 0.25]
+        }));
+        archive.archive_hash = legacy_hash(&archive.payload).unwrap();
+        assert_ne!(
+            archive.archive_hash,
+            archive_payload_hash(&archive.payload).unwrap()
+        );
+        validate(&archive).unwrap();
+
+        let legacy = archive.payload.resources.last_mut().unwrap();
+        legacy["values"][3] = json!(0.5);
+        assert!(
+            matches!(validate(&archive),Err(StorageError::Management{code,..}) if code=="archive_hash_mismatch")
+        );
+    }
+
     fn seed(store: &SqliteStore) -> (String, Uuid, Uuid) {
         let owner = Uuid::new_v4().to_string();
         let c = store.create_conversation(&owner).unwrap();
