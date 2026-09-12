@@ -393,10 +393,9 @@
           "task_id": "30000000-0000-4000-8000-000000000001",
           "task_revision": "sha256",
           "registry_revision": "sha256",
-          "role": "task_planning_and_vision",
+          "role": "task_planning",
           "required_capabilities": [
-            "text_generation",
-            "object_detection"
+            "text_generation"
           ],
           "compatible_model_ids": [
             "model-profile:40000000-0000-4000-8000-000000000001"
@@ -404,7 +403,13 @@
           "status": "required",
           "return_path": "/projects/P/work?task=30000000-0000-4000-8000-000000000001&draft=draft-1"
         }
-      ]
+      ],
+      "visual_readiness_boundary": {
+        "status": "validate_exact_draft",
+        "reason": "Annotation output kind does not imply one model capability. Validate exact frozen Draft bindings through existing previews.",
+        "builder_preview_url": "/api/projects/P/conversations/C/tasks/T/builder-preview",
+        "sample_preview_url": "/api/projects/P/conversations/C/tasks/T/sample-preview"
+      }
     }
   },
   "model_profile_stale_writer": {

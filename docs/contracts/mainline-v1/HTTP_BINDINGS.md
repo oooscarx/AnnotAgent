@@ -260,3 +260,13 @@ same-Project/Task `return_path`; `ready` requires current production-eligible
 Ready evidence for every required capability. Unknown and TEST/Mock candidates
 never make a production request Ready. Refreshing either GET only re-reads state
 and cannot probe, install, grant, resume, plan, or call a Provider.
+
+ML-015 narrows this setup request to `role:task_planning` and
+`required_capabilities:[text_generation]`. A requested annotation output kind is
+not a model capability requirement: bounding-box work may begin with a VLM and a
+later Draft may compose detection, grounding, or refinement. The response's
+`visual_readiness_boundary` therefore says `awaiting_frozen_draft` before a Draft
+and `validate_exact_draft` afterward, with the existing Builder/Sample preview
+URLs. Those previews validate the actual selected nodes/bindings and permissions.
+The setup request does not claim a detector is required, does not auto-select a
+VLM, and does not weaken production eligibility.

@@ -218,6 +218,72 @@ fn active_authorization(journeys: &[Value]) -> Value {
         })
 }
 
+fn planning_setup_request(
+    project: &str,
+    conversation: Uuid,
+    task: Uuid,
+    task_revision: &str,
+    registry_revision: &str,
+    draft: &Value,
+    candidates: &[Value],
+) -> Value {
+    // Before execution has a frozen Draft, output annotation kind does not imply a
+    // particular model capability. A VLM may bootstrap detections and a later
+    // Draft may compose a detector/refiner. Exact visual bindings are validated by
+    // the existing Builder/Sample/processing previews.
+    let required_capabilities = ["text_generation"];
+    let compatible_model_ids = candidates
+        .iter()
+        .filter(|candidate| {
+            candidate["capabilities"]
+                .as_array()
+                .is_some_and(|capabilities| {
+                    capabilities.iter().any(|value| value == "text_generation")
+                })
+                && !candidate["test_fixture"].as_bool().unwrap_or(false)
+                && (candidate["production_eligible"].as_bool().unwrap_or(false)
+                    || candidate["readiness"] == "unknown")
+        })
+        .filter_map(|candidate| candidate["id"].as_str().map(str::to_owned))
+        .collect::<Vec<_>>();
+    let ready = candidates.iter().any(|candidate| {
+        candidate["readiness"] == "ready"
+            && candidate["production_eligible"].as_bool().unwrap_or(false)
+            && candidate["capabilities"]
+                .as_array()
+                .is_some_and(|capabilities| {
+                    capabilities.iter().any(|value| value == "text_generation")
+                })
+    });
+    let id = annotagent_image_tools::sha256(
+        &serde_json::to_vec(&json!({
+            "project_id":project,"conversation_id":conversation,"task_id":task,
+            "task_revision":task_revision,"registry_revision":registry_revision,
+            "role":"task_planning","required_capabilities":required_capabilities,
+            "compatible_model_ids":compatible_model_ids
+        }))
+        .expect("setup request identity is serializable"),
+    );
+    let mut return_url =
+        url::Url::parse("http://annotagent.local").expect("fixed internal return URL is valid");
+    return_url.set_path(&format!("/projects/{project}/work"));
+    {
+        let mut query = return_url.query_pairs_mut();
+        query.append_pair("task", &task.to_string());
+        if let Some(draft_id) = draft["id"].as_str() {
+            query.append_pair("draft", draft_id);
+        }
+    }
+    json!({
+        "id":id,"project_id":project,"task_id":task,
+        "task_revision":task_revision,"registry_revision":registry_revision,
+        "role":"task_planning","required_capabilities":required_capabilities,
+        "compatible_model_ids":compatible_model_ids,
+        "status":if ready{"ready"}else{"required"},
+        "return_path":return_url[url::Position::BeforePath..].to_owned()
+    })
+}
+
 pub(super) fn snapshot(
     state: &ServerState,
     project: &str,
@@ -377,69 +443,16 @@ pub(super) fn snapshot(
         &serde_json::to_vec(&json!({"candidates":candidates,"project_bindings":bindings}))
             .map_err(ApiError::internal)?,
     );
-    let delivery = state
-        .application
-        .task_delivery_intent(project, conversation, task)
-        .map_err(ApiError::conversation)?;
-    let mut required_capabilities = vec!["text_generation"];
-    if delivery
-        .saved
-        .as_ref()
-        .and_then(|saved| saved.intent.training_target.as_ref())
-        .is_some_and(annotagent_core::dataset_delivery::TrainingTarget::is_detection_preset)
-    {
-        required_capabilities.push("object_detection");
-    }
-    let compatible_model_ids = candidates
-        .iter()
-        .filter(|candidate| {
-            candidate["capabilities"]
-                .as_array()
-                .is_some_and(|capabilities| {
-                    capabilities.iter().any(|capability| {
-                        required_capabilities
-                            .iter()
-                            .any(|required| capability == required)
-                    })
-                })
-                && !candidate["test_fixture"].as_bool().unwrap_or(false)
-                && (candidate["production_eligible"].as_bool().unwrap_or(false)
-                    || candidate["readiness"] == "unknown")
-        })
-        .filter_map(|candidate| candidate["id"].as_str().map(str::to_owned))
-        .collect::<Vec<_>>();
-    let setup_ready = required_capabilities.iter().all(|required| {
-        candidates.iter().any(|candidate| {
-            candidate["readiness"] == "ready"
-                && candidate["production_eligible"].as_bool().unwrap_or(false)
-                && candidate["capabilities"]
-                    .as_array()
-                    .is_some_and(|capabilities| capabilities.iter().any(|value| value == required))
-        })
-    });
-    let setup_id = annotagent_image_tools::sha256(
-        &serde_json::to_vec(&json!({
-            "project_id":project,"conversation_id":conversation,"task_id":task,
-            "task_revision":task_record.input.schema_revision,
-            "registry_revision":registry_digest,
-            "role":"task_planning_and_vision",
-            "required_capabilities":required_capabilities,
-            "compatible_model_ids":compatible_model_ids
-        }))
-        .map_err(ApiError::internal)?,
-    );
     let draft = current_draft(state, project, &journeys, &builders)?;
-    let mut return_url =
-        url::Url::parse("http://annotagent.local").expect("fixed internal return URL is valid");
-    return_url.set_path(&format!("/projects/{project}/work"));
-    {
-        let mut query = return_url.query_pairs_mut();
-        query.append_pair("task", &task.to_string());
-        if let Some(draft_id) = draft["id"].as_str() {
-            query.append_pair("draft", draft_id);
-        }
-    }
-    let return_path = return_url[url::Position::BeforePath..].to_owned();
+    let setup_request = planning_setup_request(
+        project,
+        conversation,
+        task,
+        &task_record.input.schema_revision,
+        &registry_digest,
+        &draft,
+        &candidates,
+    );
     let budget = state
         .application
         .conversation_task_budget(project, conversation, task)
@@ -453,16 +466,13 @@ pub(super) fn snapshot(
         "conversation_id":conversation,"task_id":task,"task_schema_revision":task_record.input.schema_revision,
         "draft":draft,"registry_revision":registry_digest,"registry_revision_kind":"snapshot_sha256",
         "candidates":candidates,"agent_model_preference":agent_model,
-        "setup_requests":[{
-            "id":setup_id,"project_id":project,"task_id":task,
-            "task_revision":task_record.input.schema_revision,
-            "registry_revision":registry_digest,
-            "role":"task_planning_and_vision",
-            "required_capabilities":required_capabilities,
-            "compatible_model_ids":compatible_model_ids,
-            "status":if setup_ready{"ready"}else{"required"},
-            "return_path":return_path
-        }],
+        "setup_requests":[setup_request],
+        "visual_readiness_boundary":{
+            "status":if draft.is_null(){"awaiting_frozen_draft"}else{"validate_exact_draft"},
+            "reason":"Annotation output kind does not imply one model capability. Validate the exact frozen Draft bindings through the existing Builder, Sample and processing previews.",
+            "builder_preview_url":format!("/api/projects/{project}/conversations/{conversation}/tasks/{task}/builder-preview"),
+            "sample_preview_url":format!("/api/projects/{project}/conversations/{conversation}/tasks/{task}/sample-preview")
+        },
         "authorization":authorization,"budget":budget,
         "task_cost":{"scope":"conversation_task_model_calls","receipt_count":calls.len(),
             "known":no_calls,"amount":if no_calls {json!("0")} else {Value::Null},"currency":null,
@@ -575,7 +585,7 @@ mod tests {
         assert_eq!(setup["task_id"], sent.task_id.to_string());
         assert_eq!(setup["task_revision"], first["task_schema_revision"]);
         assert_eq!(setup["registry_revision"], first["registry_revision"]);
-        assert_eq!(setup["role"], "task_planning_and_vision");
+        assert_eq!(setup["role"], "task_planning");
         assert_eq!(setup["required_capabilities"], json!(["text_generation"]));
         assert_eq!(setup["status"], "required");
         assert_eq!(
@@ -641,6 +651,30 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn vlm_bootstrap_is_a_valid_planning_candidate_without_claiming_detector_capability() {
+        let task = Uuid::new_v4();
+        let model_id = "model-profile:TEST-vlm";
+        let request = planning_setup_request(
+            "TEST-project",
+            Uuid::new_v4(),
+            task,
+            "schema-revision",
+            "registry-revision",
+            &Value::Null,
+            &[json!({
+                "id":model_id,
+                "capabilities":["text_generation","vision_language","image_classification"],
+                "readiness":"ready","production_eligible":true,"test_fixture":false
+            })],
+        );
+        assert_eq!(request["role"], "task_planning");
+        assert_eq!(request["required_capabilities"], json!(["text_generation"]));
+        assert_eq!(request["compatible_model_ids"], json!([model_id]));
+        assert_eq!(request["status"], "ready");
+        assert_eq!(request["task_id"], task.to_string());
     }
 
     #[test]
