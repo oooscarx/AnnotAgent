@@ -11,6 +11,11 @@ import zlib
 from http_smoke import uid
 
 
+def delivery_processing_selection(draft_id, sample_test_id):
+    """Exact saved delivery scope: the server owns the image set and rejects limit."""
+    return {"draft_id": draft_id, "sample_test_id": sample_test_id}
+
+
 def test_png(index):
     width, height = 1000, 500
     rows = []
@@ -66,7 +71,7 @@ def seed_delivery(c, provider):
     budget = preview["conversation_budget"]
     sample = c.post(p + "/sample-operations", {"request_id": preview["request_id"], "draft_id": draft_id, "expected_revision": preview["revision"], "image_indices": [0, 1, 2], "authorization_fingerprint": preview["authorization_fingerprint"], "conversation": {"conversation_id": conversation, "task_id": sent["task_id"], **{key: budget[key] for key in ["previous_grant_id", "scope_hash", "expires_at"]}, "allow_unknown_cost": True, "human_review": True}})
     c.poll(p + "/sample-operations/" + sample["id"], lambda v: v["status"] == "succeeded" and (v.get("assistance") or {}).get("status") == "completed")
-    selection = {"draft_id": draft_id, "sample_test_id": sample["id"], "limit": 12}
+    selection = delivery_processing_selection(draft_id, sample["id"])
     authorization = c.get(p + "/processing-preview?" + urllib.parse.urlencode(selection))
     operation = c.post(p + "/processing-operations", {"request_id": uid(), "selection": selection, "expected_revision": authorization["revision"], "authorization_fingerprint": authorization["authorization_fingerprint"]})
     batch_url = "/api/batches/" + operation["batch_id"]
