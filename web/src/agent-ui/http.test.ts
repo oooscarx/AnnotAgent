@@ -90,6 +90,45 @@ it("formal delivery reads never dispatch and commands retain frozen scope across
   await expect(adapter.delivery.startPackage("TEST-alpha","t1",input)).rejects.toThrow("stale whole-image snapshot");
   await expect(adapter.delivery.confirmImage("TEST-alpha","t1",confirmation)).rejects.toThrow("stale whole-image snapshot");
 });
+it("adapts exact task formal review and package consent reads without starting work",async()=>{
+  const formal={project_id:"TEST-alpha",task_id:"t1",processing_operation_id:"process",batch_id:"batch",workflow_version:"7",status:"completed",images:[{image_id:"image-uuid",child_run_id:"run"}]};
+  const reviewPage={project_id:"TEST-alpha",task_id:"t1",intent_revision:3,intent_sha256:"frozen-delivery",summary:{selected:2,positive:1,negative:0,excluded:0,unreviewed:1},items:[{image_id:"image-uuid",child_run_id:"run",execution_error:null,review_revision:4,review_decision:"positive_complete",confirmation_current:true},{image_id:"other",child_run_id:null,execution_error:"TEST child failed",review_revision:0,review_decision:null,confirmation_current:false}],next_cursor:null};
+  const consent={input:{id:"package",intent_revision:3,intent_sha256:"frozen-delivery",confirmed:true as const},state:"armed",effective_state:"blocked",readiness:{ready:false,selected_images:2,confirmed_images:1,blocked_images:1,reasons:["whole_image_review_missing_or_stale"]},job:null};
+  const calls:{path:string;method:string}[]=[];
+  const reads=mockTransport({
+    [`${root}/t1/formal-result`]:formal,
+    [`${root}/t1/delivery-review-items?cursor=0&limit=50`]:reviewPage,
+    [`${root}/t1/delivery-package-consents`]:{items:[consent],next_cursor:null},
+  });
+  const transport:Transport=async<T>(path:string,init?:RequestInit)=>{calls.push({path,method:init?.method||"GET"});return reads.transport<T>(path,init);};
+  const adapter=new HttpAdapter(transport,memoryStorage());await adapter.refresh();await adapter.loadTask("TEST-alpha","t1");calls.length=0;
+  expect(await adapter.delivery.formalResult!("TEST-alpha","t1")).toEqual(formal);
+  const summary=await adapter.delivery.reviewSummary!("TEST-alpha","t1");
+  expect(summary).toMatchObject({counts:{total:2,complete:1,unresolved:1,failed:1},items:[{image_id:"image-uuid",state:"positive_complete",review_revision:4},{image_id:"other",state:"failed",error:"TEST child failed"}]});
+  const readiness=await adapter.delivery.packageReadiness!("TEST-alpha","t1");
+  expect(readiness).toMatchObject({intent_revision:3,intent_sha256:"frozen-delivery",ready:false,consent:{input:{id:"package"},state:"armed"},package:null,blockers:[{code:"whole_image_review_missing_or_stale"}]});
+  expect(calls.every(call=>call.method==="GET")).toBe(true);
+  expect(calls.filter(call=>call.path.endsWith("/delivery-package-consents"))).toHaveLength(1);
+});
+it("posts package permission only on explicit authorization and checks the frozen receipt",async()=>{
+  const reads=mockTransport();const posts:{path:string;body:unknown}[]=[];
+  const input={id:"package-consent",intent_revision:3,intent_sha256:"frozen-delivery",confirmed:true as const};
+  const transport:Transport=async<T>(path:string,init?:RequestInit)=>{
+    if(init?.method==="POST"){
+      const body=JSON.parse(String(init.body));posts.push({path,body});
+      if(path.endsWith("/cancel"))return {input,state:"cancelled",effective_state:"cancelled"} as T;
+      return {input,state:"armed",effective_state:"blocked"} as T;
+    }
+    return reads.transport<T>(path,init);
+  };
+  const adapter=new HttpAdapter(transport,memoryStorage());await adapter.refresh();await adapter.loadTask("TEST-alpha","t1");
+  expect(await adapter.delivery.authorizePackage!("TEST-alpha","t1",input)).toEqual({input,state:"armed"});
+  expect(await adapter.delivery.cancelPackageAuthorization!("TEST-alpha","t1",input.id)).toEqual({input,state:"cancelled"});
+  expect(posts).toEqual([
+    {path:`${root}/t1/delivery-package-consents`,body:input},
+    {path:`${root}/t1/delivery-package-consents/package-consent/cancel`,body:{confirmed:true}},
+  ]);
+});
 it("planning an existing task never overrides its frozen Send model with the next-request preference", async () => {
   const { transport, paths } = mockTransport({
     "/api/agent-model-bindings": {pipeline_builder:"new-preference"},

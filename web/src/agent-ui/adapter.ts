@@ -97,6 +97,8 @@ export type Task = {
     budget: string | null;
   };
   mainline?: import("./mainline").MainlineTaskView;
+  /** Frozen Sample Test projection used by the delivery canvas and Composer reference. */
+  sampleResult?: import("./deliveryVisualSelection").DeliverySampleResult;
 };
 export type Settings = {
   revision: string;

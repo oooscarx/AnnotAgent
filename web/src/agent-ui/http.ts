@@ -104,6 +104,67 @@ export class HttpAdapter implements WorkspaceAdapter {
     },
     cancelPackage: (project, task, id) => this.transport(`${this.deliveryRoot(project,task)}/delivery-packages/${esc(id)}/cancel`, { method: "POST", body: JSON.stringify({ confirmed: true }) }),
     downloadUrl: (project, task, id) => `${this.deliveryRoot(project,task)}/delivery-packages/${esc(id)}/download`,
+    formalResult: async(project,task,signal) => {
+      const value=await this.transport<import("./deliveryVisualSelection").DeliveryFormalResult|null>(`${this.deliveryRoot(project,task)}/formal-result`,{signal});
+      if(value&&(value.project_id!==project||value.task_id!==task))throw new Error("正式结果不属于当前 Project/Task。");
+      return value;
+    },
+    reviewSummary: async(project,task,cursor,signal) => {
+      const root=this.deliveryRoot(project,task);
+      const page=await this.transport<{
+        project_id:string;task_id:string;intent_revision:number;intent_sha256:string;
+        summary:{selected:number;positive:number;negative:number;excluded:number;unreviewed:number};
+        items:{image_id:string;child_run_id:string|null;execution_error:string|null;review_revision:number;review_decision:string|null;confirmation_current:boolean}[];
+        next_cursor:string|null;
+      }>(`${root}/delivery-review-items?cursor=${esc(cursor||"0")}&limit=50`,{signal});
+      if(page.project_id!==project||page.task_id!==task)throw new Error("审核摘要不属于当前 Project/Task。");
+      const items=page.items.map(item=>{
+        const state=typeof item.execution_error==="string"&&item.execution_error.length
+          ? "failed" as const
+          : !item.confirmation_current
+            ? "unresolved" as const
+            : item.review_decision==="positive_complete"
+              ? "positive_complete" as const
+              : item.review_decision==="negative_confirmed"
+                ? "negative_confirmed" as const
+                : item.review_decision==="excluded"
+                  ? "excluded" as const
+                  : "unresolved" as const;
+        return {image_id:item.image_id,state,review_revision:item.review_revision||null,child_run_id:item.child_run_id,error:item.execution_error||null};
+      });
+      const failed=items.filter(item=>item.state==="failed").length;
+      const complete=page.summary.positive+page.summary.negative+page.summary.excluded;
+      return {intent_revision:page.intent_revision,intent_sha256:page.intent_sha256,formal_result:await this.delivery.formalResult!(project,task,signal),counts:{total:page.summary.selected,complete,positive:page.summary.positive,negative:page.summary.negative,excluded:page.summary.excluded,unresolved:page.summary.unreviewed,failed},items,next_cursor:page.next_cursor};
+    },
+    packageReadiness: async(project,task,signal) => {
+      const root=this.deliveryRoot(project,task);
+      const owned=this.task(task);
+      if(!owned.conversationId)throw new Error("任务没有所属会话。");
+      const [view,consents]=await Promise.all([
+        this.mainlineTask.read(project,owned.conversationId,task,signal),
+        this.transport<{items:{input:{id:string;intent_revision:number;intent_sha256:string;confirmed:true};state:string;effective_state:string;readiness:{ready:boolean;selected_images:number;confirmed_images:number;blocked_images:number;reasons:string[]};job:import("./deliveryService").DeliveryPackageStatus|null}[];next_cursor:null}>(`${root}/delivery-package-consents`,{signal}),
+      ]);
+      const delivery=(view.delivery as import("./DeliveryIntake").IntakeView)?.saved;
+      if(!delivery)throw new Error("当前任务没有已保存的交付版本。");
+      const current=consents.items.find(item=>item.input.intent_revision===delivery.revision&&item.input.intent_sha256===delivery.content_sha256&&["armed","consumed"].includes(item.state))
+        || consents.items.find(item=>item.input.intent_revision===delivery.revision&&item.input.intent_sha256===delivery.content_sha256);
+      const packageRead=current?.job ? await this.delivery.packageStatus(project,task,current.job.id,signal) : null;
+      const failed=(view.formal_source as {images?:{error?:string|null}[]} | null)?.images?.filter(image=>!!image.error).length||0;
+      const counts={total:view.review_summary.selected_images,complete:view.review_summary.current_reviews,positive:0,negative:0,excluded:0,unresolved:view.review_summary.pending_reviews,failed};
+      const reasons=current?.readiness.reasons||[];
+      const blockers=reasons.map(code=>({code,message:code==="whole_image_review_missing_or_stale"?"仍有图片未完成当前快照的整图审核。":code==="delivery_intent_changed"?"交付目标已变化，原打包授权已失效。":code,image_ids:[]}));
+      return {intent_revision:delivery.revision,intent_sha256:delivery.content_sha256,ready:current?.readiness.ready===true,counts,review_revisions:{},blockers,consent:current?{input:current.input,state:current.state as import("./deliveryService").PackageConsent["state"]}:null,package:packageRead};
+    },
+    authorizePackage: async(project,task,input) => {
+      const value=await this.transport<{input:typeof input;state:string}>(`${this.deliveryRoot(project,task)}/delivery-package-consents`,{method:"POST",body:JSON.stringify(input)});
+      if(value.input.id!==input.id||value.input.intent_revision!==input.intent_revision||value.input.intent_sha256!==input.intent_sha256)throw new Error("打包授权回执范围不匹配。");
+      return {input:value.input,state:value.state as import("./deliveryService").PackageConsent["state"]};
+    },
+    cancelPackageAuthorization: async(project,task,id) => {
+      const value=await this.transport<{input:{id:string;intent_revision:number;intent_sha256:string;confirmed:true};state:string}>(`${this.deliveryRoot(project,task)}/delivery-package-consents/${esc(id)}/cancel`,{method:"POST",body:JSON.stringify({confirmed:true})});
+      if(value.input.id!==id)throw new Error("取消打包授权的回执身份不匹配。");
+      return {input:value.input,state:value.state as import("./deliveryService").PackageConsent["state"]};
+    },
   };
   private deliveryPendingKey(project:string,task:string) {
     if(!this.state.workspaceId)throw new Error("工作区身份尚未读取，不能恢复或发送打包命令。");
@@ -314,7 +375,7 @@ export class HttpAdapter implements WorkspaceAdapter {
         const value=await this.transport<{sample_test:WorkflowSampleTestRecord;annotation_schema?:{task:{kind:string;labels:string[]}}}>(`/api/workflow-drafts/${esc(draftId)}/sample-test?test_id=${esc(sampleId)}`,{signal:ctrl.signal});
         const record=value.sample_test;
         if(!record || record.id!==sampleId || record.draft_id!==draftId || record.project_id!==project) throw new Error("样例不属于当前项目和任务");
-        const boxesByImage:Record<ImageId,Box[]>={}, imageResults:NonNullable<Task["imageResults"]>={};
+        const boxesByImage:Record<ImageId,Box[]>={}, imageResults:NonNullable<Task["imageResults"]>={}, sampleImages:import("./deliveryVisualSelection").DeliverySampleResult["images"]=[];
         let requestedLabel="", requestedKind="", feedbackVersion="";
         for(const [index,input] of record.inputs.entries()) {
           const image=images.images.find(i=>i.image_id===input.image_id), asset=artifacts.find(a=>a.id===input.image_id);
@@ -326,6 +387,9 @@ export class HttpAdapter implements WorkspaceAdapter {
           const original=terminalSampleAnnotations(sample,input.image_id,sampleId);
           const overlay=sampleFeedbackOverlay(original,feedback.revisions);
           const annotations=overlay.annotations;result.excludedCandidates![input.image_id]=overlay.excluded;
+          const projected=[...(sample.projection?.final_candidates||[]),...(sample.projection?.review_candidates||[]).map(item=>item.candidate)];
+          const sourceArtifacts=Object.fromEntries(projected.map(candidate=>[candidate.outcome.id,candidate.source_artifact_id]));
+          sampleImages.push({image_id:input.image_id,image_sha256:input.content_hash,result_revision:`${sampleId}:${input.image_id}:${feedback.revisions.at(-1)?.sequence||0}`,source_artifacts:sourceArtifacts,annotations});
           const dims=await this.measure(asset.src);asset.width=dims.width;asset.height=dims.height;
           boxesByImage[input.image_id]=annotations.flatMap(a=>a.value.kind==="bounding_box"?[{id:a.id,label:a.label || "",x:a.value.rect[0]*dims.width,y:a.value.rect[1]*dims.height,w:a.value.rect[2]*dims.width,h:a.value.rect[3]*dims.height}]:[]);
           imageResults[input.image_id]={labels:annotations.flatMap(a=>a.value.kind==="classification"?a.value.labels:[]),risks:sample.projection?.review_candidates.map(r=>r.explanation.summary) || (sample.projection?[]:["旧样例没有终端投影，未显示中间框"])};
@@ -338,6 +402,7 @@ export class HttpAdapter implements WorkspaceAdapter {
         }
         result.boxesByImage=boxesByImage;result.imageResults=imageResults;result.resultRevision=`${sampleId}:${feedbackVersion}`;
         result.sample={id:sampleId,draft:draftId,revision:record.draft_revision};
+        if(task.conversationId)result.sampleResult={project_id:project,conversation_id:task.conversationId,task_id:id,project_schema_revision:current.revision,draft_id:draftId,draft_revision:record.draft_revision,sample_test_id:sampleId,images:sampleImages};
         if(human) result.human={id:human.input.id,image:human.input.image_id,kind:requestedKind || "unsupported",labels:value.annotation_schema?.task.labels || (requestedLabel?[requestedLabel]:[]),label:requestedLabel,candidate:human.input.outcome_id || ""};
       }
       const persistedStop = this.stored<{id:string}|null>(`stop.${id}`, null) || [...thread].reverse().find(t=>t.message.input.reference?.scope==="stop_request");

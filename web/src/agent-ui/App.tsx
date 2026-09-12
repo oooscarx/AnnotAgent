@@ -79,13 +79,7 @@ export function AgentPreviewApp({
     { name: string; url: string; task: string }[]
   >([]);
   const [split, setSplit] = useState(54);
-  const [reference, setReference] = useState<{
-    preview: true;
-    task: string;
-    image: string;
-    candidate: string;
-    revision: string;
-  } | null>(null);
+  const [reference, setReference] = useState<NonNullable<Command["selection"]> | null>(null);
   const [approval, setApproval] = useState<Command | null>(null);
   const [previewTheme, setPreviewTheme] = useState<string>();
   const compose = useRef<HTMLTextAreaElement>(null);
@@ -108,6 +102,8 @@ export function AgentPreviewApp({
     if(task && !state.settings.collapsed)setExpanded(ids=>ids.includes(task.project)?ids:[...ids,task.project]);
   },[task?.project]);
   const allowed = (action: "send" | "stop" | "resume" | "approve" | "answer") => fixture || task?.actions?.[action]?.available === true;
+  const referenceBelongsToTask=(value:Command["selection"]|null,current:Task):value is NonNullable<Command["selection"]>=>!!value
+    && ("preview" in value ? value.task===current.id : value.project_id===current.project&&value.task_id===current.id);
   useEffect(() => {
     if (task && adapter.loadTask) void adapter.loadTask(task.project, task.id).catch(e => setError(e.message));
   }, [adapter, task?.id, task?.project]);
@@ -253,14 +249,14 @@ export function AgentPreviewApp({
       task.draft,
       mode,
       task.model,
-      reference?.task === task.id ? reference : null,
+      referenceBelongsToTask(reference,task) ? reference : null,
     ]);
     if (retryCommand.current?.signature !== signature)
       retryCommand.current = {
         signature,
         command: {
           ...command(task),
-          selection: reference?.task === task.id ? reference : undefined,
+          selection: referenceBelongsToTask(reference,task) ? reference : undefined,
         },
       };
     await act(async () => {
@@ -538,7 +534,7 @@ export function AgentPreviewApp({
                           )}
                         </div>
                         {!fixture && !!task.receipts?.length && <ExecutionProgress receipts={task.receipts} />}
-                        {!fixture && adapter.deliveryIntake && !task.id.startsWith("new:") && <DeliveryIntake key={task.id} service={adapter.deliveryIntake} delivery={adapter.delivery} project={task.project} task={task.id} locked={active} images={state.artifacts.filter(i => i.project === task.project).map(i => ({id:String(i.id),name:i.name,src:i.src}))} />}
+                        {!fixture && adapter.deliveryIntake && !task.id.startsWith("new:") && <DeliveryIntake key={task.id} service={adapter.deliveryIntake} delivery={adapter.delivery} project={task.project} task={task.id} locked={active} sampleResult={task.sampleResult} onVisualSelection={selection=>setReference(selection)} onSampleIssue={selection=>{setReference(selection);requestAnimationFrame(()=>compose.current?.focus());}} images={state.artifacts.filter(i => i.project === task.project).map(i => ({id:String(i.id),name:i.name,src:i.src}))} />}
                         {!fixture && !active && !task.approval && adapter.prepareAction && task.items.length > 0 && task.mainline?.available_actions.some(action=>action.id==="build_and_test_pipeline"&&action.state==="requires_confirmation") && <div className="task-next-actions">
                           {(() => {
                             const action={kind:"sample" as const,label:"构建方案并测试样例…",icon:"image" as const};
@@ -647,9 +643,9 @@ export function AgentPreviewApp({
                       void send();
                     }}
                   >
-                    {reference?.task === task.id && (
+                    {referenceBelongsToTask(reference,task) && reference && (
                       <div className="reference-chip">
-                        引用：示意图片 {reference.image} · {reference.candidate}
+                        引用：{fixture ? "示意图片" : "样例图片"} {referenceSummary(reference).image} · 候选 {referenceSummary(reference).candidate}
                         <button
                           type="button"
                           aria-label="移除对象引用"
