@@ -573,14 +573,29 @@ async fn openai_completion(
             json!({"decision":"draft","kind":if classification {"classification"} else {"bounding_box"},"labels":if classification {json!(["室内","室外"])} else {json!(["cup"])},"multi_label":false,"attributes":{},"boundary_rules":["TEST fixture rule"],"rationale":"TEST scripted Schema proposal, not Live model quality evidence"})
         };
         if serialized.contains("task-delivery-semantics-v1") && !classification {
+            if request["model"] == "e2e-conversation-bbox-feedback-image-class" {
+                arguments["labels"] = json!(["cup", "bottle"]);
+                arguments["boundary_rules"] = json!([
+                    "Annotate physical cups and bottles; exclude printed depictions and cupcakes"
+                ]);
+            }
+            let labels = arguments["labels"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(|label| {
+                    json!({
+                        "existing_id":null,
+                        "display_name":match label {"cup"=>"杯子","bottle"=>"瓶子",other=>other},
+                        "aliases":[label],
+                        "include":format!("真实{label}，包括部分遮挡目标"),
+                        "exclude":format!("{label}图案和相似但不同类别")
+                    })
+                })
+                .collect::<Vec<_>>();
             arguments["delivery"] = json!({
-                "labels":[{
-                    "existing_id":null,
-                    "display_name":"杯子",
-                    "aliases":["cup"],
-                    "include":"真实杯子，包括部分遮挡的杯子",
-                    "exclude":"杯子图案和非杯状容器"
-                }],
+                "labels":labels,
                 "training_target":{
                     "annotation_kind":"bounding_box",
                     "framework":"ultralytics",
