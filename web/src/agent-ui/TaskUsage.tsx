@@ -155,7 +155,23 @@ function UsageAttempt({ attempt }: { attempt: TaskUsageAttempt }) {
   );
 }
 
-export function TaskUsageView({ value, compact = false }: { value: TaskUsagePage; compact?: boolean }) {
+export function TaskUsageReadError() {
+  return <p role="alert">暂时无法读取本次用量，费用未知。请稍后刷新。</p>;
+}
+
+export function mergeUsagePages(pages: TaskUsagePage[]): TaskUsagePage | undefined {
+  const latest = pages[pages.length - 1];
+  if (!latest) return undefined;
+  const items = new Map<string, TaskUsageAttempt>();
+  for (const page of pages) {
+    if (page.scope.project_id !== latest.scope.project_id || page.scope.task_id !== latest.scope.task_id || page.scope.conversation_id !== latest.scope.conversation_id)
+      throw new Error("用量记录范围不一致");
+    for (const attempt of page.attempts.items) items.set(attempt.attempt_id, attempt);
+  }
+  return { ...latest, attempts: { ...latest.attempts, items: [...items.values()] } };
+}
+
+export function TaskUsageView({ value, compact = true }: { value: TaskUsagePage; compact?: boolean }) {
   const taskAttempts = value.attempts.items.filter((attempt) => attempt.kind === "task");
   const probes = value.attempts.items.filter((attempt) => attempt.kind === "probe");
   const currencyTotals = value.summary.costs_by_currency;
@@ -167,7 +183,7 @@ export function TaskUsageView({ value, compact = false }: { value: TaskUsagePage
           <div>
             <p>输入 {summaryToken(value.summary.input_tokens, value.summary.unknown_attempt_count)} · 输出 {summaryToken(value.summary.output_tokens, value.summary.unknown_attempt_count)}</p>
             {currencyTotals.length > 0
-              ? currencyTotals.map((item) => <p key={item.currency}>{value.summary.unknown_attempt_count > 0 ? "已知费用 " : ""}{item.currency} {item.cost}</p>)
+              ? currencyTotals.map((item) => <p key={item.currency}>按冻结单价估算 · {value.summary.unknown_attempt_count > 0 ? "已知部分 " : ""}{item.currency} {item.cost}</p>)
               : <p>总费用未知（不是 0）</p>}
           </div>
         )}
@@ -175,7 +191,7 @@ export function TaskUsageView({ value, compact = false }: { value: TaskUsagePage
       {value.state === "no_model_requests" && <p>此 Task 尚未产生模型请求；Preset 候选不会伪造 Token 或费用。</p>}
       {value.summary.unknown_attempt_count > 0 && <p role="status">{value.summary.unknown_attempt_count} 次尝试缺少完整 Token、价格或终态；未按 0 处理。</p>}
       {!compact && taskAttempts.map((attempt) => <UsageAttempt key={attempt.attempt_id} attempt={attempt} />)}
-      {compact && taskAttempts.length > 0 && <Disclosure title={`查看 ${taskAttempts.length} 次任务请求`}><div>{taskAttempts.map((attempt) => <UsageAttempt key={attempt.attempt_id} attempt={attempt} />)}</div></Disclosure>}
+      {compact && taskAttempts.length > 0 && <Disclosure title={`调用明细 · ${taskAttempts.length} 次任务请求`}><div>{taskAttempts.map((attempt) => <UsageAttempt key={attempt.attempt_id} attempt={attempt} />)}</div></Disclosure>}
       {probes.length > 0 && <Disclosure title={`独立的模型探测记录 · ${probes.length}`}><p>探测不是普通 Task 推理，不计入上方任务尝试。</p>{probes.map((attempt) => <UsageAttempt key={attempt.attempt_id} attempt={attempt} />)}</Disclosure>}
     </div>
   );
@@ -185,7 +201,7 @@ export function TaskUsage({
   projectId,
   taskId,
   service,
-  compact = false,
+  compact = true,
 }: {
   projectId: string;
   taskId: string;
@@ -223,23 +239,24 @@ export function TaskUsage({
     };
   }, [projectId, taskId, service, generation]);
 
-  const latest = pages[pages.length - 1];
-  const combined = latest && pages.length > 1
-    ? { ...latest, attempts: { ...latest.attempts, items: pages.flatMap((page) => page.attempts.items) } }
-    : latest;
+  const ownedPages = pages.filter((page) => page.scope.project_id === projectId && page.scope.task_id === taskId);
+  const latest = ownedPages[ownedPages.length - 1];
+  const combined = mergeUsagePages(ownedPages);
   const loadMore = async () => {
-    if (!latest?.attempts.next_cursor || loading) return;
+    if (latest?.attempts.next_cursor == null || loading) return;
+    const requestGeneration = live.current;
     setLoading(true);
     setError("");
     try {
       const value = await service.getTaskUsage(projectId, taskId, latest.attempts.next_cursor);
+      if (requestGeneration !== live.current) return;
       if (value.scope.project_id !== projectId || value.scope.task_id !== taskId)
         throw new Error("下一页用量记录不属于当前 Project 与 Task");
       setPages((current) => [...current, value]);
     } catch (reason) {
-      setError((reason as Error).message);
+      if (requestGeneration === live.current) setError((reason as Error).message);
     } finally {
-      setLoading(false);
+      if (requestGeneration === live.current) setLoading(false);
     }
   };
 
@@ -247,7 +264,7 @@ export function TaskUsage({
     <section className="task-usage" aria-label="本次任务模型用量">
       <div className="task-usage-title"><h3>本次模型用量</h3><button disabled={loading} onClick={() => setGeneration((value) => value + 1)}>刷新</button></div>
       {loading && !combined && <p role="status">读取本次 Task 的模型请求…</p>}
-      {error && <p role="alert">{error}。未把缺失记录显示为零。</p>}
+      {error && <TaskUsageReadError />}
       {combined && <TaskUsageView value={combined} compact={compact} />}
       {latest?.attempts.next_cursor != null && <button disabled={loading} onClick={() => void loadMore()}>{loading ? "读取下一页…" : "加载更多请求"}</button>}
     </section>
