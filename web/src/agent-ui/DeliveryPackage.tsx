@@ -16,6 +16,9 @@ type Props = {
   scope: Scope;
   locked?: boolean;
   onInspect: (id: string) => void;
+  initialPackageId?:string;
+  onReady?:(receipt:DeliveryPackageRead)=>void;
+  onDownload?:(packageId:string)=>void;
 };
 
 const phases = {
@@ -32,10 +35,10 @@ const phases = {
  * the frozen intent, cancel that authorization, and display persisted receipts.
  * It never infers readiness by scanning every image and never POSTs on ready.
  */
-export function DeliveryPackage({ service, project, task, scope, locked = false, onInspect }: Props) {
+export function DeliveryPackage({ service, project, task, scope, locked = false, onInspect, initialPackageId, onReady, onDownload }: Props) {
   const [history, setHistory] = useState<{ id: string; created_at: string }[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
-  const [id, setId] = useState(() => new URL(location.href).searchParams.get("delivery_package") || "");
+  const [id, setId] = useState(() => initialPackageId || new URL(location.href).searchParams.get("delivery_package") || "");
   const [job, setJob] = useState<DeliveryPackageRead>();
   const [readiness, setReadiness] = useState<DeliveryPackageReadiness>();
   const [error, setError] = useState("");
@@ -43,6 +46,7 @@ export function DeliveryPackage({ service, project, task, scope, locked = false,
   const [refresh, setRefresh] = useState(0);
   const pending = useRef(false);
   const authorizationRetry = useRef<DeliveryPackageConsent["input"] | undefined>(undefined);
+  const readyNotification = useRef<string | undefined>(undefined);
 
   const select = (next: string) => {
     setId(next);
@@ -57,6 +61,10 @@ export function DeliveryPackage({ service, project, task, scope, locked = false,
     window.addEventListener("popstate", back);
     return () => window.removeEventListener("popstate", back);
   }, []);
+
+  useEffect(()=>{
+    if(initialPackageId)setId(initialPackageId);
+  },[initialPackageId]);
 
   useEffect(() => {
     setReadiness(undefined);
@@ -130,6 +138,12 @@ export function DeliveryPackage({ service, project, task, scope, locked = false,
     if (!busy) void read();
     return () => { controller.abort(); clearTimeout(timer); };
   }, [busy, id, project, refresh, service, task]);
+
+  useEffect(()=>{
+    if(job?.job.phase!=="ready"||!job.job.result||readyNotification.current===job.job.id)return;
+    readyNotification.current=job.job.id;
+    onReady?.(job);
+  },[job,onReady]);
 
   const act = async (operation: () => Promise<void>) => {
     if (pending.current) return;
@@ -236,8 +250,12 @@ export function DeliveryPackage({ service, project, task, scope, locked = false,
         <p>类别：{receipt.summary?.labels.join("、") || "旧回执未记录，请查看包内清单"}</p>
         <p>训练图片 {receipt.summary?.splits.train ?? "未记录"} · 验证图片 {receipt.summary?.splits.val ?? "未记录"} · 确认负样本 {receipt.negatives} · 排除 {receipt.excluded}</p>
         <p>已纳入 {receipt.images} 张原图、{receipt.objects} 个正式对象 · {receipt.bytes.toLocaleString()} bytes</p>
+        {receipt.summary?.demo&&<p>示例 {receipt.summary.demo.id} · {receipt.summary.demo.version} · 数据 {receipt.summary.demo.data_sha256}</p>}
+        {receipt.summary?.source_mode&&<p>来源：{receipt.summary.source_mode==="preset_candidates"?"预置候选":"本次模型预测"} · {receipt.summary.live_inference_occurred?"发生过现场模型推理":"本次无模型请求"}</p>}
+        {receipt.summary?.source_counts&&<p>预置候选 {receipt.summary.source_counts.preset_candidate??0} · 模型预测 {receipt.summary.source_counts.live_model_prediction??0} · 人工修订 {receipt.summary.source_counts.human_revision??0}</p>}
+        {!!receipt.summary?.review_sources?.length&&<p>审核来源：{receipt.summary.review_sources.join("、")}</p>}
         <p>结构检查通过；不表示模型精度或漏检检查通过。完整性依据为保存的人工整图确认。</p>
-        <a href={service.downloadUrl(project, task, job.job.id)} download>下载数据集 ZIP</a>
+        <a href={service.downloadUrl(project, task, job.job.id)} download onClick={()=>onDownload?.(job.job.id)}>下载数据集 ZIP</a>
         <Disclosure title="查看真实检查报告">
           <p>SHA-256：{receipt.sha256}</p>
           <p>完整报告、原图哈希、来源与划分位于 ZIP 的 annotagent 目录。</p>

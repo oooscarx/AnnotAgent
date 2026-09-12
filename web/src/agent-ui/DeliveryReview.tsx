@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnnotationCanvas } from "../components/AnnotationCanvas";
 import type { Annotation } from "../types";
-import type { DeliveryImageView, DeliveryReviewInput, DeliveryReviewSummary, DeliveryService } from "./deliveryService";
+import type { DemoAnnotationOrigin, DeliveryImageView, DeliveryReviewInput, DeliveryReviewSummary, DeliveryService } from "./deliveryService";
+import { demoOriginLabel } from "./demoDeliveryPresentation";
 import {
   sampleVisualSelection,
   type DeliveryFormalResult,
@@ -27,6 +28,7 @@ export type DeliveryReviewProps = {
   onVisualSelection?: (selection: SampleVisualSelection) => void;
   onSampleIssue?: (selection: SampleVisualSelection) => void;
   onFormalSelection?: (selection: FormalVisualSelection) => void;
+  annotationOrigins?:Record<string,Record<string,DemoAnnotationOrigin>>;
 };
 
 const fromUrl = (images: Image[], hasSample: boolean): Selection => {
@@ -41,7 +43,7 @@ const fromUrl = (images: Image[], hasSample: boolean): Selection => {
 export function DeliveryReview({
   service, project, task, images, labels = [], sampleResult = null,
   formalResult: formalResultProp, locked = false, onEditingState,
-  onVisualSelection, onSampleIssue, onFormalSelection,
+  onVisualSelection, onSampleIssue, onFormalSelection, annotationOrigins = {},
 }: DeliveryReviewProps) {
   const [formalResult, setFormalResult] = useState<DeliveryFormalResult | null | undefined>(
     formalResultProp !== undefined ? formalResultProp : service.formalResult ? undefined : null,
@@ -370,6 +372,9 @@ export function DeliveryReview({
       readOnly={selection.mode === "sample" || busy || locked || !formalResult || !formalImage || !service.editObject}
       compactList
     />}
+    {image&&Object.keys(annotationOrigins[image.id]||{}).length>0&&<div className="delivery-source-receipt" aria-label="当前图片候选来源">
+      {Object.entries(annotationOrigins[image.id]).map(([annotationId,origin])=><span key={annotationId}>{annotationId===selected?"当前对象 · ":""}{demoOriginLabel(origin)}</span>)}
+    </div>}
     {selection.mode === "sample" && sampleResult && <div className="actions">
       <button type="button" disabled={!selected} onClick={() => {
         const annotation = sampleImage?.annotations.find((item) => item.id === selected);
