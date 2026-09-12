@@ -40,6 +40,14 @@ def seed_processing(c, root, model, kind):
     nodes = [node for node in draft["nodes"] if node.get("model_profile_binding") or node.get("model_binding")]
     assert len(nodes) == 1
     nodes[0]["model_profile_binding"] = {"model_profile_id": model["id"], "locked": True}
+    nodes[0]["model_binding"] = model["remote_model_id"]
+    # Keep the typed LabelPipeline projection aligned with the authoring graph.
+    # Leaving the built-in mock-classifier identity here makes the normal TEST
+    # Registry purge correctly treat this as a fixture-backed Draft on restart.
+    for pipeline in (draft.get("label_pipeline") or {}).get("label_pipelines", []):
+        for step in pipeline.get("steps", []):
+            if step.get("id") == nodes[0]["id"] and step.get("model_binding"):
+                step["model_binding"]["model_id"] = model["remote_model_id"]
     c.request("PATCH", "/api/workflow-drafts/" + draft_id, draft, extra_headers={"if-match": str(draft["revision"])})
     preview = c.get(tr + "/sample-preview?" + urllib.parse.urlencode({"draft_id": draft_id, "request_id": uid()}))
     budget = preview["conversation_budget"]

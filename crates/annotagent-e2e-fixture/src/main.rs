@@ -572,6 +572,23 @@ async fn openai_completion(
         } else {
             json!({"decision":"draft","kind":if classification {"classification"} else {"bounding_box"},"labels":if classification {json!(["室内","室外"])} else {json!(["cup"])},"multi_label":false,"attributes":{},"boundary_rules":["TEST fixture rule"],"rationale":"TEST scripted Schema proposal, not Live model quality evidence"})
         };
+        if serialized.contains("task-delivery-semantics-v1") && !classification {
+            arguments["delivery"] = json!({
+                "labels":[{
+                    "existing_id":null,
+                    "display_name":"杯子",
+                    "aliases":["cup"],
+                    "include":"真实杯子，包括部分遮挡的杯子",
+                    "exclude":"杯子图案和非杯状容器"
+                }],
+                "training_target":{
+                    "annotation_kind":"bounding_box",
+                    "framework":"ultralytics",
+                    "export_profile":"ultralytics_yolo_detection",
+                    "profile_revision":1
+                }
+            });
+        }
         if request["model"] == "e2e-conversation-classification-schema-background" {
             // TEST transport evidence: echo the actual incoming model, not the
             // browser's currently selected preference after this slow request.
