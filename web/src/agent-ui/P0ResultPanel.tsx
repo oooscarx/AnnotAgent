@@ -1,6 +1,7 @@
 import { AnnotationCanvas } from "../components/AnnotationCanvas";
 import type { Annotation } from "../types";
 import { DeliveryPackage } from "./DeliveryPackage";
+import { terminalSampleProjection } from "./deliveryVisualSelection";
 import {
   DeliveryReview,
   type DeliveryReviewFocus,
@@ -58,28 +59,44 @@ const diagnosticTitle:Record<P0DiagnosticCategory,string>={
   projection_failed:"候选无法投影到原图",
 };
 
+function DiagnosticPanel({view}:{view:Extract<P0ResultPanelView,{kind:"diagnostic"}>}){
+  return <section className="p0-result-diagnostic" aria-label="结果诊断">
+    <h3>{diagnosticTitle[view.category]}</h3><p role="alert">{view.message}</p>
+    {view.image&&<AnnotationCanvas imageUrl={view.image.src} annotations={view.annotations} selectedId={view.focus_candidate_id||undefined} onSelect={()=>{}} onChange={()=>{}} readOnly compactList/>}
+    {view.category==="legal_empty"&&<p>这是模型结果，不是人工负样本确认。只有你检查原图后才能保存“没有目标”。</p>}
+  </section>;
+}
+
 /** The single result surface. Rust owns all progression; this component only renders the current read model. */
 export function P0ResultPanel({service,projectId,taskId,view,onSelection,onSampleIssue,onPackageReady}:P0ResultPanelProps){
   if(view.kind==="preparing")return <section className="p0-result-status" aria-label="当前处理状态">
     <strong>{view.stage}</strong><p role="status">{view.message}</p>{view.elapsed_ms!==null&&<small>已用时 {Math.max(0,Math.round(view.elapsed_ms/1000))} 秒</small>}
   </section>;
-  if(view.kind==="sample_feedback")return <DeliveryReview
-    key={`sample:${view.sample_result.sample_test_id}:${view.sample_result.draft_revision}`}
-    service={service} project={projectId} task={taskId} images={view.images} labels={view.labels}
-    sampleResult={view.sample_result} formalResult={null} preferredMode="sample" fixedMode="sample" focus={view.focus}
-    permissions={permissions(view.actions)} guided onVisualSelection={onSelection} onSampleIssue={onSampleIssue}
-  />;
+  if(view.kind==="sample_feedback"){
+    const projection=terminalSampleProjection(view.sample_result);
+    const terminalCount=projection.result.images.reduce((sum,image)=>sum+image.annotations.length,0);
+    const sourceCount=view.sample_result.images.reduce((sum,image)=>sum+image.annotations.length,0);
+    if(sourceCount>0&&terminalCount===0){
+      const first=view.sample_result.images.find(image=>image.annotations.length>0)!;
+      return <DiagnosticPanel view={{kind:"diagnostic",category:"projection_failed",message:"服务端返回了候选，但没有对象属于当前任务的终端候选投影。中间粗框不会进入样例审核。",image:view.images.find(image=>image.id===first.image_id)||null,annotations:first.annotations,focus_candidate_id:first.annotations[0]?.id||null}}/>;
+    }
+    return <>
+      {projection.rejected.length>0&&<p className="p0-result-projection-warning" role="alert">已隐藏 {projection.rejected.length} 个不属于当前终端投影或引用已失效的候选；有效结果仍可审核。</p>}
+      <DeliveryReview
+        key={`sample:${projection.result.sample_test_id}:${projection.result.draft_revision}`}
+        service={service} project={projectId} task={taskId} images={view.images} labels={view.labels}
+        sampleResult={projection.result} formalResult={null} preferredMode="sample" fixedMode="sample" focus={view.focus}
+        permissions={permissions(view.actions)} guided onVisualSelection={onSelection} onSampleIssue={onSampleIssue}
+      />
+    </>;
+  }
   if(view.kind==="formal_review")return <DeliveryReview
     key={`formal:${view.formal_result.processing_operation_id}:${view.formal_result.batch_id}`}
     service={service} project={projectId} task={taskId} images={view.images} labels={view.labels}
     sampleResult={null} formalResult={view.formal_result} preferredMode="formal" fixedMode="formal" focus={view.focus}
     permissions={permissions(view.actions)} guided onFormalSelection={onSelection}
   />;
-  if(view.kind==="diagnostic")return <section className="p0-result-diagnostic" aria-label="结果诊断">
-    <h3>{diagnosticTitle[view.category]}</h3><p role="alert">{view.message}</p>
-    {view.image&&<AnnotationCanvas imageUrl={view.image.src} annotations={view.annotations} selectedId={view.focus_candidate_id||undefined} onSelect={()=>{}} onChange={()=>{}} readOnly compactList/>}
-    {view.category==="legal_empty"&&<p>这是模型结果，不是人工负样本确认。只有你检查原图后才能保存“没有目标”。</p>}
-  </section>;
+  if(view.kind==="diagnostic")return <DiagnosticPanel view={view}/>;
   return <DeliveryPackage
     service={service} project={projectId} task={taskId} scope={view.scope}
     initialPackageId={view.package_id||undefined} onInspect={()=>{}}

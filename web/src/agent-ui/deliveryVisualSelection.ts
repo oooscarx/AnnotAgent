@@ -37,6 +37,11 @@ export type FormalReviewSelection = {
   save_target:"formal_object"|"formal_image_review";
 };
 export type VisualSelection = SampleVisualSelection|FormalReviewSelection;
+export type RejectedSampleProjection = {
+  image_id:string;
+  annotation_id:string;
+  reason:"not_terminal"|"identity_mismatch"|"stale_reference";
+};
 
 const sampleAnnotationKind=(annotation:Annotation):SampleVisualSelection["annotation"]["kind"]=>{
   if(annotation.value.kind==="bounding_box"||annotation.value.kind==="classification"||annotation.value.kind==="semantic_mask"||annotation.value.kind==="instance_mask")return annotation.value.kind;
@@ -59,6 +64,42 @@ export function sampleVisualSelection(result:DeliverySampleResult,imageId:string
     (selection.annotation.label??null)===(annotation.label??null)&&selection.result_revision===image.result_revision;
   if(!valid)throw new Error("服务端选择引用与当前样例候选不一致");
   return structuredClone(selection);
+}
+
+/**
+ * The review canvas may only consume annotations represented by the canonical
+ * terminal-candidate read model. Legacy aggregate outcomes and stale selection
+ * references stay out of the review layer instead of becoming convincing boxes.
+ */
+export function terminalSampleProjection(result:DeliverySampleResult):{
+  result:DeliverySampleResult;
+  rejected:RejectedSampleProjection[];
+}{
+  const imageIds=result.images.map(image=>image.image_id);
+  const rejected:RejectedSampleProjection[]=[];
+  const duplicateImages=new Set(imageIds.filter((id,index)=>imageIds.indexOf(id)!==index));
+  const images=result.images.map(image=>{
+    const candidateCounts=new Map<string,number>();
+    const annotationCounts=new Map<string,number>();
+    for(const candidate of image.candidates)candidateCounts.set(candidate.candidate_id,(candidateCounts.get(candidate.candidate_id)||0)+1);
+    for(const annotation of image.annotations)annotationCounts.set(annotation.id,(annotationCounts.get(annotation.id)||0)+1);
+    const annotations=image.annotations.filter(annotation=>{
+      if(duplicateImages.has(image.image_id)||annotation.image_id!==image.image_id||annotationCounts.get(annotation.id)!==1){
+        rejected.push({image_id:image.image_id,annotation_id:annotation.id,reason:"identity_mismatch"});return false;
+      }
+      if(candidateCounts.get(annotation.id)!==1){
+        rejected.push({image_id:image.image_id,annotation_id:annotation.id,reason:"not_terminal"});return false;
+      }
+      const candidate=image.candidates.find(item=>item.candidate_id===annotation.id)!;
+      if(candidate.selection){
+        try{sampleVisualSelection(result,image.image_id,annotation);}
+        catch{rejected.push({image_id:image.image_id,annotation_id:annotation.id,reason:"stale_reference"});return false;}
+      }
+      return true;
+    });
+    return {...image,candidates:image.candidates.filter(candidate=>annotations.some(annotation=>annotation.id===candidate.candidate_id)),annotations};
+  });
+  return {result:{...result,images},rejected};
 }
 export function formalVisualSelection(result:DeliveryFormalResult,imageId:string,snapshot:{sha256:string;intent_revision:number;intent_sha256:string;review_revision:number|null},annotation?:Annotation):FormalReviewSelection {
   const image=result.images.find(item=>item.image_id===imageId);if(!image)throw new Error("此图片不属于本任务绑定的 Batch");if(annotation&&!image.child_run_id)throw new Error("没有 child Run 的图片不能引用正式对象");

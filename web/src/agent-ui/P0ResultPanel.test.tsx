@@ -20,3 +20,12 @@ it("keeps a legal empty result distinct from human negative confirmation",()=>{
   expect(html).toContain("不是人工负样本确认");
   expect(html).not.toContain("确认整张图没有目标");
 });
+
+it("moves a non-terminal coarse outcome to read-only projection diagnostics",()=>{
+  const coarse={id:"coarse",image_id:"image",task_id:"objects",label:"cup",value:{kind:"bounding_box" as const,rect:[0,0,1,1] as [number,number,number,number]},attributes:{},source:"model",review_status:"needs_review" as const,provenance:{},created_at:"TEST"};
+  const view:P0ResultPanelView={kind:"sample_feedback",images:[],labels:[],sample_result:{project_id:"project",conversation_id:"conversation",task_id:"task",project_schema_revision:"schema",draft_id:"draft",draft_revision:2,sample_test_id:"sample",images:[{image_id:"image",image_sha256:"pixels",result_revision:"result",candidates:[],annotations:[coarse]}]},focus:null,actions:[]};
+  const html=renderToStaticMarkup(<P0ResultPanel service={service} projectId="project" taskId="task" view={view}/>);
+  expect(html).toContain("候选无法投影到原图");
+  expect(html).toContain("中间粗框不会进入样例审核");
+  expect(html).not.toContain("样例反馈");
+});
