@@ -88,8 +88,24 @@ details p {
   background: var(--aa-primary);
   color: var(--aa-on-primary);
 }
-button.primary:hover:not(:disabled) {
+a.primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: max-content;
+  max-width: 100%;
+  min-height: 32px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  text-decoration: none;
+}
+a.primary:visited {
+  color: var(--aa-on-primary);
+}
+button.primary:hover:not(:disabled),
+a.primary:hover {
   background: var(--aa-primary-hover);
+  color: var(--aa-on-primary);
 }
 .ui-app {
   height: 100dvh;
@@ -1047,7 +1063,7 @@ caption {
 .ui-app .native-image-grid img { width: 100%; height: 140px; object-fit: contain; }
 .ui-app .native-image-grid figcaption { overflow-wrap: anywhere; padding-block: 8px; }
 .ui-app .native-management-tabs { display: flex; flex-wrap: wrap; gap: 16px; }
-.ui-app .native-project-manager a { color: var(--aa-text); text-underline-offset: 3px; }
+.ui-app .native-project-manager a:not(.primary) { color: var(--aa-text); text-underline-offset: 3px; }
 .ui-app .native-management-tabs { margin-block: 12px 24px; }
 .ui-app .native-management-tabs a { display: inline-flex; align-items: center; min-height: 32px; }
 .ui-app .native-export > label { max-width: 560px; margin-block: 20px 12px; }
