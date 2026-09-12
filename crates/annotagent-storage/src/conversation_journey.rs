@@ -1812,6 +1812,22 @@ pub(crate) mod tests {
             .finish_conversation_journey_dispatch(consent.id, recovered, None)
             .unwrap();
         assert!(
+            !reopened
+                .finish_conversation_journey_dispatch(
+                    consent.id,
+                    recovered,
+                    Some("TEST late duplicate failure")
+                )
+                .unwrap(),
+            "a duplicate completion cannot settle or rewrite the terminal dispatch"
+        );
+        let terminal = reopened
+            .conversation_journey_dispatch(&project, conversation, consent.task_id, consent.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(terminal["status"], "settled");
+        assert!(terminal["error"].is_null());
+        assert!(
             reopened
                 .queued_conversation_journey_dispatches()
                 .unwrap()

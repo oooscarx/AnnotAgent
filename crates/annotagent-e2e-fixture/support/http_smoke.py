@@ -333,16 +333,39 @@ def verify_ambiguous_goal(c, project_root, schema_revision, provider, visual_mod
     }
     saved = c.post(tr + "/human-schema-drafts", answer)
     assert saved["task_id"] == task
-    completed = c.poll(execution, lambda value: value.get("sample") is not None or ((value.get("dispatch") or {}).get("status") == "settled" and (value.get("dispatch") or {}).get("error")))
+    # This TEST provider has no artificial delay. Do not register an HTTP observer
+    # while the child work completes: the server-owned worker must consume durable
+    # Builder/Sample receipts even when completion wins that race.
+    time.sleep(5)
+    first_terminal_observation = c.get(execution)
+    assert (first_terminal_observation.get("sample") or {}).get("assistance", {}).get("status") == "completed", first_terminal_observation
+    completed = first_terminal_observation
     assert completed.get("sample") and completed["sample"]["id"] == consent["sample_operation_id"], completed
     sample = c.get(f"/api/workflow-drafts/{completed['sample']['draft_id']}/sample-test?test_id={consent['sample_operation_id']}")["sample_test"]
     assert [(image["image_id"], image["content_hash"]) for image in sample["inputs"]] == [(image["image_id"], image["sha256"]) for image in task_images]
+    calls_before_replays = c.get(tr + "/calls")
+    budget_before_replays = c.get(tr + "/budget")
+    samples_before_replays = c.get(tr + "/sample-operations")
+    workspace_before_replays = c.get(tr + "/workspace")
+    builders_before_replays = workspace_before_replays["builder_operations"]["items"]
+    assert [item["id"] for item in samples_before_replays["items"]] == [consent["sample_operation_id"]], samples_before_replays
+    assert len(builders_before_replays) == 1 and builders_before_replays[0]["operation"]["id"] == consent["builder_operation_id"], builders_before_replays
+    for _ in range(3):
+        assert c.post(tr + "/journey-consents", consent)["consent"]["id"] == consent["id"]
+        replay = c.post(execution)
+        assert replay["sample"]["id"] == consent["sample_operation_id"], replay
+    assert c.get(tr + "/calls") == calls_before_replays
+    assert c.get(tr + "/budget") == budget_before_replays
+    assert c.get(tr + "/sample-operations") == samples_before_replays
+    builders_after_replays = c.get(tr + "/workspace")["builder_operations"]["items"]
+    assert [(item["operation"]["id"], item["operation"]["status"]) for item in builders_after_replays] == [(item["operation"]["id"], item["operation"]["status"]) for item in builders_before_replays]
+    assert c.get(f"/api/workflow-drafts/{completed['sample']['draft_id']}/sample-test?test_id={consent['sample_operation_id']}")["sample_test"] == sample
     delivery = c.get(tr + "/delivery-intent")
     assert delivery["missing_slots"] == []
     assert delivery["saved"]["intent"]["training_target"]["annotation_kind"] == "bounding_box"
     final_clarification = c.get(tr + "/calls/" + clarification["id"] + "/clarification")
     assert final_clarification["status"] == "applied" and final_clarification["schema_draft_id"] == saved["id"]
-    return {"conversation_id": conversation, "task_id": task, "task_root": tr, "consent_id": consent["id"], "schema_call_id": clarification["id"], "question": clarification["question"], "question_count": 1, "calls_before_answer": len(first_calls), "sample_before_answer": False, "answered_schema_id": saved["id"], "delivery_revision": delivery["saved"]["revision"], "sample_operation_id": completed["sample"]["id"], "sample_image_ids": [image["image_id"] for image in sample["inputs"]], "visual_model_id": visual_model["id"]}
+    return {"conversation_id": conversation, "task_id": task, "task_root": tr, "consent_id": consent["id"], "schema_call_id": clarification["id"], "question": clarification["question"], "question_count": 1, "calls_before_answer": len(first_calls), "sample_before_answer": False, "answered_schema_id": saved["id"], "delivery_revision": delivery["saved"]["revision"], "sample_operation_id": completed["sample"]["id"], "sample_image_ids": [image["image_id"] for image in sample["inputs"]], "visual_model_id": visual_model["id"], "immediate_provider_delay_ms": 0, "observer_registered_after_terminal": True, "duplicate_completion_observations": 3, "sample_operation_count_after_replays": len(samples_before_replays["items"]), "builder_operation_count_after_replays": len(builders_after_replays), "budget_unchanged_after_replays": True, "formal_run_created": False}
 
 
 def verify_stop(c, cr, schema_revision, provider, normal_model):

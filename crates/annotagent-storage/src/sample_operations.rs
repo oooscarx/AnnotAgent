@@ -252,6 +252,16 @@ mod tests {
         );
         store.start_sample_operation("same-request").unwrap();
         store.finish_sample_operation("same-request", None).unwrap();
+        let terminal = store.sample_operation("same-request").unwrap().unwrap();
+        store.finish_sample_operation("same-request", None).unwrap();
+        store
+            .finish_sample_operation("same-request", Some("TEST late duplicate failure"))
+            .unwrap();
+        assert_eq!(
+            store.sample_operation("same-request").unwrap().unwrap(),
+            terminal,
+            "duplicate completion delivery cannot rewrite a terminal Sample receipt"
+        );
         assert!(
             !store
                 .reserve_sample_operation(&operation("same-request"))
