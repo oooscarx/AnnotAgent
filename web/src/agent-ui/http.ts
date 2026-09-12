@@ -99,7 +99,7 @@ export class HttpAdapter implements WorkspaceAdapter {
     const value=workspace.mainline;
     if(!value||value.contract_version!=="mainline-task-v1")throw new Error("服务器尚未提供 Mainline Task read model；不会猜测下一步。");
     if(value.project_id!==task.project||value.task_id!==task.id||value.conversation_id!==task.conversationId||value.project_owner_id!==this.projects.get(task.project)?.project_owner_id)throw new Error("Mainline Task read model 的所有权不匹配。");
-    const diagnosticCodes=new Set(["model_weights_missing","model_capability_unavailable","provider_request_not_sent","provider_outcome_unknown","model_response_invalid_structure","legal_empty_detection","candidate_projection_failed"]);
+    const diagnosticCodes=new Set(["model_weights_missing","model_capability_unavailable","provider_request_not_sent","provider_outcome_unknown","model_response_invalid_structure","legal_empty_detection","candidate_projection_failed","authorization_expired","authorization_revoked","task_call_budget_exhausted"]);
     for(const diagnostic of value.result_diagnostics||[]){
       if(!diagnosticCodes.has(diagnostic.code)||!diagnostic.source?.id||diagnostic.automatic_retry!==false||diagnostic.preserves_existing_results!==true||diagnostic.safe_action?.method!=="GET"||typeof diagnostic.safe_action.url!=="string"||!diagnostic.safe_action.url.startsWith("/api/"))throw new Error("服务器返回了不完整或不可安全呈现的结果诊断；不会猜测修复动作。");
     }

@@ -57,6 +57,9 @@ const diagnosticCopy:Record<MainlineResultDiagnostic["code"],{title:string;detai
   model_response_invalid_structure:{title:"模型响应结构无法使用",detail:"Provider 已返回响应，但结构校验失败。原回执和已有结果会保留；再次调用需要新的授权。"},
   legal_empty_detection:{title:"这张样例没有检测到候选",detail:"这是一次合法的空检测结果，不等于人工确认的负样本。请查看原图后再决定如何处理。"},
   candidate_projection_failed:{title:"候选无法投影到原图",detail:"模型产生了候选，但其 Artifact 无法安全映射到原图。其他有效结果会保留，不会伪造替代框。"},
+  authorization_expired:{title:"当前模型授权已过期",detail:"原授权范围已过有效期，服务端已停止继续调用。只读检查不会续期；再次执行必须重新确认当前范围。"},
+  authorization_revoked:{title:"当前模型授权已撤销",detail:"原授权已被明确撤销，服务端不会恢复或继续消费。已有调用回执和结果仍保留。"},
+  task_call_budget_exhausted:{title:"当前任务的模型调用额度已用完",detail:"此任务已达到获准的调用上限。服务端不会自动增加额度；已有费用和未知结果仍计入原账本。"},
 };
 
 /** Select only a diagnostic tied to the task's current failing source. */
@@ -73,11 +76,16 @@ export function currentResultDiagnostic(task:Task):MainlineResultDiagnostic|unde
   }
   const setupRequests=(task.mainline?.capability_readiness as {setup_requests?:{id:string;status:string}[]}|undefined)?.setup_requests||[];
   const requiredIds=new Set(setupRequests.filter(item=>item.status==="required").map(item=>item.id));
+  // A task-scoped grant is the immediate execution boundary. Model setup cannot
+  // revive an expired/revoked grant or increase an exhausted call budget.
+  const authorization=[...diagnostics].reverse().find(item=>item.source.kind==="call_grant");
+  if(authorization)return authorization;
+  const currentReceipts=new Set((task.receipts||[]).filter(item=>["failed","in_doubt","invalid_result"].includes(item.status)).map(item=>item.id));
+  const modelCall=[...diagnostics].reverse().find(item=>item.source.kind==="model_call"&&currentReceipts.has(item.source.id));
+  if(modelCall)return modelCall;
   const capability=[...diagnostics].reverse().find(item=>item.source.kind==="capability_setup_request"&&requiredIds.has(item.source.id));
   if(capability)return capability;
-  if(task.phase!=="failed"&&task.phase!=="outcome_unknown")return undefined;
-  const currentReceipts=new Set((task.receipts||[]).filter(item=>["failed","in_doubt","invalid_result"].includes(item.status)).map(item=>item.id));
-  return [...diagnostics].reverse().find(item=>item.source.kind==="model_call"&&currentReceipts.has(item.source.id));
+  return undefined;
 }
 
 /**

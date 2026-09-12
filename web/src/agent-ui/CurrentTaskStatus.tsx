@@ -18,6 +18,18 @@ const actionLabel: Record<CurrentTaskAction["kind"], string> = {
   download_package: "下载训练数据包",
 };
 
+const diagnosticActionLabel:Record<string,string>={
+  open_model_setup:"查看缺失权重的模型",
+  inspect_capability_setup:"检查模型能力要求",
+  fix_configuration_and_authorize_new_attempt:"检查请求配置",
+  inspect_request_failure_before_new_authorization:"查看未发送请求记录",
+  inspect_receipt_and_resolve_unknown:"核实远端请求回执",
+  inspect_receipt_before_new_authorization:"查看无效响应记录",
+  inspect_empty_result:"查看空结果证据",
+  inspect_saved_artifact:"查看投影失败证据",
+  inspect_task_authorization_budget:"查看任务授权与预算",
+};
+
 export function CurrentTaskStatus({
   presentation,
   approval,
@@ -67,6 +79,9 @@ export function CurrentTaskStatus({
       )}
 
       <div className="current-task-actions">
+        {presentation.diagnostic && <a className="diagnostic-action" href={presentation.diagnostic.safe_action.url} target="_blank" rel="noreferrer">
+          <Icon name="arrow-right" size={16}/>{diagnosticActionLabel[presentation.diagnostic.safe_action.id]||"打开只读诊断记录"}
+        </a>}
         {presentation.clarification && (
           <div className="current-task-choices" aria-label="选择标注输出类型">
             {presentation.clarification.choices.map((choice) => (

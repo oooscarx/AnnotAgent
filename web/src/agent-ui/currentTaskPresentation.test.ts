@@ -234,6 +234,9 @@ describe("single current-task presentation", () => {
     ["model_response_invalid_structure","model_call"],
     ["legal_empty_detection","sample_test"],
     ["candidate_projection_failed","sample_test"],
+    ["authorization_expired","call_grant"],
+    ["authorization_revoked","call_grant"],
+    ["task_call_budget_exhausted","call_grant"],
   ] as const)("presents the current typed diagnostic %s without inventing a retry",(code,sourceKind)=>{
     const resultDiagnostic=diagnostic(code,sourceKind);
     const mainline=view({
@@ -247,6 +250,28 @@ describe("single current-task presentation", () => {
         : {};
     const result=selectCurrentTaskPresentation(task(mainline,overrides));
     expect(result).toMatchObject({kind:"blocked",diagnostic:{code,automatic_retry:false,preserves_existing_results:true}});
+    expect(result.primary).toBeUndefined();
+  });
+
+  it("keeps a task-scoped authorization blocker ahead of broader model setup",()=>{
+    const expired=diagnostic("authorization_expired","call_grant");
+    const missingWeights=diagnostic("model_weights_missing","capability_setup_request");
+    const result=selectCurrentTaskPresentation(task(view({
+      result_diagnostics:[expired,missingWeights],
+      capability_readiness:{setup_requests:[{id:"setup-1",status:"required"}]},
+    })));
+    expect(result).toMatchObject({kind:"blocked",diagnostic:{code:"authorization_expired"}});
+    expect(result.primary).toBeUndefined();
+  });
+
+  it("keeps a current failed model receipt ahead of a broader setup request",()=>{
+    const invalid=diagnostic("model_response_invalid_structure","model_call");
+    const missingWeights=diagnostic("model_weights_missing","capability_setup_request");
+    const result=selectCurrentTaskPresentation(task(view({
+      result_diagnostics:[invalid,missingWeights],
+      capability_readiness:{setup_requests:[{id:"setup-1",status:"required"}]},
+    }),{phase:"idle",receipts:[{id:"call-1",title:"invalid response",status:"failed"}]}));
+    expect(result).toMatchObject({kind:"blocked",diagnostic:{code:"model_response_invalid_structure"}});
     expect(result.primary).toBeUndefined();
   });
 

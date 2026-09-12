@@ -323,6 +323,9 @@ export function AgentPreviewApp({
     model_response_invalid_structure:"invalid_structure",
     legal_empty_detection:"legal_empty",
     candidate_projection_failed:"projection_failed",
+    authorization_expired:"authorization_blocked",
+    authorization_revoked:"authorization_blocked",
+    task_call_budget_exhausted:"authorization_blocked",
   } as const)[currentTask.diagnostic.code];
   const p0ResultView: P0ResultPanelView | undefined = !fixture&&task&&packageScope&&(currentTask?.kind==="ready_to_deliver"||currentTask?.kind==="delivered")
     ? {kind:"package",scope:packageScope,package_id:task.mainline?.completion.package_id||null}

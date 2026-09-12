@@ -22,7 +22,7 @@ export type P0ResultAction={
   available:boolean;
   reason:string|null;
 };
-export type P0DiagnosticCategory="capability_missing"|"provider_not_received"|"outcome_unknown"|"invalid_structure"|"legal_empty"|"projection_failed";
+export type P0DiagnosticCategory="capability_missing"|"provider_not_received"|"outcome_unknown"|"invalid_structure"|"legal_empty"|"projection_failed"|"authorization_blocked";
 export type P0ResultPanelView=
   |{kind:"preparing";stage:string;message:string;elapsed_ms:number|null}
   |{kind:"sample_feedback";images:ResultImage[];labels:{stable_id:string;display_name:string}[];sample_result:DeliverySampleResult;focus:DeliveryReviewFocus|null;actions:P0ResultAction[];diagnostics?:MainlineResultDiagnostic[]}
@@ -59,6 +59,7 @@ const diagnosticTitle:Record<P0DiagnosticCategory,string>={
   invalid_structure:"模型返回结构无法使用",
   legal_empty:"本次没有检测到候选",
   projection_failed:"候选无法投影到原图",
+  authorization_blocked:"当前授权不能继续",
 };
 const sampleDiagnosticCopy:Partial<Record<MainlineResultDiagnostic["code"],string>>={
   legal_empty_detection:"没有检测到候选；这不是人工确认的负样本。",

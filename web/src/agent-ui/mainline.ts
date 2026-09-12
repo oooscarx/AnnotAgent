@@ -16,12 +16,16 @@ export type MainlineResultDiagnosticCode=
   |"provider_outcome_unknown"
   |"model_response_invalid_structure"
   |"legal_empty_detection"
-  |"candidate_projection_failed";
+  |"candidate_projection_failed"
+  |"authorization_expired"
+  |"authorization_revoked"
+  |"task_call_budget_exhausted";
 export type MainlineResultDiagnostic={
   code:MainlineResultDiagnosticCode;category:string;state:"blocked"|"completed";
-  source:{kind:"model_call"|"sample_test"|"capability_setup_request";id:string;image_index?:number;role?:string};
+  source:{kind:"model_call"|"sample_test"|"capability_setup_request"|"call_grant";id:string;image_index?:number;role?:string};
   stage?:string;failure?:{stage?:string;category?:string;message?:string;http_status?:number|null}|null;
   provider_received?:boolean|null;failure_classes?:string[];human_negative_recorded?:boolean;
+  reason?:string;scope?:{task_id?:string;maximum_calls?:number;used_calls?:number;expires_at?:string;revoked?:boolean};
   automatic_retry:false;preserves_existing_results:true;
   safe_action:{id:string;method:"GET";url:string};
 };
