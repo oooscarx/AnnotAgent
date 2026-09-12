@@ -3,11 +3,13 @@ import datetime
 import http.cookiejar
 import json
 from pathlib import Path
+import struct
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import zlib
 
 
 def uid():
@@ -104,14 +106,21 @@ def verify(c, manifest, root):
     project = "TEST-agent-ui-" + uid()
     c.post("/api/projects", {"id": project, "yaml": "version: 1\nproject:\n  name: TEST Agent UI HTTP fixture\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n"})
     p = f"/api/projects/{project}"
-    c.request("PUT", p + "/model-bindings", {"bindings": [{"capability": "image_classification", "role": "classification", "match_kind": "capability", "model_profile_id": model["id"], "locked": False}]})
-    c.request("POST", p + "/image-upload?name=TEST-synthetic.png", (root / "examples/robocup/images/synthetic-robocup.png").read_bytes())
+    c.request("PUT", p + "/model-bindings", {"bindings": [{"capability": "vision_language", "role": "primary_inference", "match_kind": "role", "model_profile_id": model["id"], "locked": True}]})
+    png = (root / "examples/robocup/images/synthetic-robocup.png").read_bytes()
+    task_images = []
+    for index in range(4):
+        chunk = b"tEXt" + f"TEST\x00p0-autonomy-{index}".encode()
+        image = png[:-12] + struct.pack(">I", len(chunk) - 4) + chunk + struct.pack(">I", zlib.crc32(chunk)) + png[-12:]
+        imported = c.request("POST", p + f"/image-upload?name=TEST-p0-{index}.png", image)
+        assert len(imported["images"]) == 1, imported
+        task_images.append({"image_id": imported["images"][0]["image_id"], "sha256": imported["images"][0]["content_hash"]})
     conversation = c.post(p + "/conversations")["conversation_id"]
     cr = p + "/conversations/" + conversation
     preference = c.get(cr + "/agent-model")
     c.post(cr + "/agent-model", {"request_id": uid(), "expected_revision": preference["revision"], "model_profile_id": model["id"]})
     schema_revision = c.get(p + "/goal")["revision"]
-    command = {"message": {"id": uid(), "text": "按室内和室外给图片分类", "image": None}, "schema_revision": schema_revision, "mode": "plan"}
+    command = {"message": {"id": uid(), "text": "框出这四张图片里的杯子并交付 YOLO Detection 数据集", "image": None}, "task_images": task_images, "schema_revision": schema_revision, "mode": "plan"}
     receipt = c.post(cr + "/send", command)
     assert c.post(cr + "/send", command) == receipt
     task = receipt["task_id"]
@@ -122,25 +131,33 @@ def verify(c, manifest, root):
     assert thread["items"][0]["source"] == "persisted_user_message"
     workspace = c.get(tr + "/workspace")
     assert workspace["calls"] == [] and workspace["sample_operations"] == []
-    assert workspace["actions"]["approve"]["available"] is False
+    actions = workspace["mainline"]["available_actions"]
+    assert len(actions) == 1 and actions[0]["id"] == "build_and_test_pipeline", actions
+    assert actions[0]["url"] == tr + "/journey-preview"
+    assert len(actions[0]["scope"]["images"]) == 4
+    assert actions[0]["scope"]["maximum_sample_images"] == 3
     c.request("GET", cr + "/tasks/" + uid() + "/workspace", expected=[400, 404])
     c.get(tr + "/message-queue")
     settings = c.get("/api/settings?view=agent-ui")
     budget = {**settings["sections"]["usage_budget"]["future_run_budget"], "max_requests": 11}
     c.request("PATCH", "/api/settings", {"expected_revision": settings["revision"], "budget": budget})
     c.request("PATCH", "/api/settings", {"expected_revision": "TEST-stale", "budget": budget}, expected=[409])
-    # Journey is explicit independent approval, not an authority granted by Send.
-    query = urllib.parse.urlencode({"consent_id": uid(), "schema_call_id": uid(), "builder_operation_id": uid(), "sample_operation_id": uid(), "planner_model_id": model["id"], "allowed_models": json.dumps(["model-profile:" + model["id"]])})
-    consent = c.get(tr + "/journey-preview?" + query)["consent"]
+    # One explicit consent starts the bounded durable queue. GET is passive and
+    # the fixture never calls the legacy execution POST for this P0 path.
+    consent = c.get(tr + "/journey-preview")["consent"]
+    assert len(consent["images"]) == 3
     consent["allow_unknown_cost"] = True
     consent["schema_proposal"]["allow_unknown_cost"] = True
     c.post(tr + "/journey-consents", consent)
     execution = tr + "/journey-consents/" + consent["id"] + "/execution"
-    c.post(execution)
     finished = c.poll(execution, lambda v: (v.get("sample") or {}).get("assistance", {}).get("status") == "completed" or ((v.get("dispatch") or {}).get("status") == "settled" and (v.get("dispatch") or {}).get("error")))
     assert finished.get("sample") and finished["sample"]["status"] == "succeeded", finished
     record = c.get(f"/api/workflow-drafts/{finished['sample']['draft_id']}/sample-test?test_id={consent['sample_operation_id']}")["sample_test"]
-    selection = {"draft_id": record["draft_id"], "sample_test_id": record["id"], "limit": 1}
+    assert 0 < len(record["inputs"]) <= 3
+    # Delivery processing owns the complete four-image Task scope. The prior
+    # Journey consent covered only the three-image sample and cannot be reused
+    # as a hidden limit on formal processing.
+    selection = {"draft_id": record["draft_id"], "sample_test_id": record["id"]}
     approval = c.get(p + "/processing-preview?" + urllib.parse.urlencode(selection))
     processing = c.post(p + "/processing-operations", {"request_id": uid(), "selection": selection, "expected_revision": approval["revision"], "authorization_fingerprint": approval["authorization_fingerprint"]})
     batch = c.poll("/api/batches/" + processing["batch_id"], lambda value: value["batch"]["status"] not in ["pending", "running", "pausing"])
@@ -152,9 +169,9 @@ def verify(c, manifest, root):
     projection = record["report"]["samples"][0]["projection"]
     candidate = (projection["final_candidates"] or [entry["candidate"] for entry in projection["review_candidates"]])[0]
     image = record["inputs"][0]
-    human = {"id": uid(), "task_id": task, "conversation_id": conversation, "sample_test_id": record["id"], "image_id": image["image_id"], "content_hash": image["content_hash"], "outcome_id": candidate["outcome"]["id"], "expected_feedback_sequence": 0, "reason_code": "wrong_target", "question": "TEST confirm saved sample classification", "resume_checkpoint_ref": record["draft_id"]}
+    human = {"id": uid(), "task_id": task, "conversation_id": conversation, "sample_test_id": record["id"], "image_id": image["image_id"], "content_hash": image["content_hash"], "outcome_id": candidate["outcome"]["id"], "expected_feedback_sequence": 0, "reason_code": "poor_boundary", "question": "TEST confirm saved sample box", "resume_checkpoint_ref": record["draft_id"]}
     c.post(tr + "/human-requests", human)
-    answer = {"revision_id": uid(), "sample_test_id": record["id"], "image_id": image["image_id"], "sequence": 1, "reason": "wrong_target", "outcome_id": candidate["outcome"]["id"], "corrected_value": {"kind": "classification", "labels": ["室内"]}, "corrected_label": "室内", "note": "TEST saved answer", "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
+    answer = {"revision_id": uid(), "sample_test_id": record["id"], "image_id": image["image_id"], "sequence": 1, "reason": "poor_boundary", "outcome_id": candidate["outcome"]["id"], "corrected_value": candidate["outcome"]["value"], "corrected_label": candidate["outcome"]["label"], "note": "TEST saved answer", "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
     answer_path = tr + "/human-requests/" + human["id"] + "/answer"
     saved = c.post(answer_path, {"answer": answer})
     replay = c.post(answer_path, {"answer": answer})
@@ -170,23 +187,26 @@ def verify(c, manifest, root):
         supplements.append(queued["message"]["id"])
     queue_root = tr + "/message-queue/"
     c.post(queue_root + supplements[1] + "/cancel")
-    preview = c.get(queue_root + supplements[0] + "/schema-preview")
-    queue_consent = {key: preview[key] for key in ["model_id", "scope_hash", "request_hash", "previous_grant_id", "maximum_calls", "expires_at"]}
-    queue_consent.update(call_id=uid(), allow_unknown_cost=True)
-    queued_receipt = c.post(queue_root + supplements[0] + "/schema-proposals", queue_consent)
-    assert c.post(queue_root + supplements[0] + "/schema-proposals", queue_consent) == queued_receipt
-    c.get(queue_root + supplements[0] + "/schema-authorization")
+    preview = c.request("GET", queue_root + supplements[0] + "/schema-preview", expected=[200, 409])
+    if preview.get("code") == "human_input_pending":
+        assert preview["admitted"] is False
+        assert preview["suggested_action"] == "answer_human_then_retry_same_command"
+    else:
+        queue_consent = {key: preview[key] for key in ["model_id", "scope_hash", "request_hash", "previous_grant_id", "maximum_calls", "expires_at"]}
+        queue_consent.update(call_id=uid(), allow_unknown_cost=True)
+        queued_receipt = c.post(queue_root + supplements[0] + "/schema-proposals", queue_consent)
+        assert c.post(queue_root + supplements[0] + "/schema-proposals", queue_consent) == queued_receipt
+        c.get(queue_root + supplements[0] + "/schema-authorization")
     c.get(tr + "/message-queue")
     c.get(tr + "/calls")
     c.get(tr + "/workspace")
     c.get(p + "/export-readiness")
-    # Export the actual accepted annotation produced by Processing.
+    # The P0 delivery still has whole-image reviews. Export executes its real
+    # readiness gate and must not turn model candidates into accepted labels.
     export = c.post(p + "/export", {"format": "native", "conversation": {"id": uid(), "conversation_id": conversation, "task_id": task}, "background": True})
     export = c.poll(tr + "/exports/" + export["job"]["id"], lambda value: not value["active"])
-    assert export["job"]["error"] is None, export
-    delivery = export["job"]["result"]["delivery"]
-    download = c.request("GET", p + "/exports/" + delivery["id"] + "/download", raw=True)
-    assert download["bytes"] == delivery["bytes"]
+    assert "Resolve pending reviews" in export["job"]["error"], export
+    assert export["job"]["result"] is None
     c.get(tr + "/exports")
     stop = verify_stop(c, cr, schema_revision, provider, model)
     pending = {**human, "id": uid(), "expected_feedback_sequence": 1, "question": "TEST pending answer for frontend adapter"}
@@ -205,7 +225,7 @@ def verify(c, manifest, root):
     assert first_page["next_cursor"] is not None
     second_page = c.get(cr + "/task-navigation?limit=1&cursor=" + str(first_page["next_cursor"]))
     assert first_page["items"][0]["task_id"] != second_page["items"][0]["task_id"]
-    return {"project": project, "conversation_id": conversation, "task_id": task, "task_root": tr, "model_profile_id": model["id"], "provider_id": provider["id"], "execution_url": execution, "export": export, "run_id": run_id, "stop": stop, "answered_request_id": human["id"], "pending_request_id": pending["id"], "plan_task_id": plan["task_id"], "controls": controls, "saved_plan": saved_plan, "bbox": bbox, "manual_stop": manual_stop, "trace": str(Path(manifest["workspace"]) / "HTTP_TRACE.json")}
+    return {"project": project, "conversation_id": conversation, "task_id": task, "task_root": tr, "model_profile_id": model["id"], "provider_id": provider["id"], "execution_url": execution, "p0_autonomy": {"task_images": task_images, "task_image_count": len(task_images), "sample_image_count": len(record["inputs"]), "consent_id": consent["id"], "schema_call_id": consent["schema_proposal"]["call_id"], "builder_operation_id": consent["builder_operation_id"], "sample_operation_id": consent["sample_operation_id"], "draft_id": record["draft_id"], "sample_status": record["status"], "execution_dispatch": finished["dispatch"]}, "export": export, "run_id": run_id, "stop": stop, "answered_request_id": human["id"], "pending_request_id": pending["id"], "plan_task_id": plan["task_id"], "controls": controls, "saved_plan": saved_plan, "bbox": bbox, "manual_stop": manual_stop, "trace": str(Path(manifest["workspace"]) / "HTTP_TRACE.json")}
 
 
 def verify_stop(c, cr, schema_revision, provider, normal_model):
@@ -266,6 +286,12 @@ def restart_snapshot(c, manifest):
     snapshot = {suffix: c.get(tr + suffix) for suffix in ["/calls", "/budget", "/message-queue", "/human-requests", "/thread"]}
     snapshot["stop"] = c.get(manifest["stop"]["request_url"])
     snapshot["run_events"] = c.get("/api/runs/" + manifest["run_id"] + "/events")
+    if manifest.get("p0_autonomy"):
+        p0 = manifest["p0_autonomy"]
+        snapshot["p0_autonomy"] = {
+            "execution": c.get(manifest["execution_url"]),
+            "sample": c.get(f"/api/workflow-drafts/{p0['draft_id']}/sample-test?test_id={p0['sample_operation_id']}"),
+        }
     for kind, scene in manifest.get("controls", {}).items():
         snapshot[kind] = {"budget": c.get(scene["task_root"] + "/budget"), "batch": c.get(scene["batch_url"]), "actions": c.get(scene["task_root"] + "/workspace")["resume_actions"]}
     if manifest.get("bbox"):
