@@ -251,6 +251,20 @@ fn owned(
     }
     Ok(())
 }
+
+pub(crate) fn migrate_dispatch_queue(db: &rusqlite::Connection) -> Result<(), StorageError> {
+    let upgraded: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('conversation_journey_dispatch') WHERE name='project_route_id')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !upgraded {
+        db.execute_batch(include_str!(
+            "../../../migrations/0070_conversation_journey_queue.sql"
+        ))?;
+    }
+    Ok(())
+}
 pub(crate) fn read(
     db: &rusqlite::Connection,
     task: Uuid,
@@ -355,7 +369,96 @@ impl SqliteStore {
             ids.into_iter().map(|id| Uuid::parse_str(&id).map_err(|_| invalid("Invalid saved journey identity"))).collect()
         })
     }
-    /// Claim only on explicit POST. Restart recovery never dispatches inference.
+    /// Persist an explicit execution intent before waiting for worker capacity.
+    /// Repeated requests keep the first queue identity and cannot widen consent.
+    pub fn queue_conversation_journey_dispatch(
+        &self,
+        project: &str,
+        project_route_id: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+        queue_id: Uuid,
+    ) -> Result<bool, StorageError> {
+        self.with_connection(|db| {
+            let tx = db.unchecked_transaction()?;
+            owned(&tx, project, conversation, task)?;
+            let saved = read(&tx, task, id)?.ok_or_else(|| invalid("Journey consent not found"))?;
+            if queue_id.is_nil()
+                || project_route_id.trim().is_empty()
+                || project_route_id.len() > 256
+                || saved.revoked
+                || saved.consent.expires_at <= Utc::now()
+            {
+                return Err(invalid("Journey consent is revoked or expired"));
+            }
+            if saved.effective_consent().repair_after_answer.is_some() {
+                return Err(invalid("Journey is waiting for its exact acknowledged human answer"));
+            }
+            let changed = tx.execute(
+                "INSERT INTO conversation_journey_dispatch(consent_id,attempt_id,project_route_id,status,updated_at) VALUES(?1,?2,?3,'queued',?4) ON CONFLICT(consent_id) DO UPDATE SET attempt_id=excluded.attempt_id,project_route_id=excluded.project_route_id,status='queued',error=NULL,updated_at=excluded.updated_at WHERE conversation_journey_dispatch.status IN ('settled','interrupted')",
+                params![id.to_string(), queue_id.to_string(), project_route_id, Utc::now().to_rfc3339()],
+            )?;
+            tx.commit()?;
+            Ok(changed == 1)
+        })
+    }
+
+    /// Claim one previously persisted execution intent. The queue CAS ensures
+    /// duplicate HTTP requests and restart scanners cannot run two workers.
+    pub fn claim_queued_conversation_journey_dispatch(
+        &self,
+        id: Uuid,
+        attempt: Uuid,
+    ) -> Result<bool, StorageError> {
+        self.with_connection(|db| {
+            if attempt.is_nil() {
+                return Err(invalid("Invalid Journey worker attempt"));
+            }
+            Ok(db.execute(
+                "UPDATE conversation_journey_dispatch SET attempt_id=?2,status='running',error=NULL,updated_at=?3 WHERE consent_id=?1 AND status='queued'",
+                params![id.to_string(), attempt.to_string(), Utc::now().to_rfc3339()],
+            )? == 1)
+        })
+    }
+
+    pub fn queued_conversation_journey_dispatches(
+        &self,
+    ) -> Result<Vec<(String, Uuid, Uuid, Uuid)>, StorageError> {
+        self.with_connection(|db| {
+            let mut statement = db.prepare(
+                "SELECT d.project_route_id,t.conversation_id,t.id,c.id FROM conversation_journey_dispatch d JOIN conversation_journey_consents c ON c.id=d.consent_id JOIN conversation_tasks t ON t.id=c.task_id WHERE d.status='queued' AND d.project_route_id IS NOT NULL AND c.revoked=0 AND json_extract(c.input_json,'$.expires_at')>?1 ORDER BY d.updated_at,c.id LIMIT 64",
+            )?;
+            let rows = statement.query_map([Utc::now().to_rfc3339()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })?;
+            rows.map(|row| {
+                let (project, conversation, task, id) = row?;
+                let parse = |value: &str| Uuid::parse_str(value).map_err(|_| invalid("Invalid queued Journey identity"));
+                Ok((project, parse(&conversation)?, parse(&task)?, parse(&id)?))
+            }).collect()
+        })
+    }
+
+    pub fn touch_conversation_journey_dispatch(
+        &self,
+        id: Uuid,
+        attempt: Uuid,
+    ) -> Result<bool, StorageError> {
+        self.with_connection(|db| {
+            Ok(db.execute(
+                "UPDATE conversation_journey_dispatch SET updated_at=?3 WHERE consent_id=?1 AND attempt_id=?2 AND status='running'",
+                params![id.to_string(), attempt.to_string(), Utc::now().to_rfc3339()],
+            )? == 1)
+        })
+    }
+
+    /// Legacy direct claim retained for application/storage tests and old callers.
     pub fn claim_conversation_journey_dispatch(
         &self,
         project: &str,
@@ -374,7 +477,7 @@ impl SqliteStore {
             if saved.effective_consent().repair_after_answer.is_some() {
                 return Err(invalid("Journey is waiting for its exact acknowledged human answer"));
             }
-            let changed = tx.execute("INSERT INTO conversation_journey_dispatch(consent_id,attempt_id,status,updated_at) VALUES(?1,?2,'running',?3) ON CONFLICT(consent_id) DO UPDATE SET attempt_id=excluded.attempt_id,status='running',error=NULL,updated_at=excluded.updated_at WHERE conversation_journey_dispatch.status!='running'",params![id.to_string(),attempt.to_string(),Utc::now().to_rfc3339()])?;
+            let changed = tx.execute("INSERT INTO conversation_journey_dispatch(consent_id,attempt_id,project_route_id,status,updated_at) VALUES(?1,?2,NULL,'running',?3) ON CONFLICT(consent_id) DO UPDATE SET attempt_id=excluded.attempt_id,status='running',error=NULL,updated_at=excluded.updated_at WHERE conversation_journey_dispatch.status NOT IN ('running','queued')",params![id.to_string(),attempt.to_string(),Utc::now().to_rfc3339()])?;
             if changed == 1 {
                 tx.execute("UPDATE conversation_answer_delivery SET status='dispatched',error=NULL WHERE consent_id=?1",[id.to_string()])?;
             }
@@ -392,7 +495,7 @@ impl SqliteStore {
         self.with_connection(|db| {
             owned(db, project, conversation, task)?;
             read(db, task, id)?.ok_or_else(|| invalid("Journey consent not found"))?;
-            Ok(db.query_row("SELECT attempt_id,status,error,updated_at FROM conversation_journey_dispatch WHERE consent_id=?1",[id.to_string()],|row|Ok(serde_json::json!({"attempt_id":row.get::<_,String>(0)?,"status":row.get::<_,String>(1)?,"error":row.get::<_,Option<String>>(2)?,"updated_at":row.get::<_,String>(3)?}))).optional()?)
+            Ok(db.query_row("SELECT attempt_id,status,error,updated_at,project_route_id FROM conversation_journey_dispatch WHERE consent_id=?1",[id.to_string()],|row|Ok(serde_json::json!({"attempt_id":row.get::<_,String>(0)?,"status":row.get::<_,String>(1)?,"error":row.get::<_,Option<String>>(2)?,"updated_at":row.get::<_,String>(3)?,"project_route_id":row.get::<_,Option<String>>(4)?}))).optional()?)
         })
     }
     /// Attempt CAS prevents an obsolete worker from settling a newer dispatch.
@@ -434,7 +537,9 @@ impl SqliteStore {
     }
     pub fn recover_conversation_journey_dispatches(&self) -> Result<(), StorageError> {
         self.with_connection(|db| {
-            db.execute("UPDATE conversation_journey_dispatch SET status='interrupted',error='Server restarted. Read saved child receipts before explicitly retrying; no automatic inference was started.',updated_at=?1 WHERE status='running'",[Utc::now().to_rfc3339()])?;
+            let now = Utc::now().to_rfc3339();
+            db.execute("UPDATE conversation_journey_dispatch SET status='queued',error='Server restarted after this execution intent was saved. Existing child receipts will be inspected before any continuation.',updated_at=?1 WHERE status='running' AND project_route_id IS NOT NULL",[&now])?;
+            db.execute("UPDATE conversation_journey_dispatch SET status='interrupted',error='Server restarted. Read saved child receipts before explicitly retrying; no automatic inference was started.',updated_at=?1 WHERE status='running' AND project_route_id IS NULL",[&now])?;
             Ok(())
         })
     }
@@ -1606,6 +1711,111 @@ pub(crate) mod tests {
                     Uuid::new_v4()
                 )
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn explicit_execution_queue_is_durable_idempotent_and_single_claimed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("TEST-journey-queue.db");
+        let store = SqliteStore::open(&path).unwrap();
+        let (project, conversation, consent, _) = setup(&store);
+        store
+            .save_conversation_journey(&project, conversation, &consent)
+            .unwrap();
+        let queue = Uuid::new_v4();
+        assert!(
+            store
+                .queue_conversation_journey_dispatch(
+                    &project,
+                    "TEST-route",
+                    conversation,
+                    consent.task_id,
+                    consent.id,
+                    queue,
+                )
+                .unwrap()
+        );
+        assert!(
+            !store
+                .queue_conversation_journey_dispatch(
+                    &project,
+                    "TEST-route",
+                    conversation,
+                    consent.task_id,
+                    consent.id,
+                    Uuid::new_v4(),
+                )
+                .unwrap()
+        );
+        assert_eq!(
+            store.queued_conversation_journey_dispatches().unwrap(),
+            vec![(
+                "TEST-route".to_owned(),
+                conversation,
+                consent.task_id,
+                consent.id,
+            )]
+        );
+
+        let first = Uuid::new_v4();
+        assert!(
+            store
+                .claim_queued_conversation_journey_dispatch(consent.id, first)
+                .unwrap()
+        );
+        assert!(
+            !store
+                .claim_queued_conversation_journey_dispatch(consent.id, Uuid::new_v4())
+                .unwrap()
+        );
+        assert!(
+            store
+                .touch_conversation_journey_dispatch(consent.id, first)
+                .unwrap()
+        );
+        assert!(
+            !store
+                .touch_conversation_journey_dispatch(consent.id, Uuid::new_v4())
+                .unwrap()
+        );
+
+        store.recover_conversation_journey_dispatches().unwrap();
+        assert_eq!(
+            store
+                .conversation_journey_dispatch(&project, conversation, consent.task_id, consent.id,)
+                .unwrap()
+                .unwrap()["status"],
+            "queued"
+        );
+        drop(store);
+
+        // Reopening applies migrations idempotently and retains the route needed
+        // for server-owned recovery after a browser or process disappears.
+        let reopened = SqliteStore::open(path).unwrap();
+        assert_eq!(
+            reopened
+                .queued_conversation_journey_dispatches()
+                .unwrap()
+                .first()
+                .unwrap()
+                .0,
+            "TEST-route"
+        );
+        let recovered = Uuid::new_v4();
+        assert!(
+            reopened
+                .claim_queued_conversation_journey_dispatch(consent.id, recovered)
+                .unwrap()
+        );
+        reopened
+            .finish_conversation_journey_dispatch(consent.id, recovered, None)
+            .unwrap();
+        assert!(
+            reopened
+                .queued_conversation_journey_dispatches()
+                .unwrap()
+                .is_empty()
         );
     }
 

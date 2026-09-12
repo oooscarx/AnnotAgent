@@ -301,13 +301,15 @@ The two existing routes used by this projection are:
 | Method and URL | Request / response | Side effects |
 |---|---|---|
 | `GET D/journey-consents/K` | Original owned `ConversationJourneyRecord` including frozen consent and optional sealed Sample scope. | None. It does not claim a dispatch or create a Sample. |
-| `POST D/journey-consents/K/execution` | Empty object `{}` → current `ConversationJourneyExecutionStatus`. | Claims one existing Journey dispatch. Existing Builder and Sample IDs are reused; a running or already-created Sample is returned without redispatch. |
+| `POST D/journey-consents/K/execution` | Empty object `{}` → current `ConversationJourneyExecutionStatus`. | Persists one `queued` execution intent, then one worker claims it as `running`. Existing Builder and Sample IDs are reused; active or already-created work is returned without redispatch. |
 
 Clients must render and confirm the server action, GET its exact consent when a
 review screen is needed, then POST the returned `execution_url`. They must not
 construct new Journey, Builder, or Sample UUIDs for this transition. Repeating GET
-is passive. Repeating the exact POST while dispatch is active or after the Sample
-record exists returns current receipts and cannot create another Builder or Sample.
+is passive. Worker-capacity pressure remains durably `queued`. Repeating the exact
+POST while dispatch is active or after the Sample record exists returns current
+receipts and cannot create another Builder or Sample. See `P0_AUTONOMY.md` for
+restart and read-model fields.
 
 ### ML-021 executable visual route and failed admission projection
 
@@ -338,5 +340,6 @@ is no longer re-presented as approvable. It returns:
 No Sample receipt is invented. A Draft saved before this change with an unresolved
 placeholder remains immutable evidence and is not silently rewritten; it needs a
 new explicitly authorized Builder/Journey. Fresh Builders can materialize the
-capability-compatible VLM route and the second exact execution POST reserves the
-original `sample_operation_id`.
+capability-compatible VLM route. Once the original Journey execution intent is
+queued, its worker observes Builder completion and reserves the original
+`sample_operation_id`; no second human execution is required.

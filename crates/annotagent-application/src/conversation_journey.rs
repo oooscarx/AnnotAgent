@@ -192,6 +192,35 @@ impl LocalApplication {
         )?)
     }
 
+    pub fn queue_conversation_journey_dispatch(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        id: Uuid,
+        queue_id: Uuid,
+    ) -> Result<bool> {
+        let owner = self.conversation_project_identity(project)?;
+        Ok(self.store.queue_conversation_journey_dispatch(
+            &owner,
+            project,
+            conversation,
+            task,
+            id,
+            queue_id,
+        )?)
+    }
+
+    pub fn claim_queued_conversation_journey_dispatch(
+        &self,
+        id: Uuid,
+        attempt: Uuid,
+    ) -> Result<bool> {
+        Ok(self
+            .store
+            .claim_queued_conversation_journey_dispatch(id, attempt)?)
+    }
+
     pub fn require_active_conversation_journey(
         &self,
         project: &str,
@@ -767,15 +796,34 @@ mod tests {
             consent.sample_operation_id.to_string()
         );
         assert_eq!(pending["scope"]["draft_id"], draft.id);
-        let failed_attempt = Uuid::new_v4();
+        let queue_id = Uuid::new_v4();
         app.store
-            .claim_conversation_journey_dispatch(
+            .queue_conversation_journey_dispatch(
                 &owner,
+                project,
                 conversation,
                 task,
                 consent.id,
-                failed_attempt,
+                queue_id,
             )
+            .unwrap();
+        let continuing = app
+            .pending_journey_sample_action(
+                project,
+                conversation,
+                task,
+                &app.conversation_journey_history(project, conversation, task)
+                    .unwrap(),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(continuing["id"], "inspect_automatic_sample_progress");
+        assert_eq!(continuing["state"], "available");
+        assert_eq!(continuing["requires_confirmation"], false);
+        assert_eq!(continuing["scope"]["dispatch_status"], "queued");
+        let failed_attempt = Uuid::new_v4();
+        app.store
+            .claim_queued_conversation_journey_dispatch(consent.id, failed_attempt)
             .unwrap();
         app.store
             .finish_conversation_journey_dispatch(

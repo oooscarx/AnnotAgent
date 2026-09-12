@@ -8,6 +8,20 @@ use std::panic::AssertUnwindSafe;
 /// Only explicit answer intents that never reached a worker claim are replayed.
 /// Application startup already recovered local Sandbox checkpoint delivery.
 pub(super) async fn recover_answers(state: ServerState) {
+    match state
+        .application
+        .store()
+        .queued_conversation_journey_dispatches()
+    {
+        Ok(items) => {
+            for (project, conversation, task, id) in items {
+                spawn_queued_journey(state.clone(), project, conversation, task, id);
+            }
+        }
+        Err(error) => {
+            eprintln!("could not read queued Journey execution intents: {error}");
+        }
+    }
     loop {
         let deliveries = match state
             .application
@@ -437,7 +451,13 @@ pub(super) async fn execute(
         .application
         .conversation_journey_execution_status(&project, conversation, task, id)
         .map_err(ApiError::bad_request)?;
-    if !current["sample"].is_null() || current["dispatch"]["status"] == "running" {
+    if !current["sample"].is_null()
+        || matches!(
+            current["dispatch"]["status"].as_str(),
+            Some("queued" | "running")
+        )
+        || (current["dispatch"]["status"] == "settled" && !current["dispatch"]["error"].is_null())
+    {
         return Ok(Json(current));
     }
     let saved = state
@@ -499,51 +519,128 @@ pub(super) async fn execute(
             .resolve_answer_journey_repair(&project, conversation, &resolved)
             .map_err(ApiError::bad_request)?;
     }
-    let attempt = uuid::Uuid::new_v4();
-    let permit = state.journey_workers.clone().try_acquire_owned().map_err(|_| ApiError {
-        status: StatusCode::TOO_MANY_REQUESTS,
-        body: json!({"error":"Background journey capacity is full. No new execution was admitted.","code":"journey_capacity_exhausted"}),
-    })?;
+    let queue_id = uuid::Uuid::new_v4();
     if state
         .application
-        .claim_conversation_journey_dispatch(&project, conversation, task, id, attempt)
+        .queue_conversation_journey_dispatch(&project, conversation, task, id, queue_id)
         .map_err(ApiError::bad_request)?
     {
-        let worker_state = state.clone();
-        let worker_project = project.clone();
-        tokio::spawn(async move {
-            let _permit = permit;
-            loop {
-                let result = AssertUnwindSafe(Box::pin(advance(
-                    worker_state.clone(),
-                    worker_project.clone(),
-                    conversation,
-                    task,
-                    id,
-                )))
-                .catch_unwind()
-                .await;
-                let error = match result {
-                Ok(Ok(_)) => None,
-                Ok(Err(error)) => Some(error.body["error"].as_str().unwrap_or("Journey execution failed; child receipts remain saved.").to_owned()),
-                Err(_) => Some("Journey worker stopped unexpectedly. Saved child receipts remain; no automatic retry was started.".to_owned()),
-            };
-                match worker_state
-                    .application
-                    .store()
-                    .finish_conversation_journey_dispatch(id, attempt, error.as_deref())
-                {
-                    Ok(true) => {}
-                    Ok(false) => break,
-                    Err(error) => {
-                        eprintln!("could not settle journey dispatch {id}: {error}");
-                        break;
-                    }
-                }
-            }
-        });
+        spawn_queued_journey(state.clone(), project.clone(), conversation, task, id);
     }
     status(State(state), AxumPath((project, conversation, task, id))).await
+}
+
+fn child_waits_for_commit(current: &Value) -> bool {
+    current["sample"].is_null()
+        && (["reserved", "running"].contains(&current["schema"]["status"].as_str().unwrap_or(""))
+            || ["reserved", "running"]
+                .contains(&current["builder"]["status"].as_str().unwrap_or("")))
+}
+
+fn committed_child_failure(current: &Value) -> Option<String> {
+    if !current["sample"].is_null() {
+        return None;
+    }
+    if let Some(status @ ("failed" | "in_doubt" | "interrupted" | "cancelled")) =
+        current["schema"]["status"].as_str()
+    {
+        return Some(format!(
+            "Schema request ended as {status}; no Builder or Sample was started. Inspect the saved request receipt."
+        ));
+    }
+    if let Some(status @ ("failed" | "in_doubt" | "interrupted" | "cancelled")) =
+        current["builder"]["status"].as_str()
+    {
+        return Some(format!(
+            "Builder ended as {status}; no Sample was started. Inspect the saved Builder receipt."
+        ));
+    }
+    if current["builder"]["status"] == "completed"
+        && current["builder"]["evidence"]["outcome"] != "draft_ready_for_human_review"
+    {
+        return Some(
+            "Builder completed without an executable Draft; no Sample was started. Inspect the saved Builder receipt."
+                .to_owned(),
+        );
+    }
+    None
+}
+
+fn spawn_queued_journey(
+    state: ServerState,
+    project: String,
+    conversation: uuid::Uuid,
+    task: uuid::Uuid,
+    id: uuid::Uuid,
+) {
+    tokio::spawn(async move {
+        let Ok(permit) = state.journey_workers.clone().acquire_owned().await else {
+            return;
+        };
+        let _permit = permit;
+        let attempt = uuid::Uuid::new_v4();
+        match state
+            .application
+            .claim_queued_conversation_journey_dispatch(id, attempt)
+        {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(error) => {
+                eprintln!("could not claim queued Journey {id}: {error}");
+                return;
+            }
+        }
+        loop {
+            let result = AssertUnwindSafe(Box::pin(advance(
+                state.clone(),
+                project.clone(),
+                conversation,
+                task,
+                id,
+            )))
+            .catch_unwind()
+            .await;
+            let error = match result {
+                Ok(Ok(Json(current))) if child_waits_for_commit(&current) => {
+                    match state
+                        .application
+                        .store()
+                        .touch_conversation_journey_dispatch(id, attempt)
+                    {
+                        Ok(true) => {
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            continue;
+                        }
+                        Ok(false) => return,
+                        Err(error) => {
+                            eprintln!("could not heartbeat Journey dispatch {id}: {error}");
+                            return;
+                        }
+                    }
+                }
+                Ok(Ok(Json(current))) => committed_child_failure(&current),
+                Ok(Err(error)) => Some(
+                    error.body["error"]
+                        .as_str()
+                        .unwrap_or("Journey execution failed; child receipts remain saved.")
+                        .to_owned(),
+                ),
+                Err(_) => Some("Journey worker stopped unexpectedly. Saved child receipts remain; no automatic retry was started.".to_owned()),
+            };
+            match state
+                .application
+                .store()
+                .finish_conversation_journey_dispatch(id, attempt, error.as_deref())
+            {
+                Ok(true) => {}
+                Ok(false) => break,
+                Err(error) => {
+                    eprintln!("could not settle journey dispatch {id}: {error}");
+                    break;
+                }
+            }
+        }
+    });
 }
 
 async fn advance(
@@ -779,4 +876,52 @@ async fn advance(
     )
     .await?;
     status(State(state), AxumPath((project, conversation, task, id))).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{child_waits_for_commit, committed_child_failure};
+    use serde_json::json;
+
+    #[test]
+    fn existing_in_flight_child_keeps_the_same_journey_worker_alive() {
+        for current in [
+            json!({"schema":{"status":"reserved"},"builder":null,"sample":null}),
+            json!({"schema":null,"builder":{"status":"reserved"},"sample":null}),
+            json!({"schema":null,"builder":{"status":"running"},"sample":null}),
+        ] {
+            assert!(child_waits_for_commit(&current));
+            assert!(committed_child_failure(&current).is_none());
+        }
+        assert!(!child_waits_for_commit(&json!({
+            "schema":null,
+            "builder":{"status":"completed","evidence":{"outcome":"draft_ready_for_human_review"}},
+            "sample":{"id":"TEST-same-sample-operation"}
+        })));
+    }
+
+    #[test]
+    fn unknown_or_invalid_child_result_stops_without_fictional_sample() {
+        for (current, expected) in [
+            (
+                json!({"schema":{"status":"in_doubt"},"builder":null,"sample":null}),
+                "Schema request ended as in_doubt",
+            ),
+            (
+                json!({"schema":null,"builder":{"status":"interrupted"},"sample":null}),
+                "Builder ended as interrupted",
+            ),
+            (
+                json!({"schema":null,"builder":{"status":"completed","evidence":{"outcome":"failed"}},"sample":null}),
+                "Builder completed without an executable Draft",
+            ),
+        ] {
+            assert!(!child_waits_for_commit(&current));
+            assert!(
+                committed_child_failure(&current)
+                    .unwrap()
+                    .starts_with(expected)
+            );
+        }
+    }
 }

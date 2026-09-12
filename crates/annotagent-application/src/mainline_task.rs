@@ -77,6 +77,33 @@ impl LocalApplication {
             {
                 continue;
             }
+            let record: ConversationJourneyRecord =
+                serde_json::from_value(journey["record"].clone())?;
+            let consent = record.effective_consent();
+            let root = format!(
+                "/api/projects/{project}/conversations/{conversation}/tasks/{task}/journey-consents/{}",
+                record.consent.id
+            );
+            if matches!(
+                journey["dispatch"]["status"].as_str(),
+                Some("queued" | "running")
+            ) {
+                return Ok(Some(json!({
+                    "id":"inspect_automatic_sample_progress",
+                    "state":"available","method":"GET","url":format!("{root}/execution"),
+                    "requires_confirmation":false,
+                    "reason":"authorized_journey_is_automatically_continuing",
+                    "scope":{
+                        "journey_consent_id":record.consent.id,
+                        "builder_operation_id":consent.builder_operation_id,
+                        "sample_operation_id":consent.sample_operation_id,
+                        "images":consent.images,"allowed_models":consent.allowed_models,
+                        "maximum_sample_calls":consent.maximum_sample_calls,
+                        "expires_at":consent.expires_at,
+                        "dispatch_status":journey["dispatch"]["status"]
+                    }
+                })));
+            }
             let Some(builder) = journey.get("builder") else {
                 continue;
             };
@@ -88,9 +115,6 @@ impl LocalApplication {
             {
                 continue;
             }
-            let record: ConversationJourneyRecord =
-                serde_json::from_value(journey["record"].clone())?;
-            let consent = record.effective_consent();
             let dispatch_error = journey
                 .get("dispatch")
                 .and_then(|dispatch| dispatch.get("error"))
@@ -108,10 +132,6 @@ impl LocalApplication {
                 && self
                     .validate_conversation_journey_data(project, conversation, consent)
                     .is_ok();
-            let root = format!(
-                "/api/projects/{project}/conversations/{conversation}/tasks/{task}/journey-consents/{}",
-                record.consent.id
-            );
             return Ok(Some(json!({
                 "id":"test_pipeline_samples",
                 "state":if active{"requires_confirmation"}else{"blocked"},

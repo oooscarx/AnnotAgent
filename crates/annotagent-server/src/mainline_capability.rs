@@ -202,18 +202,30 @@ fn active_authorization(journeys: &[Value]) -> Value {
                 }))
                 .ok()?,
             );
+            let continuation_state = if !journey["sample"].is_null() {
+                "sample_started"
+            } else {
+                journey["dispatch"]["status"]
+                    .as_str()
+                    .unwrap_or("not_requested")
+            };
+            let can_resume = matches!(continuation_state, "queued" | "running");
             Some(json!({
                 "source":"journey_consent","consent_id":consent.get("id"),
                 "expires_at":expires_at,"permission_digest":digest,
                 "allowed_models":allowed,"active":true,
-                "can_resume_without_authorization":false
+                "can_resume_without_authorization":can_resume,
+                "continuation_state":continuation_state,
+                "continuation_reason":if can_resume {"saved_execution_intent_is_active"} else if continuation_state == "sample_started" {"sample_operation_already_exists"} else {"no_active_execution_intent"}
             }))
         })
         .unwrap_or_else(|| {
             json!({
                 "source":null,"consent_id":null,"expires_at":null,
                 "permission_digest":null,"allowed_models":[],"active":false,
-                "can_resume_without_authorization":false
+                "can_resume_without_authorization":false,
+                "continuation_state":"not_authorized",
+                "continuation_reason":"no_active_journey_consent"
             })
         })
 }
@@ -315,7 +327,35 @@ pub(super) fn snapshot(
         .application
         .conversation_builder_history(project, conversation, task)
         .map_err(ApiError::conversation)?;
-    let authorization = active_authorization(&journeys);
+    let mut authorization = active_authorization(&journeys);
+    if authorization["can_resume_without_authorization"] == true {
+        let exact_scope_is_current = authorization["consent_id"]
+            .as_str()
+            .and_then(|id| {
+                journeys.iter().find_map(|journey| {
+                    let record = journey.get("record")?;
+                    let consent = record
+                        .get("resolved_consent")
+                        .filter(|value| !value.is_null())
+                        .unwrap_or_else(|| record.get("consent").unwrap_or(&Value::Null));
+                    (consent["id"] == id).then_some(consent.clone())
+                })
+            })
+            .and_then(|consent| {
+                serde_json::from_value(consent).ok().map(|consent| {
+                    state
+                        .application
+                        .validate_conversation_journey_data(project, conversation, &consent)
+                        .is_ok()
+                })
+            })
+            .unwrap_or(false);
+        if !exact_scope_is_current {
+            authorization["can_resume_without_authorization"] = json!(false);
+            authorization["continuation_state"] = json!("approval_required");
+            authorization["continuation_reason"] = json!("authorized_scope_changed");
+        }
+    }
     let agent_model = state
         .application
         .project_conversation_agent_model(project, conversation)
@@ -686,7 +726,7 @@ mod tests {
         let journeys = vec![
             json!({"record":{"revoked":true,"consent":{"id":Uuid::new_v4(),"expires_at":future,"allowed_models":[]}}}),
             json!({"record":{"revoked":false,"consent":{"id":Uuid::new_v4(),"expires_at":expired,"allowed_models":[]}}}),
-            json!({"record":{"revoked":false,"consent":{"id":active,"expires_at":future,"allowed_models":[{"model_id":format!("model-profile:{model}"),"binding_digest":"a".repeat(64)}],"maximum_builder_calls":4,"maximum_sample_calls":3}}}),
+            json!({"record":{"revoked":false,"consent":{"id":active,"expires_at":future,"allowed_models":[{"model_id":format!("model-profile:{model}"),"binding_digest":"a".repeat(64)}],"maximum_builder_calls":4,"maximum_sample_calls":3}},"dispatch":{"status":"queued"},"sample":null}),
         ];
         let projected = active_authorization(&journeys);
         assert_eq!(projected["active"], true);
@@ -696,6 +736,11 @@ mod tests {
                 .as_str()
                 .is_some_and(|value| value.len() == 64)
         );
-        assert_eq!(projected["can_resume_without_authorization"], false);
+        assert_eq!(projected["can_resume_without_authorization"], true);
+        assert_eq!(projected["continuation_state"], "queued");
+        assert_eq!(
+            projected["continuation_reason"],
+            "saved_execution_intent_is_active"
+        );
     }
 }
