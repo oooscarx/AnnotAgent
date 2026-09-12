@@ -27,6 +27,21 @@ pub struct ConversationSchemaAuthorization {
     pub allow_unknown_cost: bool,
 }
 
+/// One explicitly re-authorized successor of a settled invalid Schema response.
+/// The cumulative allowance is exact and the original receipt remains immutable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConversationSchemaRetryAuthorization {
+    pub call_id: Uuid,
+    pub retry_of: Uuid,
+    pub model_id: annotagent_core::ModelProfileId,
+    pub previous_grant_id: Uuid,
+    pub scope_hash: String,
+    pub maximum_calls: u32,
+    pub expires_at: DateTime<Utc>,
+    pub allow_unknown_cost: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConversationCallBudget {
     pub current_grant: ConversationCallGrant,
@@ -231,6 +246,162 @@ pub(crate) fn require_call_admission_clear(
 }
 
 impl SqliteStore {
+    pub fn authorize_conversation_schema_retry(
+        &self,
+        project: &str,
+        task: Uuid,
+        input: &ConversationSchemaRetryAuthorization,
+    ) -> Result<(), StorageError> {
+        if input.call_id.is_nil()
+            || input.retry_of.is_nil()
+            || input.call_id == input.retry_of
+            || !input.allow_unknown_cost
+            || !digest(&input.scope_hash)
+            || !(2..=128).contains(&input.maximum_calls)
+        {
+            return Err(invalid("invalid Schema retry authorization"));
+        }
+        let grant = ConversationCallGrant {
+            id: input.call_id,
+            task_id: task,
+            scope_hash: input.scope_hash.clone(),
+            maximum_calls: input.maximum_calls,
+            expires_at: input.expires_at,
+        };
+        self.advance_conversation_authorization_with(
+            project,
+            input.previous_grant_id,
+            &grant,
+            |tx, _created| {
+                let source = receipt(tx, input.retry_of)?
+                    .ok_or_else(|| invalid("Schema retry source receipt not found"))?;
+                if source.task_id != task
+                    || source.status != ConversationCallStatus::Completed
+                    || source
+                        .evidence
+                        .as_ref()
+                        .and_then(|value| value.get("decision"))
+                        .and_then(|value| value.get("Err"))
+                        .is_none()
+                    || source
+                        .evidence
+                        .as_ref()
+                        .and_then(|value| value.pointer("/diagnostic/failure_code"))
+                        .and_then(serde_json::Value::as_str)
+                        == Some("provider_filtered")
+                {
+                    return Err(invalid(
+                        "Schema retry source is not a settled retryable structured-output failure",
+                    ));
+                }
+                let cancelled: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM conversation_call_cancellations WHERE call_id=?1)",
+                    [input.retry_of.to_string()],
+                    |row| row.get(0),
+                )?;
+                if cancelled {
+                    return Err(invalid("Cancelled Schema calls cannot be retry sources"));
+                }
+                let saved: Option<(String, String, String)> = tx
+                    .query_row(
+                        "SELECT task_id,retry_of,input_json FROM conversation_schema_retries WHERE call_id=?1",
+                        [input.call_id.to_string()],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .optional()?;
+                if let Some((saved_task, retry_of, value)) = saved {
+                    if saved_task != task.to_string()
+                        || retry_of != input.retry_of.to_string()
+                        || serde_json::from_str::<ConversationSchemaRetryAuthorization>(&value)?
+                            != *input
+                    {
+                        return Err(invalid("Schema retry command changed its saved scope"));
+                    }
+                    return Ok(());
+                }
+                let previous_maximum: u32 = tx.query_row(
+                    "SELECT maximum_calls FROM conversation_authorization_revisions WHERE id=?1 AND task_id=?2",
+                    params![input.previous_grant_id.to_string(), task.to_string()],
+                    |row| row.get(0),
+                )?;
+                let used: u32 = tx.query_row(
+                    "SELECT COUNT(*) FROM conversation_model_calls WHERE task_id=?1",
+                    [task.to_string()],
+                    |row| row.get(0),
+                )?;
+                let exact = previous_maximum.max(used.saturating_add(1));
+                if input.maximum_calls != exact {
+                    return Err(invalid(
+                        "Schema retry must add exactly one cumulative call allowance",
+                    ));
+                }
+                tx.execute(
+                    "INSERT INTO conversation_schema_retries(call_id,task_id,retry_of,input_json,created_at) VALUES(?1,?2,?3,?4,?5)",
+                    params![
+                        input.call_id.to_string(),
+                        task.to_string(),
+                        input.retry_of.to_string(),
+                        serde_json::to_string(input)?,
+                        Utc::now().to_rfc3339()
+                    ],
+                )?;
+                Ok(())
+            },
+        )
+    }
+
+    pub fn conversation_schema_retry(
+        &self,
+        project: &str,
+        task: Uuid,
+        call: Uuid,
+    ) -> Result<Option<ConversationSchemaRetryAuthorization>, StorageError> {
+        self.with_connection(|db| {
+            owner(db, project, task)?;
+            let saved: Option<(String, String)> = db
+                .query_row(
+                    "SELECT task_id,input_json FROM conversation_schema_retries WHERE call_id=?1",
+                    [call.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            saved
+                .map(|(saved_task, value)| {
+                    if saved_task != task.to_string() {
+                        return Err(invalid("Schema retry belongs to another task"));
+                    }
+                    serde_json::from_str(&value).map_err(Into::into)
+                })
+                .transpose()
+        })
+    }
+
+    /// Return the newest successor in the single retry chain, if any.
+    pub fn latest_conversation_schema_retry(
+        &self,
+        project: &str,
+        task: Uuid,
+        source: Uuid,
+    ) -> Result<Option<ConversationSchemaRetryAuthorization>, StorageError> {
+        self.with_connection(|db| {
+            owner(db, project, task)?;
+            let value: Option<String> = db
+                .query_row(
+                    "WITH RECURSIVE chain(call_id,depth) AS (
+                        SELECT call_id,1 FROM conversation_schema_retries WHERE task_id=?1 AND retry_of=?2
+                        UNION ALL
+                        SELECT r.call_id,c.depth+1 FROM conversation_schema_retries r JOIN chain c ON r.retry_of=c.call_id WHERE r.task_id=?1
+                    ) SELECT r.input_json FROM chain c JOIN conversation_schema_retries r ON r.call_id=c.call_id ORDER BY c.depth DESC LIMIT 1",
+                    params![task.to_string(), source.to_string()],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            value
+                .map(|value| serde_json::from_str(&value).map_err(Into::into))
+                .transpose()
+        })
+    }
+
     pub fn conversation_task_budget(
         &self,
         project: &str,
@@ -492,6 +663,31 @@ impl SqliteStore {
             owner(db,project,task)?;
             let saved:Option<String>=db.query_row("SELECT a.input_json FROM conversation_schema_authorizations a JOIN conversation_call_grants g ON g.id=a.call_id WHERE a.task_id=?1 AND NOT EXISTS(SELECT 1 FROM conversation_model_calls m WHERE m.id=a.call_id) AND NOT EXISTS(SELECT 1 FROM conversation_call_cancellations c WHERE c.call_id=a.call_id)",[task.to_string()],|row|row.get(0)).optional()?;
             saved.map(|value|serde_json::from_str(&value).map_err(Into::into)).transpose()
+        })
+    }
+    pub fn conversation_schema_authorization(
+        &self,
+        project: &str,
+        task: Uuid,
+        call: Uuid,
+    ) -> Result<Option<ConversationSchemaAuthorization>, StorageError> {
+        self.with_connection(|db| {
+            owner(db, project, task)?;
+            let saved: Option<(String, String)> = db
+                .query_row(
+                    "SELECT task_id,input_json FROM conversation_schema_authorizations WHERE call_id=?1",
+                    [call.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            saved
+                .map(|(saved_task, value)| {
+                    if saved_task != task.to_string() {
+                        return Err(invalid("Schema authorization belongs to another task"));
+                    }
+                    serde_json::from_str(&value).map_err(Into::into)
+                })
+                .transpose()
         })
     }
     fn authorize_initial_request(
@@ -831,6 +1027,158 @@ mod tests {
                 .unwrap()
                 .reserved_calls,
             1
+        );
+    }
+
+    #[test]
+    fn schema_retry_adds_one_exact_allowance_and_is_restart_idempotent() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("TEST-schema-retry.db");
+        let store = SqliteStore::open(&path).unwrap();
+        let project = Uuid::new_v4().to_string();
+        let conversation = store.create_conversation(&project).unwrap();
+        let message = ConversationMessageInput {
+            id: Uuid::new_v4(),
+            text: "TEST retry".into(),
+            image: None,
+            reference: None,
+        };
+        store
+            .append_conversation_message(&project, conversation, &message)
+            .unwrap();
+        let task = Uuid::new_v4();
+        store
+            .begin_conversation_task(
+                &project,
+                conversation,
+                &BeginConversationTask {
+                    id: task,
+                    source_message_id: message.id,
+                    schema_revision: "a".repeat(64),
+                },
+            )
+            .unwrap();
+        let original = Uuid::new_v4();
+        let first = ConversationCallGrant {
+            id: original,
+            task_id: task,
+            scope_hash: "b".repeat(64),
+            maximum_calls: 1,
+            expires_at: Utc::now() + Duration::minutes(10),
+        };
+        store
+            .authorize_conversation_calls(&project, &first)
+            .unwrap();
+        assert_eq!(
+            store
+                .reserve_conversation_call(
+                    &project,
+                    task,
+                    original,
+                    &first.scope_hash,
+                    &"c".repeat(64)
+                )
+                .unwrap(),
+            ConversationCallAdmission::Admitted
+        );
+        store
+            .finish_conversation_call(
+                &project,
+                task,
+                original,
+                ConversationCallStatus::Completed,
+                serde_json::json!({
+                    "decision":{"Err":"no final action"},
+                    "diagnostic":{"failure_code":"length_terminated_without_action"},
+                    "response":{"usage":{"input_tokens":1639,"output_tokens":2048}}
+                }),
+            )
+            .unwrap();
+        let retry = ConversationSchemaRetryAuthorization {
+            call_id: Uuid::new_v4(),
+            retry_of: original,
+            model_id: annotagent_core::ModelProfileId::new(),
+            previous_grant_id: original,
+            scope_hash: "d".repeat(64),
+            maximum_calls: 2,
+            expires_at: Utc::now() + Duration::minutes(10),
+            allow_unknown_cost: true,
+        };
+        store
+            .authorize_conversation_schema_retry(&project, task, &retry)
+            .unwrap();
+        store
+            .authorize_conversation_schema_retry(&project, task, &retry)
+            .unwrap();
+        assert_eq!(
+            store
+                .conversation_schema_retry(&project, task, retry.call_id)
+                .unwrap(),
+            Some(retry.clone())
+        );
+        assert_eq!(
+            store
+                .latest_conversation_schema_retry(&project, task, original)
+                .unwrap(),
+            Some(retry.clone())
+        );
+        assert_eq!(
+            store
+                .reserve_conversation_call(
+                    &project,
+                    task,
+                    retry.call_id,
+                    &retry.scope_hash,
+                    &"e".repeat(64)
+                )
+                .unwrap(),
+            ConversationCallAdmission::Admitted
+        );
+        store
+            .finish_conversation_call(
+                &project,
+                task,
+                retry.call_id,
+                ConversationCallStatus::Completed,
+                serde_json::json!({"decision":{"Ok":{"decision":"draft"}}}),
+            )
+            .unwrap();
+        store
+            .authorize_conversation_schema_retry(&project, task, &retry)
+            .unwrap();
+        let mut changed = retry.clone();
+        changed.scope_hash = "f".repeat(64);
+        assert!(
+            store
+                .authorize_conversation_schema_retry(&project, task, &changed)
+                .is_err()
+        );
+        let second = ConversationSchemaRetryAuthorization {
+            call_id: Uuid::new_v4(),
+            previous_grant_id: retry.call_id,
+            maximum_calls: 3,
+            ..retry.clone()
+        };
+        assert!(
+            store
+                .authorize_conversation_schema_retry(&project, task, &second)
+                .is_err()
+        );
+        drop(store);
+        let reopened = SqliteStore::open(path).unwrap();
+        assert_eq!(
+            reopened
+                .conversation_schema_retry(&project, task, retry.call_id)
+                .unwrap(),
+            Some(retry)
+        );
+        assert_eq!(
+            reopened
+                .conversation_call_budget(&project, task)
+                .unwrap()
+                .unwrap()
+                .used_calls,
+            2
         );
     }
 

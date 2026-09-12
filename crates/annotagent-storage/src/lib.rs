@@ -78,7 +78,7 @@ mod task_model_usage;
 pub use conversation_calls::{
     ConversationCallAdmission, ConversationCallBudget, ConversationCallGrant,
     ConversationCallReceipt, ConversationCallStatus, ConversationSchemaAuthorization,
-    ConversationTaskBudget,
+    ConversationSchemaRetryAuthorization, ConversationTaskBudget,
 };
 pub use conversation_human_requests::{
     ConversationHumanDeferral, ConversationHumanRequest, ConversationHumanRequestInput,
@@ -762,6 +762,8 @@ impl SqliteStore {
             transaction.execute_batch(include_str!("../../../migrations/0069_task_model_attempts.sql"))?;
             transaction.execute_batch(include_str!("../../../migrations/0071_demo_onboarding.sql"))?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(71,'demo_onboarding',?1)",[Utc::now().to_rfc3339()])?;
+            transaction.execute_batch(include_str!("../../../migrations/0072_conversation_schema_retries.sql"))?;
+            transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(72,'conversation_schema_retries',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(68,'delivery_package_consents',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(67,'delivery_export_snapshots',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(66,'delivery_image_reviews',?1)",[Utc::now().to_rfc3339()])?;

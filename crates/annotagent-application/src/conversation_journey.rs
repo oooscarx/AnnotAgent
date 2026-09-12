@@ -107,6 +107,20 @@ impl LocalApplication {
             .map(|id| self.conversation_journey_execution_status(project, conversation, task, id))
             .collect()
     }
+    pub fn conversation_journey_id_for_schema_call(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        call: Uuid,
+    ) -> Result<Option<Uuid>> {
+        Ok(self.store.conversation_journey_id_for_schema_call(
+            &self.conversation_project_identity(project)?,
+            conversation,
+            task,
+            call,
+        )?)
+    }
     pub fn conversation_journey_execution_status(
         &self,
         project: &str,
@@ -136,13 +150,27 @@ impl LocalApplication {
         let dispatch = self
             .store
             .conversation_journey_dispatch(&owner, conversation, task, id)?;
-        let schema = record
+        let schema_retry = record
             .consent
             .schema_proposal
             .as_ref()
             .map(|proposal| {
-                self.conversation_call_receipt(project, conversation, task, proposal.call_id)
+                self.latest_conversation_schema_retry(project, conversation, task, proposal.call_id)
             })
+            .transpose()?
+            .flatten();
+        let schema_call = schema_retry
+            .as_ref()
+            .map(|retry| retry.call_id)
+            .or_else(|| {
+                record
+                    .consent
+                    .schema_proposal
+                    .as_ref()
+                    .map(|proposal| proposal.call_id)
+            });
+        let schema = schema_call
+            .map(|call| self.conversation_call_receipt(project, conversation, task, call))
             .transpose()?
             .flatten();
         let mut sample_value = serde_json::json!(sample);
@@ -170,7 +198,7 @@ impl LocalApplication {
                 serde_json::json!(self.store.sample_assistance_status(&sample.id)?);
         }
         Ok(
-            serde_json::json!({"record":record,"schema":schema,"clarification":clarification_value,"builder":builder,"sample":sample_value,"dispatch":dispatch,"answer_delivery":self.store.conversation_answer_delivery(&owner,conversation,task,id)?}),
+            serde_json::json!({"record":record,"schema":schema,"schema_retry":schema_retry,"clarification":clarification_value,"builder":builder,"sample":sample_value,"dispatch":dispatch,"answer_delivery":self.store.conversation_answer_delivery(&owner,conversation,task,id)?}),
         )
     }
 

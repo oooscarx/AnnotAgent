@@ -277,6 +277,8 @@ impl OpenAiCompatibleProvider {
             // The common OpenAI-compatible auto-only subset accepts this value. We
             // never emit `required` or a named-tool selector.
             body.insert("tool_choice".to_owned(), json!("auto"));
+        } else {
+            body.remove("parallel_tool_calls");
         }
         if response_mode == OpenAiResponseMode::JsonObject {
             body.insert("response_format".to_owned(), json!({"type": "json_object"}));
@@ -679,6 +681,10 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
                 parsed
                     .provider_metadata
                     .insert("action_source".to_owned(), "json_adapter".to_owned());
+                // The validated/promoted action is the durable structured value.
+                // Keep only safe content presence/length diagnostics, not a second
+                // raw copy of the Provider envelope.
+                parsed.content = None;
             } else if !parsed.tool_calls.is_empty() {
                 parsed
                     .provider_metadata
@@ -694,6 +700,9 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
                     "structured_output_error".to_owned(),
                     safe_structured_output_error(&error),
                 );
+                // Invalid/partial final text is not an executable artifact and may
+                // echo private input. Its safe length metadata and usage remain.
+                parsed.content = None;
                 let cached = cached_input_tokens(&parsed);
                 self.finish_observed_attempt(
                     attempt_id.as_deref(),
@@ -917,36 +926,43 @@ fn parse_chat_response(value: &Value, request_id: Option<String>) -> CoreResult<
         .pointer("/choices/0/message")
         .ok_or_else(|| CoreError::Provider("response lacks choices[0].message".to_owned()))?;
     let content = parse_message_content(message.get("content"));
-    let tool_calls = message
-        .get("tool_calls")
-        .and_then(Value::as_array)
-        .map(|calls| {
-            calls
-                .iter()
-                .map(|call| {
-                    let id = call
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .unwrap_or("provider-call");
-                    let function = call.get("function").unwrap_or(call);
-                    let name = function
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| CoreError::Provider("tool call lacks name".to_owned()))?;
-                    let raw_arguments = function.get("arguments").cloned().unwrap_or(Value::Null);
-                    let arguments = raw_arguments.as_str().map_or(raw_arguments.clone(), |raw| {
-                        serde_json::from_str(raw).unwrap_or_else(|_| Value::String(raw.to_owned()))
-                    });
-                    Ok(ModelToolCall {
-                        id: ToolCallId::new(id),
-                        name: name.to_owned(),
-                        arguments,
-                    })
-                })
-                .collect::<CoreResult<Vec<_>>>()
-        })
-        .transpose()?
-        .unwrap_or_default();
+    let mut invalid_tool_arguments = 0usize;
+    let mut missing_tool_names = 0usize;
+    let mut tool_calls = Vec::new();
+    if let Some(calls) = message.get("tool_calls").and_then(Value::as_array) {
+        for call in calls {
+            let id = call
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("provider-call");
+            let function = call.get("function").unwrap_or(call);
+            let name = function
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| {
+                    missing_tool_names += 1;
+                    ""
+                });
+            let arguments = match function.get("arguments") {
+                Some(Value::String(raw)) => serde_json::from_str(raw).unwrap_or_else(|_| {
+                    invalid_tool_arguments += 1;
+                    // Preserve the completed response and usage without persisting
+                    // a partial argument payload that may contain private input.
+                    Value::Null
+                }),
+                Some(value) if value.is_object() => value.clone(),
+                _ => {
+                    invalid_tool_arguments += 1;
+                    Value::Null
+                }
+            };
+            tool_calls.push(ModelToolCall {
+                id: ToolCallId::new(id),
+                name: name.to_owned(),
+                arguments,
+            });
+        }
+    }
     let input = value
         .pointer("/usage/prompt_tokens")
         .and_then(Value::as_u64);
@@ -973,6 +989,14 @@ fn parse_chat_response(value: &Value, request_id: Option<String>) -> CoreResult<
         content.as_ref().map_or(0, String::len).to_string(),
     );
     provider_metadata.insert("tool_call_count".to_owned(), tool_calls.len().to_string());
+    provider_metadata.insert(
+        "invalid_tool_arguments".to_owned(),
+        invalid_tool_arguments.to_string(),
+    );
+    provider_metadata.insert(
+        "missing_tool_names".to_owned(),
+        missing_tool_names.to_string(),
+    );
     let reasoning_content = message
         .get("reasoning_content")
         .and_then(Value::as_str)
@@ -1518,6 +1542,32 @@ mod tests {
         assert_eq!(response.usage.output_tokens, Some(2048));
     }
 
+    #[test]
+    fn malformed_native_arguments_keep_usage_without_persisting_partial_payload() {
+        let response = parse_chat_response(
+            &json!({
+                "choices":[{"finish_reason":"length","message":{"content":null,"tool_calls":[{
+                    "id":"TEST-partial","function":{
+                        "name":"propose_annotation_schema",
+                        "arguments":"{\"decision\":\"draft\",\"private\":\"do not retain"
+                    }
+                }]}}],
+                "usage":{"prompt_tokens":1639,"completion_tokens":2048,"total_tokens":3687}
+            }),
+            Some("TEST-partial".into()),
+        )
+        .unwrap();
+        assert_eq!(response.usage.total_tokens, Some(3_687));
+        assert_eq!(response.tool_calls.len(), 1);
+        assert!(response.tool_calls[0].arguments.is_null());
+        assert_eq!(response.provider_metadata["invalid_tool_arguments"], "1");
+        assert!(
+            !serde_json::to_string(&response)
+                .unwrap()
+                .contains("do not retain")
+        );
+    }
+
     #[tokio::test]
     async fn json_object_http_request_freezes_mode_limit_and_thinking_after_extra_merge() {
         let (endpoint, bodies) = spawn_capture_fixture(json!({
@@ -1591,6 +1641,7 @@ mod tests {
         assert_eq!(body["response_format"], json!({"type":"json_object"}));
         assert!(body.get("tools").is_none());
         assert!(body.get("tool_choice").is_none());
+        assert!(body.get("parallel_tool_calls").is_none());
         assert!(body.get("reasoning_effort").is_none());
     }
 

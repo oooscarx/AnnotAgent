@@ -369,6 +369,28 @@ impl SqliteStore {
             ids.into_iter().map(|id| Uuid::parse_str(&id).map_err(|_| invalid("Invalid saved journey identity"))).collect()
         })
     }
+    pub fn conversation_journey_id_for_schema_call(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        call: Uuid,
+    ) -> Result<Option<Uuid>, StorageError> {
+        self.with_connection(|db| {
+            owned(db, project, conversation, task)?;
+            let id: Option<String> = db
+                .query_row(
+                    "SELECT id FROM conversation_journey_consents WHERE task_id=?1 AND json_extract(input_json,'$.schema_proposal.call_id')=?2 ORDER BY created_at,id LIMIT 1",
+                    params![task.to_string(), call.to_string()],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            id.map(|value| {
+                Uuid::parse_str(&value).map_err(|_| invalid("Invalid journey identity"))
+            })
+            .transpose()
+        })
+    }
     /// Persist an explicit execution intent before waiting for worker capacity.
     /// Repeated requests keep the first queue identity and cannot widen consent.
     pub fn queue_conversation_journey_dispatch(
@@ -671,15 +693,27 @@ impl SqliteStore {
                 return Ok(saved);
             }
             let proposal=saved.consent.schema_proposal.as_ref().ok_or_else(||invalid("Journey already starts with a saved Schema"))?;
+            // A structured-output repair is a separately authorized successor of
+            // the original proposal. It may satisfy only this same Journey slot;
+            // the immutable Journey input continues to name the original call.
+            let schema_call:Option<String>=tx.query_row(
+                "WITH RECURSIVE retry(call_id,depth) AS (SELECT call_id,1 FROM conversation_schema_retries WHERE task_id=?1 AND retry_of=?2 UNION ALL SELECT r.call_id,p.depth+1 FROM conversation_schema_retries r JOIN retry p ON r.retry_of=p.call_id WHERE r.task_id=?1) SELECT call_id FROM retry ORDER BY depth DESC LIMIT 1",
+                params![resolved.task_id.to_string(),proposal.call_id.to_string()],
+                |row|row.get(0),
+            ).optional()?;
+            let schema_call=schema_call
+                .map(|value|Uuid::parse_str(&value).map_err(|_|invalid("Invalid Schema retry identity")))
+                .transpose()?
+                .unwrap_or(proposal.call_id);
             let mut expected=saved.consent.clone();
             expected.schema_proposal=None;
             expected.schema_id=resolved.schema_id;expected.schema_revision=resolved.schema_revision;
             expected.schema_digest.clone_from(&resolved.schema_digest);expected.builder_scope_hash.clone_from(&resolved.builder_scope_hash);
-            expected.previous_grant_id=Some(proposal.call_id);
+            expected.previous_grant_id=Some(schema_call);
             if expected!=*resolved || resolved.schema_revision!=1{return Err(invalid("Schema resolution expanded the original journey scope"));}
-            let mut definition:Option<String>=tx.query_row("SELECT r.definition_json FROM conversation_schema_drafts d JOIN conversation_schema_revisions r ON r.draft_id=d.id JOIN conversation_model_calls c ON c.id=d.source_call_id WHERE d.id=?1 AND d.task_id=?2 AND d.source_call_id=?3 AND r.revision=1 AND c.status='completed' AND json_extract(c.evidence_json,'$.decision.Ok.decision')='draft'",params![resolved.schema_id.to_string(),resolved.task_id.to_string(),proposal.call_id.to_string()],|row|row.get(0)).optional()?;
+            let mut definition:Option<String>=tx.query_row("SELECT r.definition_json FROM conversation_schema_drafts d JOIN conversation_schema_revisions r ON r.draft_id=d.id JOIN conversation_model_calls c ON c.id=d.source_call_id WHERE d.id=?1 AND d.task_id=?2 AND d.source_call_id=?3 AND r.revision=1 AND c.status='completed' AND json_extract(c.evidence_json,'$.decision.Ok.decision')='draft'",params![resolved.schema_id.to_string(),resolved.task_id.to_string(),schema_call.to_string()],|row|row.get(0)).optional()?;
             if definition.is_none() && saved.consent.continue_after_clarification {
-                let question=crate::conversation_clarifications::read(&tx,project,resolved.task_id,proposal.call_id)?;
+                let question=crate::conversation_clarifications::read(&tx,project,resolved.task_id,schema_call)?;
                 if question.status=="applied" && question.schema_draft_id==Some(resolved.schema_id) {
                     definition=tx.query_row("SELECT r.definition_json FROM conversation_schema_revisions r JOIN conversation_schema_drafts d ON d.id=r.draft_id WHERE d.id=?1 AND d.task_id=?2 AND r.revision=1 AND (SELECT MAX(revision) FROM conversation_schema_revisions WHERE draft_id=d.id)=1",params![resolved.schema_id.to_string(),resolved.task_id.to_string()],|row|row.get(0)).optional()?;
                 }
@@ -1601,6 +1635,118 @@ pub(crate) mod tests {
                 .unwrap()
                 .used_calls,
             1
+        );
+    }
+
+    #[test]
+    fn authorized_schema_retry_resolves_the_original_journey_slot_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SqliteStore::open(dir.path().join("TEST-schema-retry-journey.db")).unwrap();
+        let (project, conversation, human, _) = setup(&store);
+        let original = Uuid::new_v4();
+        let mut initial = human.clone();
+        initial.schema_proposal = Some(crate::ConversationSchemaAuthorization {
+            call_id: original,
+            model_id: human.builder_model_id.unwrap(),
+            scope_hash: human.builder_scope_hash.clone(),
+            expires_at: human.expires_at,
+            allow_unknown_cost: true,
+        });
+        initial.schema_id = Uuid::nil();
+        initial.schema_revision = 0;
+        initial.schema_digest = "a".repeat(64);
+        store
+            .save_conversation_journey(&project, conversation, &initial)
+            .unwrap();
+        store
+            .authorize_conversation_schema(
+                &project,
+                initial.task_id,
+                initial.schema_proposal.as_ref().unwrap(),
+            )
+            .unwrap();
+        store
+            .reserve_conversation_call(
+                &project,
+                initial.task_id,
+                original,
+                &initial.builder_scope_hash,
+                &"b".repeat(64),
+            )
+            .unwrap();
+        store
+            .finish_conversation_call(
+                &project,
+                initial.task_id,
+                original,
+                crate::ConversationCallStatus::Completed,
+                serde_json::json!({
+                    "decision":{"Err":"no final action"},
+                    "diagnostic":{"failure_code":"length_terminated_without_action"}
+                }),
+            )
+            .unwrap();
+        let retry = crate::ConversationSchemaRetryAuthorization {
+            call_id: Uuid::new_v4(),
+            retry_of: original,
+            model_id: initial.builder_model_id.unwrap(),
+            previous_grant_id: original,
+            scope_hash: "c".repeat(64),
+            maximum_calls: 2,
+            expires_at: initial.expires_at,
+            allow_unknown_cost: true,
+        };
+        store
+            .authorize_conversation_schema_retry(&project, initial.task_id, &retry)
+            .unwrap();
+        store
+            .reserve_conversation_call(
+                &project,
+                initial.task_id,
+                retry.call_id,
+                &retry.scope_hash,
+                &"d".repeat(64),
+            )
+            .unwrap();
+        store
+            .finish_conversation_call(
+                &project,
+                initial.task_id,
+                retry.call_id,
+                crate::ConversationCallStatus::Completed,
+                serde_json::json!({"decision":{"Ok":{"decision":"draft"}}}),
+            )
+            .unwrap();
+        let definition = crate::ConversationSchemaDefinition {
+            goal: "TEST classify cups".into(),
+            task: serde_json::from_value(
+                serde_json::json!({"id":"objects","kind":"classification","labels":["cup"]}),
+            )
+            .unwrap(),
+            boundary_rules: vec![],
+        };
+        let schema = store
+            .create_conversation_schema_draft(&project, initial.task_id, retry.call_id, &definition)
+            .unwrap();
+        let mut resolved = human;
+        resolved.schema_id = schema.id;
+        resolved.previous_grant_id = Some(retry.call_id);
+        resolved.builder_scope_hash = "e".repeat(64);
+        let saved = store
+            .resolve_conversation_journey_schema(&project, conversation, &resolved)
+            .unwrap();
+        assert_eq!(saved.consent, initial);
+        assert_eq!(saved.resolved_consent, Some(resolved));
+        assert_eq!(
+            store
+                .conversation_journey_id_for_schema_call(
+                    &project,
+                    conversation,
+                    initial.task_id,
+                    original
+                )
+                .unwrap(),
+            Some(saved.consent.id)
         );
     }
 

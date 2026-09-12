@@ -11250,6 +11250,40 @@ mod tests {
 
     use super::*;
 
+    #[derive(Clone)]
+    struct SchemaRetryHttpFixture {
+        requests: Arc<std::sync::Mutex<Vec<Value>>>,
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    async fn schema_retry_http_completion(
+        State(state): State<SchemaRetryHttpFixture>,
+        Json(body): Json<Value>,
+    ) -> Json<Value> {
+        state
+            .calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        state.requests.lock().unwrap().push(body);
+        // Keep the first request in flight long enough for a concurrent duplicate
+        // to observe the same durable reservation.
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        Json(json!({
+            "id":"TEST-schema-retry-response",
+            "choices":[{"finish_reason":"stop","message":{"content":
+                json!({
+                    "name":"propose_annotation_schema",
+                    "arguments":{
+                        "decision":"draft","kind":"bounding_box","labels":["cup"],
+                        "multi_label":false,"attributes":{},
+                        "boundary_rules":["Exclude bottles"],
+                        "rationale":"Use the saved task text; no image was inspected"
+                    }
+                }).to_string()
+            }}],
+            "usage":{"prompt_tokens":200,"completion_tokens":120,"total_tokens":320}
+        }))
+    }
+
     pub(super) async fn test_state(
         application: Arc<LocalApplication>,
         secret_store: Arc<InMemorySecretStore>,
@@ -13319,6 +13353,386 @@ export:
         )
         .await;
         assert_eq!(status, StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn schema_retry_http_is_exact_single_dispatch_and_preserves_original_usage() {
+        let temp = tempfile::tempdir().unwrap();
+        let application = Arc::new(LocalApplication::new(temp.path()).unwrap());
+        let project = "TEST-schema-retry-http";
+        application.create_project(project, "version: 1\nproject:\n  name: TEST Schema retry HTTP\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n").unwrap();
+
+        let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let provider_address = provider_listener.local_addr().unwrap();
+        let provider_fixture = SchemaRetryHttpFixture {
+            requests: Arc::clone(&requests),
+            calls: Arc::clone(&calls),
+        };
+        tokio::spawn(async move {
+            axum::serve(
+                provider_listener,
+                Router::new()
+                    .route("/v1/chat/completions", post(schema_retry_http_completion))
+                    .with_state(provider_fixture),
+            )
+            .await
+            .unwrap();
+        });
+
+        let secrets = Arc::new(InMemorySecretStore::default());
+        let provider_id = ProviderId::new();
+        let credential = secrets
+            .put(
+                SecretScope {
+                    provider_id,
+                    source: CredentialSource::SessionOnly,
+                    locator: "TEST-schema-retry-http".into(),
+                },
+                SecretValue::new("TEST-only-not-real").unwrap(),
+            )
+            .await
+            .unwrap();
+        let now = Utc::now();
+        let provider = ProviderProfile {
+            id: provider_id,
+            display_name: "TEST Schema retry HTTP".into(),
+            preset_id: Some("TEST".into()),
+            adapter: ProviderAdapterKind::OpenAiCompatible,
+            base_url: format!("http://{provider_address}/v1").parse().unwrap(),
+            organization: None,
+            workspace: None,
+            credential_ref: Some(credential),
+            safe_headers: BTreeMap::new(),
+            connection_policy: ProviderConnectionPolicy {
+                maximum_retries: 0,
+                ..ProviderConnectionPolicy::default()
+            },
+            enabled: true,
+            health: ProviderHealthSnapshot {
+                status: ProviderHealthStatus::Available,
+                safe_message: Some("TEST loopback only".into()),
+                checked_at: Some(now),
+            },
+            created_at: now,
+            updated_at: now,
+        };
+        application
+            .store()
+            .save_provider_profile(&provider)
+            .unwrap();
+        let model = ModelProfile {
+            id: ModelProfileId::new(),
+            revision: 1,
+            provider_id,
+            display_name: "TEST structured Schema".into(),
+            remote_model_id: "TEST-structured".into(),
+            input_modalities: BTreeSet::from([InputModality::Text]),
+            protocol_features: ProtocolFeatures {
+                tool_calls: true,
+                structured_output: true,
+                usage_reporting: true,
+                reasoning_controls: true,
+                ..ProtocolFeatures::default()
+            },
+            task_capabilities: BTreeSet::from([ModelCapability::TextGeneration]),
+            capability_source: CapabilityDeclarationSource::UserDeclared,
+            limits: ModelLimits {
+                maximum_output_tokens: Some(4_096),
+                ..ModelLimits::default()
+            },
+            generation_defaults: GenerationDefaults {
+                maximum_output_tokens: Some(4_096),
+                structured_output_mode: Some("json_object".into()),
+                reasoning_mode: Some("enabled".into()),
+                reasoning_wire_parameter: Some(annotagent_core::ReasoningWireParameter::Thinking),
+                supported_reasoning_modes: BTreeSet::from(["enabled".into(), "disabled".into()]),
+                ..GenerationDefaults::default()
+            },
+            pricing: ModelPricing::default(),
+            quality_contracts: vec![],
+            status: ModelProfileStatus::Available,
+            enabled: true,
+            locked: false,
+            created_at: now,
+            updated_at: now,
+        };
+        application.store().save_model_profile(&model).unwrap();
+        let conversation = application.create_project_conversation(project).unwrap();
+        application
+            .select_project_conversation_agent_model(
+                project,
+                conversation,
+                &annotagent_storage::SelectConversationAgentModel {
+                    request_id: uuid::Uuid::new_v4(),
+                    expected_revision: 0,
+                    model_profile_id: Some(model.id),
+                },
+            )
+            .unwrap();
+        let sent = application
+            .send_project_conversation_message(
+                project,
+                conversation,
+                &annotagent_storage::ConversationSendInput {
+                    message: annotagent_storage::ConversationMessageInput {
+                        id: uuid::Uuid::new_v4(),
+                        text: "Find cups and exclude bottles".into(),
+                        image: None,
+                        reference: None,
+                    },
+                    task_images: vec![],
+                    task_id: None,
+                    schema_revision: application.project_goal(project).unwrap()["revision"]
+                        .as_str()
+                        .unwrap()
+                        .into(),
+                    agent_model: Some(annotagent_storage::ConversationAgentModel {
+                        revision: 1,
+                        model_profile_id: Some(model.id),
+                    }),
+                    mode: Some(annotagent_storage::ConversationSendMode::Execute),
+                },
+            )
+            .unwrap();
+        let original = uuid::Uuid::new_v4();
+        let original_scope = "a".repeat(64);
+        let original_authorization = annotagent_storage::ConversationSchemaAuthorization {
+            call_id: original,
+            model_id: model.id,
+            scope_hash: original_scope.clone(),
+            expires_at: now + chrono::Duration::minutes(20),
+            allow_unknown_cost: true,
+        };
+        let owner = stable_project_id(application.project_path(project).unwrap().parent().unwrap())
+            .to_string();
+        let journey_id = uuid::Uuid::new_v4();
+        application
+            .store()
+            .save_conversation_journey(
+                &owner,
+                conversation,
+                &annotagent_storage::ConversationJourneyConsent {
+                    repair_after_answer: None,
+                    repair: None,
+                    schema_proposal: Some(original_authorization.clone()),
+                    continue_after_clarification: true,
+                    id: journey_id,
+                    task_id: sent.task_id,
+                    builder_operation_id: uuid::Uuid::new_v4(),
+                    builder_model_id: Some(model.id),
+                    previous_grant_id: None,
+                    sample_operation_id: uuid::Uuid::new_v4(),
+                    builder_scope_hash: original_scope.clone(),
+                    schema_id: uuid::Uuid::nil(),
+                    schema_revision: 0,
+                    schema_digest: application.project_goal(project).unwrap()["revision"]
+                        .as_str()
+                        .unwrap()
+                        .into(),
+                    images: vec![annotagent_storage::JourneyImageScope {
+                        image_id: uuid::Uuid::new_v4(),
+                        content_hash: "c".repeat(64),
+                    }],
+                    allowed_models: vec![annotagent_storage::JourneyModelScope {
+                        model_id: format!("model-profile:{}", model.id),
+                        binding_digest: "d".repeat(64),
+                    }],
+                    maximum_builder_calls: 8,
+                    maximum_sample_calls: 1,
+                    expires_at: original_authorization.expires_at,
+                    allow_unknown_cost: true,
+                },
+            )
+            .unwrap();
+        application
+            .authorize_conversation_schema_request(
+                project,
+                conversation,
+                sent.task_id,
+                &original_authorization,
+            )
+            .unwrap();
+        application
+            .store()
+            .reserve_conversation_call(
+                &owner,
+                sent.task_id,
+                original,
+                &original_scope,
+                &"b".repeat(64),
+            )
+            .unwrap();
+        application
+            .store()
+            .finish_conversation_call(
+                &owner,
+                sent.task_id,
+                original,
+                annotagent_storage::ConversationCallStatus::Completed,
+                json!({
+                    "decision":{"Err":"no final action"},
+                    "diagnostic":{
+                        "failure_code":"length_terminated_without_action",
+                        "finish_reason":"length","maximum_output_tokens":2048,
+                        "actual_output_tokens":2048
+                    },
+                    "response":{"usage":{"input_tokens":1639,"output_tokens":2048,"total_tokens":3687}}
+                }),
+            )
+            .unwrap();
+
+        let mut state = test_state(application.clone(), secrets).await;
+        // Keep the worker queued so this test isolates Schema recovery and proves
+        // the durable handoff without invoking Builder or image models.
+        state.journey_workers = Arc::new(tokio::sync::Semaphore::new(0));
+        let service = router(state, None);
+        let base = format!(
+            "/api/projects/{project}/conversations/{conversation}/tasks/{}",
+            sent.task_id
+        );
+        let preview_response = request(
+            &service,
+            axum::http::Method::GET,
+            &format!(
+                "{base}/schema-retry-preview?retry_of={original}&model_id={}",
+                model.id
+            ),
+            None,
+        )
+        .await;
+        assert_eq!(preview_response.status(), StatusCode::OK);
+        let preview = response_json(preview_response).await;
+        assert_eq!(preview["maximum_output_tokens"], 4_096);
+        assert_eq!(preview["response_mode"], "json_object");
+        assert_eq!(preview["thinking"]["parameter"], "thinking");
+        assert_eq!(preview["thinking"]["value"], json!({"type":"disabled"}));
+        assert_eq!(preview["source_diagnostic"]["finish_reason"], "length");
+        let retry_call = uuid::Uuid::new_v4();
+        let command = json!({
+            "call_id":retry_call,"retry_of":original,"model_id":model.id,
+            "previous_grant_id":preview["previous_grant_id"],
+            "scope_hash":preview["scope_hash"],
+            "maximum_calls":preview["maximum_calls"],
+            "expires_at":preview["expires_at"],"allow_unknown_cost":true
+        });
+        let saved_before_dispatch: annotagent_storage::ConversationSchemaRetryAuthorization =
+            serde_json::from_value(command.clone()).unwrap();
+        application
+            .authorize_conversation_schema_retry(
+                project,
+                conversation,
+                sent.task_id,
+                &saved_before_dispatch,
+            )
+            .unwrap();
+        assert!(
+            application
+                .conversation_call_receipt(project, conversation, sent.task_id, retry_call)
+                .unwrap()
+                .is_none()
+        );
+        let retries_path = format!("{base}/schema-retries");
+        let first = request(
+            &service,
+            axum::http::Method::POST,
+            &retries_path,
+            Some(command.clone()),
+        );
+        let second = request(
+            &service,
+            axum::http::Method::POST,
+            &retries_path,
+            Some(command.clone()),
+        );
+        let (first, second) = tokio::join!(first, second);
+        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(second.status(), StatusCode::OK);
+        let first = response_json(first).await;
+        let second = response_json(second).await;
+        assert!(
+            [&first, &second]
+                .iter()
+                .any(|value| value["receipt"]["status"] == "completed")
+        );
+        assert!(
+            [&first, &second]
+                .iter()
+                .any(
+                    |value| value["journey_resume"]["journey_id"] == journey_id.to_string()
+                        && value["journey_resume"]["queued"] == true
+                )
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        {
+            let bodies = requests.lock().unwrap();
+            assert_eq!(bodies.len(), 1);
+            assert_eq!(bodies[0]["model"], "TEST-structured");
+            assert_eq!(bodies[0]["max_tokens"], 4_096);
+            assert_eq!(bodies[0]["thinking"], json!({"type":"disabled"}));
+            assert_eq!(bodies[0]["response_format"], json!({"type":"json_object"}));
+            assert!(bodies[0].get("tools").is_none());
+            assert!(bodies[0].get("parallel_tool_calls").is_none());
+        }
+        let replay = request(
+            &service,
+            axum::http::Method::POST,
+            &retries_path,
+            Some(command.clone()),
+        )
+        .await;
+        assert_eq!(replay.status(), StatusCode::OK);
+        let replay = response_json(replay).await;
+        assert_eq!(replay["replayed"], true);
+        assert_eq!(replay["journey_resume"]["queued"], false);
+        assert_eq!(
+            replay["journey_resume"]["journey_id"],
+            journey_id.to_string()
+        );
+        assert_eq!(
+            replay["receipt"]["evidence"]["diagnostic"]["retry_of"],
+            original.to_string()
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            application
+                .store()
+                .conversation_journey_dispatch(&owner, conversation, sent.task_id, journey_id)
+                .unwrap()
+                .unwrap()["status"],
+            "queued"
+        );
+        let receipt = request(
+            &service,
+            axum::http::Method::GET,
+            &format!("{base}/schema-retries/{retry_call}"),
+            None,
+        )
+        .await;
+        assert_eq!(receipt.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(receipt).await["receipt"]["status"],
+            "completed"
+        );
+        let mut changed = command;
+        changed["scope_hash"] = json!("f".repeat(64));
+        let changed = request(
+            &service,
+            axum::http::Method::POST,
+            &retries_path,
+            Some(changed),
+        )
+        .await;
+        assert_eq!(changed.status(), StatusCode::CONFLICT);
+        let original_receipt = application
+            .conversation_call_receipt(project, conversation, sent.task_id, original)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            original_receipt.evidence.unwrap()["response"]["usage"]["output_tokens"],
+            2_048
+        );
     }
 
     #[tokio::test]

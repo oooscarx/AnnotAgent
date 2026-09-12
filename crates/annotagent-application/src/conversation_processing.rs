@@ -41,6 +41,62 @@ impl LocalApplication {
             input,
         )?)
     }
+    pub fn conversation_schema_authorization(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        call: Uuid,
+    ) -> Result<Option<annotagent_storage::ConversationSchemaAuthorization>> {
+        self.optional_conversation_builder_budget(project, conversation, task)?;
+        Ok(self.store.conversation_schema_authorization(
+            &self.conversation_project_identity(project)?,
+            task,
+            call,
+        )?)
+    }
+    pub fn authorize_conversation_schema_retry(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        input: &annotagent_storage::ConversationSchemaRetryAuthorization,
+    ) -> Result<()> {
+        self.optional_conversation_builder_budget(project, conversation, task)?;
+        Ok(self.store.authorize_conversation_schema_retry(
+            &self.conversation_project_identity(project)?,
+            task,
+            input,
+        )?)
+    }
+    pub fn latest_conversation_schema_retry(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        source: Uuid,
+    ) -> Result<Option<annotagent_storage::ConversationSchemaRetryAuthorization>> {
+        self.optional_conversation_builder_budget(project, conversation, task)?;
+        Ok(self.store.latest_conversation_schema_retry(
+            &self.conversation_project_identity(project)?,
+            task,
+            source,
+        )?)
+    }
+    pub fn conversation_schema_retry(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        call: Uuid,
+    ) -> Result<Option<annotagent_storage::ConversationSchemaRetryAuthorization>> {
+        self.optional_conversation_builder_budget(project, conversation, task)?;
+        Ok(self.store.conversation_schema_retry(
+            &self.conversation_project_identity(project)?,
+            task,
+            call,
+        )?)
+    }
     pub fn project_conversation_call_limit(
         &self,
         project: &str,

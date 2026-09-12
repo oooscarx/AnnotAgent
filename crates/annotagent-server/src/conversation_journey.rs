@@ -767,6 +767,31 @@ fn spawn_queued_journey(
     });
 }
 
+pub(super) fn resume_after_schema_retry(
+    state: &ServerState,
+    project: &str,
+    conversation: uuid::Uuid,
+    task: uuid::Uuid,
+    original_call: uuid::Uuid,
+) -> ApiResult<(Option<uuid::Uuid>, bool)> {
+    let Some(id) = state
+        .application
+        .conversation_journey_id_for_schema_call(project, conversation, task, original_call)
+        .map_err(ApiError::bad_request)?
+    else {
+        return Ok((None, false));
+    };
+    let queue_id = uuid::Uuid::new_v4();
+    let queued = state
+        .application
+        .queue_conversation_journey_dispatch(project, conversation, task, id, queue_id)
+        .map_err(ApiError::bad_request)?;
+    if queued {
+        spawn_queued_journey(state.clone(), project.to_owned(), conversation, task, id);
+    }
+    Ok((Some(id), queued))
+}
+
 async fn advance(
     state: ServerState,
     project: String,
@@ -791,12 +816,23 @@ async fn advance(
                 .application
                 .validate_conversation_journey_data(&project, conversation, &saved.consent)
                 .map_err(ApiError::bad_request)?;
+            let retry = state
+                .application
+                .latest_conversation_schema_retry(&project, conversation, task, proposal.call_id)
+                .map_err(ApiError::bad_request)?;
+            let schema_call_id = retry
+                .as_ref()
+                .map_or(proposal.call_id, |value| value.call_id);
             let receipt = if let Some(receipt) = state
                 .application
-                .conversation_call_receipt(&project, conversation, task, proposal.call_id)
+                .conversation_call_receipt(&project, conversation, task, schema_call_id)
                 .map_err(ApiError::bad_request)?
             {
                 receipt
+            } else if retry.is_some() {
+                // The explicit retry command owns this successor request. Journey
+                // recovery observes its durable receipt and never dispatches it.
+                return status(State(state), AxumPath((project, conversation, task, id))).await;
             } else {
                 // Recheck the text request scope at first admission. Once
                 // this exact call has a durable receipt, never treat the
@@ -834,12 +870,12 @@ async fn advance(
             let schema = match decision.as_str() {
                 "draft" => state
                     .application
-                    .save_conversation_schema_draft(&project, conversation, task, proposal.call_id)
+                    .save_conversation_schema_draft(&project, conversation, task, schema_call_id)
                     .map_err(ApiError::bad_request)?,
                 "clarify" if saved.consent.continue_after_clarification => {
                     let question = state
                         .application
-                        .schema_clarification(&project, conversation, task, proposal.call_id)
+                        .schema_clarification(&project, conversation, task, schema_call_id)
                         .map_err(ApiError::bad_request)?;
                     let Some(schema_id) = question
                         .schema_draft_id
@@ -917,7 +953,7 @@ async fn advance(
                     queued_message_id: None,
                     source_draft_id: None,
                 },
-                AuthorizationBase::Existing(proposal.call_id),
+                AuthorizationBase::Existing(schema_call_id),
             )?;
             let mut resolved = saved.consent.clone();
             resolved.schema_proposal = None;
@@ -930,7 +966,7 @@ async fn advance(
                 .as_str()
                 .ok_or_else(|| ApiError::internal("Builder scope missing"))?
                 .into();
-            resolved.previous_grant_id = Some(proposal.call_id);
+            resolved.previous_grant_id = Some(schema_call_id);
             saved = state
                 .application
                 .resolve_initial_journey_schema(&project, conversation, &resolved)

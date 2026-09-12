@@ -576,6 +576,7 @@ fn is_expensive_action(path: &str) -> bool {
         || (path.contains("/feedback/") && path.ends_with("/execute"))
         || path.ends_with("/active-probe")
         || path.ends_with("/schema-proposals")
+        || path.ends_with("/schema-retries")
         // A human answer may explicitly resume its already-authorized journey.
         || path.ends_with("/human-schema-drafts")
         || path.ends_with("/builder-operations")

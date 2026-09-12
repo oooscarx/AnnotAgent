@@ -28,6 +28,8 @@ pub struct ConversationSchemaRequestConfig {
     pub response_mode: annotagent_provider::OpenAiResponseMode,
     pub thinking_parameter: Option<annotagent_core::ReasoningWireParameter>,
     pub thinking_value: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_of: Option<Uuid>,
 }
 
 impl ConversationSchemaRequestConfig {
@@ -55,6 +57,7 @@ pub fn default_conversation_schema_request_config() -> ConversationSchemaRequest
         response_mode: annotagent_provider::OpenAiResponseMode::NativeTool,
         thinking_parameter: None,
         thinking_value: None,
+        retry_of: None,
     }
 }
 
@@ -1238,6 +1241,7 @@ pub struct ConversationSchemaDiagnostic {
     pub thinking_value: Option<serde_json::Value>,
     pub response_mode: annotagent_provider::OpenAiResponseMode,
     pub action_source: Option<String>,
+    pub retry_of: Option<Uuid>,
     pub failure_code: Option<ConversationSchemaFailureCode>,
 }
 
@@ -1310,6 +1314,7 @@ fn schema_diagnostic(
         thinking_value: config.thinking_value.clone(),
         response_mode: config.response_mode,
         action_source: response.provider_metadata.get("action_source").cloned(),
+        retry_of: config.retry_of,
         failure_code,
     }
 }
@@ -1913,6 +1918,7 @@ mod tests {
             response_mode: annotagent_provider::OpenAiResponseMode::NativeTool,
             thinking_parameter: Some(annotagent_core::ReasoningWireParameter::Thinking),
             thinking_value: Some(json!({"type":"disabled"})),
+            retry_of: None,
         };
         let run = |response: ModelResponse| TestProvider {
             requests: Mutex::new(Vec::new()),
@@ -2094,6 +2100,7 @@ mod tests {
             response_mode: annotagent_provider::OpenAiResponseMode::JsonObject,
             thinking_parameter: Some(annotagent_core::ReasoningWireParameter::Thinking),
             thinking_value: Some(json!({"type":"disabled"})),
+            retry_of: None,
         };
         let attempt = propose_conversation_schema_tracked(
             &provider,
@@ -2188,6 +2195,7 @@ mod tests {
             response_mode: annotagent_provider::OpenAiResponseMode::NativeTool,
             thinking_parameter: Some(annotagent_core::ReasoningWireParameter::Thinking),
             thinking_value: Some(json!({"type":"disabled"})),
+            retry_of: None,
         };
         let receipt = app
             .execute_conversation_schema_with_config(
@@ -2227,6 +2235,22 @@ mod tests {
             .await
             .unwrap(),
             receipt
+        );
+        assert_eq!(provider.requests.lock().unwrap().len(), 1);
+        let mut changed_config = config.clone();
+        changed_config.maximum_output_tokens = 4_096;
+        assert!(
+            app.execute_conversation_schema_with_config(
+                project,
+                &execution,
+                &changed_config,
+                &provider,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("idempotency")
         );
         assert_eq!(provider.requests.lock().unwrap().len(), 1);
     }

@@ -373,6 +373,17 @@ fn official_zhipu_chat_endpoint(selected: &PipelineBuilderModelRuntime) -> bool 
         .is_some_and(|host| host == "open.bigmodel.cn" || host.ends_with(".bigmodel.cn"))
 }
 
+fn unsupported_response_mode(message: impl Into<String>) -> ApiError {
+    ApiError {
+        status: StatusCode::CONFLICT,
+        body: json!({
+            "status":409,"code":"schema_response_mode_unsupported",
+            "error":message.into(),"admitted":false,
+            "suggested_action":"update_model_profile_and_preview_again"
+        }),
+    }
+}
+
 pub(super) fn schema_stage_config(
     selected: &PipelineBuilderModelRuntime,
 ) -> ApiResult<(
@@ -391,7 +402,7 @@ pub(super) fn schema_stage_config(
     let response_mode = match mode {
         Some("json_object") => {
             if !selected.model.protocol_features.structured_output {
-                return Err(ApiError::bad_request(
+                return Err(unsupported_response_mode(
                     "Model Profile selects json_object without structured-output support",
                 ));
             }
@@ -399,7 +410,7 @@ pub(super) fn schema_stage_config(
         }
         Some("json_schema") => {
             if !selected.model.protocol_features.json_schema {
-                return Err(ApiError::bad_request(
+                return Err(unsupported_response_mode(
                     "Model Profile selects json_schema without JSON Schema support",
                 ));
             }
@@ -407,14 +418,14 @@ pub(super) fn schema_stage_config(
         }
         Some("tool" | "native_tool") => {
             if !selected.model.protocol_features.tool_calls {
-                return Err(ApiError::bad_request(
+                return Err(unsupported_response_mode(
                     "Model Profile selects native tools without tool-call support",
                 ));
             }
             annotagent_provider::OpenAiResponseMode::NativeTool
         }
         Some(other) => {
-            return Err(ApiError::bad_request(format!(
+            return Err(unsupported_response_mode(format!(
                 "Unsupported Schema structured-output mode {other:?}"
             )));
         }
@@ -430,7 +441,7 @@ pub(super) fn schema_stage_config(
             annotagent_provider::OpenAiResponseMode::JsonObject
         }
         None => {
-            return Err(ApiError::bad_request(
+            return Err(unsupported_response_mode(
                 "Schema planning needs a declared native-tool or JSON Object capability",
             ));
         }
@@ -494,6 +505,7 @@ pub(super) fn schema_stage_config(
         response_mode,
         thinking_parameter,
         thinking_value,
+        retry_of: None,
     };
     Ok((provider, request))
 }
@@ -589,6 +601,345 @@ pub(super) async fn preview(
             Ok(Json(preview))
         },
     )
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct SchemaRetrySelection {
+    retry_of: uuid::Uuid,
+    model_id: Option<ModelProfileId>,
+}
+
+fn retryable_source(receipt: &ConversationCallReceipt) -> ApiResult<()> {
+    if receipt.status != annotagent_storage::ConversationCallStatus::Completed
+        || receipt
+            .evidence
+            .as_ref()
+            .and_then(|value| value.pointer("/decision/Err"))
+            .is_none()
+    {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            body: json!({
+                "status":409,"code":"schema_retry_source_not_retryable",
+                "error":"Only a settled invalid structured Schema response can be retried with this operation",
+                "admitted":false,"suggested_action":"inspect_original_receipt"
+            }),
+        });
+    }
+    if receipt
+        .evidence
+        .as_ref()
+        .and_then(|value| value.pointer("/diagnostic/failure_code"))
+        .and_then(Value::as_str)
+        == Some("provider_filtered")
+    {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            body: json!({
+                "status":409,"code":"schema_retry_requires_new_task_decision",
+                "error":"Filtered or refused output is not eligible for this structured-output repair retry",
+                "admitted":false,"suggested_action":"review_provider_or_task_policy"
+            }),
+        });
+    }
+    Ok(())
+}
+
+fn retry_scope(
+    state: &ServerState,
+    project: &str,
+    conversation: uuid::Uuid,
+    task: uuid::Uuid,
+    retry_of: uuid::Uuid,
+    requested_model: Option<ModelProfileId>,
+    saved_command: Option<&annotagent_storage::ConversationSchemaRetryAuthorization>,
+) -> ApiResult<(
+    PipelineBuilderModelRuntime,
+    ConversationSchemaRequestConfig,
+    Value,
+)> {
+    let source = state
+        .application
+        .conversation_call_receipt(project, conversation, task, retry_of)
+        .map_err(ApiError::bad_request)?
+        .ok_or_else(|| ApiError::not_found("Schema retry source receipt not found"))?;
+    retryable_source(&source)?;
+    let source_model = if let Some(initial) = state
+        .application
+        .conversation_schema_authorization(project, conversation, task, retry_of)
+        .map_err(ApiError::bad_request)?
+    {
+        initial.model_id
+    } else {
+        state
+            .application
+            .conversation_schema_retry(project, conversation, task, retry_of)
+            .map_err(ApiError::bad_request)?
+            .map(|retry| retry.model_id)
+            .ok_or_else(|| ApiError::bad_request("Schema retry source has no saved model scope"))?
+    };
+    if requested_model.is_some_and(|model| model != source_model) {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            body: json!({
+                "status":409,"code":"schema_retry_model_changed",
+                "error":"Retry keeps the original Model Profile; review a separate task change to use another Provider",
+                "admitted":false,"source_model_id":source_model
+            }),
+        });
+    }
+    let (selected, base) = preview_scope(state, project, conversation, task, Some(source_model))?;
+    let (provider, mut request_config) = schema_stage_config(&selected)?;
+    request_config.retry_of = Some(retry_of);
+    let budget = state
+        .application
+        .optional_conversation_builder_budget(project, conversation, task)
+        .map_err(ApiError::bad_request)?
+        .ok_or_else(|| ApiError::bad_request("Original Schema call has no saved allowance"))?;
+    let (previous_grant_id, maximum_calls, expires_at) = if let Some(saved) = saved_command {
+        if saved.retry_of != retry_of
+            || saved.model_id != source_model
+            || budget.current_grant.id != saved.call_id
+            || budget.current_grant.scope_hash != saved.scope_hash
+            || budget.current_grant.maximum_calls != saved.maximum_calls
+            || budget.current_grant.expires_at != saved.expires_at
+            || budget.revoked
+        {
+            return Err(ApiError {
+                status: StatusCode::CONFLICT,
+                body: json!({"status":409,"code":"schema_retry_scope_changed","error":"Saved Schema retry is no longer the current active authorization; no request was sent","admitted":false,"suggested_action":"inspect_retry_receipt"}),
+            });
+        }
+        (
+            saved.previous_grant_id,
+            saved.maximum_calls,
+            saved.expires_at,
+        )
+    } else {
+        (
+            budget.current_grant.id,
+            budget
+                .current_grant
+                .maximum_calls
+                .max(budget.used_calls.saturating_add(1)),
+            Utc::now() + Duration::minutes(30),
+        )
+    };
+    let scope_hash = annotagent_image_tools::sha256(
+        &serde_json::to_vec(&json!({
+            "contract":"conversation-schema-retry-v1",
+            "retry_of":retry_of,
+            "source_request_hash":source.request_hash,
+            "source_failure":source.evidence.as_ref().and_then(|value|value.get("diagnostic")),
+            "base_scope_hash":base["scope_hash"],
+            "model":selected.model,
+            "provider":selected.provider,
+            "provider_config":provider,
+            "request_config":request_config,
+            "previous_grant_id":previous_grant_id,
+            "maximum_calls":maximum_calls,
+        }))
+        .map_err(ApiError::internal)?,
+    );
+    let preview = json!({
+        "contract":"conversation-schema-retry-v1",
+        "retry_of":retry_of,
+        "source_status":source.status,
+        "source_request_hash":source.request_hash,
+        "source_diagnostic":source.evidence.as_ref().and_then(|value|value.get("diagnostic")),
+        "model_id":selected.model.id,
+        "model_name":selected.model.display_name,
+        "destination":selected.provider.endpoint_summary(),
+        "previous_grant_id":previous_grant_id,
+        "maximum_calls":maximum_calls,
+        "new_request_limit":1,
+        "scope_hash":scope_hash,
+        "maximum_output_tokens":request_config.maximum_output_tokens,
+        "response_mode":request_config.response_mode,
+        "thinking":{"parameter":request_config.thinking_parameter,"value":request_config.thinking_value},
+        "estimated_cost":null,
+        "expires_at":expires_at,
+        "operation":"Retry this saved Schema interpretation once with the corrected structured-output configuration. No image inference, publication or annotation acceptance."
+    });
+    Ok((selected, request_config, preview))
+}
+
+pub(super) async fn retry_preview(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+    Query(selection): Query<SchemaRetrySelection>,
+) -> ApiResult<Json<Value>> {
+    retry_scope(
+        &state,
+        &project,
+        conversation,
+        task,
+        selection.retry_of,
+        selection.model_id,
+        None,
+    )
+    .map(|(_, _, preview)| Json(preview))
+}
+
+pub(super) async fn retry_receipt(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task, call)): AxumPath<(
+        String,
+        uuid::Uuid,
+        uuid::Uuid,
+        uuid::Uuid,
+    )>,
+) -> ApiResult<Json<Value>> {
+    let authorization = state
+        .application
+        .conversation_schema_retry(&project, conversation, task, call)
+        .map_err(ApiError::bad_request)?
+        .ok_or_else(|| ApiError::not_found("Schema retry command not found"))?;
+    let receipt = state
+        .application
+        .conversation_call_receipt(&project, conversation, task, call)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(
+        json!({"authorization":authorization,"receipt":receipt}),
+    ))
+}
+
+pub(super) async fn retry(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+    Json(input): Json<annotagent_storage::ConversationSchemaRetryAuthorization>,
+) -> ApiResult<Json<Value>> {
+    let saved_command = state
+        .application
+        .conversation_schema_retry(&project, conversation, task, input.call_id)
+        .map_err(ApiError::bad_request)?;
+    if let Some(saved) = &saved_command {
+        if saved != &input {
+            return Err(ApiError {
+                status: StatusCode::CONFLICT,
+                body: json!({"status":409,"code":"schema_retry_command_conflict","error":"Schema retry command changed its saved scope","admitted":false}),
+            });
+        }
+        if let Some(receipt) = state
+            .application
+            .conversation_call_receipt(&project, conversation, task, input.call_id)
+            .map_err(ApiError::bad_request)?
+        {
+            let valid = receipt
+                .evidence
+                .as_ref()
+                .and_then(|value| value.pointer("/decision/Ok/decision"))
+                .is_some();
+            let (journey_id, queued) = if valid {
+                super::conversation_journey::resume_after_schema_retry(
+                    &state,
+                    &project,
+                    conversation,
+                    task,
+                    saved.retry_of,
+                )?
+            } else {
+                (None, false)
+            };
+            return Ok(Json(json!({
+                "authorization":saved,"receipt":receipt,"replayed":true,
+                "journey_resume":{"journey_id":journey_id,"queued":queued}
+            })));
+        }
+    }
+    if !input.allow_unknown_cost {
+        return Err(ApiError::bad_request(
+            "Confirm unknown Provider cost for this one corrected Schema request",
+        ));
+    }
+    let (selected, request_config, preview) = retry_scope(
+        &state,
+        &project,
+        conversation,
+        task,
+        input.retry_of,
+        Some(input.model_id),
+        saved_command.as_ref(),
+    )?;
+    if preview["scope_hash"] != input.scope_hash
+        || preview["previous_grant_id"] != json!(input.previous_grant_id)
+        || preview["maximum_calls"] != input.maximum_calls
+        || input.expires_at <= Utc::now()
+        || input.expires_at > Utc::now() + Duration::minutes(31)
+    {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            body: json!({"status":409,"code":"schema_retry_scope_changed","error":"Schema retry configuration, model, task or allowance changed; review a fresh preview","admitted":false,"suggested_action":"reload_retry_preview"}),
+        });
+    }
+    let credential = resolve_provider_credential(&state, &selected.provider)
+        .await?
+        .ok_or_else(|| {
+            ApiError::bad_request("Provider credential is missing; no retry was sent")
+        })?;
+    let (provider_config, rechecked_config) = schema_stage_config(&selected)?;
+    if rechecked_config.maximum_output_tokens != request_config.maximum_output_tokens
+        || rechecked_config.response_mode != request_config.response_mode
+        || rechecked_config.thinking_parameter != request_config.thinking_parameter
+        || rechecked_config.thinking_value != request_config.thinking_value
+    {
+        return Err(ApiError::bad_request(
+            "Schema retry configuration changed before dispatch",
+        ));
+    }
+    let attempt_observer = state
+        .application
+        .task_model_attempt_observer(&project, conversation, task, &selected)
+        .map_err(ApiError::bad_request)?;
+    let provider = OpenAiCompatibleProvider::new_with_api_key(
+        provider_config,
+        Some(credential.expose_secret().to_owned()),
+    )
+    .map_err(ApiError::bad_request)?
+    .with_attempt_observer(attempt_observer);
+    state
+        .application
+        .authorize_conversation_schema_retry(&project, conversation, task, &input)
+        .map_err(ApiError::bad_request)?;
+    let execution = ConversationSchemaExecution {
+        conversation_id: conversation,
+        task_id: task,
+        call_id: input.call_id,
+        remote_model: selected.model.remote_model_id,
+        scope_hash: input.scope_hash.clone(),
+    };
+    let receipt = state
+        .application
+        .execute_conversation_schema_with_config(
+            &project,
+            &execution,
+            &request_config,
+            &provider,
+            CancellationToken::default(),
+        )
+        .await
+        .map_err(ApiError::bad_request)?;
+    let valid = receipt
+        .evidence
+        .as_ref()
+        .and_then(|value| value.pointer("/decision/Ok/decision"))
+        .is_some();
+    let (journey_id, queued) = if valid {
+        super::conversation_journey::resume_after_schema_retry(
+            &state,
+            &project,
+            conversation,
+            task,
+            input.retry_of,
+        )?
+    } else {
+        (None, false)
+    };
+    Ok(Json(json!({
+        "authorization":input,"receipt":receipt,"replayed":false,
+        "journey_resume":{"journey_id":journey_id,"queued":queued}
+    })))
 }
 
 pub(super) async fn propose(
