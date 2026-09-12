@@ -46,5 +46,5 @@ The Backend read model must own `authorization.can_resume_without_authorization`
 - Backend durable Journey continuation: delivered at `563f2f7`, pending Frontend 1 integration and joint HTTP A1/A2 evidence.
 - Full Web unit/build: passed at the first P0 delivery; focused contract tests and typecheck passed after alignment to `563f2f7`.
 - Live HTTP P0 A1/A2: pending after Frontend 1 integration.
-- Independent Backend verification of `563f2f7` is currently blocked before Journey tests run: `cargo test -p annotagent-storage conversation_journey --lib` reports seven `ConversationSendInput` test initializers missing `task_images`. Reported as `P0-F3-002`; do not count the backend regression as passed until its follow-up SHA is verified.
+- Independent Backend verification used a detached worktree fixed at exact SHA `563f2f7` after an initial parallel-worktree race was identified. Targeted Journey tests passed: Storage 11, Application 1 and Server 2. The earlier `task_images` compile report came from Backend's concurrent A1 work, not this commit, and is superseded by the isolated result.
 - No Provider call, probe, install, credential read, push or real workspace mutation was performed.
