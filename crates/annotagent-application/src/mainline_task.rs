@@ -1,8 +1,9 @@
 //! Passive Task delivery projection and bounded, server-authorized local advancement.
 use crate::{LocalApplication, PrepareDeliverySchema, require_delivery_schema};
 use annotagent_storage::{
-    ConversationCallReceipt, ConversationCallStatus, ConversationHumanRequestStatus,
-    ConversationJourneyRecord, DeliveryPackagePhase, SampleOperation,
+    ConversationCallBudget, ConversationCallReceipt, ConversationCallStatus,
+    ConversationHumanRequestStatus, ConversationJourneyRecord, DeliveryPackagePhase,
+    SampleOperation,
 };
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
@@ -113,6 +114,34 @@ fn sample_result_diagnostics(operation: &SampleOperation, report: &Value) -> Vec
         }
     }
     diagnostics
+}
+
+fn authorization_result_diagnostic(
+    budget: &ConversationCallBudget,
+    budget_url: &str,
+) -> Option<Value> {
+    let (code, reason) = if budget.revoked {
+        ("authorization_revoked", "saved_authorization_was_revoked")
+    } else if budget.current_grant.expires_at <= chrono::Utc::now() {
+        ("authorization_expired", "saved_authorization_expired")
+    } else if budget.used_calls >= budget.current_grant.maximum_calls {
+        (
+            "task_call_budget_exhausted",
+            "saved_model_call_allowance_is_exhausted",
+        )
+    } else {
+        return None;
+    };
+    Some(json!({
+        "code":code,"category":"authorization","state":"blocked","reason":reason,
+        "source":{"kind":"call_grant","id":budget.current_grant.id},
+        "scope":{"task_id":budget.current_grant.task_id,
+            "maximum_calls":budget.current_grant.maximum_calls,
+            "used_calls":budget.used_calls,"expires_at":budget.current_grant.expires_at,
+            "revoked":budget.revoked},
+        "automatic_retry":false,"preserves_existing_results":true,
+        "safe_action":{"id":"inspect_task_authorization_budget","method":"GET","url":budget_url}
+    }))
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -319,6 +348,13 @@ impl LocalApplication {
             .iter()
             .filter_map(|call| call_result_diagnostic(call, &calls_url))
             .collect::<Vec<_>>();
+        let budget_url =
+            format!("/api/projects/{project}/conversations/{conversation}/tasks/{task}/budget");
+        if let Some(budget) = self.store.conversation_call_budget(&owner, task)?
+            && let Some(diagnostic) = authorization_result_diagnostic(&budget, &budget_url)
+        {
+            result_diagnostics.push(diagnostic);
+        }
         let processing = self.conversation_processing_history(project, conversation, task)?;
         let journeys = self.conversation_journey_history(project, conversation, task)?;
         let sample_operations =
@@ -739,9 +775,15 @@ impl LocalApplication {
 
 #[cfg(test)]
 mod tests {
-    use super::{call_result_diagnostic, journey_sample_operation, sample_result_diagnostics};
+    use super::{
+        authorization_result_diagnostic, call_result_diagnostic, journey_sample_operation,
+        sample_result_diagnostics,
+    };
     use annotagent_core::{ModelFailure, ModelFailureCategory, ModelFailureStage};
-    use annotagent_storage::{ConversationCallReceipt, ConversationCallStatus, SampleOperation};
+    use annotagent_storage::{
+        ConversationCallBudget, ConversationCallGrant, ConversationCallReceipt,
+        ConversationCallStatus, SampleOperation,
+    };
     use serde_json::json;
     use uuid::Uuid;
 
@@ -852,5 +894,43 @@ mod tests {
             report["samples"][1]["projection"]["final_candidates"][0]["outcome"]["id"],
             "preserved"
         );
+    }
+
+    #[test]
+    fn authorization_diagnostics_keep_expiry_and_exhaustion_explicit() {
+        let now = chrono::Utc::now();
+        let grant = |expires_at, maximum_calls| ConversationCallGrant {
+            id: Uuid::new_v4(),
+            task_id: Uuid::new_v4(),
+            scope_hash: "a".repeat(64),
+            maximum_calls,
+            expires_at,
+        };
+        let expired = authorization_result_diagnostic(
+            &ConversationCallBudget {
+                current_grant: grant(now - chrono::Duration::seconds(1), 2),
+                used_calls: 0,
+                revoked: false,
+            },
+            "/budget",
+        )
+        .unwrap();
+        assert_eq!(expired["code"], "authorization_expired");
+        assert_eq!(expired["automatic_retry"], false);
+        assert_eq!(expired["safe_action"]["url"], "/budget");
+
+        let exhausted = authorization_result_diagnostic(
+            &ConversationCallBudget {
+                current_grant: grant(now + chrono::Duration::minutes(5), 1),
+                used_calls: 1,
+                revoked: false,
+            },
+            "/budget",
+        )
+        .unwrap();
+        assert_eq!(exhausted["code"], "task_call_budget_exhausted");
+        assert_eq!(exhausted["scope"]["maximum_calls"], 1);
+        assert_eq!(exhausted["scope"]["used_calls"], 1);
+        assert_eq!(exhausted["preserves_existing_results"], true);
     }
 }

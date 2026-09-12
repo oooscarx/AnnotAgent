@@ -558,6 +558,9 @@ with its actual method and route. Current codes are:
 | `model_response_invalid_structure` | failed call category is `invalid_structured_output` | inspect the completed response receipt before separately authorizing another attempt |
 | `legal_empty_detection` | persisted Sample image is empty, not failed, has no terminal candidate and no Provider/infrastructure/budget failure | inspect the saved Sample; `human_negative_recorded:false` |
 | `candidate_projection_failed` | persisted Sample image includes `invalid_artifact` | inspect the saved artifact/report; other saved candidates/results remain unchanged |
+| `authorization_expired` | current saved call grant is past `expires_at` | inspect `D/budget`; a read never renews or replaces the grant |
+| `authorization_revoked` | current saved call grant is revoked | inspect `D/budget`; a read never restores permission |
+| `task_call_budget_exhausted` | `used_calls >= maximum_calls` on the current saved call grant | inspect `D/budget`; spent and unknown calls remain counted |
 
 Example:
 
@@ -580,3 +583,78 @@ Capability readiness retains its own `registry_revision`; it is composed by the
 server after the Application Task digest and does not silently invalidate an
 unchanged execution grant. Calls and Sample records are already part of the
 Application read-model digest.
+
+An authorization blocker has this additive shape:
+
+```json
+{
+  "code": "task_call_budget_exhausted",
+  "category": "authorization",
+  "state": "blocked",
+  "reason": "saved_model_call_allowance_is_exhausted",
+  "source": {"kind": "call_grant", "id": "GRANT_UUID"},
+  "scope": {
+    "task_id": "TASK_UUID",
+    "maximum_calls": 1,
+    "used_calls": 1,
+    "expires_at": "2026-09-12T17:15:21Z",
+    "revoked": false
+  },
+  "automatic_retry": false,
+  "preserves_existing_results": true,
+  "safe_action": {
+    "id": "inspect_task_authorization_budget",
+    "method": "GET",
+    "url": "D/budget"
+  }
+}
+```
+
+### P0 A6/A7 deterministic HTTP scenes
+
+The opt-in HTTP fixture seeds no production route. Its ignored Rust server test
+idempotently writes ordinary owned Task, call-ledger and Sample-report records into
+the marked isolated SQLite workspace before the Router is exposed. The browser then
+reads every scene through the production `GET D/workspace` handler. A local Plugin
+package with deliberately absent weights supplies the Registry evidence for
+`model_weights_missing`; it is installed only in this explicit TEST workspace and is
+never executed.
+
+Start and retain a browser fixture:
+
+```sh
+python3 crates/annotagent-e2e-fixture/support/http_fixture.py \
+  --enable-fixture --web-dist /absolute/path/to/existing/dist
+```
+
+Run once and stop owned processes after verification:
+
+```sh
+python3 crates/annotagent-e2e-fixture/support/http_fixture.py \
+  --enable-fixture --smoke
+```
+
+The printed `manifest.json` contains
+`diagnostic_scenes.scenes.<code>.task_url`, `workspace_url`, `task_id`, and the
+exact observed `diagnostic`. Supported scene keys are:
+
+```json
+[
+  "model_weights_missing",
+  "provider_request_not_sent",
+  "provider_outcome_unknown",
+  "model_response_invalid_structure",
+  "legal_empty_detection",
+  "candidate_projection_failed",
+  "authorization_expired",
+  "task_call_budget_exhausted"
+]
+```
+
+The test-data boundary is explicit: the fixture creates typed external outcome
+receipts and Sample reports, while ownership checks, SQLite writes, Registry
+readiness, budget math, restart recovery, and the HTTP projection execute the real
+Rust code. It does not call a third party, retry a call, create a candidate, accept a
+human decision, or touch a user workspace. Reusing the printed workspace with
+`--workspace <TEST-path> --smoke` must yield
+`seed_snapshot_unchanged:true` and `restart_verified:true`.

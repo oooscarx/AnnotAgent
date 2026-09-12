@@ -240,3 +240,20 @@ after each run. No real credential, paid Provider, model download, user workspac
   hashes, every manifest file hash/size, 18 label rows, YAML, split manifest and
   validation report. No external model, credential, paid call, weight download or
   user workspace was used.
+
+## P0 deterministic failure and authorization scenes
+
+The isolated HTTP fixture now creates eight stable Task scenes for browser A6/A7
+acceptance. They are selected from
+`manifest.json -> diagnostic_scenes.scenes.<code>` and read through each scene's
+normal `workspace_url`. The retained verification workspace is
+`/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-dzse13l4`.
+Its first smoke observed every code exactly once; a second same-workspace start
+recorded `seed_snapshot_unchanged:true` and `restart_verified:true`.
+
+The fixture provider and deliberately missing local Plugin weights are TEST data.
+Task ownership, call admission/settlement, budget exhaustion, Sample persistence,
+Registry projection, restart behavior, and HTTP reads use the regular Rust
+Application and SQLite paths. No candidate or human acceptance was fabricated, and
+no third-party Provider, credential, paid request, weight download, user workspace,
+8787, or 8788 was used.

@@ -211,6 +211,23 @@ def seed_and_verify(manifest, root):
         evidence.write_text(json.dumps({"fixture": "TEST external-model-only; real application HTTP and database", "requests": c.trace}, indent=2, ensure_ascii=False) + "\n")
 
 
+def verify_diagnostic_scenes(c, manifest):
+    seeded = json.loads((Path(manifest["workspace"]) / "P0_DIAGNOSTIC_SCENES.json").read_text())
+    assert seeded["contract_version"] == "p0-diagnostic-scenes-v1", seeded
+    observed = {}
+    for code, scene in seeded["scenes"].items():
+        workspace = c.get(scene["workspace_url"])
+        matches = [item for item in workspace["mainline"]["result_diagnostics"] if item["code"] == code]
+        assert len(matches) == 1, (code, workspace["mainline"]["result_diagnostics"])
+        diagnostic = matches[0]
+        assert diagnostic["state"] == scene["expected"]["state"], diagnostic
+        assert diagnostic["automatic_retry"] is False, diagnostic
+        assert diagnostic["preserves_existing_results"] is True, diagnostic
+        assert diagnostic["safe_action"]["method"] == "GET", diagnostic
+        observed[code] = {**scene, "diagnostic": diagnostic}
+    return {**seeded, "scenes": observed}
+
+
 def verify(c, manifest, root):
     # Exercise the real middleware: an uncredentialed mutation is rejected.
     request = urllib.request.Request(c.base + "/api/projects", data=b"{}", headers={"content-type": "application/json"}, method="POST")
@@ -395,7 +412,8 @@ def verify(c, manifest, root):
     execution_posts = [entry for entry in c.trace if entry["method"] == "POST" and entry["path"] == execution]
     assert len(consent_posts) == 1, consent_posts
     assert execution_posts == [], execution_posts
-    return {"project": project, "conversation_id": conversation, "task_id": task, "task_root": tr, "model_profile_id": model["id"], "provider_id": provider["id"], "execution_url": execution, "p0_autonomy": {"task_images": task_images, "task_image_count": len(task_images), "sample_image_count": len(record["inputs"]), "unavoidable_user_decisions": 1, "technical_relay_clicks": 0, "consent_post_count": len(consent_posts), "execution_post_count": len(execution_posts), "consent_response_ms": consent_response_ms, "journey_duration_ms": journey_duration_ms, "first_observation": first_observation, "consent_id": consent["id"], "schema_call_id": consent["schema_proposal"]["call_id"], "builder_operation_id": consent["builder_operation_id"], "sample_operation_id": consent["sample_operation_id"], "draft_id": record["draft_id"], "sample_status": record["status"], "delivery_schema_id": delivery_schema["schema"]["id"], "review_work_item_id": review_workspace["review_work_item_id"], "review_action": review_workspace["available_actions"][0], "automatic_review_request_ids": [item["input"]["id"] for item in automatic_reviews], "processing_review_gate": {"preview_code": blocked_preview["code"], "confirm_code": blocked_processing["code"], "receipt_count_before_reviews": 0, "unresolved_before": len(blocked_preview["sample_review"]["unresolved"]), "applied_after": len(approval["sample_review"]["applied_request_ids"]), "ready_after": approval["sample_review"]["ready"]}, "execution_dispatch": finished["dispatch"], "formal_delivery": package_evidence}, "describe_before_upload": describe_before_upload, "ambiguous_goal": ambiguous_goal, "export": export, "run_id": run_id, "stop": stop, "answered_request_id": human["id"], "pending_request_id": pending["id"], "plan_task_id": plan["task_id"], "controls": controls, "saved_plan": saved_plan, "bbox": bbox, "manual_stop": manual_stop, "trace": str(Path(manifest["workspace"]) / "HTTP_TRACE.json")}
+    diagnostic_scenes = verify_diagnostic_scenes(c, manifest)
+    return {"project": project, "conversation_id": conversation, "task_id": task, "task_root": tr, "model_profile_id": model["id"], "provider_id": provider["id"], "execution_url": execution, "p0_autonomy": {"task_images": task_images, "task_image_count": len(task_images), "sample_image_count": len(record["inputs"]), "unavoidable_user_decisions": 1, "technical_relay_clicks": 0, "consent_post_count": len(consent_posts), "execution_post_count": len(execution_posts), "consent_response_ms": consent_response_ms, "journey_duration_ms": journey_duration_ms, "first_observation": first_observation, "consent_id": consent["id"], "schema_call_id": consent["schema_proposal"]["call_id"], "builder_operation_id": consent["builder_operation_id"], "sample_operation_id": consent["sample_operation_id"], "draft_id": record["draft_id"], "sample_status": record["status"], "delivery_schema_id": delivery_schema["schema"]["id"], "review_work_item_id": review_workspace["review_work_item_id"], "review_action": review_workspace["available_actions"][0], "automatic_review_request_ids": [item["input"]["id"] for item in automatic_reviews], "processing_review_gate": {"preview_code": blocked_preview["code"], "confirm_code": blocked_processing["code"], "receipt_count_before_reviews": 0, "unresolved_before": len(blocked_preview["sample_review"]["unresolved"]), "applied_after": len(approval["sample_review"]["applied_request_ids"]), "ready_after": approval["sample_review"]["ready"]}, "execution_dispatch": finished["dispatch"], "formal_delivery": package_evidence}, "describe_before_upload": describe_before_upload, "ambiguous_goal": ambiguous_goal, "export": export, "run_id": run_id, "stop": stop, "answered_request_id": human["id"], "pending_request_id": pending["id"], "plan_task_id": plan["task_id"], "controls": controls, "saved_plan": saved_plan, "bbox": bbox, "manual_stop": manual_stop, "diagnostic_scenes": diagnostic_scenes, "trace": str(Path(manifest["workspace"]) / "HTTP_TRACE.json")}
 
 
 def verify_describe_before_upload(c, project_root, schema_revision, png):
@@ -592,4 +610,6 @@ def restart_snapshot(c, manifest):
     if manifest.get("bbox"):
         bbox = manifest["bbox"]
         snapshot["bbox"] = {"requests": c.get(bbox["task_root"] + "/human-requests"), "feedback": c.get(bbox["feedback_url"])}
+    if manifest.get("diagnostic_scenes"):
+        snapshot["diagnostic_scenes"] = verify_diagnostic_scenes(c, manifest)
     return snapshot
