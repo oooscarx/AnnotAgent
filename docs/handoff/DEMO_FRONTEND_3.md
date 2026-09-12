@@ -95,11 +95,19 @@ Only an unchanged server snapshot with an explicit
 does not dispatch Journey work. Scope changes require the task's one current
 approval, while missing readiness remains a concrete blocker.
 
-Backend issue `P0-F3-001` tracks removal of the duplicate Sample approval and the
-durable Builder-to-Sample wakeup. Until that backend contract is committed and
-integrated, Frontend 3 does not claim A1/A2 are complete.
+Backend issue `P0-F3-001` tracked removal of the duplicate Sample approval and the
+durable Builder-to-Sample wakeup. That server contract is now committed and
+integrated; current acceptance evidence is recorded below.
 
 Backend delivered the durable continuation contract in `563f2f7`. Frontend 3
 accepts `server_continuing` only for the exact `queued`/`running` states with the
 server-provided continuation reason; contradictory read-model fields fail closed.
-Joint A1/A2 still require Frontend 1 integration and real HTTP evidence.
+Frontend 1 integrated the complete A1/A2 Sample path through `424e2b7`. Independent
+real-HTTP TEST runs proved one bounded consent, zero execution relays, delayed and
+observer-after-terminal completion, exact three-image Sample scope, restart recovery,
+and duplicate notifications that do not change calls, budget, Builder or Sample IDs.
+The latest exact Backend evidence SHA is
+`1ab6834580e6b15a28755631bb8253eba3210bfd`; its manifest is
+`/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-xrt2f1je/manifest.json`.
+This proves orchestration with a deterministic external TEST Provider, not live-model
+accuracy. G2/A8 formal processing, formal review and real ZIP remain pending.
