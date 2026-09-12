@@ -21,7 +21,8 @@ export type SetupTarget =
 
 export type SetupRequirement = {
   id: string;
-  target: SetupTarget;
+  /** Optional for server capability groups: candidate kinds are alternatives, not dependencies. */
+  target?: SetupTarget;
   capability: ModelCapability;
   input_modalities: InputModality[];
   tool_calls?: boolean;
@@ -178,6 +179,7 @@ export type CapabilityReadiness = {
   registry_revision: string;
   registry_revision_kind: "snapshot_sha256";
   candidates: CapabilityReadinessCandidate[];
+  setup_requests: MainlineCapabilitySetupRequest[];
   agent_model_preference: { revision: number; model_profile_id: string | null };
   authorization: {
     source: string | null;
@@ -216,6 +218,13 @@ export type PreparationSnapshot = {
     requirement: SetupRequirement;
     ready_candidate_ids: string[];
     uncertain_candidate_ids: string[];
+    alternatives: {
+      id: string;
+      target: SetupTarget;
+      state: PreparationState;
+      setup_api_url: string;
+      reasons: string[];
+    }[];
   }[];
   authorization: "recheck_required";
 };
@@ -264,6 +273,35 @@ function same(a: unknown, b: unknown) {
 
 function sortedUnique(values: string[]) {
   return [...new Set(values)].sort((left, right) => left.localeCompare(right));
+}
+
+const modelCapabilities = new Set<ModelCapability>([
+  "text_generation",
+  "vision_language",
+  "image_classification",
+  "object_detection",
+  "open_vocabulary_detection",
+  "phrase_grounding",
+  "semantic_segmentation",
+  "prompted_segmentation",
+  "instance_segmentation",
+  "keypoint_detection",
+]);
+
+function capabilityRequirements(
+  request: MainlineCapabilitySetupRequest,
+): SetupRequirement[] {
+  return sortedUnique(request.required_capabilities).map((capability) => {
+    if (!modelCapabilities.has(capability as ModelCapability))
+      throw new Error(`Capability Setup 含未知 capability：${capability}`);
+    const knownCapability = capability as ModelCapability;
+    return {
+      id: `capability:${knownCapability}`,
+      capability: knownCapability,
+      input_modalities: knownCapability === "text_generation" ? ["text"] : ["image"],
+      purpose: `为当前任务准备 ${knownCapability} 能力`,
+    };
+  });
 }
 
 export function setupContextFromCapabilityRequest(
@@ -349,6 +387,7 @@ function readinessMatchesRequirement(
   requirement: SetupRequirement,
 ) {
   if (!candidate.capabilities.includes(requirement.capability)) return false;
+  if (!requirement.target) return true;
   if (requirement.target === "agent_model")
     return candidate.candidate_type === "model_profile" && candidate.roles.includes("agent");
   if (requirement.target === "provider_model")
@@ -356,6 +395,18 @@ function readinessMatchesRequirement(
   if (requirement.target === "plugin")
     return candidate.candidate_type === "plugin_model";
   return candidate.candidate_type === "model_instance";
+}
+
+function candidateTarget(
+  candidate: CapabilityReadinessCandidate,
+  requirement: SetupRequirement,
+): SetupTarget {
+  if (requirement.target) return requirement.target;
+  if (candidate.candidate_type === "plugin_model") return "plugin";
+  if (candidate.candidate_type === "model_instance") return "model_instance";
+  return requirement.capability === "text_generation" && candidate.roles.includes("agent")
+    ? "agent_model"
+    : "provider_model";
 }
 
 function authoritativeCandidateState(candidate: CapabilityReadinessCandidate) {
@@ -372,7 +423,6 @@ function authoritativeCandidateState(candidate: CapabilityReadinessCandidate) {
 export function setupContextFromReadiness(
   request: MainlineCapabilitySetupRequest,
   readiness: CapabilityReadiness,
-  requirements: SetupRequirement[],
   created_at: string,
 ) {
   if (
@@ -383,9 +433,13 @@ export function setupContextFromReadiness(
     readiness.registry_revision !== request.registry_revision
   )
     throw new Error("Capability Setup 与服务器 readiness 身份或 revision 不一致");
+  const ownedRequest = readiness.setup_requests.find((item) => item.id === request.id);
+  if (!ownedRequest || !same(ownedRequest, request))
+    throw new Error("Capability Setup 请求不属于当前服务器 readiness snapshot");
+  const requirements = capabilityRequirements(ownedRequest);
   const compatible = sortedUnique(readiness.candidates
     .filter((candidate) => requirements.some((requirement) => readinessMatchesRequirement(candidate, requirement)))
-    .filter((candidate) => candidate.production_eligible || (candidate.readiness === "unknown" && !candidate.test_fixture))
+    .filter((candidate) => !candidate.test_fixture && (candidate.production_eligible || candidate.readiness === "unknown"))
     .map((candidate) => candidate.id));
   if (!same(compatible, sortedUnique(request.compatible_model_ids)))
     throw new Error("Capability Setup 的兼容模型集合已经变化");
@@ -419,9 +473,8 @@ function assertContext(context: SetupContext) {
   if (context.allowed_models.some((item) => !item.model_id || !item.binding_digest))
     throw new Error("allowed_models 缺少模型或绑定摘要");
   const targets = new Set<SetupTarget>(["agent_model", "provider_model", "plugin", "model_instance"]);
-  const capabilities = new Set<ModelCapability>(["text_generation", "vision_language", "image_classification", "object_detection", "open_vocabulary_detection", "phrase_grounding", "semantic_segmentation", "prompted_segmentation", "instance_segmentation", "keypoint_detection"]);
   const modalities = new Set<InputModality>(["text", "image", "video"]);
-  if (context.requirements.some((item) => !item.id || !item.purpose || !targets.has(item.target) || !capabilities.has(item.capability) || !item.input_modalities.length || item.input_modalities.some((input) => !modalities.has(input))))
+  if (context.requirements.some((item) => !item.id || !item.purpose || (item.target !== undefined && !targets.has(item.target)) || !modelCapabilities.has(item.capability) || !item.input_modalities.length || item.input_modalities.some((input) => !modalities.has(input))))
     throw new Error("模型准备 requirement 含未知 target、capability 或输入类型");
   const target = new URL(context.return_to, "http://annotagent.local");
   const expected = `/projects/${encodeURIComponent(context.project_id)}/work`;
@@ -441,7 +494,7 @@ export function createModelPreparationService(
     const conversation = esc(context.conversation_id);
     const task = esc(context.task_id);
     const profileRequirements = context.requirements.filter((item) =>
-      ["agent_model", "provider_model"].includes(item.target),
+      item.target === undefined || item.target === "agent_model" || item.target === "provider_model",
     );
     const compatibilityReads = Promise.all(
       profileRequirements.map(async (requirement) => {
@@ -507,7 +560,7 @@ export function createModelPreparationService(
     const providerModels: ProviderModelCandidate[] = profiles.models
       .flatMap((model): ProviderModelCandidate[] => {
         const matches = context.requirements.filter((requirement) =>
-          ["agent_model", "provider_model"].includes(requirement.target) &&
+          (requirement.target === undefined || requirement.target === "agent_model" || requirement.target === "provider_model") &&
           requirementMatchesModel(requirement, model),
         );
         if (!matches.length) return [];
@@ -517,7 +570,9 @@ export function createModelPreparationService(
         if (!authority) return [];
         const provider = providers.providers.find((item) => item.id === model.provider_id);
         return (["agent_model", "provider_model"] as const).flatMap((kind) => {
-          const roleMatches = matches.filter((item) => item.target === kind && readinessMatchesRequirement(authority, item));
+          const roleMatches = matches.filter((item) =>
+            candidateTarget(authority, item) === kind && readinessMatchesRequirement(authority, item),
+          );
           if (!roleMatches.length) return [];
           const availability = authoritativeCandidateState(authority);
           const omittedByServer = roleMatches.some(
@@ -548,7 +603,7 @@ export function createModelPreparationService(
     const modelInstances: ModelInstanceCandidate[] = instanceResult.model_profiles
       .flatMap((profile): ModelInstanceCandidate[] => {
         const matches = context.requirements.filter((requirement) =>
-          requirement.target === "model_instance" &&
+          (requirement.target === undefined || requirement.target === "model_instance") &&
           requirementMatchesCapabilities(requirement, profile.capabilities),
         );
         if (!matches.length) return [];
@@ -576,7 +631,7 @@ export function createModelPreparationService(
       .flatMap((plugin): PluginCandidate[] => {
         const capabilities = plugin.manifest.models.flatMap((model) => model.capabilities);
         const matches = context.requirements.filter((requirement) =>
-          requirement.target === "plugin" &&
+          (requirement.target === undefined || requirement.target === "plugin") &&
           requirementMatchesCapabilities(requirement, capabilities),
         );
         if (!matches.length) return [];
@@ -606,7 +661,7 @@ export function createModelPreparationService(
     const bundleCandidates: BundleCandidate[] = catalog.bundles
       .map((bundle) => {
         const matches = context.requirements.filter((requirement) =>
-          ["plugin", "model_instance"].includes(requirement.target) &&
+          (requirement.target === undefined || requirement.target === "plugin" || requirement.target === "model_instance") &&
           requirementMatchesCapabilities(requirement, bundle.capabilities),
         );
         if (!matches.length) return undefined;
@@ -626,10 +681,9 @@ export function createModelPreparationService(
       })
       .filter((item): item is BundleCandidate => !!item);
 
-    const allCandidates = [...providerModels, ...pluginCandidates, ...modelInstances];
     const liveCompatibleIds = sortedUnique(readiness.candidates
       .filter((candidate) => context.requirements.some((requirement) => readinessMatchesRequirement(candidate, requirement)))
-      .filter((candidate) => candidate.production_eligible || (candidate.readiness === "unknown" && !candidate.test_fixture))
+      .filter((candidate) => !candidate.test_fixture && (candidate.production_eligible || candidate.readiness === "unknown"))
       .map((candidate) => candidate.id));
     if (!same(liveCompatibleIds, sortedUnique(context.compatible_model_ids)))
       contextChanges.push("兼容模型集合已变化");
@@ -653,11 +707,20 @@ export function createModelPreparationService(
       model_instances: modelInstances,
       model_bundles: bundleCandidates,
       requirements: context.requirements.map((requirement) => {
-        const candidates = allCandidates.filter((candidate) => candidate.requirement_ids.includes(requirement.id));
+        const candidates = readiness.candidates
+          .filter((candidate) => readinessMatchesRequirement(candidate, requirement))
+          .filter((candidate) => context.compatible_model_ids.includes(candidate.id))
+          .map((candidate) => ({
+            id: candidate.id,
+            target: candidateTarget(candidate, requirement),
+            ...authoritativeCandidateState(candidate),
+            setup_api_url: candidate.setup.api_url,
+          }));
         return {
           requirement,
-          ready_candidate_ids: candidates.filter((candidate) => candidate.state === "ready").map((candidate) => `${candidate.kind}:${candidate.id}`),
-          uncertain_candidate_ids: candidates.filter((candidate) => candidate.state === "uncertain").map((candidate) => `${candidate.kind}:${candidate.id}`),
+          ready_candidate_ids: candidates.filter((candidate) => candidate.state === "ready").map((candidate) => candidate.id),
+          uncertain_candidate_ids: candidates.filter((candidate) => candidate.state === "uncertain").map((candidate) => candidate.id),
+          alternatives: candidates,
         };
       }),
       authorization: "recheck_required",
@@ -722,10 +785,16 @@ export function clearSetupContext(storage: Storage, id: string) {
   storage.removeItem(`${setupPrefix}${id}`);
 }
 
-export function setupSettingsPath(context: SetupContext, target: SetupTarget) {
+export function setupSettingsPath(
+  context: SetupContext,
+  target: SetupTarget,
+  candidateId?: string,
+) {
   assertContext(context);
   const page = target === "agent_model" ? "agent-models" : target === "provider_model" ? "vision-models" : target === "plugin" ? "plugins" : "vision-models";
-  return `/settings/${page}?setup_request=${encodeURIComponent(context.id)}`;
+  const query = new URLSearchParams({ setup_request: context.id });
+  if (candidateId) query.set("candidate", candidateId);
+  return `/settings/${page}?${query}`;
 }
 
 export function setupReturnPath(

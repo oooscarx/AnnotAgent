@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { readSetupSettingsContext } from "./SetupSettingsReturn";
+import { readSetupCandidate, readSetupSettingsContext } from "./SetupSettingsReturn";
 import { preserveSetupContext, type SetupContext } from "./modelPreparation";
 
 const context = {
@@ -33,4 +33,5 @@ it("restores only the exact task-scoped settings return token", () => {
   expect(readSetupSettingsContext(storage, "?setup_request=setup-id")).toEqual(context);
   expect(readSetupSettingsContext(storage, "")).toBeUndefined();
   expect(() => readSetupSettingsContext(storage, "?setup_request=other")).toThrow("不存在");
+  expect(readSetupCandidate("?setup_request=setup-id&candidate=plugin-model%3Asegment")).toBe("plugin-model:segment");
 });

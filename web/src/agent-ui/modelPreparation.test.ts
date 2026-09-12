@@ -193,6 +193,20 @@ function fixture(overrides: {
           ...pluginModels,
           ...instanceModels,
         ],
+        setup_requests: [{
+          id: "setup",
+          project_id: "p",
+          task_id: "t",
+          task_revision: overrides.taskRevision?.() ?? "schema-1",
+          registry_revision: "registry-1",
+          role: "task_planning_and_vision",
+          required_capabilities: ["text_generation", "image_classification"],
+          compatible_model_ids: models
+            .filter((item) => item.status === "available" || item.status === "unknown" || item.status === "unverified")
+            .map((item) => `model-profile:${item.id}`),
+          status: "required",
+          return_path: "/projects/p/work?task=t&draft=d",
+        }],
         agent_model_preference: { revision: overrides.preferenceRevision?.() ?? 1, model_profile_id: "planner" },
         authorization: { source: "journey_consent", consent_id: "consent", expires_at: "2027-01-01", permission_digest: "old-auth", allowed_models: context.allowed_models, active: true, can_resume_without_authorization: false },
         budget: {},
@@ -284,27 +298,34 @@ describe("task-scoped model preparation", () => {
 
   it("builds the continuation only from the owned B4 readiness revision", async () => {
     const snapshot = await fixture().service.inspect(context, new AbortController().signal);
-    const request = {
+    const request = snapshot.readiness.setup_requests[0];
+    const built = setupContextFromReadiness(request, snapshot.readiness, "2026-01-01");
+    expect(built).toMatchObject({
       id: "setup",
       project_id: "p",
+      conversation_id: "c",
       task_id: "t",
       task_revision: "schema-1",
-      registry_revision: "registry-1",
-      role: "task_planning_and_vision",
-      required_capabilities: ["image_classification", "text_generation"],
+      draft_id: "d",
+      draft_revision: 1,
+      allowed_models: context.allowed_models,
       compatible_model_ids: ["model-profile:planner", "model-profile:vision"],
-      status: "required" as const,
-      return_path: "/projects/p/work?task=t&draft=d",
-    };
-    expect(setupContextFromReadiness(request, snapshot.readiness, context.requirements, "2026-01-01")).toEqual(context);
-    expect(() => setupContextFromReadiness({ ...request, registry_revision: "stale" }, snapshot.readiness, context.requirements, "2026-01-01")).toThrow("revision");
+      return_to: "/projects/p/work?task=t&draft=d",
+    });
+    expect(built.requirements).toEqual([
+      expect.objectContaining({ id: "capability:image_classification", capability: "image_classification" }),
+      expect.objectContaining({ id: "capability:text_generation", capability: "text_generation" }),
+    ]);
+    expect(built.requirements.every((item) => !("target" in item))).toBe(true);
+    expect(() => setupContextFromReadiness({ ...request, registry_revision: "stale" }, snapshot.readiness, "2026-01-01")).toThrow("revision");
+    expect(() => setupContextFromReadiness({ ...request, compatible_model_ids: [] }, snapshot.readiness, "2026-01-01")).toThrow("snapshot");
   });
 
   it("surfaces unknown availability as uncertain instead of a certain failure", async () => {
     const { service } = fixture({ models: [model("planner", "text_generation"), model("vision", "image_classification", "unknown")] });
     const result = await service.inspect(context, new AbortController().signal);
     expect(result.provider_models.find((item) => item.id === "vision")?.state).toBe("uncertain");
-    expect(result.requirements.find((item) => item.requirement.id === "vision")?.uncertain_candidate_ids).toEqual(["provider_model:vision"]);
+    expect(result.requirements.find((item) => item.requirement.id === "vision")?.uncertain_candidate_ids).toEqual(["model-profile:vision"]);
     const recheck = await service.recheck(result, new AbortController().signal);
     expect(recheck.capability_prepared).toBe(false);
     expect(recheck.can_resume_without_authorization).toBe(false);
@@ -322,12 +343,12 @@ describe("task-scoped model preparation", () => {
     ]);
   });
 
-  it("requires Plugin, Model Bundle and Model Instance to be independently Ready", async () => {
+  it("treats Provider, Plugin and Model Instance as alternatives for one capability", async () => {
     const localContext: SetupContext = {
       ...context,
+      compatible_model_ids: ["instance-selection", "model-profile:segment", "plugin-selection"],
       requirements: [
-        { id: "plugin", target: "plugin", capability: "prompted_segmentation", input_modalities: ["image"], purpose: "执行提示分割" },
-        { id: "instance", target: "model_instance", capability: "prompted_segmentation", input_modalities: ["image"], purpose: "加载实际模型权重" },
+        { id: "capability:prompted_segmentation", capability: "prompted_segmentation", input_modalities: ["image"], purpose: "执行提示分割" },
       ],
     };
     const installation = {
@@ -365,6 +386,7 @@ describe("task-scoped model preparation", () => {
       manifest: { id: "bundle", version: "1", publishable: true, fixture: false },
     } as InstalledModelBundle;
     const { service } = fixture({
+      models: [model("segment", "prompted_segmentation")],
       plugins: { installations: [installation], models: [{ selection_id: "plugin-selection", reference: { plugin_id: "plugin", plugin_version: "1", package_digest: "plugin-sha", plugin_api_version: "1", protocol_version: "1", model_id: "segment", model_profile_revision: 1, capability_contract_hash: "contract" }, display_name: "Segment Plugin", capabilities: ["prompted_segmentation"], availability: "available", plugin_status: "ready", enabled: true, selectable: true }], agent_permissions: { discover: true, install: false, accept_licenses: false, provision_weights: false } },
       instances: [instance],
       instanceProfiles: [profile],
@@ -373,8 +395,20 @@ describe("task-scoped model preparation", () => {
     const result = await service.inspect(localContext, new AbortController().signal);
     expect(result.plugins[0].state).toBe("ready");
     expect(result.model_instances[0].state).toBe("ready");
+    expect(result.requirements).toHaveLength(1);
+    expect(result.requirements[0].alternatives.map((item) => [item.id, item.target])).toEqual([
+      ["model-profile:segment", "provider_model"],
+      ["plugin-selection", "plugin"],
+      ["instance-selection", "model_instance"],
+    ]);
+    expect(result.requirements[0].ready_candidate_ids).toEqual([
+      "model-profile:segment",
+      "plugin-selection",
+      "instance-selection",
+    ]);
 
     const broken = fixture({
+      models: [model("segment", "prompted_segmentation")],
       plugins: { installations: [installation], models: [{ selection_id: "plugin-selection", reference: { plugin_id: "plugin", plugin_version: "1", package_digest: "plugin-sha", plugin_api_version: "1", protocol_version: "1", model_id: "segment", model_profile_revision: 1, capability_contract_hash: "contract" }, display_name: "Segment Plugin", capabilities: ["prompted_segmentation"], availability: "available", plugin_status: "ready", enabled: true, selectable: true }], agent_permissions: { discover: true, install: false, accept_licenses: false, provision_weights: false } },
       instances: [{ ...instance, status: "loading" }],
       instanceProfiles: [profile],
@@ -383,6 +417,8 @@ describe("task-scoped model preparation", () => {
     const notReady = await broken.service.inspect(localContext, new AbortController().signal);
     expect(notReady.plugins[0].state).toBe("ready");
     expect(notReady.model_instances[0].state).toBe("uncertain");
+    const recheck = await broken.service.recheck(notReady, new AbortController().signal);
+    expect(recheck.capability_prepared).toBe(true);
   });
 
   it("rechecks Task, Draft, model preference and authorization without expanding allowed models", async () => {
@@ -420,6 +456,7 @@ describe("task-scoped model preparation", () => {
     expect(restoreSetupContext(storage, context.id)).toEqual(context);
     expect(setupSettingsPath(context, "agent_model")).toBe("/settings/agent-models?setup_request=setup");
     expect(setupSettingsPath(context, "provider_model")).toBe("/settings/vision-models?setup_request=setup");
+    expect(setupSettingsPath(context, "plugin", "plugin-model:segment")).toBe("/settings/plugins?setup_request=setup&candidate=plugin-model%3Asegment");
     expect(setupReturnPath(context, "configured")).toBe("/projects/p/work?task=t&draft=d&setup_request=setup&setup_outcome=configured");
     expect(() => preserveSetupContext(storage, { ...context, return_to: "https://example.com" })).toThrow("同一 Project 和 Task");
     expect(() => preserveSetupContext(storage, { ...context, allowed_models: [...context.allowed_models, context.allowed_models[0]] })).toThrow("重复模型");
