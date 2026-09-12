@@ -12,7 +12,7 @@
 
 `web/src/agent-ui/SetupRequest.tsx` and `web/src/agent-ui/modelPreparation.ts` are the handoff boundary.
 
-1. Pass Frontend 1's G0 `CapabilitySetupRequest` to `setupContextFromCapabilityRequest` with a server-owned `SetupContinuationScope`. The types are structurally compatible without importing App/Adapter. Freeze the exact Conversation, optional Draft revision/hash, authorization fingerprint and existing `allowed_models` model ID plus binding digest. Missing continuation identity fails closed; do not infer it from a display name or route.
+1. Read Backend B4 `capability_readiness` from the task workspace or passive `GET .../capability-readiness`, then pass Frontend 1's G0 `CapabilitySetupRequest`, that exact read model and requirements to `setupContextFromReadiness`. The types are structurally compatible without importing App/Adapter. The helper verifies Project/Task/Schema/Registry revision and compatible candidate IDs, then freezes the server-owned Conversation, optional Draft revision/hash, authorization digest and existing `allowed_models`. Missing or stale identity fails closed; do not infer it from a display name or route. `setupContextFromCapabilityRequest` remains the lower-level bridge for a separately server-owned `SetupContinuationScope`.
 2. Persist it with `preserveSetupContext(sessionStorage, context)`.
 3. Render `SetupRequest` in the existing task workspace. Pass `createModelPreparationService()` and the existing `BundleInstallerService`; do not create another installer.
 4. Route `onOpenSettings` to the returned internal path. `SettingsView` already renders `SetupSettingsReturn`, which keeps the exact setup token visible on Agent, Provider/Model, Plugin, and Model Instance pages.
@@ -28,18 +28,16 @@
 - Unknown price is displayed as unknown, never as zero or free. It is explicitly scoped to candidate Registry pricing, not global usage.
 - The real Bundle installer is embedded only after a user opens it. Its existing license, download confirmation, lost-response recovery, verification, and Model Instance creation flow is reused.
 - Return checks Task schema revision, Draft revision/content hash, Agent model preference revision, Project model bindings, and frozen allowed-model scope. It preserves Task and Draft identity and always requires authorization review.
-- The G0 Registry revision and compatible model IDs are preserved. The live compatible set is re-read and any change marks the return stale; the Registry revision itself remains opaque until Backend exposes the planned task `capability_readiness` read model.
+- The G0 Registry revision and compatible model IDs are preserved. Backend B4 `mainline-capability-v1` is authoritative for ownership, readiness, production eligibility, TEST status, Registry digest, current Agent preference, authorization and task cost. Supplemental Registry/Plugin/Bundle reads provide display and installer details only. Any read-model change marks the return stale.
 - Settings now separates Agent/default text roles from visual model roles. Model Profile editing retains the existing `expected_revision` CAS path.
 
 ## Existing CAS verification
 
 `ModelProfiles` re-reads the current profile, retains the editor on a revision mismatch, and sends `expected_revision`. The existing server regression `model_profile_patch_cas_conflict_and_legacy_request` proves the competing CAS writer receives `409 model_profile_revision_conflict`. No Rust change was made.
 
-## Backend observations FE3API-001 / ML-005
+## Backend observations FE3API-001 / ML-005 / ML-010
 
-The task preparation snapshot currently requires multiple independent GETs (Task workspace, Draft, model profiles, compatibility, Providers, Plugins, Instances, Bundles, Project bindings, and Agent preference). The frontend guards ownership and rechecks before return, but the initial snapshot can span concurrent server revisions. A future non-blocking contract should expose an owned, task-scoped read model or snapshot revision covering these inputs. Until then, the integration must treat every return as authorization recheck required and must not auto-execute.
-
-G0 `CapabilitySetupRequest` does not carry Conversation, Draft revision/hash or the frozen authorization/model-scope digest, and there is no server GET-by-request-ID contract resolving those fields. F3 therefore requires a separate frozen `SetupContinuationScope`. ML-005 asks Backend/F1 either to extend the task-owned readiness object or define the server resolver; direct composition without this scope must remain disabled.
+FE3API-001/ML-005 identified that the earlier UI had to assemble ownership, Registry and authorization truth from independent reads. Backend ML-010 commit `3d5b4429db4963a5d2ee81fabec67f2e979dde4b` resolves this with the passive, server-composed `mainline-capability-v1` snapshot. F3 consumes that object without importing Backend code. It still treats every setup return as authorization recheck only, because the server explicitly reports `can_resume_without_authorization=false` and `auto_expands_allowed_models=false`.
 
 ## Test boundary
 

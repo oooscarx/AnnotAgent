@@ -16,6 +16,7 @@ import {
   setupReturnPath,
   setupSettingsPath,
   setupContextFromCapabilityRequest,
+  setupContextFromReadiness,
   type SetupContext,
 } from "./modelPreparation";
 
@@ -77,13 +78,13 @@ const context: SetupContext = {
   task_revision: "schema-1",
   registry_revision: "registry-1",
   role: "task_planning_and_vision",
-  compatible_model_ids: ["planner", "vision"],
+  compatible_model_ids: ["model-profile:planner", "model-profile:vision"],
   setup_status: "required",
   draft_id: "d",
   draft_revision: 1,
   draft_content_hash: "draft-hash",
   authorization_fingerprint: "old-auth",
-  allowed_models: [{ model_id: "vision", binding_digest: "binding-hash" }],
+  allowed_models: [{ model_id: "model-profile:vision", binding_digest: "binding-hash" }],
   return_to: "/projects/p/work?task=t&draft=d",
   requirements: [
     {
@@ -121,6 +122,87 @@ function fixture(overrides: {
   const models = overrides.models ?? [model("planner", "text_generation"), model("vision", "image_classification")];
   const transport = (async (path: string, init?: RequestInit) => {
     calls.push({ path, init });
+    if (path.endsWith("/tasks/t/capability-readiness")) {
+      const pluginModels = (overrides.plugins?.models ?? []).map((item) => ({
+        id: item.selection_id,
+        candidate_type: "plugin_model",
+        revision: item.reference.model_profile_revision,
+        digest: item.reference.capability_contract_hash,
+        roles: ["visual"],
+        capabilities: item.capabilities,
+        quality_contracts: [],
+        readiness: item.availability === "available" ? "ready" : "unknown",
+        production_eligible: item.selectable && item.availability === "available",
+        test_fixture: false,
+        blocker: null,
+        project_bindings: [],
+        allowed_by_current_scope: false,
+        setup: { kind: "plugin", api_url: "/api/plugins" },
+      }));
+      const instanceModels = (overrides.instanceProfiles ?? []).map((item) => {
+        const installed = overrides.instances?.find((instance) => instance.id === item.model_instance_id);
+        const ready = item.availability === "available" && installed?.status === "ready";
+        return ({
+        id: item.selection_id ?? item.model_instance_id,
+        candidate_type: "model_instance",
+        model_profile_id: item.model_profile_id,
+        model_instance_id: item.model_instance_id,
+        revision: item.model_profile_revision,
+        digest: `digest-${item.model_instance_id}`,
+        roles: ["visual"],
+        capabilities: item.capabilities,
+        quality_contracts: [],
+        readiness: ready ? "ready" : "unknown",
+        production_eligible: item.selectable && ready,
+        test_fixture: false,
+        blocker: null,
+        project_bindings: [],
+        allowed_by_current_scope: false,
+        setup: { kind: "model_instance", api_url: `/api/model-instances/${item.model_instance_id}` },
+        });
+      });
+      return {
+        contract_version: "mainline-capability-v1",
+        project_id: "p",
+        project_owner_id: "owner",
+        conversation_id: "c",
+        task_id: "t",
+        task_schema_revision: overrides.taskRevision?.() ?? "schema-1",
+        draft: { id: "d", revision: overrides.draftRevision?.() ?? 1, content_hash: "draft-hash", status: "editing" },
+        registry_revision: "registry-1",
+        registry_revision_kind: "snapshot_sha256",
+        candidates: [
+          ...models.map((item) => ({
+            id: `model-profile:${item.id}`,
+            candidate_type: "model_profile",
+            model_profile_id: item.id,
+            revision: item.revision,
+            digest: `digest-${item.id}`,
+            roles: item.task_capabilities.includes("text_generation") ? ["agent"] : ["classification"],
+            capabilities: item.task_capabilities,
+            quality_contracts: [],
+            readiness: item.status === "available" ? "ready" : item.status === "unknown" || item.status === "unverified" ? "unknown" : item.status === "disabled" ? "disabled" : "unavailable",
+            production_eligible: item.status === "available",
+            test_fixture: false,
+            blocker: item.status === "available" ? null : { code: "not_verified", message: "not verified" },
+            project_bindings: [],
+            allowed_by_current_scope: false,
+            selected_for_next_agent_request: item.id === "planner",
+            setup: { kind: "model_profile", api_url: `/api/model-profiles/${item.id}` },
+          })),
+          ...pluginModels,
+          ...instanceModels,
+        ],
+        agent_model_preference: { revision: overrides.preferenceRevision?.() ?? 1, model_profile_id: "planner" },
+        authorization: { source: "journey_consent", consent_id: "consent", expires_at: "2027-01-01", permission_digest: "old-auth", allowed_models: context.allowed_models, active: true, can_resume_without_authorization: false },
+        budget: {},
+        task_cost: { scope: "conversation_task_model_calls", receipt_count: 0, known: true, amount: "0", currency: null, reason: null },
+        passive: true,
+        setup_recheck_only: true,
+        auto_expands_allowed_models: false,
+        consistency: "server_composed_versioned_snapshot",
+      };
+    }
     if (path.includes("/tasks/t/workspace"))
       return { project_id: "p", conversation_id: "c", task: { input: { id: "t", schema_revision: overrides.taskRevision?.() ?? "schema-1" } } };
     if (path.startsWith("/api/model-profiles/compatible?")) {
@@ -152,7 +234,7 @@ describe("task-scoped model preparation", () => {
       registry_revision: "registry-1",
       role: "task_planning_and_vision",
       required_capabilities: ["image_classification", "text_generation"],
-      compatible_model_ids: ["planner", "vision"],
+      compatible_model_ids: ["model-profile:planner", "model-profile:vision"],
       status: "required",
       return_path: "/projects/p/work?task=t&draft=d",
     }, {
@@ -196,7 +278,26 @@ describe("task-scoped model preparation", () => {
     expect(result.requirements.every((item) => item.ready_candidate_ids.length === 1)).toBe(true);
     expect(calls.every((item) => !item.init?.method || item.init.method === "GET")).toBe(true);
     expect(calls.filter((item) => item.path.includes("/compatible?")).every((item) => item.path.includes("allow_unverified=true"))).toBe(true);
+    expect(calls.filter((item) => item.path.endsWith("/capability-readiness"))).toHaveLength(1);
     expect(calls.some((item) => item.path.includes("probe"))).toBe(false);
+  });
+
+  it("builds the continuation only from the owned B4 readiness revision", async () => {
+    const snapshot = await fixture().service.inspect(context, new AbortController().signal);
+    const request = {
+      id: "setup",
+      project_id: "p",
+      task_id: "t",
+      task_revision: "schema-1",
+      registry_revision: "registry-1",
+      role: "task_planning_and_vision",
+      required_capabilities: ["image_classification", "text_generation"],
+      compatible_model_ids: ["model-profile:planner", "model-profile:vision"],
+      status: "required" as const,
+      return_path: "/projects/p/work?task=t&draft=d",
+    };
+    expect(setupContextFromReadiness(request, snapshot.readiness, context.requirements, "2026-01-01")).toEqual(context);
+    expect(() => setupContextFromReadiness({ ...request, registry_revision: "stale" }, snapshot.readiness, context.requirements, "2026-01-01")).toThrow("revision");
   });
 
   it("surfaces unknown availability as uncertain instead of a certain failure", async () => {
@@ -250,6 +351,7 @@ describe("task-scoped model preparation", () => {
     } as unknown as InstalledModelInstance;
     const profile = {
       model_instance_id: "instance",
+      selection_id: "instance-selection",
       model_profile_id: "instance-profile",
       model_profile_revision: 3,
       display_name: "Segment Instance",
@@ -263,7 +365,7 @@ describe("task-scoped model preparation", () => {
       manifest: { id: "bundle", version: "1", publishable: true, fixture: false },
     } as InstalledModelBundle;
     const { service } = fixture({
-      plugins: { installations: [installation], models: [], agent_permissions: { discover: true, install: false, accept_licenses: false, provision_weights: false } },
+      plugins: { installations: [installation], models: [{ selection_id: "plugin-selection", reference: { plugin_id: "plugin", plugin_version: "1", package_digest: "plugin-sha", plugin_api_version: "1", protocol_version: "1", model_id: "segment", model_profile_revision: 1, capability_contract_hash: "contract" }, display_name: "Segment Plugin", capabilities: ["prompted_segmentation"], availability: "available", plugin_status: "ready", enabled: true, selectable: true }], agent_permissions: { discover: true, install: false, accept_licenses: false, provision_weights: false } },
       instances: [instance],
       instanceProfiles: [profile],
       installedBundles: [bundle],
@@ -273,14 +375,14 @@ describe("task-scoped model preparation", () => {
     expect(result.model_instances[0].state).toBe("ready");
 
     const broken = fixture({
-      plugins: { installations: [installation], models: [], agent_permissions: { discover: true, install: false, accept_licenses: false, provision_weights: false } },
+      plugins: { installations: [installation], models: [{ selection_id: "plugin-selection", reference: { plugin_id: "plugin", plugin_version: "1", package_digest: "plugin-sha", plugin_api_version: "1", protocol_version: "1", model_id: "segment", model_profile_revision: 1, capability_contract_hash: "contract" }, display_name: "Segment Plugin", capabilities: ["prompted_segmentation"], availability: "available", plugin_status: "ready", enabled: true, selectable: true }], agent_permissions: { discover: true, install: false, accept_licenses: false, provision_weights: false } },
       instances: [{ ...instance, status: "loading" }],
       instanceProfiles: [profile],
       installedBundles: [bundle],
     });
     const notReady = await broken.service.inspect(localContext, new AbortController().signal);
-    expect(notReady.plugins[0].state).toBe("setup_required");
-    expect(notReady.model_instances[0].state).toBe("setup_required");
+    expect(notReady.plugins[0].state).toBe("ready");
+    expect(notReady.model_instances[0].state).toBe("uncertain");
   });
 
   it("rechecks Task, Draft, model preference and authorization without expanding allowed models", async () => {
