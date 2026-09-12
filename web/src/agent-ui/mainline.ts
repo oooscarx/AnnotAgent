@@ -9,6 +9,22 @@ export type MainlineMessage={
 };
 export type MainlineStep={id:string;kind:string;title:string;status:"blocked"|"ready"|"awaiting_approval"|"running"|"waiting_for_human"|"completed"|"failed"|"outcome_unknown";detail?:string};
 export type MainlineAction={id:string;state:"authorized"|"available"|"requires_confirmation"|"blocked";method:"GET"|"POST";url:string;execution_method?:"POST";execution_url?:string;requires_confirmation:boolean;reason:string|null;scope?:unknown;failure?:{stage?:string;category?:string;message?:string}|null};
+export type MainlineResultDiagnosticCode=
+  |"model_weights_missing"
+  |"model_capability_unavailable"
+  |"provider_request_not_sent"
+  |"provider_outcome_unknown"
+  |"model_response_invalid_structure"
+  |"legal_empty_detection"
+  |"candidate_projection_failed";
+export type MainlineResultDiagnostic={
+  code:MainlineResultDiagnosticCode;category:string;state:"blocked"|"completed";
+  source:{kind:"model_call"|"sample_test"|"capability_setup_request";id:string;image_index?:number;role?:string};
+  stage?:string;failure?:{stage?:string;category?:string;message?:string;http_status?:number|null}|null;
+  provider_received?:boolean|null;failure_classes?:string[];human_negative_recorded?:boolean;
+  automatic_retry:false;preserves_existing_results:true;
+  safe_action:{id:string;method:"GET";url:string};
+};
 export type MainlinePublicAction={id:string;kind:string;available:boolean;reason:string;requires_approval:boolean;scope_revision:string;method:"GET"|"POST";url:string};
 export type MainlineTaskView={
   contract_version:"mainline-task-v1";project_id:string;project_owner_id:string;conversation_id:string;task_id:string;read_model_revision:string;
@@ -16,7 +32,7 @@ export type MainlineTaskView={
   delivery:unknown;schema:unknown;
   review_summary:{selected_images:number;saved_review_receipts:number;current_reviews:number;pending_reviews:number};
   package:{consents:unknown[];jobs:{id:string;phase:string;intent_revision:number;snapshot_sha256:string;error?:string|null}[]};
-  available_actions:MainlineAction[];actions?:MainlinePublicAction[];blockers:(string|{code:string;message:string})[];
+  available_actions:MainlineAction[];actions?:MainlinePublicAction[];blockers:(string|{code:string;message:string})[];result_diagnostics?:MainlineResultDiagnostic[];
   completion:{model_request_completed:boolean;processing_completed:boolean;package_ready:boolean;task_completed:boolean;status?:"incomplete"|"package_ready";package_id?:string;download_url?:string};
   messages?:MainlineMessage[];steps?:MainlineStep[];active_operation_ids?:string[];review_work_item_id?:string;package_id?:string;formal_source?:unknown;capability_readiness?:unknown;
   links?:{self:string;thread:string;visual_selections:string;capability_readiness:string;review_work_items:string;package_consents:string;advance:string};

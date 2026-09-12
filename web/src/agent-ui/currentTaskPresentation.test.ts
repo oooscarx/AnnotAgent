@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Task } from "./adapter";
-import type { MainlineAction, MainlineTaskView } from "./mainline";
-import { selectCurrentTaskPresentation } from "./currentTaskPresentation";
+import type { MainlineAction, MainlineResultDiagnostic, MainlineTaskView } from "./mainline";
+import { currentResultDiagnostic, selectCurrentTaskPresentation } from "./currentTaskPresentation";
 
 const action = (
   id: string,
@@ -66,6 +66,13 @@ const task = (mainline: MainlineTaskView, overrides: Partial<Task> = {}): Task =
   image: "image-1",
   mainline,
   ...overrides,
+});
+
+const diagnostic=(code:MainlineResultDiagnostic["code"],kind:MainlineResultDiagnostic["source"]["kind"]):MainlineResultDiagnostic=>({
+  code,category:"TEST",state:code==="legal_empty_detection"?"completed":"blocked",
+  source:{kind,id:kind==="sample_test"?"sample-1":kind==="model_call"?"call-1":"setup-1",...(kind==="sample_test"?{image_index:0}:{})},
+  automatic_retry:false,preserves_existing_results:true,
+  safe_action:{id:"inspect",method:"GET",url:"/api/TEST/inspect"},
 });
 
 describe("single current-task presentation", () => {
@@ -219,6 +226,40 @@ describe("single current-task presentation", () => {
     expect(result).toMatchObject({kind:"ready_to_deliver",primary:{kind:"prepare_export"},action:{id:"authorize_training_package"}});
   });
 
+  it.each([
+    ["model_weights_missing","capability_setup_request"],
+    ["model_capability_unavailable","capability_setup_request"],
+    ["provider_request_not_sent","model_call"],
+    ["provider_outcome_unknown","model_call"],
+    ["model_response_invalid_structure","model_call"],
+    ["legal_empty_detection","sample_test"],
+    ["candidate_projection_failed","sample_test"],
+  ] as const)("presents the current typed diagnostic %s without inventing a retry",(code,sourceKind)=>{
+    const resultDiagnostic=diagnostic(code,sourceKind);
+    const mainline=view({
+      result_diagnostics:[resultDiagnostic],
+      ...(sourceKind==="capability_setup_request"?{capability_readiness:{setup_requests:[{id:"setup-1",status:"required"}]}}:{}),
+    });
+    const overrides:Partial<Task>=sourceKind==="sample_test"
+      ? {sample:{id:"sample-1",draft:"draft-1",revision:1},sampleResult:{project_id:"TEST-project",conversation_id:"TEST-conversation",task_id:"TEST-task",project_schema_revision:"schema-1",draft_id:"draft-1",draft_revision:1,sample_test_id:"sample-1",images:[{image_id:"image-1",image_sha256:"hash",result_revision:"result-1",candidates:[],annotations:[]}]}}
+      : sourceKind==="model_call"
+        ? {phase:code==="provider_outcome_unknown"?"outcome_unknown":"failed",receipts:[{id:"call-1",title:"call",status:code==="provider_outcome_unknown"?"in_doubt":"failed"}]}
+        : {};
+    const result=selectCurrentTaskPresentation(task(mainline,overrides));
+    expect(result).toMatchObject({kind:"blocked",diagnostic:{code,automatic_retry:false,preserves_existing_results:true}});
+    expect(result.primary).toBeUndefined();
+  });
+
+  it("keeps an older failed call in details after a later usable Sample result",()=>{
+    const old=diagnostic("provider_request_not_sent","model_call");
+    const current=task(view({result_diagnostics:[old]}),{
+      phase:"failed",receipts:[{id:"call-1",title:"old call",status:"failed"}],
+      sample:{id:"sample-1",draft:"draft-1",revision:1},
+      sampleResult:{project_id:"TEST-project",conversation_id:"TEST-conversation",task_id:"TEST-task",project_schema_revision:"schema-1",draft_id:"draft-1",draft_revision:1,sample_test_id:"sample-1",images:[{image_id:"image-1",image_sha256:"hash",result_revision:"result-1",candidates:[],annotations:[]}]},
+    });
+    expect(currentResultDiagnostic(current)).toBeUndefined();
+  });
+
   it("lets the server proposal resolve label and target without another form", () => {
     const result = selectCurrentTaskPresentation(
       task(
@@ -307,6 +348,27 @@ describe("single current-task presentation", () => {
       kind: "running",
       title: "生成标注方法",
       primary: { kind: "stop" },
+    });
+  });
+
+  it("prefers one exact server-issued resume checkpoint over a stale running projection", () => {
+    const result = selectCurrentTaskPresentation(
+      task(
+        view({
+          steps: [{id:"processing",kind:"processing",title:"Dataset processing",status:"running"}],
+          active_operation_ids:["batch-1"],
+        }),
+        {
+          phase:"running",
+          actions:{resume:{available:true,reason:"exact checkpoint"}},
+          resumeTargets:[{id:"batch:batch-1",label:"batch",reason:"Resume the frozen checkpoint"}],
+        },
+      ),
+    );
+
+    expect(result).toMatchObject({
+      kind:"interrupted",
+      primary:{kind:"resume",target:"batch:batch-1"},
     });
   });
 

@@ -14,6 +14,7 @@ import type {
   SampleVisualSelection,
 } from "./deliveryVisualSelection";
 import type { FormalVisualSelection } from "./mainline";
+import type { MainlineResultDiagnostic } from "./mainline";
 
 type ResultImage={id:string;name:string;src?:string};
 export type P0ResultAction={
@@ -24,7 +25,7 @@ export type P0ResultAction={
 export type P0DiagnosticCategory="capability_missing"|"provider_not_received"|"outcome_unknown"|"invalid_structure"|"legal_empty"|"projection_failed";
 export type P0ResultPanelView=
   |{kind:"preparing";stage:string;message:string;elapsed_ms:number|null}
-  |{kind:"sample_feedback";images:ResultImage[];labels:{stable_id:string;display_name:string}[];sample_result:DeliverySampleResult;focus:DeliveryReviewFocus|null;actions:P0ResultAction[]}
+  |{kind:"sample_feedback";images:ResultImage[];labels:{stable_id:string;display_name:string}[];sample_result:DeliverySampleResult;focus:DeliveryReviewFocus|null;actions:P0ResultAction[];diagnostics?:MainlineResultDiagnostic[]}
   |{kind:"formal_review";images:ResultImage[];labels:{stable_id:string;display_name:string}[];formal_result?:DeliveryFormalResult;focus:DeliveryReviewFocus|null;actions:P0ResultAction[]}
   |{kind:"diagnostic";category:P0DiagnosticCategory;message:string;image:ResultImage|null;annotations:Annotation[];focus_candidate_id:string|null}
   |{kind:"package";scope:{revision:number;content_sha256:string;image_ids:string[]};package_id:string|null};
@@ -59,6 +60,10 @@ const diagnosticTitle:Record<P0DiagnosticCategory,string>={
   legal_empty:"本次没有检测到候选",
   projection_failed:"候选无法投影到原图",
 };
+const sampleDiagnosticCopy:Partial<Record<MainlineResultDiagnostic["code"],string>>={
+  legal_empty_detection:"没有检测到候选；这不是人工确认的负样本。",
+  candidate_projection_failed:"候选无法安全投影到原图；其他有效候选仍保留。",
+};
 
 function DiagnosticPanel({view}:{view:Extract<P0ResultPanelView,{kind:"diagnostic"}>}){
   return <section className="p0-result-diagnostic" aria-label="结果诊断">
@@ -84,8 +89,14 @@ export function P0ResultPanel({service,projectId,taskId,view,onSelection,onSampl
       const first=view.sample_result.images.find(image=>image.annotations.length>0)!;
       return <DiagnosticPanel view={{kind:"diagnostic",category:"projection_failed",message:"服务端返回了候选，但没有对象属于当前任务的终端候选投影。中间粗框不会进入样例审核。",image:view.images.find(image=>image.id===first.image_id)||null,annotations:first.annotations,focus_candidate_id:first.annotations[0]?.id||null}}/>;
     }
+    const diagnostics=(view.diagnostics||[]).filter(item=>item.source.kind==="sample_test"&&item.source.id===view.sample_result.sample_test_id&&sampleDiagnosticCopy[item.code]);
     return <>
       {projection.rejected.length>0&&<p className="p0-result-projection-warning" role="alert">已隐藏 {projection.rejected.length} 个不属于当前终端投影或引用已失效的候选；有效结果仍可审核。</p>}
+      {diagnostics.length>0&&<div className="p0-result-projection-warning" aria-label="样例结果诊断">{diagnostics.map(item=>{
+        const index=item.source.image_index;
+        const name=typeof index==="number"?view.images[index]?.name:undefined;
+        return <p key={`${item.code}:${item.source.id}:${index??"all"}`}><strong>{name?`${name}：`:""}</strong>{sampleDiagnosticCopy[item.code]} 服务器不会自动重试，已有结果不会被覆盖。</p>;
+      })}</div>}
       <DeliveryReview
         key={`sample:${projection.result.sample_test_id}:${projection.result.draft_revision}`}
         service={service} project={projectId} task={taskId} images={view.images} labels={view.labels}

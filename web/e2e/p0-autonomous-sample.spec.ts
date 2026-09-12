@@ -262,6 +262,94 @@ export:
   await reopened.close();
 });
 
+test("current task keeps an exact three-image scope inside a ten-image project",async({page,request},testInfo)=>{
+  test.skip(!process.env.AGENT_UI_TEST_MANIFEST,"Requires the marked isolated Agent UI fixture");
+  test.setTimeout(180_000);
+  const manifest=JSON.parse(readFileSync(process.env.AGENT_UI_TEST_MANIFEST!,"utf8"));
+  const project=`TEST-p0-exact-scope-${randomUUID()}`;
+  const yaml=`version: 1
+project:
+  name: TEST P0 exact task scope
+dataset:
+  root: images
+runtime: {}
+tasks: []
+review:
+  auto_accept_confidence: 0.9
+  force_review_below: 0.5
+export:
+  formats: [native]
+`;
+  expect((await request.post("/api/projects",{data:{id:project,yaml}})).ok()).toBe(true);
+  const binding=await request.put(`/api/projects/${project}/model-bindings`,{data:{bindings:[{capability:"vision_language",role:"primary_inference",match_kind:"capability",model_profile_id:manifest.model_profile_id,locked:false}]}});
+  expect(binding.ok(),await binding.text()).toBe(true);
+  const existingFiles=[
+    "../examples/robocup/images/synthetic-robocup.png",
+    "public/brand/core/pwa-192.png",
+    "public/brand/core/pwa-512.png",
+    "public/evidence/visual-finish/reference/01-new-task-light.png",
+    "public/brand/core/apple-touch-icon.png",
+    "public/brand/core/og-card.png",
+    "../examples/demo-packs/object-detection-review/1.0.0/thumbnail.png",
+  ];
+  for(let index=0;index<existingFiles.length;index++){
+    const bytes=readFileSync(resolve(existingFiles[index]));
+    const uploaded=await request.post(`/api/projects/${project}/image-upload?name=existing_${index+1}.png`,{data:bytes,headers:{"Content-Type":"image/png"}});
+    expect(uploaded.ok(),await uploaded.text()).toBe(true);
+  }
+  const beforeImages=(await(await request.get(`/api/projects/${project}/images`)).json()).images;
+  expect(beforeImages).toHaveLength(7);
+  const existingIds=new Set(beforeImages.map((image:{image_id:string})=>image.image_id));
+
+  await page.goto(`/projects/${project}/work`);
+  const currentFiles=[1,2,3].map(index=>resolve(`../examples/demo-packs/object-detection-review/1.0.0/images/desk_0${index}.png`));
+  await page.locator('input[type="file"]').setInputFiles(currentFiles);
+  await page.getByRole("textbox",{name:"给 AnnotAgent 的需求"}).fill("标注这三张新图片中的杯子和瓶子，框住完整可见物体，用于 Ultralytics YOLO 目标检测。先给我看三张样例。");
+  await page.getByRole("button",{name:"发送",exact:true}).click();
+  await expect.poll(()=>new URL(page.url()).searchParams.get("task")).not.toBeNull();
+  const task=new URL(page.url()).searchParams.get("task")!;
+  const navigation=await(await request.get("/api/navigation?limit=100")).json();
+  const owner=navigation.items.find((item:{project_id:string})=>item.project_id===project);
+  const root=`/api/projects/${project}/conversations/${owner.conversation_id}/tasks/${task}`;
+  const initial=await(await request.get(`${root}/workspace`)).json();
+  const taskIds=initial.mainline.intake.dataset_scope.map((image:{image_id:string})=>image.image_id);
+  expect(taskIds).toHaveLength(3);
+  expect(taskIds.every((id:string)=>!existingIds.has(id))).toBe(true);
+  expect((await(await request.get(`/api/projects/${project}/images`)).json()).images).toHaveLength(10);
+
+  await page.getByRole("button",{name:"开始标注样例",exact:true}).click();
+  const approval=page.getByRole("dialog");
+  await expect(approval).toContainText("3 张图片已冻结");
+  await page.screenshot({path:testInfo.outputPath("01-exact-three-of-ten-approval.png"),fullPage:true,animations:"disabled"});
+  await approval.getByRole("button",{name:"接受未知费用并执行此范围",exact:true}).click();
+  await expect.poll(async()=>{
+    const workspace=await(await request.get(`${root}/workspace`)).json();
+    return workspace.human_requests?.filter((item:{status:string})=>item.status==="pending").length||0;
+  },{timeout:90_000}).toBe(3);
+  const afterSample=await(await request.get(`${root}/workspace`)).json();
+  const sample=afterSample.sample_operations.find((item:{status:string})=>item.status==="succeeded");
+  const sampleRecord=await(await request.get(`/api/workflow-drafts/${sample.draft_id}/sample-test?test_id=${sample.id}`)).json();
+  expect(new Set(sampleRecord.sample_test.inputs.map((input:{image_id:string})=>input.image_id))).toEqual(new Set(taskIds));
+
+  await page.reload();
+  for(let count=1;count<=3;count++){
+    await page.getByRole("button",{name:"这个样例结果正确",exact:true}).click();
+    await expect.poll(async()=>{
+      const workspace=await(await request.get(`${root}/workspace`)).json();
+      return workspace.human_requests.filter((item:{status:string})=>item.status==="applied").length;
+    }).toBe(count);
+  }
+  await page.getByRole("button",{name:"确认范围并处理剩余图片",exact:true}).click();
+  const processingDialog=page.getByRole("dialog");
+  await expect(processingDialog).toContainText("3 张图片");
+  const started=page.waitForResponse(response=>response.request().method()==="POST"&&new URL(response.url()).pathname===`/api/projects/${project}/processing-operations`);
+  await processingDialog.getByRole("button",{name:"接受未知费用并执行此范围",exact:true}).click();
+  const receipt=await(await started).json();
+  expect(receipt.authorization.available_images).toBe(10);
+  expect(receipt.authorization.images.map((image:{image_id:string})=>image.image_id)).toEqual(taskIds);
+  await page.screenshot({path:testInfo.outputPath("02-exact-three-of-ten-processing.png"),fullPage:true,animations:"disabled"});
+});
+
 test("description first then later upload keeps one Task and exact six-image scope",async({page,request},testInfo)=>{
   test.skip(!process.env.AGENT_UI_TEST_MANIFEST,"Requires the marked isolated Agent UI fixture");
   test.setTimeout(180_000);

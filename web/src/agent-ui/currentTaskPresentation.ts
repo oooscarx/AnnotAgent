@@ -1,11 +1,11 @@
 import type { SchemaClarification, Task } from "./adapter";
-import { taskIsComplete, type IntakeSlot, type MainlineAction } from "./mainline";
+import { taskIsComplete, type IntakeSlot, type MainlineAction, type MainlineResultDiagnostic } from "./mainline";
 
 export type CurrentTaskAction =
   | { kind: "prepare_sample" }
   | { kind: "confirm_approval" }
   | { kind: "stop" }
-  | { kind: "resume" }
+  | { kind: "resume"; target?: string }
   | { kind: "open_review"; id?: string }
   | { kind: "prepare_processing" }
   | { kind: "prepare_export" }
@@ -29,6 +29,7 @@ export type CurrentTaskPresentation = {
   primary?: CurrentTaskAction;
   action?: MainlineAction;
   clarification?: SchemaClarification;
+  diagnostic?: MainlineResultDiagnostic;
 };
 
 const missingQuestions: Record<IntakeSlot, string> = {
@@ -47,6 +48,37 @@ const blockerText = (task: Task) => {
   if (typeof blocker === "string") return blocker;
   return blocker?.message;
 };
+
+const diagnosticCopy:Record<MainlineResultDiagnostic["code"],{title:string;detail:string}>={
+  model_weights_missing:{title:"本地模型缺少权重",detail:"当前模型实例没有可验证的权重。请在模型设置中完成安装后返回此任务；现有结果会保留。"},
+  model_capability_unavailable:{title:"缺少当前任务需要的模型能力",detail:"没有 Ready 且兼容的模型绑定。查看模型准备要求后再决定是否配置；不会自动安装或改用演示结果。"},
+  provider_request_not_sent:{title:"模型请求没有发出",detail:"请求在发送前失败，没有产生远端结果。修复配置后仍需重新确认新的调用范围。"},
+  provider_outcome_unknown:{title:"远端结果未知",detail:"服务端无法确认远端是否完成。不会自动重试可能收费的请求；请在执行详情核实原回执。"},
+  model_response_invalid_structure:{title:"模型响应结构无法使用",detail:"Provider 已返回响应，但结构校验失败。原回执和已有结果会保留；再次调用需要新的授权。"},
+  legal_empty_detection:{title:"这张样例没有检测到候选",detail:"这是一次合法的空检测结果，不等于人工确认的负样本。请查看原图后再决定如何处理。"},
+  candidate_projection_failed:{title:"候选无法投影到原图",detail:"模型产生了候选，但其 Artifact 无法安全映射到原图。其他有效结果会保留，不会伪造替代框。"},
+};
+
+/** Select only a diagnostic tied to the task's current failing source. */
+export function currentResultDiagnostic(task:Task):MainlineResultDiagnostic|undefined{
+  const diagnostics=task.mainline?.result_diagnostics||[];
+  if(!diagnostics.length||taskIsComplete(task.mainline!))return undefined;
+  const sampleId=task.sampleResult?.sample_test_id||task.sample?.id;
+  if(sampleId){
+    const sample=[...diagnostics].reverse().find(item=>item.source.kind==="sample_test"&&item.source.id===sampleId);
+    const usableTerminal=task.sampleResult?.images.some(image=>image.annotations.some(annotation=>image.candidates.some(candidate=>candidate.candidate_id===annotation.id)));
+    if(sample&&!usableTerminal)return sample;
+    // A later usable Sample result makes older call failures historical detail.
+    if(task.sampleResult)return undefined;
+  }
+  const setupRequests=(task.mainline?.capability_readiness as {setup_requests?:{id:string;status:string}[]}|undefined)?.setup_requests||[];
+  const requiredIds=new Set(setupRequests.filter(item=>item.status==="required").map(item=>item.id));
+  const capability=[...diagnostics].reverse().find(item=>item.source.kind==="capability_setup_request"&&requiredIds.has(item.source.id));
+  if(capability)return capability;
+  if(task.phase!=="failed"&&task.phase!=="outcome_unknown")return undefined;
+  const currentReceipts=new Set((task.receipts||[]).filter(item=>["failed","in_doubt","invalid_result"].includes(item.status)).map(item=>item.id));
+  return [...diagnostics].reverse().find(item=>item.source.kind==="model_call"&&currentReceipts.has(item.source.id));
+}
 
 /**
  * The only selector allowed to decide which task-level decision is current.
@@ -105,6 +137,12 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
     };
   }
 
+  const diagnostic=currentResultDiagnostic(task);
+  if(diagnostic){
+    const copy=diagnosticCopy[diagnostic.code];
+    return {kind:"blocked",title:copy.title,detail:copy.detail,diagnostic};
+  }
+
   const activeReviewCount =
     task.sampleResult?.images.length ||
     view.review_summary.current_reviews ||
@@ -129,6 +167,21 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
   }
 
   const runningStep = view.steps?.find((step) => step.status === "running");
+  const resumableTarget =
+    task.actions?.resume?.available && task.resumeTargets?.length === 1
+      ? task.resumeTargets[0]
+      : undefined;
+  // A concrete server-issued checkpoint is stronger evidence than a stale
+  // running projection. This does not invent recovery: the target is sent
+  // back verbatim and the adapter revalidates it before POSTing.
+  if (resumableTarget) {
+    return {
+      kind: "interrupted",
+      title: "任务已暂停，可以从保存点继续",
+      detail: resumableTarget.reason,
+      primary: { kind: "resume", target: resumableTarget.id },
+    };
+  }
   const automaticContinuation = action(
     task,
     "inspect_automatic_sample_progress",

@@ -187,15 +187,18 @@ test("f: explicit native Export produces a real downloadable file, not a server 
   expect(href).toMatch(/^\/api\/projects\/TEST-/);
   const file=await request.get(href!);expect(file.ok()).toBe(true);expect((await file.body()).length).toBeGreaterThan(0);
 });
-test("d: saved interrupted state cannot become a fictional resume; paused Batch resumes its checkpoint",async({page,request})=>{
+test("d: a non-resumable server state cannot invent resume; paused Batch resumes its checkpoint",async({page,request})=>{
   const nav=await(await request.get("/api/navigation")).json();
   const interrupted=nav.items.find((p:{project_id:string})=>p.project_id.startsWith("TEST-agent-ui-interrupted-"));
   const paused=nav.items.find((p:{project_id:string})=>p.project_id.startsWith("TEST-agent-ui-resumable-"));
   expect(interrupted).toBeTruthy();expect(paused).toBeTruthy();
   const interruptedTasks=await(await request.get(`/api/projects/${interrupted.project_id}/conversations/${interrupted.conversation_id}/task-navigation`)).json();
+  const interruptedRoot=`/api/projects/${interrupted.project_id}/conversations/${interrupted.conversation_id}/tasks/${interruptedTasks.items[0].task_id}`;
+  const interruptedWorkspace=await(await request.get(`${interruptedRoot}/workspace`)).json();
+  expect(interruptedWorkspace.resume_actions.filter((a:{available:boolean})=>a.available)).toEqual([]);
   await page.goto(`/projects/${interrupted.project_id}/work?task=${interruptedTasks.items[0].task_id}`);
-  await expect(page.getByText("停止回执已确认",{exact:true})).toBeVisible();
-  await expect(page.getByRole("button",{name:"继续任务",exact:true})).toBeDisabled();
+  await expect(page.getByRole("region",{name:"当前任务状态",exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"继续任务",exact:true})).toHaveCount(0);
   const cr=`/api/projects/${paused.project_id}/conversations/${paused.conversation_id}`;
   const tasks=await(await request.get(`${cr}/task-navigation`)).json();
   const tr=`${cr}/tasks/${tasks.items[0].task_id}`;
@@ -204,7 +207,7 @@ test("d: saved interrupted state cannot become a fictional resume; paused Batch 
   expect(batch).toBeTruthy();
   const before=await(await request.get(`/api/batches/${batch.id}`)).json();
   await page.goto(`/projects/${paused.project_id}/work?task=${tasks.items[0].task_id}`);
-  await page.getByRole("button",{name:"继续 batch",exact:true}).click();
+  await page.getByRole("button",{name:"继续任务",exact:true}).click();
   await expect.poll(async()=>{const b=await(await request.get(`/api/batches/${batch.id}`)).json();return b.batch.status;},{timeout:30_000}).toBe("completed");
   const after=await(await request.get(`/api/batches/${batch.id}`)).json();
   for(const id of before.batch.child_run_ids)expect(after.batch.child_run_ids).toContain(id);
@@ -380,8 +383,8 @@ test("d: actual stop POST is observed as stopping and settles to unknown without
   const initial=await(await response).json();expect(initial.normalized_state).toBe("stopping");
   await testInfo.attach("actual-initial-stop-receipt",{body:JSON.stringify(initial,null,2),contentType:"application/json"});
   await page.getByRole("button",{name:"收起数据",exact:true}).click();
-  await expect(page.getByRole("region",{name:"当前执行状态",exact:true}).getByRole("status")).toContainText("远端结果未知");
-  await page.reload();await expect(page.getByRole("region",{name:"当前执行状态",exact:true}).getByRole("status")).toContainText("远端结果未知");
+  await expect(page.getByRole("region",{name:"当前任务状态",exact:true})).toContainText("远端结果未知");
+  await page.reload();await expect(page.getByRole("region",{name:"当前任务状态",exact:true})).toContainText("远端结果未知");
   const final=await(await request.get(scene.workspace_url)).json();expect(final.calls.some((c:{status:string})=>c.status==="in_doubt")).toBe(true);
   expect(final.resume_actions.filter((a:{available:boolean})=>a.available)).toEqual([]);
 });

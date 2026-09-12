@@ -311,8 +311,25 @@ export function AgentPreviewApp({
     ? {revision:deliverySaved.revision!,content_sha256:deliverySaved.content_sha256,image_ids:deliverySaved.intent!.dataset_scope!.map(image=>image.image_id!)}
     : undefined;
   const formalReview = !!task?.processing?.length && currentTask?.kind === "needs_review";
+  const diagnosticSampleImage=task&&currentTask?.diagnostic?.source.kind==="sample_test"&&Number.isSafeInteger(currentTask.diagnostic.source.image_index)
+    ? task.sampleResult?.images[currentTask.diagnostic.source.image_index!]
+    : undefined;
+  const diagnosticAsset=diagnosticSampleImage?taskAssets.find(asset=>String(asset.id)===diagnosticSampleImage.image_id):undefined;
+  const diagnosticCategory=currentTask?.diagnostic&&({
+    model_weights_missing:"capability_missing",
+    model_capability_unavailable:"capability_missing",
+    provider_request_not_sent:"provider_not_received",
+    provider_outcome_unknown:"outcome_unknown",
+    model_response_invalid_structure:"invalid_structure",
+    legal_empty_detection:"legal_empty",
+    candidate_projection_failed:"projection_failed",
+  } as const)[currentTask.diagnostic.code];
   const p0ResultView: P0ResultPanelView | undefined = !fixture&&task&&packageScope&&(currentTask?.kind==="ready_to_deliver"||currentTask?.kind==="delivered")
     ? {kind:"package",scope:packageScope,package_id:task.mainline?.completion.package_id||null}
+    : !fixture&&task&&currentTask?.diagnostic&&diagnosticCategory
+    ? {kind:"diagnostic",category:diagnosticCategory,message:currentTask.detail,
+        image:diagnosticAsset?{id:String(diagnosticAsset.id),name:diagnosticAsset.name,src:diagnosticAsset.src}:null,
+        annotations:diagnosticSampleImage?.annotations||[],focus_candidate_id:diagnosticSampleImage?.annotations[0]?.id||null}
     : !fixture && task && formalReview
     ? {
         kind:"formal_review",
@@ -329,6 +346,7 @@ export function AgentPreviewApp({
         }),
         labels: Object.entries(task.labelNames || {}).map(([stable_id, display_name]) => ({ stable_id, display_name })),
         sample_result: task.sampleResult,
+        diagnostics:(task.mainline?.result_diagnostics||[]).filter(item=>item.source.kind==="sample_test"&&item.source.id===task.sampleResult!.sample_test_id),
         focus: task.human ? {
           mode: "sample",
           image_id: String(task.human.image),
@@ -342,8 +360,8 @@ export function AgentPreviewApp({
           reason: "仅对服务端签发了完整候选引用的样例开放反馈。",
         }],
       } : undefined;
-  const reviewAutoKey = currentTask?.kind === "needs_review" && task
-    ? `${task.id}:${task.mainline?.review_work_item_id || task.human?.id || task.sample?.id || "review"}`
+  const reviewAutoKey = (currentTask?.kind === "needs_review"||diagnosticSampleImage) && task
+    ? `${task.id}:${diagnosticSampleImage?`diagnostic:${currentTask?.diagnostic?.code}:${diagnosticSampleImage.image_id}`:task.mainline?.review_work_item_id || task.human?.id || task.sample?.id || "review"}`
     : "";
   useEffect(() => {
     if (!task || !reviewAutoKey || autoOpenedReview.current.has(reviewAutoKey)) return;
@@ -351,10 +369,10 @@ export function AgentPreviewApp({
     const next = taskLocation(urlRef.current, task.project);
     next.searchParams.set("task", task.id);
     next.searchParams.set("pane", "image");
-    next.searchParams.set("image", String(task.human?.image || task.image));
+    next.searchParams.set("image", String(diagnosticSampleImage?.image_id || task.human?.image || task.image));
     history.replaceState(history.state, "", next);
     setUrl(next);
-  }, [reviewAutoKey, task?.id, task?.human?.image, task?.image, task?.project]);
+  }, [diagnosticSampleImage?.image_id, reviewAutoKey, task?.id, task?.human?.image, task?.image, task?.project]);
   const returnFromSetup=()=>{
     if(!setupContext)return;
     setSetupPanelTask(null);
@@ -377,7 +395,7 @@ export function AgentPreviewApp({
       return;
     }
     if (next.kind === "resume") {
-      void act(() => adapter.resumeOperation(command(task)));
+      void act(() => adapter.resumeOperation(command(task), next.target));
       return;
     }
     if (next.kind === "download_package") {
