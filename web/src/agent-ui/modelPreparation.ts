@@ -146,8 +146,66 @@ export type SetupGuard = {
   allowed_models: FrozenAllowedModel[];
 };
 
+export type CapabilityReadinessCandidate = {
+  id: string;
+  candidate_type: "model_profile" | "plugin_model" | "model_instance";
+  model_profile_id?: string;
+  model_instance_id?: string;
+  revision: number;
+  digest: string;
+  roles: string[];
+  capabilities: ModelCapability[];
+  quality_contracts: unknown[];
+  readiness: "ready" | "unknown" | "unavailable" | "disabled";
+  production_eligible: boolean;
+  test_fixture: boolean;
+  blocker?: { code: string; message: string } | null;
+  project_bindings: ProjectModelBinding[];
+  allowed_by_current_scope: boolean;
+  selected_for_next_agent_request?: boolean;
+  setup: { kind: "model_profile" | "plugin" | "model_instance"; api_url: string };
+};
+
+/** Passive server-composed B4 read model. This is the authority for readiness and scope. */
+export type CapabilityReadiness = {
+  contract_version: "mainline-capability-v1";
+  project_id: string;
+  project_owner_id: string;
+  conversation_id: string;
+  task_id: string;
+  task_schema_revision: string;
+  draft?: { id: string; revision: number; content_hash: string; status: string } | null;
+  registry_revision: string;
+  registry_revision_kind: "snapshot_sha256";
+  candidates: CapabilityReadinessCandidate[];
+  agent_model_preference: { revision: number; model_profile_id: string | null };
+  authorization: {
+    source: string | null;
+    consent_id: string | null;
+    expires_at: string | null;
+    permission_digest: string | null;
+    allowed_models: FrozenAllowedModel[];
+    active: boolean;
+    can_resume_without_authorization: false;
+  };
+  budget: unknown;
+  task_cost: {
+    scope: "conversation_task_model_calls";
+    receipt_count: number;
+    known: boolean;
+    amount: string | null;
+    currency: string | null;
+    reason: string | null;
+  };
+  passive: true;
+  setup_recheck_only: true;
+  auto_expands_allowed_models: false;
+  consistency: "server_composed_versioned_snapshot";
+};
+
 export type PreparationSnapshot = {
   context: SetupContext;
+  readiness: CapabilityReadiness;
   guard: SetupGuard;
   context_changes: string[];
   provider_models: ProviderModelCandidate[];
@@ -161,8 +219,6 @@ export type PreparationSnapshot = {
   }[];
   authorization: "recheck_required";
 };
-
-export type CapabilityReadiness = PreparationSnapshot;
 
 export type PreparationRecheck = {
   snapshot: PreparationSnapshot;
@@ -288,73 +344,61 @@ function modelCost(model: RegistryModelProfile) {
       };
 }
 
-function providerModelState(
-  model: RegistryModelProfile,
-  provider: ProviderProfile | undefined,
-): { state: PreparationState; reasons: string[] } {
-  const reasons: string[] = [];
-  if (!model.enabled || model.status === "disabled")
-    reasons.push("Model Profile 已禁用");
-  if (!provider) reasons.push("Provider 不存在");
-  else {
-    if (!provider.enabled) reasons.push("Provider 已禁用");
-    if (!provider.credential_configured) reasons.push("Provider 缺少凭证");
-    if (provider.adapter === "mock") reasons.push("测试 Provider 不能用于真实任务");
-    if (["unreachable", "invalid_credential", "rate_limited", "incompatible_protocol", "disabled"].includes(provider.health.status))
-      reasons.push(`Provider 状态：${provider.health.status}`);
-  }
-  if (model.status === "unavailable") reasons.push("模型已记录为不可用");
-  if (reasons.length) return { state: "blocked", reasons };
-  if (
-    model.status === "unknown" ||
-    model.status === "unverified" ||
-    provider?.health.status === "unknown"
-  )
-    return {
-      state: "uncertain",
-      reasons: ["能力或连接尚未主动验证；不自动发起收费探测"],
-    };
-  return { state: "ready", reasons: [] };
+function readinessMatchesRequirement(
+  candidate: CapabilityReadinessCandidate,
+  requirement: SetupRequirement,
+) {
+  if (!candidate.capabilities.includes(requirement.capability)) return false;
+  if (requirement.target === "agent_model")
+    return candidate.candidate_type === "model_profile" && candidate.roles.includes("agent");
+  if (requirement.target === "provider_model")
+    return candidate.candidate_type === "model_profile";
+  if (requirement.target === "plugin")
+    return candidate.candidate_type === "plugin_model";
+  return candidate.candidate_type === "model_instance";
 }
 
-function pluginState(enabled: boolean, status: string, hasReadyInstance: boolean) {
-  if (!enabled || ["disabled", "unsupported_platform", "incompatible_api", "invalid_manifest", "invalid_contract", "crashed"].includes(status))
-    return { state: "blocked" as const, reasons: [!enabled ? "Plugin 已禁用" : `Plugin 状态：${status}`] };
-  if (!hasReadyInstance)
-    return {
-      state: "setup_required" as const,
-      reasons: ["Plugin 不是模型；仍需兼容 Model Bundle 和 Ready Model Instance"],
-    };
-  if (status !== "ready")
-    return {
-      state: "setup_required" as const,
-      reasons: [`Plugin 尚未 Ready：${status}`],
-    };
+function authoritativeCandidateState(candidate: CapabilityReadinessCandidate) {
+  const blocker = candidate.blocker?.message ? [candidate.blocker.message] : [];
+  if (candidate.test_fixture)
+    return { state: "blocked" as const, reasons: ["TEST/Mock 候选不能用于真实任务", ...blocker] };
+  if (candidate.readiness === "unknown")
+    return { state: "uncertain" as const, reasons: blocker.length ? blocker : ["服务器尚无当前可用性证据；unknown 不等于必然失败"] };
+  if (candidate.readiness !== "ready" || !candidate.production_eligible)
+    return { state: "blocked" as const, reasons: blocker.length ? blocker : ["候选当前不可用于生产任务"] };
   return { state: "ready" as const, reasons: [] };
 }
 
-function instanceState(
-  profile: ModelInstanceProfile,
-  instance: InstalledModelInstance | undefined,
-  plugin: ExpertPluginRegistry["installations"][number] | undefined,
-  bundle: InstalledModelBundle | undefined,
+export function setupContextFromReadiness(
+  request: MainlineCapabilitySetupRequest,
+  readiness: CapabilityReadiness,
+  requirements: SetupRequirement[],
+  created_at: string,
 ) {
-  const reasons: string[] = [];
-  if (!instance) reasons.push("Model Instance 不存在");
-  else {
-    if (instance.status !== "ready") reasons.push(`Model Instance 状态：${instance.status}`);
-    if (!instance.contract_inspection.valid) reasons.push("能力契约检查未通过");
-    if (instance.smoke_test_result?.status !== "passed") reasons.push("模型实例尚无通过的冒烟测试");
-  }
-  if (!profile.selectable || profile.availability !== "available")
-    reasons.push(`Model Instance Profile 状态：${profile.availability}`);
-  if (!plugin?.enabled || plugin.status !== "ready" || plugin?.manifest.id !== instance?.plugin_id || plugin?.manifest.version !== instance?.plugin_version || plugin?.package_sha256 !== instance?.plugin_package_sha256)
-    reasons.push("Plugin 未 Ready 或摘要/版本不匹配");
-  if (!bundle?.enabled || !bundle.manifest.publishable || bundle.manifest.fixture || bundle.bundle_sha256 !== instance?.model_bundle_sha256)
-    reasons.push("Model Bundle 未启用、不可发布、为 Fixture 或摘要不匹配");
-  return reasons.length
-    ? { state: "setup_required" as const, reasons }
-    : { state: "ready" as const, reasons: [] };
+  if (
+    readiness.contract_version !== "mainline-capability-v1" ||
+    readiness.project_id !== request.project_id ||
+    readiness.task_id !== request.task_id ||
+    readiness.task_schema_revision !== request.task_revision ||
+    readiness.registry_revision !== request.registry_revision
+  )
+    throw new Error("Capability Setup 与服务器 readiness 身份或 revision 不一致");
+  const compatible = sortedUnique(readiness.candidates
+    .filter((candidate) => requirements.some((requirement) => readinessMatchesRequirement(candidate, requirement)))
+    .filter((candidate) => candidate.production_eligible || (candidate.readiness === "unknown" && !candidate.test_fixture))
+    .map((candidate) => candidate.id));
+  if (!same(compatible, sortedUnique(request.compatible_model_ids)))
+    throw new Error("Capability Setup 的兼容模型集合已经变化");
+  return setupContextFromCapabilityRequest(request, {
+    conversation_id: readiness.conversation_id,
+    draft_id: readiness.draft?.id,
+    draft_revision: readiness.draft?.revision,
+    draft_content_hash: readiness.draft?.content_hash,
+    authorization_fingerprint: readiness.authorization.permission_digest ?? undefined,
+    allowed_models: readiness.authorization.allowed_models,
+    requirements,
+    created_at,
+  });
 }
 
 function assertContext(context: SetupContext) {
@@ -416,7 +460,8 @@ export function createModelPreparationService(
         return [requirement.id, new Set(value.models.map((model) => model.id))] as const;
       }),
     );
-    const [workspace, profiles, compatibleRows, providers, plugins, instanceResult, bundles, catalog, bindings, preference, draft] = await Promise.all([
+    const [readiness, workspace, profiles, compatibleRows, providers, plugins, instanceResult, bundles, catalog, bindings, draft] = await Promise.all([
+      transport<CapabilityReadiness>(`/api/projects/${project}/conversations/${conversation}/tasks/${task}/capability-readiness`, { signal }),
       transport<TaskWorkspace>(`/api/projects/${project}/conversations/${conversation}/tasks/${task}/workspace`, { signal }),
       transport<{ models: RegistryModelProfile[] }>("/api/model-profiles", { signal }),
       compatibilityReads,
@@ -426,12 +471,19 @@ export function createModelPreparationService(
       transport<{ bundles: InstalledModelBundle[] }>("/api/model-bundles", { signal }),
       transport<{ bundles: ModelCatalogEntry[] }>("/api/model-bundles/available", { signal }),
       transport<{ project_id: string; bindings: ProjectModelBinding[] }>(`/api/projects/${project}/model-bindings`, { signal }),
-      transport<{ revision: number; model_profile_id: string | null }>(`/api/projects/${project}/conversations/${conversation}/agent-model`, { signal }),
       context.draft_id
         ? transport<WorkflowDraft>(`/api/workflow-drafts/${esc(context.draft_id)}?project_id=${project}`, { signal })
         : Promise.resolve(undefined),
     ]);
     if (
+      readiness.contract_version !== "mainline-capability-v1" ||
+      readiness.passive !== true ||
+      readiness.setup_recheck_only !== true ||
+      readiness.auto_expands_allowed_models !== false ||
+      readiness.consistency !== "server_composed_versioned_snapshot" ||
+      readiness.project_id !== context.project_id ||
+      readiness.conversation_id !== context.conversation_id ||
+      readiness.task_id !== context.task_id ||
       workspace.project_id !== context.project_id ||
       workspace.conversation_id !== context.conversation_id ||
       workspace.task.input.id !== context.task_id ||
@@ -441,10 +493,16 @@ export function createModelPreparationService(
       throw new Error("模型准备读取到其他 Project、Conversation、Task 或 Draft，未展示候选");
     const compatible = new Map(compatibleRows);
     const contextChanges: string[] = [];
-    if (workspace.task.input.schema_revision !== context.task_revision)
+    if (readiness.task_schema_revision !== context.task_revision)
       contextChanges.push("Task schema revision 已变化");
-    if (draft && (draft.revision !== context.draft_revision || draft.content_hash !== context.draft_content_hash))
+    if ((readiness.draft?.id ?? undefined) !== context.draft_id || (readiness.draft?.revision ?? undefined) !== context.draft_revision || (readiness.draft?.content_hash ?? undefined) !== context.draft_content_hash)
       contextChanges.push("Draft revision 或内容摘要已变化");
+    if (readiness.registry_revision !== context.registry_revision)
+      contextChanges.push("Registry revision 已变化");
+    if ((readiness.authorization.permission_digest ?? undefined) !== context.authorization_fingerprint)
+      contextChanges.push("任务模型授权已变化");
+    if (!same(readiness.authorization.allowed_models, context.allowed_models))
+      contextChanges.push("任务 allowed_models 已变化");
 
     const providerModels: ProviderModelCandidate[] = profiles.models
       .flatMap((model): ProviderModelCandidate[] => {
@@ -453,22 +511,23 @@ export function createModelPreparationService(
           requirementMatchesModel(requirement, model),
         );
         if (!matches.length) return [];
+        const authority = readiness.candidates.find((candidate) =>
+          candidate.candidate_type === "model_profile" && candidate.model_profile_id === model.id,
+        );
+        if (!authority) return [];
         const provider = providers.providers.find((item) => item.id === model.provider_id);
         return (["agent_model", "provider_model"] as const).flatMap((kind) => {
-          const roleMatches = matches.filter((item) => item.target === kind);
+          const roleMatches = matches.filter((item) => item.target === kind && readinessMatchesRequirement(authority, item));
           if (!roleMatches.length) return [];
-          const availability = providerModelState(model, provider);
+          const availability = authoritativeCandidateState(authority);
           const omittedByServer = roleMatches.some(
             (requirement) => compatible.get(requirement.id)?.has(model.id) !== true,
           );
           const serverReasons = omittedByServer
-            ? [availability.state === "uncertain"
-                ? "服务器尚未把此 Profile 判定为可用；unknown 不等于必然失败"
-                : "服务器兼容判定未通过"]
+            ? [authority.readiness === "unknown"
+                ? "主动兼容清单尚未把此 Profile 判定为 Ready；保留被动 read model 的 unknown 状态"
+                : "主动兼容清单未包含此 Profile"]
             : [];
-          const state = omittedByServer && availability.state === "ready"
-            ? "blocked" as const
-            : availability.state;
           return [{
             kind,
             id: model.id,
@@ -478,7 +537,7 @@ export function createModelPreparationService(
             provider_id: model.provider_id,
             provider_name: provider?.display_name ?? "Provider 不存在",
             requirement_ids: roleMatches.map((item) => item.id),
-            state,
+            state: availability.state,
             reasons: [...availability.reasons, ...serverReasons],
             capability_source: model.capability_source,
             cost: modelCost(model),
@@ -494,9 +553,9 @@ export function createModelPreparationService(
         );
         if (!matches.length) return [];
         const instance = instanceResult.instances.find((item) => item.id === profile.model_instance_id);
-        const plugin = plugins.installations.find((item) => item.manifest.id === instance?.plugin_id && item.manifest.version === instance?.plugin_version);
-        const bundle = bundles.bundles.find((item) => item.manifest.id === instance?.model_bundle_id && item.manifest.version === instance?.model_bundle_version);
-        const availability = instanceState(profile, instance, plugin, bundle);
+        const authority = readiness.candidates.find((candidate) => candidate.candidate_type === "model_instance" && candidate.id === profile.selection_id && candidate.model_instance_id === profile.model_instance_id);
+        if (!authority) return [];
+        const availability = authoritativeCandidateState(authority);
         return [{
           kind: "model_instance" as const,
           id: profile.model_instance_id,
@@ -521,14 +580,18 @@ export function createModelPreparationService(
           requirementMatchesCapabilities(requirement, capabilities),
         );
         if (!matches.length) return [];
-        const ready = instanceResult.model_profiles.some((profile) => {
-          if (!matches.some((requirement) => requirementMatchesCapabilities(requirement, profile.capabilities))) return false;
-          const instance = instanceResult.instances.find((item) => item.id === profile.model_instance_id);
-          if (instance?.plugin_id !== plugin.manifest.id || instance.plugin_version !== plugin.manifest.version) return false;
-          const bundle = bundles.bundles.find((item) => item.manifest.id === instance.model_bundle_id && item.manifest.version === instance.model_bundle_version);
-          return instanceState(profile, instance, plugin, bundle).state === "ready";
-        });
-        const availability = pluginState(plugin.enabled, plugin.status, ready);
+        const authorities = plugins.models
+          .filter((model) => model.reference.plugin_id === plugin.manifest.id && model.reference.plugin_version === plugin.manifest.version)
+          .map((model) => readiness.candidates.find((candidate) => candidate.candidate_type === "plugin_model" && candidate.id === model.selection_id))
+          .filter((candidate): candidate is CapabilityReadinessCandidate => !!candidate && matches.some((requirement) => readinessMatchesRequirement(candidate, requirement)));
+        const states = authorities.map(authoritativeCandidateState);
+        const availability = states.some((item) => item.state === "ready")
+          ? { state: "ready" as const, reasons: [] }
+          : states.some((item) => item.state === "uncertain")
+            ? { state: "uncertain" as const, reasons: states.flatMap((item) => item.reasons) }
+            : states.length
+              ? { state: "blocked" as const, reasons: states.flatMap((item) => item.reasons) }
+              : { state: "setup_required" as const, reasons: ["Plugin 尚无匹配的服务器能力候选"] };
         return [{
           kind: "plugin" as const,
           id: plugin.manifest.id,
@@ -564,25 +627,25 @@ export function createModelPreparationService(
       .filter((item): item is BundleCandidate => !!item);
 
     const allCandidates = [...providerModels, ...pluginCandidates, ...modelInstances];
-    const liveCompatibleIds = sortedUnique([
-      ...compatibleRows.flatMap(([, ids]) => [...ids]),
-      ...pluginCandidates.filter((item) => item.state === "ready").map((item) => item.id),
-      ...modelInstances.filter((item) => item.state === "ready").map((item) => item.id),
-    ]);
+    const liveCompatibleIds = sortedUnique(readiness.candidates
+      .filter((candidate) => context.requirements.some((requirement) => readinessMatchesRequirement(candidate, requirement)))
+      .filter((candidate) => candidate.production_eligible || (candidate.readiness === "unknown" && !candidate.test_fixture))
+      .map((candidate) => candidate.id));
     if (!same(liveCompatibleIds, sortedUnique(context.compatible_model_ids)))
       contextChanges.push("兼容模型集合已变化");
     return {
       context,
+      readiness,
       guard: {
-        task_revision: workspace.task.input.schema_revision,
-        registry_revision: context.registry_revision,
+        task_revision: readiness.task_schema_revision,
+        registry_revision: readiness.registry_revision,
         compatible_model_ids: liveCompatibleIds,
-        draft_revision: draft?.revision,
-        draft_content_hash: draft?.content_hash,
-        agent_model_revision: preference.revision,
-        project_bindings: bindings.bindings,
-        authorization_fingerprint: context.authorization_fingerprint,
-        allowed_models: context.allowed_models,
+        draft_revision: readiness.draft?.revision,
+        draft_content_hash: readiness.draft?.content_hash,
+        agent_model_revision: readiness.agent_model_preference.revision,
+        project_bindings: readiness.candidates.flatMap((candidate) => candidate.project_bindings),
+        authorization_fingerprint: readiness.authorization.permission_digest ?? undefined,
+        allowed_models: readiness.authorization.allowed_models,
       },
       context_changes: contextChanges,
       provider_models: providerModels,
@@ -609,12 +672,18 @@ export function createModelPreparationService(
       changed.push(...snapshot.context_changes);
       if (snapshot.guard.task_revision !== previous.guard.task_revision)
         changed.push("Task schema revision 已变化");
+      if (snapshot.guard.registry_revision !== previous.guard.registry_revision)
+        changed.push("Registry revision 已变化");
+      if (!same(snapshot.guard.compatible_model_ids, previous.guard.compatible_model_ids))
+        changed.push("兼容模型集合已变化");
       if (snapshot.guard.draft_revision !== previous.guard.draft_revision || snapshot.guard.draft_content_hash !== previous.guard.draft_content_hash)
         changed.push("Draft revision 或内容摘要已变化");
       if (snapshot.guard.agent_model_revision !== previous.guard.agent_model_revision)
         changed.push("Agent 模型偏好 revision 已变化");
       if (!same(snapshot.guard.project_bindings, previous.guard.project_bindings))
         changed.push("Project 模型绑定已变化");
+      if (snapshot.guard.authorization_fingerprint !== previous.guard.authorization_fingerprint || !same(snapshot.guard.allowed_models, previous.guard.allowed_models))
+        changed.push("任务模型授权已变化");
       if (!same(snapshot.context.allowed_models, previous.context.allowed_models))
         throw new Error("设置回流不得扩大 allowed_models");
       const uniqueChanges = [...new Set(changed)];

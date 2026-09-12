@@ -272,8 +272,13 @@ export function SetupRequest({
           )}
 
           <div className="setup-cost-note">
-            <strong>费用范围</strong>
-            <p>这里只显示本任务兼容候选的 Registry 单价。未知费用不会显示为 0；未自动运行收费探测、模型调用或安装。</p>
+            <strong>当前 Task 费用</strong>
+            <p>
+              {snapshot.readiness.task_cost.known
+                ? `${snapshot.readiness.task_cost.receipt_count} 条模型调用回执 · ${snapshot.readiness.task_cost.amount ?? "金额未知"}${snapshot.readiness.task_cost.currency ? ` ${snapshot.readiness.task_cost.currency}` : ""}`
+                : `费用未知 · ${snapshot.readiness.task_cost.reason ?? "现有回执无法形成可比较金额"}`}
+            </p>
+            <p>范围仅为当前 conversation task，不是全系统统计。兼容候选的 Registry 单价见各候选；未自动运行收费探测、模型调用或安装。</p>
           </div>
 
           {recheck?.changed.length ? (
