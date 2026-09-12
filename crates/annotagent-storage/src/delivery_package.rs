@@ -110,6 +110,37 @@ fn job(
 }
 
 impl SqliteStore {
+    /// Deterministic local package work that was admitted but did not reach a
+    /// terminal receipt before shutdown. No model or external tool is involved.
+    pub fn incomplete_delivery_packages(
+        &self,
+    ) -> Result<Vec<(String, Uuid, Uuid, Uuid)>, StorageError> {
+        self.with_connection(|db| {
+            let mut query = db.prepare("SELECT e.project_id,e.conversation_id,e.task_id,e.id FROM conversation_exports e JOIN delivery_export_snapshots p ON p.export_id=e.id WHERE p.phase IN ('preparing','exporting','validating') ORDER BY e.created_at,e.id LIMIT 100")?;
+            let rows = query.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })?;
+            rows.map(|row| {
+                let (project, conversation, task, id) = row?;
+                Ok((
+                    project,
+                    Uuid::parse_str(&conversation)
+                        .map_err(|_| invalid("invalid package conversation identity"))?,
+                    Uuid::parse_str(&task)
+                        .map_err(|_| invalid("invalid package task identity"))?,
+                    Uuid::parse_str(&id)
+                        .map_err(|_| invalid("invalid delivery package identity"))?,
+                ))
+            })
+            .collect()
+        })
+    }
+
     /// Bounded owned history for Task reconciliation. Reading this list never
     /// claims or resumes an interrupted package worker.
     pub fn delivery_packages(

@@ -214,3 +214,29 @@ after each run. No real credential, paid Provider, model download, user workspac
   three Sample images, exact child IDs, `sample_status:"passed"` and a settled
   dispatch without error. A same-workspace restart retained the complete snapshot
   without redispatch. The older `TEST-agent-ui-imsjr9j9` trace remains diagnostic only.
+
+## P0 formal review and package continuation
+
+- Formal processing remains a separate exact approval after the three Sample
+  HumanRequests are saved and applied. Sample answers are not formal annotation or
+  whole-image receipts.
+- The six-image HTTP acceptance path now reads the Task-owned processing/Batch/child
+  Run projection, changes all 18 `needs_review` candidates through the formal object
+  CAS endpoint, and saves six explicit whole-image decisions.
+- After all six image decisions, the Task projection exposes only
+  `authorize_training_package`. One consent POST admits one existing
+  training-package job; replaying the same consent returns that job. A separate Rust
+  test covers an early armed consent and the final-receipt/pre-hook crash window.
+- Local export admission now persists `preparing` before waiting for the existing
+  two-worker semaphore. Startup resumes nonterminal local package jobs from the
+  frozen snapshot and rechecks armed permissions, including the crash window after
+  the final image receipt commits but before its HTTP event hook.
+- Dirty-worktree TEST evidence is retained at
+  `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-km64o02y`.
+  The real HTTP trace records six formal image receipts, 18 separately accepted
+  formal objects, one consumed consent/job, and ZIP SHA-256
+  `227bba405f64f22942e9e4fc4f4ba82fdc836b9ca3d69ead1c9b735387d198d8`.
+  Python independently opened the 18-entry archive, checked the six original image
+  hashes, every manifest file hash/size, 18 label rows, YAML, split manifest and
+  validation report. No external model, credential, paid call, weight download or
+  user workspace was used.

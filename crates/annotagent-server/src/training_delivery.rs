@@ -2,6 +2,27 @@
 use super::*;
 use annotagent_storage::{DeliveryPackageInput, DeliveryPackagePhase};
 
+fn package_worker(
+    state: &ServerState,
+    project: String,
+    conversation: uuid::Uuid,
+    task: uuid::Uuid,
+    id: uuid::Uuid,
+) -> tokio::task::JoinHandle<()> {
+    let application = state.application.clone();
+    let workers = state.export_workers.clone();
+    tokio::spawn(async move {
+        let Ok(permit) = workers.acquire_owned().await else {
+            return;
+        };
+        let _ = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let _ = application.execute_training_package(&project, conversation, task, id);
+        })
+        .await;
+    })
+}
+
 async fn dispatch(
     state: &ServerState,
     project: &str,
@@ -12,25 +33,6 @@ async fn dispatch(
 ) -> ApiResult<Value> {
     let mut jobs = state.export_jobs.lock().await;
     jobs.retain(|_, job| !job.is_finished());
-    let existing = state
-        .application
-        .training_package_status(project, conversation, task, input.command_id)
-        .is_ok();
-    let permit = if existing {
-        None
-    } else {
-        Some(
-            state
-                .export_workers
-                .clone()
-                .try_acquire_owned()
-                .map_err(|_| {
-                    ApiError::bad_request(anyhow::anyhow!(
-                        "Export capacity is full. No package was admitted; retry later."
-                    ))
-                })?,
-        )
-    };
     let (receipt, created) = if authorized {
         state
             .application
@@ -42,13 +44,8 @@ async fn dispatch(
     }
     .map_err(ApiError::conversation)?;
     if created {
-        let application = state.application.clone();
-        let worker_project = project.to_owned();
         let id = input.command_id;
-        let handle = tokio::task::spawn_blocking(move || {
-            let _permit = permit;
-            let _ = application.execute_training_package(&worker_project, conversation, task, id);
-        });
+        let handle = package_worker(state, project.to_owned(), conversation, task, id);
         jobs.insert(id, handle);
     }
     let active = jobs
@@ -57,8 +54,8 @@ async fn dispatch(
     Ok(json!({"job":receipt,"active":active,"dispatched":created}))
 }
 
-/// Event-side best effort. A saved review or consent remains successful when local
-/// export capacity is full; its exact retry can try admission again.
+/// Event-side best effort. Admission is durable and a local worker waits for bounded
+/// export capacity; the review request never blocks on file generation.
 pub(super) async fn try_dispatch_automatic(
     state: &ServerState,
     project: &str,
@@ -86,6 +83,45 @@ pub(super) async fn try_dispatch_automatic(
         return;
     };
     let _ = dispatch(state, project, conversation, task, &input, true).await;
+}
+
+/// Startup recovery for deterministic local package work. It restores already
+/// admitted nonterminal jobs from their frozen snapshots, then rechecks armed
+/// consents against current whole-image receipts before admitting them.
+pub(super) async fn recover_automatic(state: ServerState) {
+    let Ok(routes) = state.application.list_project_route_ids() else {
+        return;
+    };
+    let route = |owner: &str| {
+        routes
+            .iter()
+            .find(|(id, _)| id.to_string() == owner)
+            .map(|(_, route)| route.clone())
+    };
+    let incomplete = state
+        .application
+        .store()
+        .incomplete_delivery_packages()
+        .unwrap_or_default();
+    for (owner, conversation, task, id) in incomplete {
+        let Some(project) = route(&owner) else {
+            continue;
+        };
+        let mut jobs = state.export_jobs.lock().await;
+        jobs.retain(|_, job| !job.is_finished());
+        jobs.entry(id)
+            .or_insert_with(|| package_worker(&state, project, conversation, task, id));
+    }
+    let armed = state
+        .application
+        .store()
+        .armed_delivery_package_consents()
+        .unwrap_or_default();
+    for (owner, conversation, task, _) in armed {
+        if let Some(project) = route(&owner) {
+            try_dispatch_automatic(&state, &project, conversation, task).await;
+        }
+    }
 }
 
 pub(super) async fn start(
@@ -409,24 +445,48 @@ mod tests {
         assert_eq!(consent["effective_state"], "blocked");
         assert_eq!(consent["readiness"]["ready"], false);
         assert!(consent["job"].is_null());
-        for image in &images {
+        for (index, image) in images.iter().enumerate() {
             let image_uri = format!("{root}/delivery-images/{}", image.image_id);
             let view_uri = format!("{image_uri}?source_run_id={run}");
             let view = response_json(request(&service, Method::GET, &view_uri, None).await).await;
-            let reviewed = request(
-                &service,
-                Method::POST,
-                &image_uri,
-                Some(json!({
-                    "command_id":uuid::Uuid::new_v4(),"intent_revision":intent["saved"]["revision"],
-                    "intent_sha256":intent["saved"]["content_sha256"],"image_id":image.image_id,
-                    "source_run_id":run,"expected_snapshot_sha256":view["snapshot"]["sha256"],
-                    "expected_review_revision":0,"decision":"positive_complete","reason":null,"confirmed":true
-                })),
-            )
-            .await;
-            assert_eq!(reviewed.status(), StatusCode::OK);
+            let input = json!({
+                "command_id":uuid::Uuid::new_v4(),"intent_revision":intent["saved"]["revision"],
+                "intent_sha256":intent["saved"]["content_sha256"],"image_id":image.image_id,
+                "source_run_id":run,"expected_snapshot_sha256":view["snapshot"]["sha256"],
+                "expected_review_revision":0,"decision":"positive_complete","reason":null,"confirmed":true
+            });
+            if index + 1 == images.len() {
+                // Simulate a crash after the final receipt commits but before the
+                // HTTP event hook can inspect the armed consent.
+                app.confirm_task_delivery_image(
+                    "TEST-auto-package",
+                    conversation,
+                    sent.task_id,
+                    &serde_json::from_value(input).unwrap(),
+                )
+                .unwrap();
+            } else {
+                let reviewed = request(&service, Method::POST, &image_uri, Some(input)).await;
+                assert_eq!(reviewed.status(), StatusCode::OK);
+            }
         }
+        assert!(
+            app.training_package_status(
+                "TEST-auto-package",
+                conversation,
+                sent.task_id,
+                consent_id,
+            )
+            .is_err(),
+            "the pre-hook crash window must not have admitted a package yet"
+        );
+        drop(service);
+        drop(app);
+        let restarted = Arc::new(LocalApplication::new(temp.path()).unwrap());
+        let restarted_state =
+            test_state(restarted.clone(), Arc::new(InMemorySecretStore::default())).await;
+        recover_automatic(restarted_state.clone()).await;
+        let service = router(restarted_state, None);
         let package_uri = format!("{root}/delivery-packages/{consent_id}");
         let mut finished = None;
         for _ in 0..300 {
@@ -467,14 +527,13 @@ mod tests {
         assert_eq!(list["items"].as_array().unwrap().len(), 1);
         assert_eq!(list["items"][0]["job"]["id"], consent_id.to_string());
         drop(service);
-        let reopened = LocalApplication::new(temp.path()).unwrap();
-        let history = reopened
+        let history = restarted
             .training_package_consents("TEST-auto-package", conversation, sent.task_id)
             .unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].state, "consumed");
         assert_eq!(
-            reopened
+            restarted
                 .training_package_status(
                     "TEST-auto-package",
                     conversation,
@@ -779,11 +838,43 @@ mod tests {
                 .join(format!("TEST-package/exports/deliveries/{pending_id}"))
                 .exists()
         );
-        let restarted = Arc::new(LocalApplication::new(temp.path()).unwrap());
-        let restored = router(
-            test_state(restarted, Arc::new(InMemorySecretStore::default())).await,
-            None,
+        // A separately admitted local package survives a process boundary in
+        // Preparing. Startup resumes the frozen request without another POST.
+        let mut recovery = input.clone();
+        let recovery_id = uuid::Uuid::new_v4();
+        recovery["command_id"] = json!(recovery_id);
+        app.admit_training_package(
+            "TEST-package",
+            conversation,
+            sent.task_id,
+            &serde_json::from_value(recovery).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            app.store()
+                .incomplete_delivery_packages()
+                .unwrap()
+                .iter()
+                .any(|(_, _, _, id)| *id == recovery_id)
         );
+        let restarted = Arc::new(LocalApplication::new(temp.path()).unwrap());
+        let restarted_state = test_state(restarted, Arc::new(InMemorySecretStore::default())).await;
+        recover_automatic(restarted_state.clone()).await;
+        let restored = router(restarted_state, None);
+        let recovery_uri = format!("{root}/delivery-packages/{recovery_id}");
+        let mut recovered = None;
+        for _ in 0..300 {
+            let value =
+                response_json(request(&restored, Method::GET, &recovery_uri, None).await).await;
+            if !value["active"].as_bool().unwrap() {
+                recovered = Some(value);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let recovered = recovered.expect("startup must resume admitted local package work");
+        assert_eq!(recovered["job"]["phase"], "ready", "{recovered}");
+        assert_eq!(recovered["job"]["result"]["images"], 11);
         assert_eq!(
             request(&restored, Method::GET, &format!("{uri}/download"), None)
                 .await

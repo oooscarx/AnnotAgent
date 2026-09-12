@@ -202,12 +202,12 @@ fn active_authorization(journeys: &[Value]) -> Value {
                 }))
                 .ok()?,
             );
-            let continuation_state = if !journey["sample"].is_null() {
-                "sample_started"
-            } else {
+            let continuation_state = if journey["sample"].is_null() {
                 journey["dispatch"]["status"]
                     .as_str()
                     .unwrap_or("not_requested")
+            } else {
+                "sample_started"
             };
             let can_resume = matches!(continuation_state, "queued" | "running");
             Some(json!({

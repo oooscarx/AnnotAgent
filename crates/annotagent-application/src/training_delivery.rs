@@ -3,7 +3,7 @@ use crate::LocalApplication;
 use annotagent_core::ReviewStatus;
 use annotagent_export::training_package::{
     ImageConfirmation, PackageImage, PackageImageLineage, PackageLineage, PackageProgress,
-    PackageReceipt, write_training_package_with_lineage,
+    PackageReceipt, inspect_training_package_with_lineage, write_training_package_with_lineage,
 };
 use annotagent_storage::{
     DeliveryImageDecision, DeliveryPackageInput, DeliveryPackageJob, DeliveryPackagePhase,
@@ -300,20 +300,37 @@ impl LocalApplication {
     ) -> Result<TrainingPackageStatus> {
         use DeliveryPackagePhase::{Exporting, Preparing, Validating};
         let owner = self.conversation_project_identity(project)?;
-        if !self.store.advance_delivery_package(
-            &owner,
-            conversation,
-            task,
-            id,
-            Preparing,
-            Exporting,
-        )? {
+        let phase = self
+            .store
+            .delivery_package_phase(&owner, conversation, task, id)?;
+        if phase == Preparing {
+            if !self.store.advance_delivery_package(
+                &owner,
+                conversation,
+                task,
+                id,
+                Preparing,
+                Exporting,
+            )? {
+                return self.training_package_status(project, conversation, task, id);
+            }
+        } else if !matches!(phase, Exporting | Validating) {
             return self.training_package_status(project, conversation, task, id);
         }
         let outcome = (|| -> Result<PackageReceipt> {
             let job = self
                 .store
                 .delivery_package(&owner, conversation, task, id)?;
+            let directory = self.export_delivery_directory(project, id, true)?;
+            let destination = directory.join("dataset.zip");
+            if phase == Validating && destination.is_file() {
+                return inspect_training_package_with_lineage(
+                    &destination,
+                    &id.to_string(),
+                    &job.snapshot_sha256,
+                    job.snapshot.delivery.revision,
+                );
+            }
             let mut sources = Vec::with_capacity(job.snapshot.images.len());
             for frozen in &job.snapshot.images {
                 let review = &frozen.review;
@@ -353,7 +370,6 @@ impl LocalApplication {
                     confirmation,
                 });
             }
-            let directory = self.export_delivery_directory(project, id, true)?;
             let lineage = PackageLineage {
                 package_id: id.to_string(),
                 package_version: 1,
@@ -398,7 +414,7 @@ impl LocalApplication {
                 job.snapshot.delivery.intent,
                 job.snapshot.delivery.revision,
                 &sources,
-                &directory.join("dataset.zip"),
+                &destination,
                 Some(lineage),
                 |progress| {
                     if progress == PackageProgress::Validating {

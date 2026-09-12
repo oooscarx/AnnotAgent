@@ -206,6 +206,28 @@ The opt-in HTTP smoke uploads six byte-distinct PNGs and sends the fixed Chinese
 request from `07_ACCEPTANCE.md`. Its explicit TEST Provider delays the first Builder HTTP response
 for four seconds. The consent POST must return in under three seconds with a queued/running
 dispatch and no Sample; passive reads must later observe the original Sample ID as `passed` for
-exactly three inputs. The manifest records decision/click counts, timings and POST counts. The
-same smoke continues through formal processing and verifies that package export refuses while
-whole-image reviews remain, so TEST candidates never become accepted annotations.
+exactly three inputs. The manifest records decision/click counts, timings and POST counts.
+
+The same real HTTP trace continues through the separate formal-processing authorization. Before
+the three exact Sample HumanRequests are applied, both processing preview and confirmation return
+`409 sample_reviews_pending` and create no receipt. After they are applied, the existing Batch
+processes all six images. Its 18 formal candidates remain `needs_review`; the test changes each
+object through the formal CAS endpoint and commits six explicit whole-image receipts. These are
+new formal receipts and are not inferred from the earlier Sample answers.
+
+After all six whole-image receipts, the Task read model exposes exactly one
+`authorize_training_package` action. One consent POST then admits one durable job using that
+consent ID, and an exact consent replay returns the same consumed permission and same job. The
+downloaded ZIP is opened by Python independently of the Rust validator: required
+YAML/manifests/reports are present, entry paths and every manifest hash/byte count are checked, all
+six packaged original hashes match the upload receipts, and label row count matches the 18
+human-accepted formal objects. A same-workspace server restart downloads the same package hash and
+does not redispatch. Separate Rust recovery tests arm before the last receipt to cover that valid
+but non-primary ordering and its post-commit/pre-hook crash window.
+
+Package execution remains the existing deterministic local exporter. Admission persists a
+`preparing` job even when its bounded worker capacity is occupied; its worker waits on the existing
+semaphore. Startup scans admitted `preparing|exporting|validating` jobs and resumes from their
+frozen snapshot. It separately scans still-armed consents and repeats current intent/review CAS,
+covering the transaction-to-event-hook crash window. It never starts a model, changes an
+annotation, or treats a GET as a wake signal.

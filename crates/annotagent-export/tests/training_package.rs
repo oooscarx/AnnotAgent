@@ -130,6 +130,22 @@ fn real_zip_contains_originals_negative_labels_mapping_and_portable_yaml() {
         format!("{:x}", Sha256::digest(fs::read(&destination).unwrap()))
     );
     validate_training_package(&destination).unwrap();
+    let recovered = inspect_training_package(&destination).unwrap();
+    assert_eq!(recovered.sha256, receipt.sha256);
+    assert_eq!(recovered.bytes, receipt.bytes);
+    assert_eq!(
+        (
+            recovered.images,
+            recovered.objects,
+            recovered.negatives,
+            recovered.excluded
+        ),
+        (11, 20, 1, 1)
+    );
+    assert_eq!(
+        recovered.summary.as_ref().unwrap().splits,
+        receipt.summary.as_ref().unwrap().splits
+    );
     let mut archive = zip::ZipArchive::new(fs::File::open(&destination).unwrap()).unwrap();
     let manifest: PackageManifest =
         serde_json::from_reader(archive.by_name("annotagent/manifest.json").unwrap()).unwrap();
@@ -390,10 +406,22 @@ fn package_lineage_is_explicit_and_independently_checked() {
         validator_version: 1,
         images,
     };
+    let package_id = lineage.package_id.clone();
+    let snapshot_sha256 = lineage.frozen_snapshot_sha256.clone();
     let original = temp.path().join("lineage.zip");
     write_training_package_with_lineage(intent, 1, &sources, &original, Some(lineage), |_| Ok(()))
         .unwrap();
     validate_training_package(&original).unwrap();
+    inspect_training_package_with_lineage(&original, &package_id, &snapshot_sha256, 1).unwrap();
+    assert!(
+        inspect_training_package_with_lineage(
+            &original,
+            &ImageId::new().to_string(),
+            &snapshot_sha256,
+            1
+        )
+        .is_err()
+    );
     for case in [
         "missing",
         "classes",

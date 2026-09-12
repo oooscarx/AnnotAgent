@@ -161,9 +161,14 @@ reasons, frozen delivery revision/hash and linked job. Authorizing uses
 `DeliveryPackageConsentInput {id,intent_revision,intent_sha256,confirmed:true}`.
 The final qualifying review, or authorization after all reviews are current, tries
 the existing durable admission. Storage atomically transitions one armed consent to
-one package job and exact retries never redispatch. Local capacity exhaustion leaves
-the consent armed, so an exact review/consent retry can try again. No consent,
-stale/cancelled consent or incomplete review means no admission. GET never admits.
+one package job and exact retries never redispatch. The admitted job is persisted as
+`preparing` before a local worker waits for the existing bounded export semaphore;
+capacity exhaustion therefore needs no browser retry. Startup resumes admitted
+`preparing|exporting|validating` local jobs from their frozen snapshot. It also
+rechecks still-armed consents against the current intent and every current whole-image
+receipt, covering a crash after the final review commit but before its event hook.
+No consent, stale/cancelled consent or incomplete review means no admission. GET never
+admits or resumes work.
 
 ## Model readiness, CAS and history cutoff (implemented facts)
 

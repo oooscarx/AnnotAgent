@@ -416,6 +416,10 @@ impl crate::LocalApplication {
             ),
         ])
     }
+    // Every identity is deliberately supplied separately at this internal
+    // ownership boundary; collapsing them into an untyped routing object would
+    // weaken the checks below.
+    #[allow(clippy::too_many_arguments)]
     pub fn answer_schema_output_clarification(
         &self,
         project: &str,
