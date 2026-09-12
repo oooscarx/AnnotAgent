@@ -26,6 +26,7 @@ function readiness(
     registry_revision: "registry-sha",
     registry_revision_kind: "snapshot_sha256",
     candidates,
+    setup_requests: [],
     agent_model_preference: {
       revision: 2,
       model_profile_id: "agent-ready",
@@ -145,6 +146,18 @@ describe("mainline task model setup composition", () => {
         ],
       }),
     ]);
+    value.setup_requests = [{
+      id: "setup-ready",
+      project_id: "TEST-project",
+      task_id: "TEST-task",
+      task_revision: "schema-1",
+      registry_revision: "registry-sha",
+      role: "task_planning_and_vision",
+      required_capabilities: ["text_generation", "vision_language"],
+      compatible_model_ids: ["agent-ready", "vision-ready"],
+      status: "ready",
+      return_path: "/projects/TEST-project/work?task=TEST-task",
+    }];
 
     expect(
       modelSetupContext(
@@ -161,6 +174,18 @@ describe("mainline task model setup composition", () => {
         readiness: "unknown",
       }),
     ]);
+    value.setup_requests = [{
+      id: "setup-required",
+      project_id: "TEST-project",
+      task_id: "TEST-task",
+      task_revision: "schema-1",
+      registry_revision: "registry-sha",
+      role: "task_planning_and_vision",
+      required_capabilities: ["text_generation", "vision_language"],
+      compatible_model_ids: ["agent-unselected", "vision-unbound"],
+      status: "required",
+      return_path: "/projects/TEST-project/work?task=TEST-task&pane=thread",
+    }];
 
     const context = modelSetupContext(
       task(value),
@@ -177,10 +202,11 @@ describe("mainline task model setup composition", () => {
       return_to: "/projects/TEST-project/work?task=TEST-task&pane=thread",
       compatible_model_ids: ["agent-unselected", "vision-unbound"],
     });
-    expect(context?.requirements.map((item) => item.target)).toEqual([
-      "agent_model",
-      "provider_model",
+    expect(context?.requirements.map((item) => item.capability)).toEqual([
+      "text_generation",
+      "vision_language",
     ]);
+    expect(context?.requirements.every((item) => item.target===undefined)).toBe(true);
     expect(context?.allowed_models).toEqual([]);
   });
 

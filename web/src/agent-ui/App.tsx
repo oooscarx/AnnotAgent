@@ -29,7 +29,7 @@ import { ArtifactPane } from "./ArtifactPane";
 import { ExecutionProgress } from "./ExecutionProgress";
 import { DeliveryIntake } from "./DeliveryIntake";
 import { SetupRequest } from "./SetupRequest";
-import { setupContextFromReadiness, type CapabilityReadiness, type SetupRequirement } from "./modelPreparation";
+import { setupContextFromReadiness, type CapabilityReadiness } from "./modelPreparation";
 import { routeProject, taskLocation, settingsTaskReturn } from "./routes";
 import { parseAgentRoute } from "./navigationContract";
 export const phaseNames: Record<Phase, string> = {
@@ -63,34 +63,12 @@ function referenceSummary(reference:NonNullable<Command["selection"]>){
 export function modelSetupContext(task:Task,url:URL){
   const readiness=task.mainline?.capability_readiness as CapabilityReadiness|null|undefined;
   if(!readiness||readiness.contract_version!=="mainline-capability-v1"||!task.mainline?.available_actions.some(action=>action.id==="build_and_test_pipeline"&&action.state==="requires_confirmation"))return undefined;
-  const usable=(candidate:CapabilityReadiness["candidates"][number])=>candidate.readiness==="ready"&&candidate.production_eligible&&!candidate.test_fixture;
-  const readyAgent=readiness.candidates.some(candidate=>usable(candidate)&&candidate.roles.includes("agent")&&candidate.selected_for_next_agent_request);
-  const visual=(candidate:CapabilityReadiness["candidates"][number])=>candidate.roles.some(role=>["vision_language","detection","classification","segmentation","visual"].includes(role));
-  const readyVisual=readiness.candidates.some(candidate=>usable(candidate)&&visual(candidate)&&(candidate.candidate_type!=="model_profile"||candidate.project_bindings.length>0));
-  const requirements:SetupRequirement[]=[];
-  if(!readyAgent)requirements.push({id:"task-agent",target:"agent_model",capability:"text_generation",input_modalities:["text"],purpose:"构造并校验当前任务的标注方案"});
-  if(!readyVisual){
-    const candidates=readiness.candidates.filter(candidate=>visual(candidate));
-    const selected=candidates.find(candidate=>candidate.candidate_type==="model_instance")||candidates.find(candidate=>candidate.candidate_type==="model_profile")||candidates[0];
-    const preferred=["object_detection","open_vocabulary_detection","phrase_grounding","vision_language","image_classification","prompted_segmentation"] as const;
-    const capability=preferred.find(value=>candidates.some(candidate=>candidate.capabilities.includes(value)))||"object_detection";
-    const target=selected?.candidate_type==="model_instance"?"model_instance":selected?.candidate_type==="plugin_model"?"plugin":"provider_model";
-    requirements.push({id:"task-vision",target,capability,input_modalities:target==="provider_model"?["text","image"]:["image"],purpose:"在当前图片范围内生成可审核的目标标注"});
-  }
-  if(!requirements.length)return undefined;
-  const matches=(candidate:CapabilityReadiness["candidates"][number],requirement:SetupRequirement)=>candidate.capabilities.includes(requirement.capability)
-    && (requirement.target==="agent_model"?candidate.candidate_type==="model_profile"&&candidate.roles.includes("agent")
-      :requirement.target==="provider_model"?candidate.candidate_type==="model_profile"
-        :requirement.target==="plugin"?candidate.candidate_type==="plugin_model"
-          :candidate.candidate_type==="model_instance");
-  const compatible_model_ids=[...new Set(readiness.candidates.filter(candidate=>requirements.some(requirement=>matches(candidate,requirement))).filter(candidate=>candidate.production_eligible||(candidate.readiness==="unknown"&&!candidate.test_fixture)).map(candidate=>candidate.id))].sort();
-  const returnUrl=taskLocation(url,task.project);returnUrl.searchParams.set("task",task.id);returnUrl.searchParams.delete("setup_request");returnUrl.searchParams.delete("setup_outcome");
-  return setupContextFromReadiness({
-    id:`setup-${task.id}-${readiness.registry_revision.slice(0,12)}`,project_id:task.project,task_id:task.id,
-    task_revision:readiness.task_schema_revision,registry_revision:readiness.registry_revision,
-    role:requirements.map(requirement=>requirement.target).join("+"),required_capabilities:requirements.map(requirement=>requirement.capability),
-    compatible_model_ids,status:"required",return_path:`${returnUrl.pathname}${returnUrl.search}`,
-  },readiness,requirements,new Date().toISOString());
+  const request=readiness.setup_requests.find(value=>value.status==="required");
+  if(!request)return undefined;
+  const expectedReturn=taskLocation(url,task.project);expectedReturn.searchParams.set("task",task.id);
+  const returned=new URL(request.return_path,"http://annotagent.local");
+  if(returned.pathname!==expectedReturn.pathname||returned.searchParams.get("task")!==task.id)throw new Error("服务器模型准备请求没有返回当前 Project/Task");
+  return setupContextFromReadiness(request,readiness,new Date().toISOString());
 }
 export function AgentPreviewApp({
   adapter,
