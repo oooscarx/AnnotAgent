@@ -141,7 +141,15 @@ impl PipelineModelBackend for LimitedPipeline {
         cancellation: CancellationToken,
     ) -> CoreResult<PipelineInferenceResponse> {
         let receipt = self.calls.begin(&request, &cancellation)?;
-        let result = self.inner.infer_pipeline(request, cancellation).await;
+        let result = if let Some(receipt) = receipt.as_ref() {
+            annotagent_provider::within_model_call(
+                receipt.id().to_string(),
+                self.inner.infer_pipeline(request, cancellation),
+            )
+            .await
+        } else {
+            self.inner.infer_pipeline(request, cancellation).await
+        };
         if let Some(receipt) = receipt {
             receipt.finish(result.is_ok())?;
         }
@@ -202,7 +210,15 @@ impl VisionModelBackend for LimitedBackend {
         cancellation: CancellationToken,
     ) -> CoreResult<VisionInferenceResponse> {
         let receipt = self.calls.begin(&request, &cancellation)?;
-        let result = self.inner.infer(request, cancellation).await;
+        let result = if let Some(receipt) = receipt.as_ref() {
+            annotagent_provider::within_model_call(
+                receipt.id().to_string(),
+                self.inner.infer(request, cancellation),
+            )
+            .await
+        } else {
+            self.inner.infer(request, cancellation).await
+        };
         if let Some(receipt) = receipt {
             receipt.finish(result.is_ok())?;
         }

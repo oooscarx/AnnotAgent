@@ -11,6 +11,7 @@ use uuid::Uuid;
 pub struct ConversationVisionCalls {
     store: Arc<SqliteStore>,
     project: String,
+    conversation: Uuid,
     task: Uuid,
     scope: String,
 }
@@ -42,6 +43,7 @@ impl crate::LocalApplication {
         Ok(ConversationVisionCalls {
             store: self.store.clone(),
             project: owner,
+            conversation,
             task,
             scope: scope.into(),
         })
@@ -49,6 +51,45 @@ impl crate::LocalApplication {
 }
 
 impl ConversationVisionCalls {
+    pub(crate) fn attempt_observer_for_snapshot(
+        &self,
+        snapshot: &annotagent_core::ModelProfileSnapshot,
+    ) -> anyhow::Result<Arc<dyn annotagent_provider::ModelAttemptObserver>> {
+        let mut model = self
+            .store
+            .get_model_profile(snapshot.model_profile_id, Some(snapshot.revision))?;
+        let mut provider = self.store.get_provider_profile(snapshot.provider_id)?;
+        model.provider_id = snapshot.provider_id;
+        model.remote_model_id.clone_from(&snapshot.remote_model_id);
+        model
+            .input_modalities
+            .clone_from(&snapshot.input_modalities);
+        model.protocol_features = snapshot.protocol_features.clone();
+        model
+            .task_capabilities
+            .clone_from(&snapshot.task_capabilities);
+        model.limits = snapshot.limits.clone();
+        model
+            .generation_defaults
+            .clone_from(&snapshot.generation_defaults);
+        provider.adapter = snapshot.provider_adapter;
+        provider.base_url = snapshot.provider_base_url.clone();
+        let selected = crate::PipelineBuilderModelRuntime {
+            provider: provider.clone(),
+            model: model.clone(),
+            binding_source: annotagent_core::ModelBindingSource::WorkflowNode,
+            locked: true,
+        };
+        Ok(Arc::new(crate::ConversationTaskAttemptObserver {
+            store: self.store.clone(),
+            project_id: self.project.clone(),
+            conversation_id: self.conversation,
+            task_id: self.task,
+            model,
+            provider,
+            effective_request: serde_json::to_value(selected.effective_request()?)?,
+        }))
+    }
     pub(crate) fn require_owner(&self, owner: &str) -> anyhow::Result<()> {
         if self.project != owner {
             anyhow::bail!("Sample budget does not belong to this Project");
@@ -115,11 +156,23 @@ impl Drop for VisionCallReceipt {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use annotagent_core::{PipelineInferenceRequest, PipelineInferenceResponse, VisionCapability};
+    use annotagent_core::{
+        CapabilityDeclarationSource, CredentialReference, CredentialSource, GenerationDefaults,
+        InputModality, ModelCapability, ModelImage, ModelLimits, ModelMessage, ModelPricing,
+        ModelProfile, ModelProfileSnapshot, ModelProfileStatus, ModelRequest, ModelRole,
+        PipelineInferenceRequest, PipelineInferenceResponse, PricingSource, ProtocolFeatures,
+        ProviderAdapterKind, ProviderConnectionPolicy, ProviderHealthSnapshot,
+        ProviderHealthStatus, ProviderProfile, UsageSource, VisionCapability,
+    };
+    use annotagent_provider::{OpenAiCompatibleConfig, OpenAiCompatibleProvider, OpenAiProtocol};
     use annotagent_storage::{
         BeginConversationTask, ConversationCallGrant, ConversationMessageInput,
     };
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use rust_decimal::Decimal;
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        sync::atomic::{AtomicU64, Ordering},
+    };
     use tokio_util::sync::CancellationToken;
 
     fn setup(store: Arc<SqliteStore>) -> ConversationVisionCalls {
@@ -161,9 +214,164 @@ mod tests {
         ConversationVisionCalls {
             store,
             project,
+            conversation,
             task,
             scope: "b".repeat(64),
         }
+    }
+
+    #[tokio::test]
+    async fn authorized_vision_provider_records_exact_physical_attempt_and_cost() {
+        async fn completion() -> axum::Json<serde_json::Value> {
+            axum::Json(serde_json::json!({
+                "id":"TEST-vision-request",
+                "choices":[{"message":{"role":"assistant","content":"done"}}],
+                "usage":{"prompt_tokens":1500,"completion_tokens":500,"total_tokens":2000,
+                    "prompt_tokens_details":{"cached_tokens":0}}
+            }))
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                axum::Router::new().route("/v1/chat/completions", axum::routing::post(completion)),
+            )
+            .await
+            .unwrap();
+        });
+
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let calls = setup(store.clone());
+        let now = chrono::Utc::now();
+        let provider = ProviderProfile {
+            id: annotagent_core::ProviderId::new(),
+            display_name: "TEST loopback".into(),
+            preset_id: Some("TEST".into()),
+            adapter: ProviderAdapterKind::OpenAiCompatible,
+            base_url: format!("http://{address}/v1").parse().unwrap(),
+            organization: None,
+            workspace: None,
+            credential_ref: Some(CredentialReference {
+                provider_id: annotagent_core::ProviderId::new(),
+                source: CredentialSource::SessionOnly,
+                locator: "TEST".into(),
+            }),
+            safe_headers: BTreeMap::new(),
+            connection_policy: ProviderConnectionPolicy {
+                maximum_retries: 0,
+                ..ProviderConnectionPolicy::default()
+            },
+            enabled: true,
+            health: ProviderHealthSnapshot {
+                status: ProviderHealthStatus::Available,
+                safe_message: Some("TEST".into()),
+                checked_at: Some(now),
+            },
+            created_at: now,
+            updated_at: now,
+        };
+        let provider = ProviderProfile {
+            credential_ref: Some(CredentialReference {
+                provider_id: provider.id,
+                source: CredentialSource::SessionOnly,
+                locator: "TEST".into(),
+            }),
+            ..provider
+        };
+        store.save_provider_profile(&provider).unwrap();
+        let model = ModelProfile {
+            id: annotagent_core::ModelProfileId::new(),
+            revision: 1,
+            provider_id: provider.id,
+            display_name: "TEST vision".into(),
+            remote_model_id: "TEST-vision".into(),
+            input_modalities: BTreeSet::from([InputModality::Text, InputModality::Image]),
+            protocol_features: ProtocolFeatures {
+                usage_reporting: true,
+                ..ProtocolFeatures::default()
+            },
+            task_capabilities: BTreeSet::from([ModelCapability::VisionLanguage]),
+            capability_source: CapabilityDeclarationSource::UserDeclared,
+            limits: ModelLimits::default(),
+            generation_defaults: GenerationDefaults::default(),
+            pricing: ModelPricing {
+                currency: "USD".into(),
+                input_per_million_tokens: Some(Decimal::from(2)),
+                output_per_million_tokens: Some(Decimal::from(8)),
+                cached_input_per_million_tokens: Some(Decimal::ONE),
+                per_image: Some(Decimal::ZERO),
+                per_request: None,
+                source: PricingSource::UserConfigured,
+                updated_at: Some(now),
+            },
+            quality_contracts: Vec::new(),
+            status: ModelProfileStatus::Available,
+            enabled: true,
+            locked: true,
+            created_at: now,
+            updated_at: now,
+        };
+        store.save_model_profile(&model).unwrap();
+        let snapshot = ModelProfileSnapshot::frozen(&model, &provider).unwrap();
+        let concrete = OpenAiCompatibleProvider::new_with_api_key(
+            OpenAiCompatibleConfig {
+                endpoint: provider.base_url.to_string(),
+                api_key_env: "UNUSED_TEST".into(),
+                model: model.remote_model_id.clone(),
+                protocol: OpenAiProtocol::ChatCompletions,
+                request_timeout_seconds: 5,
+                max_output_tokens: 100,
+                temperature: 0.0,
+                reasoning_mode: None,
+                supports_tool_calls: false,
+                supports_json_schema: false,
+                custom_headers: BTreeMap::new(),
+                extra_request_fields: BTreeMap::new(),
+                max_retries: 0,
+                minimum_retry_delay_ms: 0,
+                maximum_retry_delay_ms: 0,
+            },
+            Some("TEST-secret".into()),
+        )
+        .unwrap();
+        concrete.set_attempt_observer(calls.attempt_observer_for_snapshot(&snapshot).unwrap());
+        let wrapped = calls.provider(Arc::new(concrete));
+        wrapped
+            .complete(
+                ModelRequest {
+                    model: model.remote_model_id,
+                    messages: vec![ModelMessage {
+                        role: ModelRole::User,
+                        content: "TEST".into(),
+                        tool_call_id: None,
+                        tool_calls: Vec::new(),
+                    }],
+                    images: vec![ModelImage {
+                        id: "TEST-image".into(),
+                        mime_type: "image/png".into(),
+                        data_base64: "AA==".into(),
+                    }],
+                    tools: Vec::new(),
+                    max_output_tokens: 100,
+                    temperature: 0.0,
+                    task_id: annotagent_core::TaskId::from("TEST"),
+                    extra: BTreeMap::new(),
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+
+        let usage = store
+            .task_model_usage(&calls.project, calls.conversation, calls.task, 0, 50)
+            .unwrap();
+        assert_eq!(usage["summary"]["known_cost"], "0.007");
+        assert_eq!(usage["attempts"]["items"][0]["image_count"], 1);
+        assert_eq!(
+            usage["attempts"]["items"][0]["usage_source"],
+            serde_json::to_value(UsageSource::Actual).unwrap()
+        );
     }
     struct Counter(Arc<AtomicU64>);
     #[async_trait::async_trait]
@@ -231,6 +439,7 @@ mod tests {
         assert_eq!(completed, 2);
         assert_eq!(counter.load(Ordering::SeqCst), 2);
         let project = calls.project.clone();
+        let conversation = calls.conversation;
         let task = calls.task;
         drop(backend);
         drop(calls);
@@ -254,6 +463,7 @@ mod tests {
         let restored = ConversationVisionCalls {
             store,
             project,
+            conversation,
             task,
             scope: "b".repeat(64),
         };

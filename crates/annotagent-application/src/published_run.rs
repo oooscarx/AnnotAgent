@@ -113,6 +113,7 @@ struct ModelExecution {
     model_name: String,
     external_backend: Option<Arc<dyn VisionModelBackend>>,
     pipeline_provider: Option<Arc<dyn VisionModelProvider>>,
+    attempt_provider: Option<Arc<OpenAiCompatibleProvider>>,
 }
 
 impl PublishedWorkflowRuntime {
@@ -120,13 +121,26 @@ impl PublishedWorkflowRuntime {
         mut self,
         limit: u64,
         conversation: Option<crate::ConversationVisionCalls>,
-    ) -> Self {
+    ) -> Result<Self> {
+        if let Some(conversation) = &conversation {
+            for snapshot in &self.workflow.snapshot.model_profiles {
+                if let Some(provider) = self
+                    .profile_executions
+                    .get(&snapshot.model_profile_id)
+                    .and_then(|execution| execution.attempt_provider.as_ref())
+                {
+                    provider.set_attempt_observer(
+                        conversation.attempt_observer_for_snapshot(snapshot)?,
+                    );
+                }
+            }
+        }
         let calls = conversation.map_or_else(
             || crate::sample_limits::SampleCalls::new(limit),
             |calls| crate::sample_limits::SampleCalls::bounded_conversation(limit, calls),
         );
         self.apply_request_allowance(&calls);
-        self
+        Ok(self)
     }
 
     pub(crate) fn with_batch_request_limit(mut self, id: annotagent_core::BatchId) -> Self {
@@ -199,6 +213,7 @@ impl PublishedWorkflowRuntime {
                     model_name: profile.remote_model_id.clone(),
                     external_backend: None,
                     pipeline_provider: None,
+                    attempt_provider: None,
                 },
                 ProviderAdapterKind::OpenAiCompatible => {
                     let mut config = settings.provider.clone();
@@ -237,13 +252,14 @@ impl PublishedWorkflowRuntime {
                     config.supports_tool_calls = profile.protocol_features.tool_calls;
                     config.supports_json_schema = profile.protocol_features.structured_output
                         || profile.protocol_features.json_schema;
-                    let provider: Arc<dyn VisionModelProvider> = Arc::new(
+                    let concrete = Arc::new(
                         OpenAiCompatibleProvider::new_with_api_key(
                             config.clone(),
                             temporary_api_key.map(str::to_owned),
                         )
                         .map_err(|error| anyhow!(error))?,
                     );
+                    let provider: Arc<dyn VisionModelProvider> = concrete.clone();
                     ModelExecution {
                         provider_name: "openai_compatible".to_owned(),
                         model_name: config.model.clone(),
@@ -255,6 +271,7 @@ impl PublishedWorkflowRuntime {
                             config.temperature,
                         ))),
                         pipeline_provider: Some(provider),
+                        attempt_provider: Some(concrete),
                     }
                 }
             };
@@ -309,6 +326,7 @@ impl PublishedWorkflowRuntime {
             model_name: self.model_name.clone(),
             external_backend: self.external_backend.clone(),
             pipeline_provider: self.pipeline_provider.clone(),
+            attempt_provider: None,
         }
     }
 
@@ -2354,6 +2372,7 @@ impl WorkflowRunner {
             model_name: self.model_name.clone(),
             external_backend: self.external_backend.clone(),
             pipeline_provider: None,
+            attempt_provider: None,
         };
         let execution =
             execution_for_node(&default_execution, &self.profile_executions, context.node);

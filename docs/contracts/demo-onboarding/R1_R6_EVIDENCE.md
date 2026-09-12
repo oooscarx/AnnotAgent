@@ -9,7 +9,7 @@ Baseline `8a7d800`; statuses describe executable code, not intended UI behavior.
 | R3 configuration | Profile persistence plus Builder/Published assembly existed | Passive effective-request API, typed reasoning mapping, output/context cap, frozen text-attempt evidence implemented; explicit HTTP TEST request pending | Implemented core/text, fixture pending |
 | R4 observe/stop | Call progress, stop receipts, Run SSE, Batch/Run stop and unknown outcome semantics exist | Demo receipt must link exact operations; >3s TEST delay evidence | Partially implemented |
 | R5 archive | UIAPI-018 archive-only export/preview/confirm/recovery is implemented and browser-stable | Demo-specific extension is unnecessary; execute round-trip regression on Demo Task | Implemented base, evidence pending |
-| R6 usage | Final call receipts and Run usage existed; active probe stays separate | Durable physical retry rows and Task read model implemented for OpenAI-compatible conversation text routes; sample vision attachment and HTTP fixture pending | Implemented text path, vision gap |
+| R6 usage | Final call receipts and Run usage existed; active probe stays separate | Durable physical retry rows and Task read model implemented for OpenAI-compatible conversation text and authorized Published/Sample vision routes; full Demo HTTP fixture pending | Implemented code path, fixture pending |
 
 No commercial Provider call is authorized. Acceptance uses tempfile SQLite, loopback
 HTTP, InMemorySecretStore and the explicit TEST fixture only. The 1500 input / 500

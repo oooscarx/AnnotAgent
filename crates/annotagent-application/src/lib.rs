@@ -11394,7 +11394,7 @@ impl LocalApplication {
             self.model_bundle_registry.clone(),
         )?;
         if source_record_hash.is_some() {
-            runtime = runtime.with_sample_request_limit(0, None);
+            runtime = runtime.with_sample_request_limit(0, None)?;
         }
         let image = Arc::new(load_image(image_path, 40_000_000).map_err(|error| anyhow!(error))?);
         let model_image = to_model_image(
@@ -17741,7 +17741,7 @@ impl LocalApplication {
         .with_sample_request_limit(
             settings.budget.max_requests.unwrap_or(500),
             runtime_provider.control.conversation_calls.clone(),
-        );
+        )?;
         let project = Arc::new(project);
         let project_root = project_path
             .parent()

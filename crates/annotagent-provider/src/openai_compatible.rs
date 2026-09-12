@@ -1,4 +1,9 @@
-use std::{collections::BTreeMap, future::Future, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    future::Future,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use annotagent_core::{
     CoreError, CoreResult, ModelCapabilities, ModelMessage, ModelRequest, ModelResponse, ModelRole,
@@ -73,7 +78,7 @@ pub struct OpenAiCompatibleProvider {
     config: OpenAiCompatibleConfig,
     client: Client,
     temporary_api_key: Option<String>,
-    attempt_observer: Option<Arc<dyn ModelAttemptObserver>>,
+    attempt_observer: Arc<RwLock<Option<Arc<dyn ModelAttemptObserver>>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -133,14 +138,21 @@ impl OpenAiCompatibleProvider {
             config,
             client,
             temporary_api_key,
-            attempt_observer: None,
+            attempt_observer: Arc::new(RwLock::new(None)),
         })
     }
 
     #[must_use]
-    pub fn with_attempt_observer(mut self, observer: Arc<dyn ModelAttemptObserver>) -> Self {
-        self.attempt_observer = Some(observer);
+    pub fn with_attempt_observer(self, observer: Arc<dyn ModelAttemptObserver>) -> Self {
+        self.set_attempt_observer(observer);
         self
+    }
+
+    pub fn set_attempt_observer(&self, observer: Arc<dyn ModelAttemptObserver>) {
+        *self
+            .attempt_observer
+            .write()
+            .expect("model attempt observer lock poisoned") = Some(observer);
     }
 
     #[must_use]
@@ -426,8 +438,12 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
         }
         for attempt in 0..=self.config.max_retries {
             let started_at = chrono::Utc::now();
-            let attempt_id = self
+            let observer = self
                 .attempt_observer
+                .read()
+                .map_err(|_| CoreError::Provider("model attempt observer unavailable".into()))?
+                .clone();
+            let attempt_id = observer
                 .as_ref()
                 .map(|observer| {
                     let call_id = MODEL_CALL_ID.try_with(Clone::clone).ok();
@@ -649,7 +665,12 @@ impl OpenAiCompatibleProvider {
         cached_input_tokens: Option<u64>,
         failure: Option<annotagent_core::ModelFailure>,
     ) -> CoreResult<()> {
-        if let (Some(observer), Some(attempt_id)) = (&self.attempt_observer, attempt_id) {
+        let observer = self
+            .attempt_observer
+            .read()
+            .map_err(|_| CoreError::Provider("model attempt observer unavailable".into()))?
+            .clone();
+        if let (Some(observer), Some(attempt_id)) = (observer, attempt_id) {
             observer.finish(
                 attempt_id,
                 &ModelAttemptOutcome {
