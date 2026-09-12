@@ -165,10 +165,17 @@ The boolean is true only for `queued`/`running`, unexpired, unrevoked consent wh
 This increment closes upload identity → partial intake → one bounded approval → durable Schema,
 Builder and Sample continuation. A deterministic external TEST Provider smoke reaches a real
 saved Sample through the normal HTTP/SQLite/provider path; it is test evidence, not a claim about
-commercial model accuracy. Ambiguous label/output/export requests still stop at the existing
-HumanRequest. A Schema that omits valid delivery semantics or a Provider result that is unknown
+commercial model accuracy. Ambiguous label/output/export requests stop at one persisted
+`SchemaClarification`, before Builder or image inference. A linked exact answer completes the
+private delivery draft and resumes the same Journey; reads/replays cannot duplicate the question
+or Schema call. A Schema that omits valid delivery semantics or a Provider result that is unknown
 stops before image inference and is never automatically retried. Formal processing and package
 admission retain their separate dataset-sized scopes.
+
+Sample selection is identity based even though the legacy executor accepts array indices. The
+Journey worker resolves its ordered consent `(image_id,content_hash)` pairs immediately before
+admission and the running worker repeats that exact check. Tests add another uploaded image set
+before the clarified Journey; the Sample still contains only its original three identities.
 
 The opt-in HTTP smoke uploads six byte-distinct PNGs and sends the fixed Chinese acceptance
 request from `07_ACCEPTANCE.md`. Its explicit TEST Provider delays the first Builder HTTP response
