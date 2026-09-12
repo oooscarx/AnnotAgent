@@ -107,6 +107,29 @@ describe("single current-task presentation", () => {
     });
   });
 
+  it("does not mistake future whole-image review debt for a current review item", () => {
+    const result = selectCurrentTaskPresentation(
+      task(
+        view({
+          review_summary: {
+            selected_images: 6,
+            saved_review_receipts: 0,
+            current_reviews: 0,
+            pending_reviews: 6,
+          },
+          available_actions: [
+            action("build_and_test_pipeline", "requires_confirmation"),
+          ],
+        }),
+      ),
+    );
+
+    expect(result).toMatchObject({
+      kind: "ready_to_start",
+      primary: { kind: "prepare_sample" },
+    });
+  });
+
   it("lets the server proposal resolve label and target without another form", () => {
     const result = selectCurrentTaskPresentation(
       task(

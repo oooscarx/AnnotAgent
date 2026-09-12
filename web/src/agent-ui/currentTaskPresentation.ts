@@ -86,7 +86,7 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
     task.phase === "waiting_for_human" ||
     !!task.human ||
     !!view.review_work_item_id ||
-    reviewCount > 0
+    !!task.sampleResult?.images.length
   ) {
     return {
       kind: "needs_review",
