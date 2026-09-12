@@ -40,6 +40,37 @@ pub(crate) fn read(
 }
 
 impl SqliteStore {
+    /// Startup-only recovery index. Rows remain permissions, not jobs; callers
+    /// must repeat current snapshot/readiness validation before admission.
+    pub fn armed_delivery_package_consents(
+        &self,
+    ) -> Result<Vec<(String, Uuid, Uuid, Uuid)>, StorageError> {
+        self.with_connection(|db| {
+            let mut query = db.prepare("SELECT project_id,conversation_id,task_id,id FROM delivery_package_consents WHERE state='armed' ORDER BY created_at,id LIMIT 100")?;
+            let rows = query.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })?;
+            rows.map(|row| {
+                let (project, conversation, task, id) = row?;
+                Ok((
+                    project,
+                    Uuid::parse_str(&conversation)
+                        .map_err(|_| invalid("Invalid package conversation identity"))?,
+                    Uuid::parse_str(&task)
+                        .map_err(|_| invalid("Invalid package task identity"))?,
+                    Uuid::parse_str(&id)
+                        .map_err(|_| invalid("Invalid package permission identity"))?,
+                ))
+            })
+            .collect()
+        })
+    }
+
     pub fn delivery_package_consents(
         &self,
         project: &str,

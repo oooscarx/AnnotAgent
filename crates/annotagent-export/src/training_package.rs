@@ -124,6 +124,73 @@ pub struct PackageManifest {
     pub lineage: Option<PackageLineage>,
 }
 
+fn receipt_from_manifest(path: &Path, manifest: &PackageManifest) -> Result<PackageReceipt> {
+    let mut file = File::open(path)?;
+    let mut hash = Sha256::new();
+    let bytes = std::io::copy(&mut file, &mut hash)?;
+    let images = manifest
+        .images
+        .iter()
+        .filter(|image| image.image.is_some())
+        .count();
+    let objects = manifest
+        .images
+        .iter()
+        .map(|image| image.annotation_ids.len())
+        .sum();
+    let negatives = manifest
+        .images
+        .iter()
+        .filter(|image| {
+            matches!(
+                image.confirmation,
+                ImageConfirmation::NegativeConfirmed { .. }
+            )
+        })
+        .count();
+    Ok(PackageReceipt {
+        sha256: format!("{:x}", hash.finalize()),
+        bytes,
+        images,
+        objects,
+        negatives,
+        excluded: manifest.images.len().saturating_sub(images),
+        summary: Some(PackageSummary {
+            labels: manifest
+                .intent
+                .label_spec
+                .as_ref()
+                .context("labels missing")?
+                .iter()
+                .map(|label| label.display_name.clone())
+                .collect(),
+            splits: manifest.images.iter().filter_map(|image| image.split).fold(
+                BTreeMap::new(),
+                |mut counts, split| {
+                    let name = match split {
+                        DatasetSplit::Train => "train",
+                        DatasetSplit::Val => "val",
+                        DatasetSplit::Test => "test",
+                    };
+                    *counts.entry(name.into()).or_insert(0) += 1;
+                    counts
+                },
+            ),
+            warnings: manifest.warnings.clone(),
+            exclusions: manifest
+                .images
+                .iter()
+                .filter_map(|image| match &image.confirmation {
+                    ImageConfirmation::Excluded { reason, .. } => {
+                        Some((image.image_id, reason.clone()))
+                    }
+                    _ => None,
+                })
+                .collect(),
+        }),
+    })
+}
+
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -539,7 +606,6 @@ pub fn write_training_package_with_lineage(
     let mut files = BTreeMap::new();
     let mut evidence = Vec::new();
     let mut objects = 0;
-    let mut negatives = 0;
     for (source, text, extension, width, height) in prepared {
         let split = plan[&source.image_id];
         let image_path = format!(
@@ -578,9 +644,6 @@ pub fn write_training_package_with_lineage(
         files.insert(image_path.clone(), FileEvidence { sha256, bytes });
         write_entry(&mut zip, &mut files, &label_path, text.as_bytes())?;
         objects += source.annotations.len();
-        if source.annotations.is_empty() {
-            negatives += 1;
-        }
         evidence.push(ImageEvidence {
             image_id: source.image_id,
             image: Some(image_path),
@@ -699,53 +762,10 @@ pub fn write_training_package_with_lineage(
     // Independent ZIP verification is required before atomic publication (implemented below).
     checkpoint(PackageProgress::Validating)?;
     validate_training_package(&temporary)?;
-    let mut file = File::open(&temporary)?;
-    let mut hash = Sha256::new();
-    let bytes = std::io::copy(&mut file, &mut hash)?;
     checkpoint(PackageProgress::Validating)?;
     fs::hard_link(&temporary, destination)
         .context("Cannot atomically publish package without overwriting")?;
-    Ok(PackageReceipt {
-        sha256: format!("{:x}", hash.finalize()),
-        bytes,
-        images: included.len(),
-        objects,
-        negatives,
-        excluded: sources.len() - included.len(),
-        summary: Some(PackageSummary {
-            labels: manifest
-                .intent
-                .label_spec
-                .as_ref()
-                .context("labels missing")?
-                .iter()
-                .map(|l| l.display_name.clone())
-                .collect(),
-            splits: manifest.images.iter().filter_map(|i| i.split).fold(
-                BTreeMap::new(),
-                |mut counts, split| {
-                    let name = match split {
-                        DatasetSplit::Train => "train",
-                        DatasetSplit::Val => "val",
-                        DatasetSplit::Test => "test",
-                    };
-                    *counts.entry(name.into()).or_insert(0) += 1;
-                    counts
-                },
-            ),
-            warnings: manifest.warnings,
-            exclusions: manifest
-                .images
-                .iter()
-                .filter_map(|i| match &i.confirmation {
-                    ImageConfirmation::Excluded { reason, .. } => {
-                        Some((i.image_id, reason.clone()))
-                    }
-                    _ => None,
-                })
-                .collect(),
-        }),
-    })
+    receipt_from_manifest(destination, &manifest)
 }
 
 /// Reopens the finished archive and checks entry paths, pairing and every payload hash.
@@ -803,4 +823,50 @@ pub fn validate_training_package(path: &Path) -> Result<()> {
         }
     }
     crate::training_package_validation::validate_contents(&mut zip, &manifest, &seen)
+}
+
+/// Validates an already atomically published archive and reconstructs its public
+/// receipt. This closes the process-crash window between file publication and
+/// the database's terminal receipt commit without replacing the file.
+pub fn inspect_training_package(path: &Path) -> Result<PackageReceipt> {
+    validate_training_package(path)?;
+    let mut zip = zip::ZipArchive::new(File::open(path)?)?;
+    let manifest_entry = zip.by_name("annotagent/manifest.json")?;
+    ensure!(
+        manifest_entry.size() <= 32 * 1024 * 1024,
+        "Package manifest exceeds validation limit"
+    );
+    let manifest: PackageManifest =
+        serde_json::from_reader(manifest_entry.take(32 * 1024 * 1024 + 1))?;
+    receipt_from_manifest(path, &manifest)
+}
+
+/// Reconstructs a receipt only when the published archive belongs to the exact
+/// frozen delivery job being recovered.
+pub fn inspect_training_package_with_lineage(
+    path: &Path,
+    expected_package_id: &str,
+    expected_snapshot_sha256: &str,
+    expected_delivery_revision: u32,
+) -> Result<PackageReceipt> {
+    validate_training_package(path)?;
+    let mut zip = zip::ZipArchive::new(File::open(path)?)?;
+    let manifest_entry = zip.by_name("annotagent/manifest.json")?;
+    ensure!(
+        manifest_entry.size() <= 32 * 1024 * 1024,
+        "Package manifest exceeds validation limit"
+    );
+    let manifest: PackageManifest =
+        serde_json::from_reader(manifest_entry.take(32 * 1024 * 1024 + 1))?;
+    let lineage = manifest
+        .lineage
+        .as_ref()
+        .context("Package lineage missing")?;
+    ensure!(
+        lineage.package_id == expected_package_id
+            && lineage.frozen_snapshot_sha256 == expected_snapshot_sha256
+            && manifest.delivery_revision == expected_delivery_revision,
+        "Published package does not match the frozen recovery job"
+    );
+    receipt_from_manifest(path, &manifest)
 }

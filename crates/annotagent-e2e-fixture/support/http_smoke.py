@@ -1,6 +1,8 @@
 """Real HTTP seed/checks for http_fixture.py. External inference only is synthetic."""
 import datetime
+import hashlib
 import http.cookiejar
+import io
 import json
 from pathlib import Path
 import struct
@@ -10,6 +12,7 @@ import urllib.parse
 import urllib.request
 import uuid
 import zlib
+import zipfile
 
 
 def uid():
@@ -69,6 +72,19 @@ class Client:
     def post(self, path, data=None):
         return self.request("POST", path, {} if data is None else data)
 
+    def download(self, path):
+        request = urllib.request.Request(self.base + path, method="GET")
+        with self.http.open(request, timeout=100) as response:
+            payload = response.read()
+            result = {
+                "bytes": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "content_type": response.headers.get("content-type"),
+            }
+            self.trace.append({"method": "GET", "path": path, "status": response.status, "request": None, "response": result})
+            assert response.status == 200, (path, response.status)
+            return payload, result
+
     def poll(self, path, predicate):
         deadline = time.monotonic() + 90
         while time.monotonic() < deadline:
@@ -77,6 +93,113 @@ class Client:
                 return result
             time.sleep(0.3)
         raise AssertionError(("poll timeout", path, result))
+
+
+def review_formal_results_and_package(c, tr, task_images):
+    page = c.get(tr + "/delivery-review-items?limit=10")
+    items = page["items"]
+    assert len(items) == len(task_images) == 6, page
+    accepted_objects = 0
+    for item in items:
+        assert item["child_run_id"] and item["execution_status"] in ["completed", "awaiting_review"], item
+        image_path = tr + "/delivery-images/" + item["image_id"]
+        source_query = "?" + urllib.parse.urlencode({"source_run_id": item["child_run_id"]})
+        view = c.get(image_path + source_query)
+        for annotation in item["annotations"]:
+            assert annotation["review_status"] == "needs_review", annotation
+            c.post(image_path + "/objects", {
+                "command_id": uid(),
+                "intent_revision": page["intent_revision"],
+                "intent_sha256": page["intent_sha256"],
+                "source_run_id": item["child_run_id"],
+                "annotation_id": annotation["annotation_id"],
+                "expected_snapshot_sha256": view["snapshot"]["sha256"],
+                "label": annotation["label"],
+                "value": annotation["value"],
+                "review_status": "human_accepted",
+                "reason": "TEST exact formal candidate accepted after inspection",
+            })
+            accepted_objects += 1
+            view = c.get(image_path + source_query)
+        assert view["unresolved_objects"] == 0, view
+        c.post(image_path, {
+            "command_id": uid(),
+            "intent_revision": page["intent_revision"],
+            "intent_sha256": page["intent_sha256"],
+            "image_id": item["image_id"],
+            "source_run_id": item["child_run_id"],
+            "expected_snapshot_sha256": view["snapshot"]["sha256"],
+            "expected_review_revision": view["review"]["revision"] if view["review"] else 0,
+            "decision": "positive_complete",
+            "reason": None,
+            "confirmed": True,
+        })
+
+    ready_for_package = c.get(tr + "/workspace")["mainline"]
+    assert [action["id"] for action in ready_for_package["available_actions"]] == ["authorize_training_package"], ready_for_package
+    package_id = uid()
+    consent_body = {
+        "id": package_id,
+        "intent_revision": page["intent_revision"],
+        "intent_sha256": page["intent_sha256"],
+        "confirmed": True,
+    }
+    armed = c.post(tr + "/delivery-package-consents", consent_body)
+    assert armed["state"] == "consumed" and armed["effective_state"] == "consumed", armed
+    assert armed["job"]["id"] == package_id and armed["readiness"]["confirmed_images"] == 6, armed
+    package_path = tr + "/delivery-packages/" + package_id
+    settled = c.poll(package_path, lambda value: not value["active"])
+    assert settled["job"]["phase"] == "ready", settled
+    result = settled["job"]["result"]
+    assert result["images"] == 6 and result["objects"] == accepted_objects, result
+    assert result["negatives"] == 0 and result["excluded"] == 0, result
+
+    replay = c.post(tr + "/delivery-package-consents", consent_body)
+    assert replay["state"] == "consumed" and replay["job"]["id"] == package_id, replay
+    consents = c.get(tr + "/delivery-package-consents")
+    matching = [item for item in consents["items"] if item["input"]["id"] == package_id]
+    assert len(matching) == 1 and matching[0]["job"]["id"] == package_id, consents
+
+    payload, transport = c.download(package_path + "/download")
+    assert transport["content_type"] == "application/zip", transport
+    assert transport["sha256"] == result["sha256"] and transport["bytes"] == result["bytes"], result
+    with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+        names = archive.namelist()
+        assert all(not name.startswith("/") and ".." not in name.split("/") for name in names), names
+        required = {"data.yaml", "annotagent/manifest.json", "annotagent/split-manifest.json", "annotagent/validation-report.json"}
+        assert required.issubset(names), names
+        package_manifest = json.loads(archive.read("annotagent/manifest.json"))
+        validation = json.loads(archive.read("annotagent/validation-report.json"))
+        for name, evidence in package_manifest["files"].items():
+            content = archive.read(name)
+            assert hashlib.sha256(content).hexdigest() == evidence["sha256"], (name, evidence)
+            assert len(content) == evidence["bytes"], (name, evidence)
+        expected_hashes = {item["image_id"]: item["sha256"] for item in task_images}
+        for image in package_manifest["images"]:
+            assert image["image_id"] in expected_hashes and image["image"], image
+            assert hashlib.sha256(archive.read(image["image"])).hexdigest() == expected_hashes[image["image_id"]], image
+        label_rows = sum(len(archive.read(name).decode().splitlines()) for name in names if name.startswith("labels/") and name.endswith(".txt"))
+        assert label_rows == accepted_objects, (label_rows, accepted_objects)
+        assert package_manifest["delivery_revision"] == page["intent_revision"]
+        assert package_manifest["lineage"]["package_id"] == package_id
+        assert validation["publication"].startswith("This archive is published only after"), validation
+
+    completed = c.get(tr + "/workspace")["mainline"]
+    assert completed["completion"]["task_completed"] is True, completed
+    assert completed["available_actions"] == [], completed
+    return {
+        "formal_images_reviewed": len(items),
+        "formal_objects_human_accepted": accepted_objects,
+        "package_consent_id": package_id,
+        "package_consent_state": replay["state"],
+        "package_job_id": settled["job"]["id"],
+        "package_phase": settled["job"]["phase"],
+        "package_sha256": result["sha256"],
+        "package_bytes": result["bytes"],
+        "zip_entry_count": len(names),
+        "zip_validation_checks": validation["checks"],
+        "duplicate_job_count": len(matching),
+    }
 
 
 def seed_and_verify(manifest, root):
@@ -248,6 +371,7 @@ def verify(c, manifest, root):
     assert "Resolve pending reviews" in export["job"]["error"], export
     assert export["job"]["result"] is None
     c.get(tr + "/exports")
+    package_evidence = review_formal_results_and_package(c, tr, task_images)
     stop = verify_stop(c, cr, schema_revision, provider, model)
     pending = {**human, "id": uid(), "expected_feedback_sequence": 1, "question": "TEST pending answer for frontend adapter", "resume_checkpoint_ref": uid()}
     c.post(tr + "/human-requests", pending)
@@ -271,7 +395,7 @@ def verify(c, manifest, root):
     execution_posts = [entry for entry in c.trace if entry["method"] == "POST" and entry["path"] == execution]
     assert len(consent_posts) == 1, consent_posts
     assert execution_posts == [], execution_posts
-    return {"project": project, "conversation_id": conversation, "task_id": task, "task_root": tr, "model_profile_id": model["id"], "provider_id": provider["id"], "execution_url": execution, "p0_autonomy": {"task_images": task_images, "task_image_count": len(task_images), "sample_image_count": len(record["inputs"]), "unavoidable_user_decisions": 1, "technical_relay_clicks": 0, "consent_post_count": len(consent_posts), "execution_post_count": len(execution_posts), "consent_response_ms": consent_response_ms, "journey_duration_ms": journey_duration_ms, "first_observation": first_observation, "consent_id": consent["id"], "schema_call_id": consent["schema_proposal"]["call_id"], "builder_operation_id": consent["builder_operation_id"], "sample_operation_id": consent["sample_operation_id"], "draft_id": record["draft_id"], "sample_status": record["status"], "delivery_schema_id": delivery_schema["schema"]["id"], "review_work_item_id": review_workspace["review_work_item_id"], "review_action": review_workspace["available_actions"][0], "automatic_review_request_ids": [item["input"]["id"] for item in automatic_reviews], "processing_review_gate": {"preview_code": blocked_preview["code"], "confirm_code": blocked_processing["code"], "receipt_count_before_reviews": 0, "unresolved_before": len(blocked_preview["sample_review"]["unresolved"]), "applied_after": len(approval["sample_review"]["applied_request_ids"]), "ready_after": approval["sample_review"]["ready"]}, "execution_dispatch": finished["dispatch"]}, "describe_before_upload": describe_before_upload, "ambiguous_goal": ambiguous_goal, "export": export, "run_id": run_id, "stop": stop, "answered_request_id": human["id"], "pending_request_id": pending["id"], "plan_task_id": plan["task_id"], "controls": controls, "saved_plan": saved_plan, "bbox": bbox, "manual_stop": manual_stop, "trace": str(Path(manifest["workspace"]) / "HTTP_TRACE.json")}
+    return {"project": project, "conversation_id": conversation, "task_id": task, "task_root": tr, "model_profile_id": model["id"], "provider_id": provider["id"], "execution_url": execution, "p0_autonomy": {"task_images": task_images, "task_image_count": len(task_images), "sample_image_count": len(record["inputs"]), "unavoidable_user_decisions": 1, "technical_relay_clicks": 0, "consent_post_count": len(consent_posts), "execution_post_count": len(execution_posts), "consent_response_ms": consent_response_ms, "journey_duration_ms": journey_duration_ms, "first_observation": first_observation, "consent_id": consent["id"], "schema_call_id": consent["schema_proposal"]["call_id"], "builder_operation_id": consent["builder_operation_id"], "sample_operation_id": consent["sample_operation_id"], "draft_id": record["draft_id"], "sample_status": record["status"], "delivery_schema_id": delivery_schema["schema"]["id"], "review_work_item_id": review_workspace["review_work_item_id"], "review_action": review_workspace["available_actions"][0], "automatic_review_request_ids": [item["input"]["id"] for item in automatic_reviews], "processing_review_gate": {"preview_code": blocked_preview["code"], "confirm_code": blocked_processing["code"], "receipt_count_before_reviews": 0, "unresolved_before": len(blocked_preview["sample_review"]["unresolved"]), "applied_after": len(approval["sample_review"]["applied_request_ids"]), "ready_after": approval["sample_review"]["ready"]}, "execution_dispatch": finished["dispatch"], "formal_delivery": package_evidence}, "describe_before_upload": describe_before_upload, "ambiguous_goal": ambiguous_goal, "export": export, "run_id": run_id, "stop": stop, "answered_request_id": human["id"], "pending_request_id": pending["id"], "plan_task_id": plan["task_id"], "controls": controls, "saved_plan": saved_plan, "bbox": bbox, "manual_stop": manual_stop, "trace": str(Path(manifest["workspace"]) / "HTTP_TRACE.json")}
 
 
 def verify_describe_before_upload(c, project_root, schema_revision, png):
@@ -456,6 +580,13 @@ def restart_snapshot(c, manifest):
             "execution": c.get(manifest["execution_url"]),
             "sample": c.get(f"/api/workflow-drafts/{p0['draft_id']}/sample-test?test_id={p0['sample_operation_id']}"),
         }
+        if p0.get("formal_delivery"):
+            package_id = p0["formal_delivery"]["package_job_id"]
+            package_path = tr + "/delivery-packages/" + package_id
+            payload, transport = c.download(package_path + "/download")
+            assert hashlib.sha256(payload).hexdigest() == p0["formal_delivery"]["package_sha256"]
+            snapshot["p0_autonomy"]["package"] = c.get(package_path)
+            snapshot["p0_autonomy"]["package_download"] = transport
     for kind, scene in manifest.get("controls", {}).items():
         snapshot[kind] = {"budget": c.get(scene["task_root"] + "/budget"), "batch": c.get(scene["batch_url"]), "actions": c.get(scene["task_root"] + "/workspace")["resume_actions"]}
     if manifest.get("bbox"):
