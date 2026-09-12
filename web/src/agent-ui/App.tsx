@@ -310,7 +310,8 @@ export function AgentPreviewApp({
   const packageScope=deliverySaved&&Number.isSafeInteger(deliverySaved.revision)&&typeof deliverySaved.content_sha256==="string"&&Array.isArray(deliverySaved.intent?.dataset_scope)&&deliverySaved.intent.dataset_scope.every(image=>typeof image.image_id==="string")
     ? {revision:deliverySaved.revision!,content_sha256:deliverySaved.content_sha256,image_ids:deliverySaved.intent!.dataset_scope!.map(image=>image.image_id!)}
     : undefined;
-  const formalReview = !!task?.processing?.length && currentTask?.kind === "needs_review";
+  const presetReview = (task?.mainline?.formal_source as {kind?:string}|undefined)?.kind === "preset_candidate_import";
+  const formalReview = (!!task?.processing?.length || presetReview) && currentTask?.kind === "needs_review";
   const diagnosticSampleImage=task&&currentTask?.diagnostic?.source.kind==="sample_test"&&Number.isSafeInteger(currentTask.diagnostic.source.image_index)
     ? task.sampleResult?.images[currentTask.diagnostic.source.image_index!]
     : undefined;
@@ -338,8 +339,9 @@ export function AgentPreviewApp({
         kind:"formal_review",
         images:taskAssets.map(asset=>({id:String(asset.id),name:asset.name,src:asset.src})),
         labels:Object.entries(task.labelNames||{}).map(([stable_id,display_name])=>({stable_id,display_name})),
+        source_mode:presetReview?"preset_candidates":"live_model",
         focus:null,
-        actions:["formal_edit_object","formal_create_object","formal_accept_object","formal_reject_object","formal_confirm_positive","formal_confirm_negative","formal_exclude_image"].map(id=>({id:id as import("./P0ResultPanel").P0ResultAction["id"],available:true,reason:null})),
+        actions:["formal_edit_object","formal_create_object","formal_accept_object","formal_reject_object","formal_confirm_positive","formal_confirm_negative","formal_exclude_image"].map(id=>({id:id as import("./P0ResultPanel").P0ResultAction["id"],available:!(presetReview&&id==="formal_create_object"),reason:presetReview&&id==="formal_create_object"?"预置候选导入不提供新增对象入口；可编辑、接受、拒绝现有候选并确认整图。":null})),
       }
     : !fixture && task?.sampleResult && currentTask?.kind === "needs_review" ? {
         kind: "sample_feedback",

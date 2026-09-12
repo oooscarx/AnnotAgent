@@ -145,6 +145,7 @@ export class HttpAdapter implements WorkspaceAdapter {
   }
   readonly delivery: import("./deliveryService").DeliveryService = {
     editObject:(project,task,image,input)=>this.transport(`${this.deliveryRoot(project,task)}/delivery-images/${esc(image)}/objects`,{method:"POST",body:JSON.stringify(input)}),
+    reviewPresetObject:(project,task,image,input)=>this.transport(`${this.deliveryRoot(project,task)}/delivery-images/${esc(image)}/preset-objects`,{method:"POST",body:JSON.stringify(input)}),
     createObject:(project,task,image,input)=>this.transport(`${this.deliveryRoot(project,task)}/delivery-images/${esc(image)}/missing-objects`,{method:"POST",body:JSON.stringify(input)}),
     pendingPackage: (project,task)=>{this.deliveryRoot(project,task);return this.storage?readPendingDelivery(this.storage,this.deliveryPendingKey(project,task)):undefined;},
     history: async(project,task,before,signal)=>{
@@ -182,7 +183,7 @@ export class HttpAdapter implements WorkspaceAdapter {
       const [page,formalResult]=await Promise.all([this.transport<{
         project_id:string;task_id:string;intent_revision:number;intent_sha256:string;
         summary:{selected:number;positive:number;negative:number;excluded:number;unreviewed:number};
-        items:{image_id:string;content_sha256:string;processing_operation_id:string|null;batch_id:string|null;child_run_id:string|null;execution_status:string|null;execution_error:string|null;unresolved_objects:number;review_revision:number;review_decision:string|null;confirmation_current:boolean;snapshot_sha256:string;annotations:{annotation_id:string;label:string|null;value:Annotation["value"];annotation_revision_id:string|null;feedback_available:boolean;conversation_reference:ConversationFormalReference|null}[]}[];
+        items:{image_id:string;content_sha256:string;processing_operation_id:string|null;batch_id:string|null;child_run_id:string|null;execution_status:string|null;execution_error:string|null;unresolved_objects:number;review_revision:number;review_decision:string|null;confirmation_current:boolean;snapshot_sha256:string;annotations:{annotation_id:string;label:string|null;value:Annotation["value"];annotation_revision_id:string|null;feedback_available:boolean;conversation_reference:ConversationFormalReference|null;origin?:import("./deliveryService").DemoAnnotationOrigin["kind"];source_artifact_id?:string|null}[]}[];
         next_cursor:string|null;
       }>(`${root}/delivery-review-items?cursor=${esc(cursor||"0")}&limit=50`,{signal}),this.delivery.formalResult!(project,task,signal)]);
       if(page.project_id!==project||page.task_id!==task)throw new Error("审核摘要不属于当前 Project/Task。");
@@ -208,7 +209,8 @@ export class HttpAdapter implements WorkspaceAdapter {
         });
         if(new Set(entries.map(([id])=>id)).size!==entries.length)throw new Error("正式审核项包含重复的 Annotation ID，未创建对象引用。");
         const formal_selections=Object.fromEntries(entries);
-        return {image_id:item.image_id,image_sha256:item.content_sha256,state:resolution.state,review_revision:item.review_revision||null,child_run_id:item.child_run_id,error:resolution.diagnostic,formal_selections};
+        const annotation_origins=Object.fromEntries(item.annotations.flatMap(annotation=>annotation.origin?[ [annotation.annotation_id,{kind:annotation.origin,source_id:annotation.annotation_id,source_artifact_id:annotation.source_artifact_id||null,model_display_name:null,actor_display_name:null,created_at:null} satisfies import("./deliveryService").DemoAnnotationOrigin] ]:[]));
+        return {image_id:item.image_id,image_sha256:item.content_sha256,state:resolution.state,review_revision:item.review_revision||null,child_run_id:item.child_run_id,error:resolution.diagnostic,formal_selections,annotation_origins};
       });
       const failed=items.filter(item=>item.state==="failed").length;
       const complete=page.summary.positive+page.summary.negative+page.summary.excluded;
@@ -591,6 +593,12 @@ export class HttpAdapter implements WorkspaceAdapter {
         ...(ws?.sample_operations || []).map(s=>({id:s.id,title:"样例测试回执",status:s.status,detail:s.error})),
       ];
       const mainline=ws?.mainline?this.assertMainline(ws,task):undefined;
+      const deliveryIntent=mainline?.delivery&&typeof mainline.delivery==="object"
+        ? (mainline.delivery as {saved?:{revision?:number;intent?:{label_spec?:{stable_id:string;display_name:string}[]}}}).saved
+        : undefined;
+      const deliveryLabelNames=deliveryIntent?.intent?.label_spec
+        ? Object.fromEntries(deliveryIntent.intent.label_spec.map(label=>[label.stable_id,label.display_name]))
+        : undefined;
       const automaticJourney = mainline?.available_actions.some(candidate=>candidate.id==="inspect_automatic_sample_progress"&&candidate.state==="available"&&candidate.method==="GET"&&!candidate.requires_confirmation);
       const active = ws?.calls.some(c=>c.status==="reserved") || ws?.sample_operations?.some(s=>["running","queued","cancelling"].includes(s.status)) || result.processing?.some(p=>["pending","running","pausing"].includes(p.status)) || automaticJourney;
       const phase: Phase = stop?.normalized_state || (active ? "running" : ws?.calls.some(c=>c.status==="in_doubt") ? "outcome_unknown" : human ? "waiting_for_human" : "idle");
@@ -598,6 +606,7 @@ export class HttpAdapter implements WorkspaceAdapter {
       this.emit({ error: undefined, artifacts, tasks: this.state.tasks.map(t => t.id !== id ? t : { ...t,
         items: [...thread.map(t => {const referenceText=persistedReferenceText(t.message.input);return { id: t.id, role: "user" as const, kind:"input" as const, text: t.message.input.text,source:{kind:"message" as const,id:t.id},...(referenceText?{referenceText}:{}) };}),...projectCallMessages(ws?.calls||[])],
         ...result, approval:pendingApproval?.view || t.approval, actions: {...ws?.actions || t.actions,answer:{available:!!result.human && ["classification","bounding_box"].includes(result.human.kind),reason:"仅保存当前人工作答的样例修正"}}, model: ws?.agent_model.model_profile_id || this.defaults.pipeline_builder || t.model,
+        ...(deliveryLabelNames?{labelNames:deliveryLabelNames,labelNamesRevision:deliveryIntent?.revision||t.labelNamesRevision}:{}),
         loaded:true, image: human?.input.image_id || artifacts[0]?.id || "", editBoxes: edits.revision===result.resultRevision ? edits.boxes || {} : {},
         phase, receipts, humanQuestion:human?.input.question,mainline,
         stopTargets:stop?.status==="needs_selection"?stop.targets.filter(t=>!stopSelection||stopTargetMatches(t,stopSelection.target)).map(target=>({id:`${target.kind}:${target.id}`,label:`${stopSelection?"核实原选择 · ":""}${this.state.tasks.find(t=>t.id===target.task_id)?.title||target.task_id} · ${target.kind} · ${target.id.slice(0,8)} · ${target.state}`})):[],

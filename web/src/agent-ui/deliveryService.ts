@@ -15,6 +15,11 @@ export type DeliveryObjectEdit = {
   review_status:"needs_review"|"human_accepted"|"rejected";reason:string;
 };
 export type DeliveryObjectCreate = Omit<DeliveryObjectEdit,"annotation_id"|"review_status">;
+export type DeliveryPresetObjectReview = {
+  command_id:string;intent_revision:number;intent_sha256:string;
+  annotation_id:string;expected_snapshot_sha256:string;label:string;value:Annotation["value"];
+  review_status:"needs_review"|"human_accepted"|"rejected";reason:string;
+};
 export type DeliveryImageSnapshot = {
   image_id: string; content_sha256: string; source_run_id: string | null;
   annotations: Annotation[]; sha256: string;
@@ -83,7 +88,7 @@ export type DeliveryPackageStart = { job: DeliveryPackageStatus; active: boolean
 export type DeliveryReviewSummary = {
   intent_revision:number;intent_sha256:string;formal_result:DeliveryFormalResult|null;
   counts:{total:number;complete:number;positive:number;negative:number;excluded:number;unresolved:number;failed:number};
-  items:{image_id:string;image_sha256:string;state:"positive_complete"|"negative_confirmed"|"excluded"|"unresolved"|"failed";review_revision:number|null;child_run_id:string|null;error:string|null;formal_selections:Record<string,import("./mainline").FormalVisualSelection>}[];
+  items:{image_id:string;image_sha256:string;state:"positive_complete"|"negative_confirmed"|"excluded"|"unresolved"|"failed";review_revision:number|null;child_run_id:string|null;error:string|null;formal_selections:Record<string,import("./mainline").FormalVisualSelection>;annotation_origins:Record<string,DemoAnnotationOrigin>}[];
   next_cursor:string|null;
 };
 export type PackageConsent = {input:{id:string;intent_revision:number;intent_sha256:string;confirmed:true};state:"armed"|"consumed"|"cancelled"};
@@ -114,6 +119,7 @@ export type DemoDeliveryPanelRead = {
 export interface DeliveryService {
   createObject?(project:string,task:string,image:string,input:DeliveryObjectCreate):Promise<unknown>;
   editObject(project:string,task:string,image:string,input:DeliveryObjectEdit):Promise<unknown>;
+  reviewPresetObject?(project:string,task:string,image:string,input:DeliveryPresetObjectReview):Promise<unknown>;
   pendingPackage(project:string,task:string):DeliveryPackageInput|undefined;
   history(project: string, task: string, before?:string, signal?:AbortSignal): Promise<{items:{id:string;created_at:string}[];next_cursor:string|null}>;
   image(project: string, task: string, image: string, run: string | null, signal?: AbortSignal): Promise<DeliveryImageView>;

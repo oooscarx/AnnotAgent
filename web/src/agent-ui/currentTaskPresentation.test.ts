@@ -226,6 +226,17 @@ describe("single current-task presentation", () => {
     expect(result).toMatchObject({kind:"ready_to_deliver",primary:{kind:"prepare_export"},action:{id:"authorize_training_package"}});
   });
 
+  it("opens repository preset candidates directly at human review without inventing a Run",()=>{
+    const result=selectCurrentTaskPresentation(task(view({
+      formal_source:{kind:"preset_candidate_import",status:"needs_review",live_inference_occurred:false,model_run_id:null},
+      available_actions:[{...action("review_delivery_images","available"),method:"GET"}],
+      review_summary:{selected_images:6,saved_review_receipts:0,current_reviews:0,pending_reviews:6},
+      completion:{model_request_completed:false,processing_completed:true,package_ready:false,task_completed:false},
+    })));
+    expect(result).toMatchObject({kind:"needs_review",primary:{kind:"open_review"}});
+    expect(result.detail).toContain("6 个结果");
+  });
+
   it.each([
     ["model_weights_missing","capability_setup_request"],
     ["model_capability_unavailable","capability_setup_request"],

@@ -26,7 +26,7 @@ export type P0DiagnosticCategory="capability_missing"|"provider_not_received"|"o
 export type P0ResultPanelView=
   |{kind:"preparing";stage:string;message:string;elapsed_ms:number|null}
   |{kind:"sample_feedback";images:ResultImage[];labels:{stable_id:string;display_name:string}[];sample_result:DeliverySampleResult;focus:DeliveryReviewFocus|null;actions:P0ResultAction[];diagnostics?:MainlineResultDiagnostic[]}
-  |{kind:"formal_review";images:ResultImage[];labels:{stable_id:string;display_name:string}[];formal_result?:DeliveryFormalResult;focus:DeliveryReviewFocus|null;actions:P0ResultAction[]}
+  |{kind:"formal_review";images:ResultImage[];labels:{stable_id:string;display_name:string}[];formal_result?:DeliveryFormalResult;source_mode?:"preset_candidates"|"live_model";focus:DeliveryReviewFocus|null;actions:P0ResultAction[]}
   |{kind:"diagnostic";category:P0DiagnosticCategory;message:string;image:ResultImage|null;annotations:Annotation[];focus_candidate_id:string|null}
   |{kind:"package";scope:{revision:number;content_sha256:string;image_ids:string[]};package_id:string|null};
 
@@ -110,6 +110,7 @@ export function P0ResultPanel({service,projectId,taskId,view,onSelection,onSampl
     key={view.formal_result?`formal:${view.formal_result.processing_operation_id}:${view.formal_result.batch_id}`:"formal:loading"}
     service={service} project={projectId} task={taskId} images={view.images} labels={view.labels}
     sampleResult={null} formalResult={view.formal_result} preferredMode="formal" fixedMode="formal" focus={view.focus}
+    formalSourceMode={view.source_mode}
     permissions={permissions(view.actions)} guided onFormalSelection={onSelection}
   />;
   if(view.kind==="diagnostic")return <DiagnosticPanel view={view}/>;

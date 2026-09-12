@@ -44,6 +44,7 @@ export type DeliveryReviewProps = {
   onSampleConfirm?: (selection: SampleVisualSelection) => Promise<void>;
   onFormalSelection?: (selection: FormalVisualSelection) => void;
   annotationOrigins?:Record<string,Record<string,DemoAnnotationOrigin>>;
+  formalSourceMode?:"preset_candidates"|"live_model";
   preferredMode?:Mode;
   fixedMode?:Mode;
   focus?:DeliveryReviewFocus|null;
@@ -65,10 +66,11 @@ export function DeliveryReview({
   service, project, task, images, labels = [], sampleResult = null,
   formalResult: formalResultProp, locked = false, onEditingState,
   onVisualSelection, onSampleIssue, onSampleConfirm, onFormalSelection, annotationOrigins = {},
-  preferredMode, fixedMode, focus, permissions, guided = false,
+  preferredMode, fixedMode, focus, permissions, guided = false, formalSourceMode,
 }: DeliveryReviewProps) {
+  const presetFormal = formalSourceMode === "preset_candidates";
   const [formalResult, setFormalResult] = useState<DeliveryFormalResult | null | undefined>(
-    formalResultProp !== undefined ? formalResultProp : service.formalResult ? undefined : null,
+    presetFormal ? null : formalResultProp !== undefined ? formalResultProp : service.formalResult ? undefined : null,
   );
   const [selection, setSelection] = useState(() => fromUrl(images, !!sampleResult, preferredMode, fixedMode));
   const [view, setView] = useState<DeliveryImageView>();
@@ -100,12 +102,12 @@ export function DeliveryReview({
   const dirty = !!draft && JSON.stringify(draft) !== JSON.stringify(original);
   const activeAnnotations = useMemo(() => {
     if (selection.mode === "sample") return sampleImage?.annotations ?? [];
-    if (!formalResult || !formalImage) return [];
+    if ((!formalResult || !formalImage) && !presetFormal) return [];
     const saved = view?.snapshot.annotations
       .filter((item) => item.review_status !== "rejected")
       .map((item) => draft?.id === item.id ? draft : item) ?? [];
     return creating && draft ? [...saved, draft] : saved;
-  }, [creating, draft, formalImage, formalResult, sampleImage, selection.mode, view]);
+  }, [creating, draft, formalImage, formalResult, presetFormal, sampleImage, selection.mode, view]);
 
   useEffect(() => {
     onEditingState?.(dirty || busy);
@@ -113,9 +115,10 @@ export function DeliveryReview({
   }, [busy, dirty, onEditingState]);
 
   useEffect(() => {
+    if (presetFormal) { setFormalResult(null); return; }
     if (formalResultProp !== undefined) setFormalResult(formalResultProp);
     else if (!service.formalResult) setFormalResult(null);
-  }, [formalResultProp, service]);
+  }, [formalResultProp, presetFormal, service]);
 
   useEffect(() => {
     if (sampleResult && (sampleResult.project_id !== project || sampleResult.task_id !== task)) {
@@ -124,14 +127,14 @@ export function DeliveryReview({
   }, [project, sampleResult, task]);
 
   useEffect(() => {
-    if (formalResultProp !== undefined || !service.formalResult) return;
+    if (presetFormal || formalResultProp !== undefined || !service.formalResult) return;
     const controller = new AbortController();
     setFormalResult(undefined);
     void service.formalResult(project, task, controller.signal)
       .then((result) => { if (!controller.signal.aborted) setFormalResult(result); })
       .catch((cause: Error) => { if (!controller.signal.aborted) setError(cause.message); });
     return () => controller.abort();
-  }, [formalResultProp, project, reload, service, task]);
+  }, [formalResultProp, presetFormal, project, reload, service, task]);
 
   const readSummary = (cursor?: string) => {
     if (!service.reviewSummary) return;
@@ -203,13 +206,13 @@ export function DeliveryReview({
 
   useEffect(() => {
     setView(undefined); setError("");
-    if (selection.mode !== "formal" || !image || formalResult === undefined) return;
-    if (!formalResult) { setError("当前任务还没有绑定正式处理结果。不会改用项目最新 Run。"); return; }
-    if (formalResult.project_id !== project || formalResult.task_id !== task) {
+    if (selection.mode !== "formal" || !image || (!presetFormal && formalResult === undefined)) return;
+    if (!presetFormal && !formalResult) { setError("当前任务还没有绑定正式处理结果。不会改用项目最新 Run。"); return; }
+    if (!presetFormal && formalResult && (formalResult.project_id !== project || formalResult.task_id !== task)) {
       setError("正式结果不属于当前 Project/Task，未读取其 child Run。");
       return;
     }
-    if (!formalImage) { setError("这张图片不属于当前任务绑定的 Batch。"); return; }
+    if (!presetFormal && !formalImage) { setError("这张图片不属于当前任务绑定的 Batch。"); return; }
     const controller = new AbortController();
     void service.image(project, task, image.id, formalRun, controller.signal)
       .then((next) => {
@@ -222,7 +225,7 @@ export function DeliveryReview({
       })
       .catch((cause: Error) => { if (!controller.signal.aborted) setError(cause.message); });
     return () => controller.abort();
-  }, [formalImage, formalResult, formalRun, image, project, reload, selection.mode, service, task]);
+  }, [formalImage, formalResult, formalRun, image, presetFormal, project, reload, selection.mode, service, task]);
 
   useEffect(() => {
     const guard = (event: Event) => {
@@ -324,10 +327,10 @@ export function DeliveryReview({
   };
 
   const saveObject = async (status: "needs_review" | "human_accepted" | "rejected") => {
-    if (selection.mode !== "formal" || creating || !object || !view || !image || !formalRun || pending.current || locked || !readable) return;
+    if (selection.mode !== "formal" || creating || !object || !view || !image || (!formalRun && !presetFormal) || pending.current || locked || !readable) return;
     const body = {
       intent_revision: view.intent_revision, intent_sha256: view.intent_sha256,
-      source_run_id: formalRun, annotation_id: object.id,
+      source_run_id: formalRun || "", annotation_id: object.id,
       expected_snapshot_sha256: view.snapshot.sha256, label: object.label || "",
       value: object.value, review_status: status,
       reason: reason.trim() || `Human object ${status} in delivery review`,
@@ -336,8 +339,19 @@ export function DeliveryReview({
     if (editRetry.current?.signature !== signature) editRetry.current = { signature, input: { ...body, command_id: crypto.randomUUID() } };
     pending.current = true; setBusy(true); setError("");
     try {
-      await service.editObject(project, task, image.id, editRetry.current.input);
-      emitFormal(object); editRetry.current = undefined; setDraft(undefined);
+      if (presetFormal) {
+        if (!service.reviewPresetObject) throw new Error("服务器没有提供预置候选审核写入口；没有保存修改。");
+        const input=editRetry.current.input;
+        await service.reviewPresetObject(project, task, image.id, {
+          command_id:input.command_id,intent_revision:input.intent_revision,intent_sha256:input.intent_sha256,
+          annotation_id:input.annotation_id,expected_snapshot_sha256:input.expected_snapshot_sha256,
+          label:input.label,value:input.value,review_status:input.review_status,reason:input.reason,
+        });
+      } else {
+        await service.editObject(project, task, image.id, editRetry.current.input);
+        emitFormal(object);
+      }
+      editRetry.current = undefined; setDraft(undefined);
       setMessage("对象修改已保存；这不等于整张图已经检查完整。");
       setReload((value) => value + 1);
     } catch (cause) { setError((cause as Error).message); }
@@ -376,7 +390,7 @@ export function DeliveryReview({
     finally { pending.current = false; setBusy(false); }
   };
 
-  const positive = !!formalRun && !!view && view.accepted_objects > 0 && view.unresolved_objects === 0;
+  const positive = (!!formalRun || presetFormal) && !!view && view.accepted_objects > 0 && view.unresolved_objects === 0;
   const negative = !!view && view.accepted_objects === 0 && view.unresolved_objects === 0;
 
   return <section className="delivery-review" aria-label="当前任务图片结果">
@@ -394,9 +408,9 @@ export function DeliveryReview({
       <label>图片<select aria-label="图片" value={selection.image} disabled={busy} onChange={(event) => choose({ ...selection, image: event.target.value })}>
         {images.map((item, index) => <option key={item.id} value={item.id}>{index + 1}/{images.length} · {item.name}</option>)}
       </select></label>
-      {selection.mode === "formal" && formalResult && <p className="delivery-source-receipt">{guided
-        ? formalRun?"本任务的正式处理结果 · 来源已绑定":"本任务的正式处理结果 · 没有可审核的候选来源"
-        : `Batch ${formalResult.batch_id.slice(0, 8)} · Workflow ${formalResult.workflow_version} · child Run ${formalRun?.slice(0, 8) ?? "无目标结果"}`}</p>}
+      {selection.mode === "formal" && (formalResult || presetFormal) && <p className="delivery-source-receipt">{guided
+        ? presetFormal?"预置候选 · 本次没有调用模型 · 必须人工审核":formalRun?"本任务的正式处理结果 · 来源已绑定":"本任务的正式处理结果 · 没有可审核的候选来源"
+        : presetFormal?"预置候选 · 无模型 Run":`Batch ${formalResult!.batch_id.slice(0, 8)} · Workflow ${formalResult!.workflow_version} · child Run ${formalRun?.slice(0, 8) ?? "无目标结果"}`}</p>}
     </div>
     {summary && selection.mode === "formal" && <div className="delivery-review-summary" aria-label="审核摘要">
       <strong>{summary.counts.complete}/{summary.counts.total} 张已完成</strong>
@@ -409,7 +423,7 @@ export function DeliveryReview({
     {error && <p role="alert" className="error">{error}</p>}
     {message && <p role="status">{message}</p>}
     {selection.mode === "formal" && formalResult === undefined && !error && <p role="status">读取当前任务绑定的正式结果…</p>}
-    {selection.mode === "formal" && formalResult && formalImage && !view && !error && <p role="status">读取 child Run 的正式标注…</p>}
+    {selection.mode === "formal" && ((formalResult && formalImage) || presetFormal) && !view && !error && <p role="status">{presetFormal?"读取预置候选与人工审核快照…":"读取 child Run 的正式标注…"}</p>}
     {selection.mode === "sample" && !sampleImage && <p role="status">这张图片没有当前 Sample Test 结果。</p>}
     {image && <AnnotationCanvas
       imageUrl={image.src}
@@ -420,11 +434,11 @@ export function DeliveryReview({
       onChange={(next) => {
         if (selection.mode === "formal" && !busy && !locked) { setSelected(next.id); setDraft(next); }
       }}
-      readOnly={selection.mode === "sample" || busy || locked || !formalResult || !formalImage || !service.editObject || permissions?.editObject===false}
+      readOnly={selection.mode === "sample" || busy || locked || ((!formalResult || !formalImage || !service.editObject) && (!presetFormal || !service.reviewPresetObject)) || permissions?.editObject===false}
       compactList
     />}
-    {image&&Object.keys(annotationOrigins[image.id]||{}).length>0&&<div className="delivery-source-receipt" aria-label="当前图片候选来源">
-      {Object.entries(annotationOrigins[image.id]).map(([annotationId,origin])=><span key={annotationId}>{annotationId===selected?"当前对象 · ":""}{demoOriginLabel(origin)}</span>)}
+    {image&&Object.keys({...annotationOrigins[image.id],...summaryItems.find(item=>item.image_id===image.id)?.annotation_origins}).length>0&&<div className="delivery-source-receipt" aria-label="当前图片候选来源">
+      {Object.entries({...annotationOrigins[image.id],...summaryItems.find(item=>item.image_id===image.id)?.annotation_origins}).map(([annotationId,origin])=><span key={annotationId}>{annotationId===selected?"当前对象 · ":""}{demoOriginLabel(origin)}</span>)}
     </div>}
     {selection.mode === "sample" && sampleResult && <div className="actions">
       <button className="primary" type="button" disabled={busy || !sampleSelectionAvailable || !onSampleConfirm} onClick={() => {
@@ -443,13 +457,13 @@ export function DeliveryReview({
       }}>这个样例框有问题</button>
       <p>{selected&&!sampleSelectionAvailable?"此终端候选没有服务端签发的反馈引用，因此只能查看，不能提交修改。":"仅创建带 Draft、Sample Test、Artifact 和 feedback revision 的反馈引用，不写正式标注。"}</p>
     </div>}
-    {selection.mode === "formal" && view && formalResult && formalImage && <>
-      {service.createObject && <button type="button" disabled={busy || locked || dirty || !formalRun || !readable || !labels.length || permissions?.createObject===false} onClick={addObject}>新增漏标目标框</button>}
+    {selection.mode === "formal" && view && ((formalResult && formalImage) || presetFormal) && <>
+      {service.createObject && !presetFormal && <button type="button" disabled={busy || locked || dirty || !formalRun || !readable || !labels.length || permissions?.createObject===false} onClick={addObject}>新增漏标目标框</button>}
       {creating && <div className="actions">
         <button type="button" disabled={busy} onClick={() => { setDraft(undefined); setSelected(undefined); }}>取消新增框</button>
         <button type="button" disabled={busy || locked || !readable || !reason.trim()} onClick={() => void saveNewObject()}>保存新增目标框</button>
       </div>}
-      {object && formalRun && <div className="delivery-object-editor">
+      {object && (formalRun || presetFormal) && <div className="delivery-object-editor">
         <p>选中对象 · {objectStateLabel[object.review_status]} {dirty ? "· 尚未保存" : ""}</p>
         <label>对象类别<select aria-label="对象类别" value={object.label || ""} disabled={busy || locked} onChange={(event) => setDraft({ ...object, label: event.target.value })}>
           {labels.length ? labels.map((item) => <option key={item.stable_id} value={item.stable_id}>{item.display_name}</option>) : <option value={object.label || ""}>{object.label}</option>}

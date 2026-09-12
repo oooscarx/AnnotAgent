@@ -154,7 +154,9 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
   const activeReviewCount =
     task.sampleResult?.images.length ||
     view.review_summary.current_reviews ||
+    view.review_summary.pending_reviews ||
     (task.human || view.review_work_item_id ? 1 : 0);
+  const deliveryReview = action(task, "review_delivery_images", "available");
   const formalProcessingAction = action(
     task,
     "start_delivery_processing",
@@ -164,6 +166,7 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
     task.phase === "waiting_for_human" ||
     !!task.human ||
     !!view.review_work_item_id ||
+    !!deliveryReview ||
     (!!task.sampleResult?.images.length && !formalProcessingAction && !task.processing?.length)
   ) {
     return {
