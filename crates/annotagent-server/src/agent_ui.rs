@@ -101,6 +101,215 @@ mod tests {
     use crate::tests::{request, response_json, test_state};
     use annotagent_provider::InMemorySecretStore;
     use axum::http::Method;
+
+    #[tokio::test]
+    async fn upload_scoped_send_exposes_one_passive_journey_approval_for_three_of_six_images() {
+        let temp = tempfile::tempdir().unwrap();
+        let app = Arc::new(LocalApplication::new(temp.path()).unwrap());
+        let project = "TEST-one-approval";
+        app.create_project(project,"version: 1\nproject:\n  name: TEST one approval\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n").unwrap();
+        let incoming = temp.path().join("TEST-one-approval-images");
+        std::fs::create_dir(&incoming).unwrap();
+        for value in 1..=6 {
+            image::RgbImage::from_pixel(48, 32, image::Rgb([value, value + 10, value + 20]))
+                .save(incoming.join(format!("image-{value}.png")))
+                .unwrap();
+        }
+        let imported = app.import_images_with_report(project, &incoming).unwrap();
+        assert_eq!(imported.images.len(), 6);
+        let conversation = app.create_project_conversation(project).unwrap();
+        let now = Utc::now();
+        let planner_provider_id = ProviderId::new();
+        let planner_reference = CredentialReference {
+            provider_id: planner_provider_id,
+            source: CredentialSource::SessionOnly,
+            locator: "TEST-one-approval-planner".into(),
+        };
+        app.store()
+            .save_provider_profile(&ProviderProfile {
+                id: planner_provider_id,
+                display_name: "TEST loopback planner".into(),
+                preset_id: None,
+                adapter: ProviderAdapterKind::OpenAiCompatible,
+                base_url: "http://127.0.0.1:9/v1".parse().unwrap(),
+                organization: None,
+                workspace: None,
+                credential_ref: Some(planner_reference.clone()),
+                safe_headers: BTreeMap::new(),
+                connection_policy: ProviderConnectionPolicy::default(),
+                enabled: true,
+                health: ProviderHealthSnapshot {
+                    status: ProviderHealthStatus::Available,
+                    safe_message: Some("TEST loopback only".into()),
+                    checked_at: Some(now),
+                },
+                created_at: now,
+                updated_at: now,
+            })
+            .unwrap();
+        let planner = ModelProfile {
+            id: ModelProfileId::new(),
+            revision: 1,
+            provider_id: planner_provider_id,
+            display_name: "TEST one approval planner".into(),
+            remote_model_id: "TEST-one-approval-planner".into(),
+            input_modalities: BTreeSet::from([InputModality::Text]),
+            protocol_features: ProtocolFeatures {
+                tool_calls: true,
+                structured_output: true,
+                json_schema: true,
+                usage_reporting: true,
+                ..ProtocolFeatures::default()
+            },
+            task_capabilities: BTreeSet::from([ModelCapability::TextGeneration]),
+            capability_source: CapabilityDeclarationSource::UserDeclared,
+            limits: ModelLimits::default(),
+            generation_defaults: GenerationDefaults::default(),
+            pricing: ModelPricing::default(),
+            quality_contracts: vec![],
+            status: ModelProfileStatus::Available,
+            enabled: true,
+            locked: true,
+            created_at: now,
+            updated_at: now,
+        };
+        app.store().save_model_profile(&planner).unwrap();
+        let mut defaults = app.store().get_global_model_defaults().unwrap();
+        defaults.pipeline_builder = Some(planner.id);
+        app.store().save_global_model_defaults(&defaults).unwrap();
+        let secrets = Arc::new(InMemorySecretStore::default());
+        secrets
+            .put(
+                SecretScope {
+                    provider_id: planner_reference.provider_id,
+                    source: planner_reference.source,
+                    locator: planner_reference.locator.clone(),
+                },
+                SecretValue::new("TEST-only-not-secret").unwrap(),
+            )
+            .await
+            .unwrap();
+        let state = test_state(app.clone(), secrets).await;
+        let mock_provider = app
+            .store()
+            .list_provider_profiles()
+            .unwrap()
+            .into_iter()
+            .find(|profile| profile.adapter == ProviderAdapterKind::Mock)
+            .unwrap();
+        let detector = app
+            .store()
+            .list_model_profiles(Some(mock_provider.id), false)
+            .unwrap()
+            .into_iter()
+            .find(|model| model.remote_model_id == "mock-detector")
+            .unwrap();
+        let project_owner = registry_project_id(&state, project).unwrap();
+        let service = router(state, None);
+        let message_id = uuid::Uuid::new_v4();
+        let send = json!({
+            "message":{"id":message_id,"text":"请框出桌面上的杯子和瓶子，并交付 YOLO Detection 训练包","image":null},
+            "task_images":imported.images.iter().map(|image|json!({"image_id":image.image_id,"sha256":image.content_hash})).collect::<Vec<_>>(),
+            "task_id":null,
+            "schema_revision":app.project_goal(project).unwrap()["revision"],
+            "mode":"execute"
+        });
+        let send_url = format!("/api/projects/{project}/conversations/{conversation}/send");
+        let receipt =
+            response_json(request(&service, Method::POST, &send_url, Some(send.clone())).await)
+                .await;
+        let task = receipt["task_id"].as_str().unwrap();
+        let root = format!("/api/projects/{project}/conversations/{conversation}/tasks/{task}");
+        let workspace =
+            response_json(request(&service, Method::GET, &format!("{root}/workspace"), None).await)
+                .await;
+        assert_eq!(
+            workspace["mainline"]["available_actions"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        let action = &workspace["mainline"]["available_actions"][0];
+        assert_eq!(action["id"], "build_and_test_pipeline");
+        assert_eq!(action["url"], format!("{root}/journey-preview"));
+        assert_eq!(action["scope"]["images"].as_array().unwrap().len(), 6);
+        assert_eq!(action["scope"]["maximum_sample_images"], 3);
+        assert!(
+            app.conversation_journey_history(project, conversation, task.parse().unwrap())
+                .unwrap()
+                .is_empty()
+        );
+
+        let missing = request(&service, Method::GET, action["url"].as_str().unwrap(), None).await;
+        assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
+        let missing = response_json(missing).await;
+        assert_eq!(missing["code"], "capability_setup_required");
+        assert!(missing["setup_requests"].as_array().unwrap().iter().any(
+            |request| request["role"] == "visual_inference" && request["status"] == "required"
+        ));
+        app.store()
+            .save_project_model_binding(
+                &ProjectModelBinding {
+                    id: ModelBindingId::new(),
+                    project_id: project_owner,
+                    capability: ModelCapability::ObjectDetection,
+                    role: ModelBindingRole::PrimaryInference,
+                    match_kind: ModelBindingMatch::Role,
+                    model_profile_id: detector.id,
+                    locked: true,
+                    created_at: Utc::now(),
+                },
+                BindingMutationActor::User,
+            )
+            .unwrap();
+        let preview = response_json(
+            request(&service, Method::GET, action["url"].as_str().unwrap(), None).await,
+        )
+        .await;
+        assert_eq!(preview["consent"]["images"].as_array().unwrap().len(), 3);
+        assert_eq!(preview["data"]["images"].as_array().unwrap().len(), 3);
+        assert!(
+            app.conversation_journey_history(project, conversation, task.parse().unwrap())
+                .unwrap()
+                .is_empty(),
+            "GET preview must not persist a consent or dispatch work"
+        );
+
+        let mut consent = preview["consent"].clone();
+        consent["allow_unknown_cost"] = json!(true);
+        consent["schema_proposal"]["allow_unknown_cost"] = json!(true);
+        let consent_url = format!("{root}/journey-consents");
+        let saved = response_json(
+            request(&service, Method::POST, &consent_url, Some(consent.clone())).await,
+        )
+        .await;
+        assert_eq!(saved["consent"]["id"], consent["id"]);
+        let execution_url = format!(
+            "{root}/journey-consents/{}/execution",
+            consent["id"].as_str().unwrap()
+        );
+        let first_status =
+            response_json(request(&service, Method::GET, &execution_url, None).await).await;
+        assert!(!first_status["dispatch"].is_null());
+        let first_attempt = first_status["dispatch"]["attempt_id"].clone();
+
+        let repeated =
+            response_json(request(&service, Method::POST, &consent_url, Some(consent)).await).await;
+        assert_eq!(repeated["consent"]["id"], saved["consent"]["id"]);
+        let repeated_status =
+            response_json(request(&service, Method::GET, &execution_url, None).await).await;
+        assert_eq!(repeated_status["dispatch"]["attempt_id"], first_attempt);
+
+        let replay =
+            response_json(request(&service, Method::POST, &send_url, Some(send)).await).await;
+        assert_eq!(replay, receipt);
+        assert_eq!(
+            app.conversation_tasks(project, conversation).unwrap().len(),
+            1
+        );
+    }
+
     #[test]
     fn contract_examples_decode_with_current_http_dtos() {
         let examples: Value = serde_json::from_str(include_str!(

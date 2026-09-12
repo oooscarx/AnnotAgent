@@ -359,7 +359,29 @@ impl LocalApplication {
         schema_revision: u64,
         selections: &[String],
     ) -> Result<ConversationJourneyDataScope> {
-        let delivery = self.require_delivery_intake(project, conversation, task)?;
+        let initial_schema = schema_id.is_nil() && schema_revision == 0;
+        let delivery = if initial_schema {
+            let view = self.task_delivery_intent(project, conversation, task)?;
+            if let Some(saved) = view.saved {
+                if saved
+                    .intent
+                    .dataset_scope
+                    .as_ref()
+                    .is_none_or(Vec::is_empty)
+                    || !view.blockers.is_empty()
+                {
+                    bail!("Uploaded Task image scope is missing or stale");
+                }
+                Some(saved)
+            } else {
+                // Legacy Tasks without an upload attachment retain their existing
+                // project-image preview semantics. New upload-scoped Tasks always
+                // carry a partial delivery intent and use that exact scope above.
+                None
+            }
+        } else {
+            self.require_delivery_intake(project, conversation, task)?
+        };
         if !self
             .conversation_tasks(project, conversation)?
             .iter()
@@ -367,7 +389,7 @@ impl LocalApplication {
         {
             bail!("Journey task belongs to another conversation");
         }
-        let schema_digest = if schema_id.is_nil() && schema_revision == 0 {
+        let schema_digest = if initial_schema {
             let task_record = self
                 .conversation_tasks(project, conversation)?
                 .into_iter()

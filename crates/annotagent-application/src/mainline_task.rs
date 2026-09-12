@@ -303,20 +303,43 @@ impl LocalApplication {
             .iter()
             .map(|message| json!({"code":"delivery_intent_blocked","message":message}))
             .collect::<Vec<_>>();
-        if delivery.saved.is_none() || !delivery.missing_slots.is_empty() {
+        if delivery.saved.is_none() {
             actions.push(json!({
                 "id":"save_delivery_intake","state":"available","method":"POST",
                 "url":format!("{root}/delivery-intent"),"requires_confirmation":true,
-                "reason":if delivery.saved.is_none() {"delivery_intake_missing"} else {"delivery_intake_incomplete"}
-            }));
-            actions.push(json!({
-                "id":"propose_delivery_semantics","state":"requires_confirmation","method":"GET",
-                "url":format!("{root}/schema-preview"),"requires_confirmation":true,
-                "reason":"text_only_schema_call_can_propose_missing_delivery_semantics"
+                "reason":"delivery_intake_missing"
             }));
             blockers.push(json!({
                 "code":"delivery_intake_incomplete",
                 "message":"Complete the Task delivery intake before planning or execution."
+            }));
+        } else if delivery.blockers.is_empty()
+            && !delivery.missing_slots.is_empty()
+            && delivery.saved.as_ref().is_some_and(|saved| {
+                saved
+                    .intent
+                    .dataset_scope
+                    .as_ref()
+                    .is_some_and(|images| !images.is_empty())
+            })
+            && delivery.missing_slots.iter().all(|slot| {
+                matches!(
+                    slot,
+                    annotagent_core::dataset_delivery::DeliverySlot::LabelSpec
+                        | annotagent_core::dataset_delivery::DeliverySlot::TrainingTarget
+                )
+            })
+        {
+            actions.push(json!({
+                "id":"build_and_test_pipeline","state":"requires_confirmation","method":"GET",
+                "url":format!("{root}/journey-preview"),"requires_confirmation":true,
+                "reason":"confirm_one_bounded_schema_builder_sample_scope",
+                "scope":{
+                    "images":delivery.saved.as_ref().and_then(|saved|saved.intent.dataset_scope.clone()),
+                    "maximum_sample_images":delivery.maximum_sample_images,
+                    "includes":["schema_proposal","builder","sample"],
+                    "missing_semantics":delivery.missing_slots
+                }
             }));
         } else if !delivery.blockers.is_empty() {
             actions.push(json!({

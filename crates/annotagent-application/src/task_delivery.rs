@@ -65,6 +65,15 @@ pub(crate) fn delivery_schema_goal(
     }))?)
 }
 
+pub(crate) fn frozen_delivery_schema_goal(
+    saved: &TaskDeliveryRevision,
+    user_goal: &str,
+) -> Result<String> {
+    Ok(serde_json::to_string(
+        &serde_json::json!({"contract":"task-delivery-schema-v1","delivery_revision":saved.revision,"delivery_sha256":saved.content_sha256,"saved_user_goal":user_goal,"labels":saved.intent.label_spec,"target":saved.intent.training_target,"image_count":saved.intent.dataset_scope.as_ref().map(Vec::len),"review_policy":saved.intent.review_policy,"completion":"Deliver a structurally validated original-image training package after explicit whole-image review; generating a Pipeline alone is not completion."}),
+    )?)
+}
+
 pub fn require_delivery_schema(
     saved: Option<&TaskDeliveryRevision>,
     definition: &annotagent_storage::ConversationSchemaDefinition,
@@ -144,6 +153,98 @@ pub(crate) fn selected_delivery_image(
 }
 
 impl LocalApplication {
+    pub(crate) fn complete_delivery_from_schema_proposal(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+        call: Uuid,
+        decision: &crate::conversation_schema::ConversationSchemaDecision,
+    ) -> Result<Option<TaskDeliveryRevision>> {
+        let view = self.task_delivery_intent(project, conversation, task)?;
+        let Some(saved) = view.saved else {
+            return Ok(None);
+        };
+        if view.missing_slots.is_empty() {
+            return Ok(Some(saved));
+        }
+        let crate::conversation_schema::ConversationSchemaDecision::Draft {
+            labels, delivery, ..
+        } = decision
+        else {
+            return Ok(Some(saved));
+        };
+        let proposal = delivery
+            .as_ref()
+            .context("Schema result omitted complete delivery semantics")?;
+        let target = proposal
+            .training_target
+            .clone()
+            .context("Schema result omitted the requested training target")?;
+        ensure!(
+            proposal.labels.len() == labels.len(),
+            "Schema and delivery label counts disagree"
+        );
+        let proposed_labels = proposal
+            .labels
+            .iter()
+            .zip(labels)
+            .map(|(proposal, stable_id)| {
+                ensure!(
+                    proposal
+                        .existing_id
+                        .as_ref()
+                        .is_none_or(|existing| existing == stable_id),
+                    "Schema and delivery label identities disagree"
+                );
+                Ok(DeliveryLabel {
+                    stable_id: stable_id.clone(),
+                    display_name: proposal.display_name.clone(),
+                    aliases: proposal.aliases.clone(),
+                    include: proposal.include.clone(),
+                    exclude: proposal.exclude.clone(),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        if let Some(existing) = &saved.intent.label_spec {
+            ensure!(
+                existing == &proposed_labels,
+                "Saved delivery labels changed before Schema materialization"
+            );
+        }
+        if let Some(existing) = &saved.intent.training_target {
+            ensure!(
+                existing == &target,
+                "Saved training target changed before Schema materialization"
+            );
+        }
+        let image_ids = saved
+            .intent
+            .dataset_scope
+            .as_ref()
+            .context("Task upload scope is missing")?
+            .iter()
+            .map(|image| image.image_id)
+            .collect();
+        self.save_task_delivery_intent(
+            project,
+            conversation,
+            task,
+            SaveTaskDeliveryIntent {
+                command_id: call,
+                expected_revision: saved.revision,
+                image_ids: Some(image_ids),
+                label_spec: Some(saved.intent.label_spec.clone().unwrap_or(proposed_labels)),
+                training_target: Some(saved.intent.training_target.clone().unwrap_or(target)),
+                split_policy: saved.intent.split_policy,
+                image_metadata: std::collections::BTreeMap::new(),
+            },
+        )?;
+        Ok(self
+            .task_delivery_intent(project, conversation, task)?
+            .saved)
+    }
+
     /// Current formal result is an exact Task processing operation and its Batch child Runs.
     /// Older project Runs and processing done for another delivery revision are excluded.
     pub fn task_delivery_formal_result(
@@ -379,9 +480,7 @@ impl LocalApplication {
                 "Explicit user delivery labels and detection task; no inference or publication."
                     .into(),
         };
-        let goal = serde_json::to_string(
-            &serde_json::json!({"contract":"task-delivery-schema-v1","delivery_revision":saved.revision,"delivery_sha256":saved.content_sha256,"saved_user_goal":message.input.text,"labels":saved.intent.label_spec,"target":saved.intent.training_target,"image_count":saved.intent.dataset_scope.as_ref().map(Vec::len),"review_policy":saved.intent.review_policy,"completion":"Deliver a structurally validated original-image training package after explicit whole-image review; generating a Pipeline alone is not completion."}),
-        )?;
+        let goal = frozen_delivery_schema_goal(&saved, &message.input.text)?;
         self.store
             .create_human_schema_with_clarification(
                 &saved.intent.project_id,
@@ -774,5 +873,148 @@ mod tests {
         );
         assert_eq!(updated["saved_delivery"]["labels"][0]["exclude"], "图案");
         assert_eq!(updated["saved_delivery"]["revision"], 2);
+    }
+
+    #[test]
+    fn uploaded_task_images_and_complete_schema_proposal_form_one_frozen_intake() {
+        let temp = tempfile::tempdir().unwrap();
+        let app = LocalApplication::new(temp.path()).unwrap();
+        let project = "TEST-upload-intake";
+        app.create_project(project,"version: 1\nproject:\n  name: TEST upload intake\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n").unwrap();
+        let source = temp.path().join("TEST-upload-source");
+        std::fs::create_dir(&source).unwrap();
+        let pack = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/demo-packs/object-detection-review/1.0.0/images");
+        for index in 1..=6 {
+            std::fs::copy(
+                pack.join(format!("desk_{index:02}.png")),
+                source.join(format!("desk_{index:02}.png")),
+            )
+            .unwrap();
+        }
+        let upload = app.import_images_with_report(project, &source).unwrap();
+        assert_eq!(upload.images.len(), 6);
+        let task_images = upload
+            .images
+            .iter()
+            .map(|image| annotagent_storage::ConversationImageRef {
+                image_id: image.image_id.to_string(),
+                sha256: image.content_hash.clone(),
+            })
+            .collect::<Vec<_>>();
+        let conversation = app.create_project_conversation(project).unwrap();
+        let command: annotagent_storage::ConversationSendInput = serde_json::from_value(
+            serde_json::json!({
+                "message":{"id":Uuid::new_v4(),"text":"框出杯子并交付 YOLO Detection 数据集","image":null},
+                "task_images":task_images,
+                "task_id":null,
+                "schema_revision":app.project_goal(project).unwrap()["revision"],
+                "mode":"execute"
+            }),
+        )
+        .unwrap();
+        let receipt = app
+            .send_project_conversation_message(project, conversation, &command)
+            .unwrap();
+        let partial = app
+            .task_delivery_intent(project, conversation, receipt.task_id)
+            .unwrap();
+        assert_eq!(partial.saved.as_ref().unwrap().revision, 1);
+        assert_eq!(
+            partial
+                .saved
+                .as_ref()
+                .unwrap()
+                .intent
+                .dataset_scope
+                .as_ref()
+                .unwrap()
+                .len(),
+            6
+        );
+        assert_eq!(
+            partial.missing_slots,
+            vec![DeliverySlot::LabelSpec, DeliverySlot::TrainingTarget]
+        );
+        let read = app
+            .mainline_task_read_model(project, conversation, receipt.task_id)
+            .unwrap();
+        assert_eq!(read["available_actions"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            read["available_actions"][0]["id"],
+            "build_and_test_pipeline"
+        );
+        assert_eq!(
+            read["available_actions"][0]["scope"]["images"]
+                .as_array()
+                .unwrap()
+                .len(),
+            6
+        );
+        assert_eq!(
+            read["available_actions"][0]["scope"]["maximum_sample_images"],
+            3
+        );
+        assert_eq!(
+            app.send_project_conversation_message(project, conversation, &command)
+                .unwrap(),
+            receipt
+        );
+
+        let call = Uuid::new_v4();
+        let decision = crate::conversation_schema::ConversationSchemaDecision::Draft {
+            kind: crate::conversation_schema::ConversationOutputKind::BoundingBox,
+            labels: vec!["cup".into()],
+            multi_label: false,
+            attributes: std::collections::BTreeMap::new(),
+            boundary_rules: vec!["Exclude printed cup pictures".into()],
+            rationale: "Explicit detection and export request".into(),
+            delivery: Some(crate::conversation_schema::DeliverySemanticsProposal {
+                labels: vec![crate::conversation_schema::DeliveryLabelProposal {
+                    existing_id: None,
+                    display_name: "杯子".into(),
+                    aliases: vec!["cup".into()],
+                    include: "真实杯子".into(),
+                    exclude: "杯子图案".into(),
+                }],
+                training_target: Some(annotagent_core::dataset_delivery::TrainingTarget {
+                    annotation_kind: annotagent_core::TaskKind::BoundingBox,
+                    framework: "ultralytics".into(),
+                    export_profile: "ultralytics_yolo_detection".into(),
+                    profile_revision: 1,
+                }),
+            }),
+        };
+        let complete = app
+            .complete_delivery_from_schema_proposal(
+                project,
+                conversation,
+                receipt.task_id,
+                call,
+                &decision,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(complete.revision, 2);
+        assert_eq!(
+            complete.intent.label_spec.as_ref().unwrap()[0].stable_id,
+            "cup"
+        );
+        assert_eq!(
+            complete.intent.dataset_scope,
+            partial.saved.unwrap().intent.dataset_scope
+        );
+        assert_eq!(
+            app.complete_delivery_from_schema_proposal(
+                project,
+                conversation,
+                receipt.task_id,
+                call,
+                &decision,
+            )
+            .unwrap()
+            .unwrap(),
+            complete
+        );
     }
 }

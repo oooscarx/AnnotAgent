@@ -102,6 +102,7 @@ mod tests {
                 image: None,
                 reference: None,
             },
+            task_images: vec![],
             task_id: None,
             schema_revision: "a".repeat(64),
             agent_model: None,

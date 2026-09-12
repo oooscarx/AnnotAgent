@@ -148,7 +148,7 @@ use annotagent_storage::{
     TaskModelAttemptKind, TaskModelAttemptStatus, WorkflowSampleTest, WorkflowSampleTestInput,
     WorkflowSampleTestStatus,
 };
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use async_trait::async_trait;
 use futures::{StreamExt, stream};
 use serde::{Deserialize, Serialize};
@@ -4098,6 +4098,9 @@ pub struct ImageImportReport {
     pub corrupt: Vec<ImageImportIssue>,
     pub unsupported_files: u64,
     pub supported_formats: Vec<String>,
+    /// Exact current identities for valid images in this import request. This
+    /// lets a later Task freeze the upload scope without guessing by list order.
+    pub images: Vec<ProjectImageSummary>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -10011,7 +10014,36 @@ impl LocalApplication {
             if saved != *input {
                 bail!("Send ID conflicts with its frozen task, message or schema");
             }
+            self.ensure_new_task_upload_scope(project_id, conversation, input, &receipt)?;
             return Ok(receipt);
+        }
+        if !input.task_images.is_empty() {
+            if input.task_id.is_some() || input.message.reference.is_some() {
+                bail!("Task upload scope is allowed only when creating a new ordinary Task");
+            }
+            if input.task_images.len() > 100_000
+                || input
+                    .task_images
+                    .iter()
+                    .map(|image| image.image_id.as_str())
+                    .collect::<BTreeSet<_>>()
+                    .len()
+                    != input.task_images.len()
+            {
+                bail!("A new Task upload scope must contain distinct image identities");
+            }
+            let current = self.list_project_image_summaries(project_id)?;
+            for image in &input.task_images {
+                let image_id: ImageId = image
+                    .image_id
+                    .parse()
+                    .context("Task upload contains an invalid image ID")?;
+                if !current.iter().any(|candidate| {
+                    candidate.image_id == image_id && candidate.content_hash == image.sha256
+                }) {
+                    bail!("Task upload image is missing, changed or belongs to another Project");
+                }
+            }
         }
         if input.task_id.is_none()
             && self.project_goal(project_id)?["revision"].as_str()
@@ -10025,13 +10057,65 @@ impl LocalApplication {
             .resolve_pipeline_builder_model(project_id, observed.model_profile_id)
             .ok()
             .map(|runtime| runtime.model.id);
-        Ok(self.store.send_conversation_message_with_model(
+        let receipt = self.store.send_conversation_message_with_model(
             &owner,
             conversation,
             input,
             resolved,
             Some(&observed),
-        )?)
+        )?;
+        self.ensure_new_task_upload_scope(project_id, conversation, input, &receipt)?;
+        Ok(receipt)
+    }
+
+    fn ensure_new_task_upload_scope(
+        &self,
+        project: &str,
+        conversation: uuid::Uuid,
+        input: &annotagent_storage::ConversationSendInput,
+        receipt: &annotagent_storage::ConversationSendReceipt,
+    ) -> Result<()> {
+        if input.task_images.is_empty()
+            || receipt.disposition != annotagent_storage::ConversationSendDisposition::NewTask
+        {
+            return Ok(());
+        }
+        if let Some(saved) = self
+            .task_delivery_intent(project, conversation, receipt.task_id)?
+            .saved
+        {
+            let frozen = saved.intent.dataset_scope.as_deref().unwrap_or_default();
+            ensure!(
+                frozen.len() == input.task_images.len()
+                    && frozen.iter().zip(&input.task_images).all(|(saved, sent)| {
+                        saved.image_id.to_string() == sent.image_id
+                            && saved.content_sha256 == sent.sha256
+                    }),
+                "Saved Task upload scope conflicts with the original Send command"
+            );
+            return Ok(());
+        }
+        self.save_task_delivery_intent(
+            project,
+            conversation,
+            receipt.task_id,
+            SaveTaskDeliveryIntent {
+                command_id: input.message.id,
+                expected_revision: 0,
+                image_ids: Some(
+                    input
+                        .task_images
+                        .iter()
+                        .map(|image| image.image_id.parse())
+                        .collect::<Result<Vec<ImageId>, _>>()?,
+                ),
+                label_spec: None,
+                training_target: None,
+                split_policy: annotagent_core::dataset_delivery::DeliverySplitPolicy::default(),
+                image_metadata: std::collections::BTreeMap::new(),
+            },
+        )?;
+        Ok(())
     }
 
     pub fn append_project_conversation_message(
@@ -18829,7 +18913,9 @@ impl LocalApplication {
             corrupt: Vec::new(),
             unsupported_files: 0,
             supported_formats: vec!["PNG".to_owned(), "JPEG".to_owned()],
+            images: Vec::new(),
         };
+        let mut request_hashes = BTreeSet::new();
         for source in candidates {
             if !is_supported_image(&source) {
                 report.unsupported_files += 1;
@@ -18861,7 +18947,9 @@ impl LocalApplication {
                 });
                 continue;
             }
-            if !hashes.insert(annotagent_image_tools::sha256(&bytes)) {
+            let content_hash = annotagent_image_tools::sha256(&bytes);
+            request_hashes.insert(content_hash.clone());
+            if !hashes.insert(content_hash) {
                 report.duplicates += 1;
                 continue;
             }
@@ -18870,6 +18958,11 @@ impl LocalApplication {
             std::fs::copy(source, target)?;
             report.imported += 1;
         }
+        report.images = self
+            .list_project_image_summaries(project_id)?
+            .into_iter()
+            .filter(|image| request_hashes.contains(&image.content_hash))
+            .collect();
         Ok(report)
     }
 
@@ -28961,6 +29054,7 @@ export:
                 image: None,
                 reference: None,
             },
+            task_images: vec![],
             task_id: None,
             schema_revision: "0".repeat(64),
             agent_model: None,

@@ -137,8 +137,8 @@ def verify(c, manifest, root):
     c.post(tr + "/journey-consents", consent)
     execution = tr + "/journey-consents/" + consent["id"] + "/execution"
     c.post(execution)
-    finished = c.poll(execution, lambda v: (v.get("sample") or {}).get("assistance", {}).get("status") == "completed")
-    assert finished["sample"]["status"] == "succeeded", finished
+    finished = c.poll(execution, lambda v: (v.get("sample") or {}).get("assistance", {}).get("status") == "completed" or ((v.get("dispatch") or {}).get("status") == "settled" and (v.get("dispatch") or {}).get("error")))
+    assert finished.get("sample") and finished["sample"]["status"] == "succeeded", finished
     record = c.get(f"/api/workflow-drafts/{finished['sample']['draft_id']}/sample-test?test_id={consent['sample_operation_id']}")["sample_test"]
     selection = {"draft_id": record["draft_id"], "sample_test_id": record["id"], "limit": 1}
     approval = c.get(p + "/processing-preview?" + urllib.parse.urlencode(selection))

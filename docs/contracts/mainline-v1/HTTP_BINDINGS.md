@@ -184,11 +184,13 @@ The `mainline` object currently contains:
 - `package`: consent and job reconciliation. Task completion is true only when a package is
   Ready; a completed model call, Schema, Draft, Sample or Batch is not task completion.
 
-When delivery intake is missing or partial, actions include both local
-`save_delivery_intake` and `propose_delivery_semantics` with state
-`requires_confirmation` and the existing text-only `schema-preview` URL. That Schema
-call can propose only missing label/target semantics; it has no image pixels or image
-execution authority and never saves the proposal automatically.
+When delivery intake is absent, `save_delivery_intake` remains available. A new Send
+may instead carry `task_images:[{image_id,sha256}]`; the server creates a partial
+intake with that complete ordered scope and returns one `build_and_test_pipeline`
+approval action when only labels/target remain. The action points to the existing
+Journey preview; the single consent freezes one text Schema proposal, one Builder and
+at most three Sample images. It grants no formal processing, publication, annotation
+acceptance or package write.
 
 Step/result-message projection remains bounded by existing real thread and operation
 receipts. Formal source, capability readiness, paged review items and package
@@ -261,15 +263,18 @@ Ready evidence for every required capability. Unknown and TEST/Mock candidates
 never make a production request Ready. Refreshing either GET only re-reads state
 and cannot probe, install, grant, resume, plan, or call a Provider.
 
-ML-015 narrows this setup request to `role:task_planning` and
-`required_capabilities:[text_generation]`. A requested annotation output kind is
-not a model capability requirement: bounding-box work may begin with a VLM and a
-later Draft may compose detection, grounding, or refinement. The response's
+ML-015 keeps the planning request at `role:task_planning` and
+`required_capabilities:[text_generation]`. P0 adds a separate
+`role:visual_inference` request with one compatible requirement, never an AND-list:
+it prefers a currently available detection/grounding capability and uses
+`vision_language` as the bounded review-required fallback. Its status is Ready only
+when exactly one usable Project visual binding is selected (preferably
+`primary_inference`). Registry-wide Ready models are choices for setup, not implicit
+data recipients. The response's
 `visual_readiness_boundary` therefore says `awaiting_frozen_draft` before a Draft
 and `validate_exact_draft` afterward, with the existing Builder/Sample preview
 URLs. Those previews validate the actual selected nodes/bindings and permissions.
-The setup request does not claim a detector is required, does not auto-select a
-VLM, and does not weaken production eligibility.
+Neither setup request auto-selects a model or weakens production eligibility.
 
 ## ML-020 saved Journey sample continuation (implemented)
 
@@ -303,13 +308,59 @@ The two existing routes used by this projection are:
 | `GET D/journey-consents/K` | Original owned `ConversationJourneyRecord` including frozen consent and optional sealed Sample scope. | None. It does not claim a dispatch or create a Sample. |
 | `POST D/journey-consents/K/execution` | Empty object `{}` → current `ConversationJourneyExecutionStatus`. | Persists one `queued` execution intent, then one worker claims it as `running`. Existing Builder and Sample IDs are reused; active or already-created work is returned without redispatch. |
 
-Clients must render and confirm the server action, GET its exact consent when a
-review screen is needed, then POST the returned `execution_url`. They must not
-construct new Journey, Builder, or Sample UUIDs for this transition. Repeating GET
-is passive. Worker-capacity pressure remains durably `queued`. Repeating the exact
-POST while dispatch is active or after the Sample record exists returns current
-receipts and cannot create another Builder or Sample. See `P0_AUTONOMY.md` for
-restart and read-model fields.
+For an existing mid-Journey consent, clients render and confirm the server action,
+GET its exact consent when a review screen is needed, then POST the returned
+`execution_url`. A new upload-scoped Task instead GETs the parameterless
+`journey-preview` and POSTs its exact consent once; saving that consent queues the
+full Schema→Builder→Sample continuation. Clients must not construct new Journey,
+Builder, or Sample UUIDs. Repeating GET is passive. Worker-capacity pressure remains
+durably `queued`. Repeating either consent or execution POST returns current receipts
+and cannot create another Builder or Sample. See `P0_AUTONOMY.md` for restart and
+read-model fields.
+
+### P0 upload identity and automatic Journey HTTP example
+
+`POST /api/projects/P/conversations/C/send` accepts:
+
+```json
+{
+  "message":{"id":"COMMAND_UUID","text":"框出杯子和瓶子并交付 YOLO Detection 训练包","image":null},
+  "task_images":[
+    {"image_id":"IMAGE_UUID","sha256":"64_HEX"}
+  ],
+  "task_id":null,
+  "schema_revision":"PROJECT_SHA256",
+  "mode":"execute"
+}
+```
+
+`task_images` is optional for legacy sends. If present it is accepted only for a new
+ordinary Task, must contain distinct same-Project current identities, and is frozen
+in the original Send command. `POST /api/projects/P/image-upload?name=...` and
+`POST /api/projects/P/import` return additive `images[]` entries containing
+`image_id`, `relative_path`, `content_hash`, `width`, `height` and format.
+
+`GET D/journey-preview` needs no query for the new primary action. Missing/ambiguous
+Project visual binding returns:
+
+```json
+{
+  "status":400,
+  "code":"capability_setup_required",
+  "suggested_action":"configure_project_model_binding",
+  "registry_revision":"SNAPSHOT_SHA256",
+  "setup_requests":[{"role":"visual_inference","required_capabilities":["object_detection"],"status":"required"}],
+  "eligible_project_model_ids":[]
+}
+```
+
+With one binding, the preview returns exact `consent.allowed_models[]` binding digests,
+all Provider destinations in `data.models[]`, `consent.images` capped at three, and
+stable UUIDv5 command identities for this Task. The UI changes both
+`consent.allow_unknown_cost` and `consent.schema_proposal.allow_unknown_cost` only
+after the user confirms the displayed unknown-cost boundary, then POSTs the exact
+consent. `200` means the consent and queue intent are durable; it does not claim a
+model result succeeded.
 
 ### ML-021 executable visual route and failed admission projection
 

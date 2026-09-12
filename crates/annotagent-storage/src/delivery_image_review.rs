@@ -617,6 +617,7 @@ mod tests {
         };
         let send = ConversationSendInput {
             message: message.clone(),
+            task_images: vec![],
             task_id: Some(i.task_id),
             schema_revision: "a".repeat(64),
             agent_model: None,
@@ -647,6 +648,7 @@ mod tests {
         }
         let stale = ConversationSendInput {
             message: stale,
+            task_images: vec![],
             task_id: Some(i.task_id),
             schema_revision: "a".repeat(64),
             agent_model: None,

@@ -260,6 +260,13 @@ impl crate::LocalApplication {
         let config = decision.task_config(task)?.ok_or_else(|| {
             anyhow::anyhow!("Clarification requires an answer, not a Schema Draft")
         })?;
+        let completed_delivery = self.complete_delivery_from_schema_proposal(
+            project,
+            conversation,
+            task,
+            call,
+            &decision,
+        )?;
         let ConversationSchemaDecision::Draft { boundary_rules, .. } = decision else {
             unreachable!()
         };
@@ -267,7 +274,7 @@ impl crate::LocalApplication {
             .store
             .conversation_message(&owner, conversation, task_record.input.source_message_id)?
             .ok_or_else(|| anyhow::anyhow!("Saved task goal not found"))?;
-        let goal = if let Some(queued) =
+        let user_goal = if let Some(queued) =
             self.store
                 .queued_planning_authorization(&owner, conversation, task, call)?
         {
@@ -276,6 +283,10 @@ impl crate::LocalApplication {
         } else {
             source.input.text
         };
+        let goal = completed_delivery.as_ref().map_or_else(
+            || Ok(user_goal.clone()),
+            |delivery| crate::task_delivery::frozen_delivery_schema_goal(delivery, &user_goal),
+        )?;
         Ok(self.store.create_conversation_schema_draft(
             &owner,
             task,
@@ -603,20 +614,23 @@ impl crate::LocalApplication {
                 json!({"error":"Cancelled before sending the Schema request", "failure":annotagent_core::ModelFailure { stage:annotagent_core::ModelFailureStage::PrepareRequest, category:annotagent_core::ModelFailureCategory::Cancelled, http_status:None }}),
             )?);
         }
-        let attempt = propose_conversation_schema_tracked(
-            provider,
-            &execution.remote_model,
-            &goal,
-            &schema.tasks,
-            cancellation.clone(),
-            |stage| {
-                Ok(self.store.mark_conversation_call_stage(
-                    &owner,
-                    execution.task_id,
-                    execution.call_id,
-                    stage,
-                )?)
-            },
+        let attempt = annotagent_provider::within_model_call(
+            execution.call_id.to_string(),
+            propose_conversation_schema_tracked(
+                provider,
+                &execution.remote_model,
+                &goal,
+                &schema.tasks,
+                cancellation.clone(),
+                |stage| {
+                    Ok(self.store.mark_conversation_call_stage(
+                        &owner,
+                        execution.task_id,
+                        execution.call_id,
+                        stage,
+                    )?)
+                },
+            ),
         )
         .await;
         let (status, evidence) = match attempt {
@@ -1474,6 +1488,7 @@ mod tests {
                 image: None,
                 reference: None,
             },
+            task_images: vec![],
             task_id: None,
             schema_revision: app.project_goal(project).unwrap()["revision"]
                 .as_str()

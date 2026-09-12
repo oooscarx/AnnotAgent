@@ -20,6 +20,10 @@ pub enum ConversationSendMode {
 #[serde(deny_unknown_fields)]
 pub struct ConversationSendInput {
     pub message: ConversationMessageInput,
+    /// Exact images attached to a newly created Task. These are task data only;
+    /// inference still requires a separate Journey consent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub task_images: Vec<crate::ConversationImageRef>,
     pub task_id: Option<Uuid>,
     pub schema_revision: String,
     /// Optional observed preference for CAS admission; absent for older clients.
@@ -671,6 +675,7 @@ mod tests {
                 image: None,
                 reference: None,
             },
+            task_images: vec![],
             task_id: None,
             schema_revision: "a".repeat(64),
             agent_model: None,
@@ -685,7 +690,11 @@ mod tests {
         let store = SqliteStore::open(&path).unwrap();
         let owner = Uuid::new_v4().to_string();
         let conversation = store.create_conversation(&owner).unwrap();
-        let command = input();
+        let mut command = input();
+        command.task_images = vec![crate::ConversationImageRef {
+            image_id: Uuid::new_v4().to_string(),
+            sha256: "b".repeat(64),
+        }];
         let first = store
             .send_conversation_message(&owner, conversation, &command)
             .unwrap();
@@ -703,6 +712,13 @@ mod tests {
         assert!(
             store
                 .send_conversation_message(&owner, conversation, &conflict)
+                .is_err()
+        );
+        let mut changed_scope = command.clone();
+        changed_scope.task_images[0].sha256 = "c".repeat(64);
+        assert!(
+            store
+                .send_conversation_message(&owner, conversation, &changed_scope)
                 .is_err()
         );
         let mut followup = input();

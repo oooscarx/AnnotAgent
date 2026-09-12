@@ -296,6 +296,127 @@ fn planning_setup_request(
     })
 }
 
+fn visual_setup_request(
+    project: &str,
+    conversation: Uuid,
+    task: Uuid,
+    task_revision: &str,
+    registry_revision: &str,
+    draft: &Value,
+    candidates: &[Value],
+) -> Value {
+    let is_visual = |candidate: &&Value| {
+        candidate["roles"]
+            .as_array()
+            .is_some_and(|roles| roles.iter().any(|role| role.as_str() != Some("agent")))
+    };
+    let ready_bound = candidates
+        .iter()
+        .filter(is_visual)
+        .filter(|candidate| candidate["readiness"] == "ready")
+        .filter(|candidate| {
+            candidate["project_bindings"]
+                .as_array()
+                .is_some_and(|bindings| !bindings.is_empty())
+        })
+        .collect::<Vec<_>>();
+    let primary = ready_bound
+        .iter()
+        .filter(|candidate| {
+            candidate["project_bindings"]
+                .as_array()
+                .is_some_and(|bindings| {
+                    bindings
+                        .iter()
+                        .any(|binding| binding["role"] == "primary_inference")
+                })
+        })
+        .collect::<Vec<_>>();
+    let preferred = if primary.len() == 1 {
+        vec![*primary[0]]
+    } else {
+        candidates.iter().filter(is_visual).collect::<Vec<_>>()
+    };
+    let required_capability = [
+        "object_detection",
+        "open_vocabulary_detection",
+        "phrase_grounding",
+        "vision_language",
+    ]
+    .into_iter()
+    .find(|capability| {
+        preferred.iter().any(|candidate| {
+            candidate["capabilities"]
+                .as_array()
+                .is_some_and(|capabilities| capabilities.iter().any(|value| value == capability))
+        })
+    })
+    .unwrap_or("vision_language");
+    let has_required_capability = |candidate: &&Value| {
+        candidate["capabilities"]
+            .as_array()
+            .is_some_and(|capabilities| {
+                capabilities
+                    .iter()
+                    .any(|value| value == required_capability)
+            })
+    };
+    let compatible_model_ids = candidates
+        .iter()
+        .filter(is_visual)
+        .filter(has_required_capability)
+        .filter(|candidate| {
+            !matches!(
+                candidate["readiness"].as_str(),
+                Some("disabled" | "unavailable")
+            )
+        })
+        .filter_map(|candidate| candidate["id"].as_str().map(str::to_owned))
+        .collect::<Vec<_>>();
+    let primary_count = ready_bound
+        .iter()
+        .filter(|candidate| {
+            candidate["project_bindings"]
+                .as_array()
+                .is_some_and(|bindings| {
+                    bindings
+                        .iter()
+                        .any(|binding| binding["role"] == "primary_inference")
+                })
+        })
+        .count();
+    let ready = (primary_count == 1 || (primary_count == 0 && ready_bound.len() == 1))
+        && ready_bound.iter().any(has_required_capability);
+    let id = annotagent_image_tools::sha256(
+        &serde_json::to_vec(&json!({
+            "project_id":project,"conversation_id":conversation,"task_id":task,
+            "task_revision":task_revision,"registry_revision":registry_revision,
+            "role":"visual_inference","required_capabilities":[required_capability],
+            "compatible_model_ids":compatible_model_ids
+        }))
+        .expect("setup request identity is serializable"),
+    );
+    let mut return_url =
+        url::Url::parse("http://annotagent.local").expect("fixed internal return URL is valid");
+    return_url.set_path(&format!("/projects/{project}/work"));
+    {
+        let mut query = return_url.query_pairs_mut();
+        query.append_pair("task", &task.to_string());
+        if let Some(draft_id) = draft["id"].as_str() {
+            query.append_pair("draft", draft_id);
+        }
+    }
+    json!({
+        "id":id,"project_id":project,"conversation_id":conversation,"task_id":task,
+        "task_revision":task_revision,"registry_revision":registry_revision,
+        "role":"visual_inference","required_capabilities":[required_capability],
+        "compatible_model_ids":compatible_model_ids,
+        "status":if ready{"ready"}else{"required"},
+        "reason":if ready{Value::Null}else{json!("Choose exactly one ready Project-bound primary inference model.")},
+        "return_path":return_url[url::Position::BeforePath..].to_owned()
+    })
+}
+
 pub(super) fn snapshot(
     state: &ServerState,
     project: &str,
@@ -484,7 +605,16 @@ pub(super) fn snapshot(
             .map_err(ApiError::internal)?,
     );
     let draft = current_draft(state, project, &journeys, &builders)?;
-    let setup_request = planning_setup_request(
+    let planning_setup = planning_setup_request(
+        project,
+        conversation,
+        task,
+        &task_record.input.schema_revision,
+        &registry_digest,
+        &draft,
+        &candidates,
+    );
+    let visual_setup = visual_setup_request(
         project,
         conversation,
         task,
@@ -506,7 +636,7 @@ pub(super) fn snapshot(
         "conversation_id":conversation,"task_id":task,"task_schema_revision":task_record.input.schema_revision,
         "draft":draft,"registry_revision":registry_digest,"registry_revision_kind":"snapshot_sha256",
         "candidates":candidates,"agent_model_preference":agent_model,
-        "setup_requests":[setup_request],
+        "setup_requests":[planning_setup,visual_setup],
         "visual_readiness_boundary":{
             "status":if draft.is_null(){"awaiting_frozen_draft"}else{"validate_exact_draft"},
             "reason":"Annotation output kind does not imply one model capability. Validate the exact frozen Draft bindings through the existing Builder, Sample and processing previews.",
@@ -632,6 +762,44 @@ mod tests {
             setup["return_path"],
             format!("/projects/TEST-capability/work?task={}", sent.task_id)
         );
+        let visual_setup = &first["setup_requests"][1];
+        assert_eq!(visual_setup["role"], "visual_inference");
+        assert_eq!(
+            visual_setup["required_capabilities"],
+            json!(["object_detection"])
+        );
+        assert_eq!(visual_setup["status"], "required");
+        let detector = app
+            .store()
+            .list_model_profiles(Some(provider.id), false)
+            .unwrap()
+            .into_iter()
+            .find(|model| model.remote_model_id == "mock-detector")
+            .unwrap();
+        assert!(
+            visual_setup["compatible_model_ids"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(format!("model-profile:{}", detector.id)))
+        );
+        app.store()
+            .save_project_model_binding(
+                &ProjectModelBinding {
+                    id: ModelBindingId::new(),
+                    project_id: owner,
+                    capability: ModelCapability::ObjectDetection,
+                    role: ModelBindingRole::PrimaryInference,
+                    match_kind: ModelBindingMatch::Role,
+                    model_profile_id: detector.id,
+                    locked: true,
+                    created_at: Utc::now(),
+                },
+                BindingMutationActor::User,
+            )
+            .unwrap();
+        let bound =
+            response_json(request(&service, axum::http::Method::GET, &url, None).await).await;
+        assert_eq!(bound["setup_requests"][1]["status"], "ready");
         assert!(
             app.store()
                 .conversation_call_history(&owner.to_string(), sent.task_id)
