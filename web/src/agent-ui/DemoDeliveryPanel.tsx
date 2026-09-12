@@ -45,6 +45,7 @@ export function DemoDeliveryPanel({service,projectId,taskId,deliveryId,onReady,o
       initialPackageId={deliveryId||view.delivery_id||undefined}
       onReady={onReady}
       onDownload={onDownload}
+      expectedDemo={view.demo}
       onInspect={()=>{}}
     />
   </section>;

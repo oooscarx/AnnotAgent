@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Disclosure } from "./Disclosure";
 import { formalReviewCountsComplete } from "./deliveryReviewState";
+import { demoPackageEvidenceError } from "./demoDeliveryPresentation";
 import type {
   DeliveryPackageConsent,
   DeliveryPackageRead,
@@ -19,6 +20,7 @@ type Props = {
   initialPackageId?:string;
   onReady?:(receipt:DeliveryPackageRead)=>void;
   onDownload?:(packageId:string)=>void;
+  expectedDemo?:import("./deliveryService").DemoDeliveryPanelRead["demo"];
 };
 
 const phases = {
@@ -35,7 +37,7 @@ const phases = {
  * the frozen intent, cancel that authorization, and display persisted receipts.
  * It never infers readiness by scanning every image and never POSTs on ready.
  */
-export function DeliveryPackage({ service, project, task, scope, locked = false, onInspect, initialPackageId, onReady, onDownload }: Props) {
+export function DeliveryPackage({ service, project, task, scope, locked = false, onInspect, initialPackageId, onReady, onDownload, expectedDemo }: Props) {
   const [history, setHistory] = useState<{ id: string; created_at: string }[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [id, setId] = useState(() => initialPackageId || new URL(location.href).searchParams.get("delivery_package") || "");
@@ -141,9 +143,10 @@ export function DeliveryPackage({ service, project, task, scope, locked = false,
 
   useEffect(()=>{
     if(job?.job.phase!=="ready"||!job.job.result||readyNotification.current===job.job.id)return;
+    if(expectedDemo&&demoPackageEvidenceError(job.job.result,expectedDemo))return;
     readyNotification.current=job.job.id;
     onReady?.(job);
-  },[job,onReady]);
+  },[expectedDemo,job,onReady]);
 
   const act = async (operation: () => Promise<void>) => {
     if (pending.current) return;
@@ -180,6 +183,7 @@ export function DeliveryPackage({ service, project, task, scope, locked = false,
   });
 
   const receipt = job?.job.result;
+  const demoEvidenceError = receipt&&expectedDemo ? demoPackageEvidenceError(receipt,expectedDemo) : null;
   const currentScope = readiness
     && readiness.intent_revision === scope.revision
     && readiness.intent_sha256 === scope.content_sha256;
@@ -255,7 +259,9 @@ export function DeliveryPackage({ service, project, task, scope, locked = false,
         {receipt.summary?.source_counts&&<p>预置候选 {receipt.summary.source_counts.preset_candidate??0} · 模型预测 {receipt.summary.source_counts.live_model_prediction??0} · 人工修订 {receipt.summary.source_counts.human_revision??0}</p>}
         {!!receipt.summary?.review_sources?.length&&<p>审核来源：{receipt.summary.review_sources.join("、")}</p>}
         <p>结构检查通过；不表示模型精度或漏检检查通过。完整性依据为保存的人工整图确认。</p>
-        <a href={service.downloadUrl(project, task, job.job.id)} download onClick={()=>onDownload?.(job.job.id)}>下载数据集 ZIP</a>
+        {demoEvidenceError
+          ? <p role="alert">{demoEvidenceError}；当前包不可下载，请刷新服务端交付状态。</p>
+          : <a href={service.downloadUrl(project, task, job.job.id)} download onClick={()=>onDownload?.(job.job.id)}>下载数据集 ZIP</a>}
         <Disclosure title="查看真实检查报告">
           <p>SHA-256：{receipt.sha256}</p>
           <p>完整报告、原图哈希、来源与划分位于 ZIP 的 annotagent 目录。</p>
