@@ -17,6 +17,7 @@ import type { WorkspaceAdapter, Snapshot, Task, Command, Settings, ImageId, Box,
 import {readPendingDelivery,rememberPendingDelivery,clearPendingDelivery} from "./pendingDelivery";
 import {projectCallMessages} from "./messageProjection";
 import {createModelPreparationService} from "./modelPreparation";
+import {resolveFormalReviewPage,type FormalReviewEvidence,type FormalRunEvidence} from "./deliveryReviewState";
 import {assertVisualSelection,deliverySampleResultFromCanonical,formalVisualSelectionFromCanonical,selectedMessage,type CanonicalVisualSelectionItem,type CanonicalVisualSelectionPage,type MainlineAdvanceReceipt,type MainlineTaskView,type VisualSelection} from "./mainline";
 
 type Page<T> = { items: T[]; next_cursor: string | number | null };
@@ -119,25 +120,26 @@ export class HttpAdapter implements WorkspaceAdapter {
     },
     reviewSummary: async(project,task,cursor,signal) => {
       const root=this.deliveryRoot(project,task);
-      const page=await this.transport<{
+      const [page,formalResult]=await Promise.all([this.transport<{
         project_id:string;task_id:string;intent_revision:number;intent_sha256:string;
         summary:{selected:number;positive:number;negative:number;excluded:number;unreviewed:number};
-        items:{image_id:string;content_sha256:string;processing_operation_id:string|null;batch_id:string|null;child_run_id:string|null;execution_error:string|null;review_revision:number;review_decision:string|null;confirmation_current:boolean;snapshot_sha256:string;annotations:{annotation_id:string;label:string|null;value:Annotation["value"];annotation_revision_id:string|null;feedback_available:boolean;conversation_reference:ConversationFormalReference|null}[]}[];
+        items:{image_id:string;content_sha256:string;processing_operation_id:string|null;batch_id:string|null;child_run_id:string|null;execution_status:string|null;execution_error:string|null;unresolved_objects:number;review_revision:number;review_decision:string|null;confirmation_current:boolean;snapshot_sha256:string;annotations:{annotation_id:string;label:string|null;value:Annotation["value"];annotation_revision_id:string|null;feedback_available:boolean;conversation_reference:ConversationFormalReference|null}[]}[];
         next_cursor:string|null;
-      }>(`${root}/delivery-review-items?cursor=${esc(cursor||"0")}&limit=50`,{signal});
+      }>(`${root}/delivery-review-items?cursor=${esc(cursor||"0")}&limit=50`,{signal}),this.delivery.formalResult!(project,task,signal)]);
       if(page.project_id!==project||page.task_id!==task)throw new Error("审核摘要不属于当前 Project/Task。");
+      const reviews:FormalReviewEvidence[]=page.items.map(item=>({
+        image_id:item.image_id,confirmation_current:item.confirmation_current,
+        review_decision:item.review_decision,unresolved_objects:item.unresolved_objects,
+        execution_status:item.execution_status,execution_error:item.execution_error,
+      }));
+      const formalImages:FormalRunEvidence[]=((formalResult?.images||[]) as {image_id:string;child_run_id:string|null;run_status?:string|null;status?:string|null;error?:string|null}[]).map(image=>({
+        image_id:image.image_id,child_run_id:image.child_run_id,run_status:image.run_status||null,
+        status:image.status||null,error:image.error||null,
+      }));
+      const resolutions=resolveFormalReviewPage(reviews,formalImages);
       const items=page.items.map(item=>{
-        const state=typeof item.execution_error==="string"&&item.execution_error.length
-          ? "failed" as const
-          : !item.confirmation_current
-            ? "unresolved" as const
-            : item.review_decision==="positive_complete"
-              ? "positive_complete" as const
-              : item.review_decision==="negative_confirmed"
-                ? "negative_confirmed" as const
-                : item.review_decision==="excluded"
-                  ? "excluded" as const
-                  : "unresolved" as const;
+        const resolution=resolutions.get(item.image_id);
+        if(!resolution)throw new Error("正式审核项缺少状态归类结果。");
         const entries=item.annotations.flatMap(annotation=>{
           if(!annotation.feedback_available||!annotation.conversation_reference)return [];
           const selection=formalVisualSelectionFromCanonical({project_id:project,conversation_id:this.task(task).conversationId!,task_id:task,image_id:item.image_id,image_sha256:item.content_sha256,annotation});
@@ -147,27 +149,27 @@ export class HttpAdapter implements WorkspaceAdapter {
         });
         if(new Set(entries.map(([id])=>id)).size!==entries.length)throw new Error("正式审核项包含重复的 Annotation ID，未创建对象引用。");
         const formal_selections=Object.fromEntries(entries);
-        return {image_id:item.image_id,image_sha256:item.content_sha256,state,review_revision:item.review_revision||null,child_run_id:item.child_run_id,error:item.execution_error||null,formal_selections};
+        return {image_id:item.image_id,image_sha256:item.content_sha256,state:resolution.state,review_revision:item.review_revision||null,child_run_id:item.child_run_id,error:resolution.diagnostic,formal_selections};
       });
       const failed=items.filter(item=>item.state==="failed").length;
       const complete=page.summary.positive+page.summary.negative+page.summary.excluded;
-      return {intent_revision:page.intent_revision,intent_sha256:page.intent_sha256,formal_result:await this.delivery.formalResult!(project,task,signal),counts:{total:page.summary.selected,complete,positive:page.summary.positive,negative:page.summary.negative,excluded:page.summary.excluded,unresolved:page.summary.unreviewed,failed},items,next_cursor:page.next_cursor};
+      return {intent_revision:page.intent_revision,intent_sha256:page.intent_sha256,formal_result:formalResult,counts:{total:page.summary.selected,complete,positive:page.summary.positive,negative:page.summary.negative,excluded:page.summary.excluded,unresolved:page.summary.unreviewed,failed},items,next_cursor:page.next_cursor};
     },
     packageReadiness: async(project,task,signal) => {
       const root=this.deliveryRoot(project,task);
       const owned=this.task(task);
       if(!owned.conversationId)throw new Error("任务没有所属会话。");
-      const [view,consents]=await Promise.all([
+      const [view,consents,reviewSummary]=await Promise.all([
         this.mainlineTask.read(project,owned.conversationId,task,signal),
         this.transport<{items:{input:{id:string;intent_revision:number;intent_sha256:string;confirmed:true};state:string;effective_state:string;readiness:{ready:boolean;selected_images:number;confirmed_images:number;blocked_images:number;reasons:string[]};job:import("./deliveryService").DeliveryPackageStatus|null}[];next_cursor:null}>(`${root}/delivery-package-consents`,{signal}),
+        this.delivery.reviewSummary!(project,task,undefined,signal),
       ]);
       const delivery=(view.delivery as import("./DeliveryIntake").IntakeView)?.saved;
       if(!delivery)throw new Error("当前任务没有已保存的交付版本。");
       const current=consents.items.find(item=>item.input.intent_revision===delivery.revision&&item.input.intent_sha256===delivery.content_sha256&&["armed","consumed"].includes(item.state))
         || consents.items.find(item=>item.input.intent_revision===delivery.revision&&item.input.intent_sha256===delivery.content_sha256);
       const packageRead=current?.job ? await this.delivery.packageStatus(project,task,current.job.id,signal) : null;
-      const failed=(view.formal_source as {images?:{error?:string|null}[]} | null)?.images?.filter(image=>!!image.error).length||0;
-      const counts={total:view.review_summary.selected_images,complete:view.review_summary.current_reviews,positive:0,negative:0,excluded:0,unresolved:view.review_summary.pending_reviews,failed};
+      const counts=reviewSummary.counts;
       const reasons=current?.readiness.reasons||[];
       const blockers=reasons.map(code=>({code,message:code==="whole_image_review_missing_or_stale"?"仍有图片未完成当前快照的整图审核。":code==="delivery_intent_changed"?"交付目标已变化，原打包授权已失效。":code,image_ids:[]}));
       return {intent_revision:delivery.revision,intent_sha256:delivery.content_sha256,ready:current?.readiness.ready===true,counts,review_revisions:{},blockers,consent:current?{input:current.input,state:current.state as import("./deliveryService").PackageConsent["state"]}:null,package:packageRead};

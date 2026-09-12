@@ -27,6 +27,12 @@ function readiness(
     registry_revision_kind: "snapshot_sha256",
     candidates,
     setup_requests: [],
+    visual_readiness_boundary: {
+      status: "awaiting_frozen_draft",
+      reason: "Visual readiness is evaluated only after the exact Draft is frozen.",
+      builder_preview_url: "/api/TEST/builder-preview",
+      sample_preview_url: "/api/TEST/sample-preview",
+    },
     agent_model_preference: {
       revision: 2,
       model_profile_id: "agent-ready",
