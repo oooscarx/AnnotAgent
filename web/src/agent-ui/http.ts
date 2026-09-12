@@ -76,6 +76,39 @@ const initialSettings: Settings = { revision: "", theme: "system", language: "zh
 
 /** Only this boundary knows HTTP routes. Reads never create conversations, tasks or execution. */
 export class HttpAdapter implements WorkspaceAdapter {
+  readonly demoOnboarding: import("./demoOnboardingService").DemoOnboardingService = {
+    catalog: (signal) => this.transport<import("./demoOnboardingService").DemoCatalog>(
+      "/api/demo-catalog?limit=2",
+      { signal },
+    ),
+    compatibleLiveModels: async (signal) => {
+      const value = await this.transport<{ models: RegistryModelProfile[] }>(
+        "/api/model-profiles/compatible?input_modalities=image&capabilities=vision_language",
+        { signal },
+      );
+      return value.models.filter((model) =>
+        model.enabled
+        && model.status === "available"
+        && model.input_modalities.includes("image")
+        && model.task_capabilities.includes("vision_language")
+      );
+    },
+    start: (input) => this.transport<import("./demoOnboardingService").StartDemoReceipt>(
+      "/api/demos/start",
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+    receipt: async (commandId, signal) => {
+      try {
+        return await this.transport<import("./demoOnboardingService").StartDemoReceipt>(
+          `/api/demos/start/${esc(commandId)}`,
+          { signal },
+        );
+      } catch (error) {
+        if (error instanceof ApiRequestError && error.status === 404) return null;
+        throw error;
+      }
+    },
+  };
   readonly modelPreparation:import("./modelPreparation").ModelPreparationService;
   readonly bundleInstaller:import("./BundleInstaller").BundleInstallerService|undefined;
   readonly mainlineTask:import("./mainline").MainlineTaskService={

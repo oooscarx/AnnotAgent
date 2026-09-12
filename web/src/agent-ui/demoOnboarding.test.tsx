@@ -10,20 +10,21 @@ import {
 } from "./demoOnboardingService";
 
 const entry: DemoCatalogEntry = {
-  id: "object-detection-review",
+  demo_id: "object-detection-review",
   version: "1.0.0",
-  catalog_digest: "digest",
+  manifest_sha256: "manifest",
   title: "标注桌面物品",
-  description: "检查六张原创合成图片中的杯子和瓶子。",
+  summary: "检查六张原创合成图片中的杯子和瓶子。",
+  learning_objectives: ["审核候选"],
   image_count: 6,
   labels: ["cup", "bottle"],
   delivery_format: "yolo_detection",
+  thumbnail_asset_id: "thumbnail",
   thumbnail_url: "/api/demo-catalog/object-detection-review/versions/1.0.0/assets/thumbnail",
-  thumbnail_alt: "桌面上的杯子和瓶子",
-  license_summary: "原创合成示例，可随项目分发",
+  license: { spdx_id: "CC0-1.0", source_url: "https://example.invalid/license", attribution_asset_id: "attribution" },
   modes: [
-    { mode: "preset_candidates", status: "ready", reason: null, model_name: null, provider_name: null, destination: "本地工作区", maximum_model_calls: 0, maximum_cost: "0", currency: "USD" },
-    { mode: "live_model", status: "setup_required", reason: "需要视觉模型", model_name: null, provider_name: null, destination: "由所选 Provider 决定", maximum_model_calls: 6, maximum_cost: null, currency: null },
+    { source_mode: "preset_candidates", status: "ready", reason: null, required_capabilities: [] },
+    { source_mode: "live_model", status: "setup_required", reason: "需要视觉模型", required_capabilities: ["vision_language"] },
   ],
 };
 
@@ -40,32 +41,32 @@ function memoryStorage(): Storage {
 }
 
 it("renders a truthful preset primary action and a separate model setup path", () => {
-  const html = renderToStaticMarkup(<DemoCard item={entry} busy={false} onStart={() => {}}/>);
-  expect(html).toContain("免配置体验：预置候选");
-  expect(html).toContain("预置候选，无本次模型推理");
-  expect(html).toContain("本次不调用模型，不产生模型 Token");
-  expect(html).toContain("配置模型并试跑");
+  const html = renderToStaticMarkup(<DemoCard item={entry} catalogRevision="catalog" liveModels={[]} selectedModel="" busy={false} onSelectModel={() => {}} onStart={() => {}}/>);
+  expect(html).toContain("体验预置候选");
+  expect(html).toContain("不调用模型 · 结果仍需逐图人工审核");
+  expect(html).toContain("不产生模型 Token，不代表实时模型准确率");
+  expect(html).toContain("连接视觉模型");
   expect(html).not.toContain("正在识别");
 });
 
 it("shows no more than two server catalog entries", () => {
-  const catalog = { contract_version: "demo-catalog-v1" as const, items: [entry, {...entry, id:"two"}, {...entry, id:"three"}] };
-  expect(visibleDemoEntries(catalog).map((item) => item.id)).toEqual(["object-detection-review", "two"]);
+  const catalog = { contract_version: "demo-catalog-v1" as const, catalog_revision:"catalog", next_cursor:null, items: [entry, {...entry, demo_id:"two"}, {...entry, demo_id:"three"}] };
+  expect(visibleDemoEntries(catalog).map((item) => item.demo_id)).toEqual(["object-detection-review", "two"]);
 });
 
 it("reuses the exact pending command and changes it only for a changed explicit scope", () => {
   const storage = memoryStorage();
-  const input = { demo_id: entry.id, demo_version: entry.version, catalog_digest: entry.catalog_digest, mode: "preset_candidates" as const, confirmed_scope: true as const };
+  const input = { demo_id: entry.demo_id, demo_version: entry.version, source_mode: "preset_candidates" as const, model_profile_id:null, catalog_revision:"catalog", manifest_sha256:entry.manifest_sha256 };
   const first = beginDemoStart(storage, "workspace-one", input, "command-one");
   expect(beginDemoStart(storage, "workspace-one", input, "command-two").command_id).toBe("command-one");
-  expect(beginDemoStart(storage, "workspace-one", {...input, mode:"live_model"}, "command-two").command_id).toBe("command-two");
-  expect(readPendingDemo(storage, "workspace-one")?.mode).toBe("live_model");
+  expect(beginDemoStart(storage, "workspace-one", {...input, source_mode:"live_model",model_profile_id:"model"}, "command-two").command_id).toBe("command-two");
+  expect(readPendingDemo(storage, "workspace-one")?.source_mode).toBe("live_model");
   expect(readPendingDemo(storage, "workspace-two")).toBeNull();
   expect(first.state).toBe("pending");
 });
 
 it("rejects a receipt that could navigate to another Demo task", () => {
-  const input = { command_id:"command", demo_id:entry.id, demo_version:entry.version, catalog_digest:entry.catalog_digest, mode:"preset_candidates" as const, confirmed_scope:true as const };
-  const receipt = { contract_version:"demo-start-v1" as const, command_id:"other", demo_id:entry.id, demo_version:entry.version, mode:"preset_candidates" as const, status:"ready" as const, project_id:"project",conversation_id:"conversation",task_id:"task",replayed:false,retry_safe:false,detail:null };
+  const input = { command_id:"command", demo_id:entry.demo_id, demo_version:entry.version, source_mode:"preset_candidates" as const, model_profile_id:null,catalog_revision:"catalog",manifest_sha256:entry.manifest_sha256,state:"pending" as const };
+  const receipt = { contract_version:"demo-start-v1" as const, command_id:"other", demo_id:entry.demo_id, demo_version:entry.version, source_mode:"preset_candidates" as const,catalog_revision:"catalog",manifest_sha256:entry.manifest_sha256,status:"ready" as const,project_id:"project",project_owner_id:"owner",conversation_id:"conversation",task_id:"task",work_route:"/projects/project/work?conversation=conversation&task=task",source_provenance:{kind:"preset_candidates" as const,live_inference_occurred:false,review_status:"needs_review",source_asset_id:"preset",source_asset_sha256:"source"},replayed:false,retry_safe:false,detail:null };
   expect(() => validateDemoReceipt(input, receipt)).toThrow("不匹配");
 });

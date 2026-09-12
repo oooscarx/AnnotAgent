@@ -1163,8 +1163,13 @@ caption {
 .ui-app .demo-card-copy { display: grid; gap: 8px; padding: 16px; }
 .ui-app .demo-card-copy h2, .ui-app .demo-card-copy p { margin: 0; }
 .ui-app .demo-mode-summary { display: grid; gap: 3px; padding: 10px 0; border-block: 1px solid var(--aa-border); color: var(--aa-text-muted); font-size: 12px; line-height: 1.5; }
+.ui-app .demo-live-model { display: grid; gap: 6px; padding-top: 4px; }
+.ui-app .demo-live-model label { display: grid; gap: 6px; font-weight: 600; }
+.ui-app .demo-live-model small { overflow-wrap: anywhere; }
 .ui-app .demo-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .ui-app .demo-actions button { justify-content: center; }
+.ui-app .demo-actions a { display: inline-flex; align-items: center; justify-content: center; min-height: 32px; padding: 7px 10px; border: 1px solid var(--aa-border); border-radius: 6px; color: var(--aa-text); text-decoration: none; }
+.ui-app .demo-actions a:hover { background: var(--aa-surface-muted); }
 .ui-app .demo-onboarding > .subtle { margin-top: 12px; }
 .ui-app .native-project-manager input[type="checkbox"] { width: auto; }
 .ui-app .native-history label:has(> input[type="checkbox"]) { display: inline-flex; align-items: center; gap: 8px; }

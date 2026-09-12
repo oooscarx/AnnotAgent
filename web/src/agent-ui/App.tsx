@@ -424,12 +424,15 @@ export function AgentPreviewApp({
     });
   };
   const openDemoReceipt=async(receipt:import("./demoOnboardingService").StartDemoReceipt)=>{
-    if(!receipt.project_id||!receipt.task_id)throw new Error("示例启动回执缺少可打开的任务");
+    if(!receipt.project_id||!receipt.task_id||!receipt.conversation_id)throw new Error("示例启动回执缺少可打开的任务");
+    const receiptRoute=new URL(receipt.work_route,location.origin);
+    const expectedPath=`/projects/${encodeURIComponent(receipt.project_id)}/work`;
+    if(receiptRoute.origin!==location.origin||receiptRoute.pathname!==expectedPath||receiptRoute.searchParams.get("task")!==receipt.task_id||receiptRoute.searchParams.get("conversation")!==receipt.conversation_id)
+      throw new Error("示例启动回执包含不匹配的站内任务地址；没有导航");
     await adapter.refresh?.();
     const created=adapter.snapshot().tasks.find(candidate=>candidate.project===receipt.project_id&&candidate.id===receipt.task_id);
-    if(!created)throw new Error("服务器已返回示例任务，但导航目录尚未包含它；请刷新后核实回执");
-    const next=taskLocation(urlRef.current,receipt.project_id);next.searchParams.set("task",receipt.task_id);
-    history.pushState(null,"",next);setUrl(next);
+    if(!created||created.conversationId!==receipt.conversation_id)throw new Error("服务器已返回示例任务，但导航目录尚未包含同一会话；请刷新后核实回执");
+    history.pushState(null,"",receiptRoute);setUrl(receiptRoute);
   };
   return (
     <div

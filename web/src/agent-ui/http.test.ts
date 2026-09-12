@@ -6,6 +6,32 @@ const settings = { revision: "revision-1", sections: { data_privacy: { workspace
 const navTask = (id: string) => ({ task_id: id, title: `TEST ${id}`, schema_revision: "schema-1", project_owner_id: "owner-a", conversation_id: "conversation-a", state: "idle" });
 const root = "/api/projects/TEST-alpha/conversations/conversation-a/tasks";
 const mainline=(id:string)=>({contract_version:"mainline-task-v1",project_id:"TEST-alpha",project_owner_id:"owner-a",conversation_id:"conversation-a",task_id:id,read_model_revision:`read-${id}`,delivery:{saved:{revision:3,content_sha256:"frozen-delivery"}},schema:null,review_summary:{selected_images:0,saved_review_receipts:0,current_reviews:0,pending_reviews:0},package:{consents:[],jobs:[]},available_actions:[{id:"prepare_delivery_schema",state:"authorized",method:"POST",url:`${root}/${id}/advance`,requires_confirmation:false,reason:null}],blockers:[],completion:{model_request_completed:false,processing_completed:false,package_ready:false,task_completed:false}});
+it("uses the exact Demo catalog/start contract and never sends client-only receipt expectations",async()=>{
+  const posts:{path:string;body:unknown}[]=[];
+  const model={
+    id:"vision-ready",revision:4,provider_id:"provider",display_name:"Vision",remote_model_id:"vision-remote",
+    input_modalities:["image"],task_capabilities:["vision_language"],enabled:true,status:"available",
+    pricing:{currency:"USD",source:"user_configured"},protocol_features:{tool_calls:false,parallel_tool_calls:false,structured_output:true,json_schema:true,usage_reporting:true,streaming:false,reasoning_controls:false},
+    capability_source:"user_declared",limits:{},generation_defaults:{},locked:false,created_at:"TEST",updated_at:"TEST",
+  };
+  const receipt={contract_version:"demo-start-v1",command_id:"command",demo_id:"object-detection-review",demo_version:"1.0.0",source_mode:"live_model",catalog_revision:"catalog",manifest_sha256:"manifest",status:"ready",project_id:"demo-project",project_owner_id:"owner",conversation_id:"conversation",task_id:"task",work_route:"/projects/demo-project/work?conversation=conversation&task=task",source_provenance:{kind:"live_model",live_inference_occurred:false,review_status:null,source_asset_id:null,source_asset_sha256:null},replayed:false,retry_safe:true,detail:null};
+  const transport:Transport=async<T>(path:string,init?:RequestInit)=>{
+    if(path==="/api/demo-catalog?limit=2")return {contract_version:"demo-catalog-v1",catalog_revision:"catalog",items:[],next_cursor:null} as T;
+    if(path==="/api/model-profiles/compatible?input_modalities=image&capabilities=vision_language")return {models:[model,{...model,id:"disabled",enabled:false}]} as T;
+    if(path==="/api/demos/start"&&init?.method==="POST"){
+      posts.push({path,body:JSON.parse(String(init.body))});return receipt as T;
+    }
+    if(path==="/api/demos/start/command")return receipt as T;
+    throw new Error(`unexpected ${path}`);
+  };
+  const adapter=new HttpAdapter(transport,memoryStorage());
+  expect(await adapter.demoOnboarding.catalog()).toMatchObject({catalog_revision:"catalog"});
+  expect((await adapter.demoOnboarding.compatibleLiveModels()).map(item=>item.id)).toEqual(["vision-ready"]);
+  const input={command_id:"command",demo_id:"object-detection-review",demo_version:"1.0.0",source_mode:"live_model" as const,model_profile_id:"vision-ready"};
+  expect(await adapter.demoOnboarding.start(input)).toEqual(receipt);
+  expect(await adapter.demoOnboarding.receipt("command")).toEqual(receipt);
+  expect(posts).toEqual([{path:"/api/demos/start",body:input}]);
+});
 it("delivery labels display names without rewriting IDs and ignore older name revisions",async()=>{
   const reads=mockTransport();let revision=2;
   const transport:Transport=async<T>(path:string,init?:RequestInit)=>path.endsWith("/delivery-intent")?{saved:{revision,intent:{label_spec:[{stable_id:"stable-label",display_name:revision===2?"足球":"旧名称"}]}},missing_slots:[],blockers:[]} as T:reads.transport<T>(path,init);
