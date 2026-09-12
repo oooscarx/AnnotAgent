@@ -506,9 +506,9 @@ export class HttpAdapter implements WorkspaceAdapter {
       if(task.id.startsWith("new:")) {
         if(!Array.isArray(receipt.images)||!receipt.images.length||receipt.images.some(image=>!image.image_id||!/^[a-f\d]{64}$/i.test(image.content_hash)))throw new Error(`${file.name} 的上传回执缺少稳定图片身份；不会猜测任务范围`);
         for(const image of receipt.images)if(!uploaded.some(current=>current.image_id===image.image_id))uploaded.push({image_id:image.image_id,sha256:image.content_hash});
+        this.save(`uploads.${task.id}`,uploaded);
       }
     }
-    if(task.id.startsWith("new:"))this.save(`uploads.${task.id}`,uploaded);
     await this.reloadCurrent(task);
   }
   saveDraft(id: string, text: string) { this.task(id); this.save(`draft.${id}`, text); this.emit({ tasks: this.state.tasks.map(t => t.id === id ? { ...t, draft: text } : t) }); }
