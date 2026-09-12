@@ -48,3 +48,13 @@ Focused verification on the F2 branch:
 - `npx playwright test --config playwright.ui-preview.config.ts e2e/ui-preview/p0-result-panel.spec.ts` — 5 passed
 
 This is component/preview evidence only. A1/A2 actual HTTP autonomy, server-issued P0 projection wiring, and real ZIP evidence remain joint Frontend 1/Backend integration work and must not be reported as passed from these tests.
+
+## Canvas first-result fit
+
+The packaged P0 result pane exposed a previously scoped CSS defect: the dimension probe and responsive SVG rules only applied under the legacy `.native-review` container. In the P0 pane the probe image therefore rendered at its natural size and visually covered the fitted SVG, making the first result look cropped at 100%.
+
+- `DeliveryReview` now imports its own domain stylesheet instead of relying on another screen to load it.
+- The probe remains a 1×1 transparent measurement element in every Delivery review surface.
+- The annotation SVG uses the available review width and a bounded viewport height, preserving source pixels and normalized geometry.
+- A newly selected image resets to Fit. Polling or rerendering the same image does not reset user zoom/pan.
+- The focused browser suite checks the 1440px start, a 720px viewport equivalent to 200% layout pressure, 390px mobile width, and zoom persistence across rerender. It does not claim native browser chrome zoom automation.

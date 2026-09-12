@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnnotationCanvas } from "../components/AnnotationCanvas";
 import type { Annotation } from "../types";
+import "./delivery-intake.css";
 import type { DemoAnnotationOrigin, DeliveryImageView, DeliveryReviewInput, DeliveryReviewSummary, DeliveryService } from "./deliveryService";
 import { demoOriginLabel } from "./demoDeliveryPresentation";
 import {
