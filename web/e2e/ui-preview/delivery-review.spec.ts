@@ -35,7 +35,7 @@ test("formal review is bound to the Task Batch child Run and preserves failed co
       },
       images: [{ id: "image-one", name: "TEST original", src: imageUrl }],
     }));
-  }, [`/@fs/${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`, pixel]);
+  }, [`/@fs${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`, pixel]);
 
   await expect(page.getByRole("heading", { name: "检查当前任务结果" })).toBeVisible();
   await expect(page.getByText(/Batch batch-on.*child Run child-on/)).toBeVisible();
@@ -93,7 +93,7 @@ test("continuous review advances only after the formal image receipt is saved", 
         { id: "image-two", name: "two", src: imageUrl },
       ],
     }));
-  }, [`/@fs/${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`, pixel]);
+  }, [`/@fs${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`, pixel]);
 
   const confirm = page.getByRole("button", { name: "确认整张图标注完整并继续", exact: true });
   await expect(confirm).toBeEnabled();
@@ -144,7 +144,7 @@ test("sample issue emits a complete sample VisualSelection and never writes form
       images: [{ id: "image-one", name: "TEST original", src: imageUrl }],
       onSampleIssue: (selection: unknown) => state.selections.push(selection),
     }));
-  }, [`/@fs/${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`, pixel]);
+  }, [`/@fs${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`, pixel]);
 
   await page.getByRole("button", { name: "Annotation list · 1", exact: true }).click();
   await page.getByRole("button", { name: /ball/ }).click();
@@ -183,7 +183,7 @@ test("negative confirmation and exclusion remain explicit per-image review decis
       images: [{ id: "negative", name: "negative", src: imageUrl }, { id: "excluded", name: "excluded", src: imageUrl }],
       formalResult: { project_id: "project", task_id: "task", processing_operation_id: "operation", batch_id: "batch", workflow_version: "workflow@1", status: "completed", images: [{ image_id: "negative", child_run_id: "run-negative" }, { image_id: "excluded", child_run_id: "run-excluded" }] },
     }));
-  }, [`/@fs/${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`, pixel]);
+  }, [`/@fs${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`, pixel]);
 
   await page.getByRole("button", { name: "确认整张图没有目标并继续", exact: true }).click();
   await expect(page).toHaveURL(/delivery_image=excluded/);

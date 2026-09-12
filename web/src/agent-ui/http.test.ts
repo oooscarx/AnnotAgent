@@ -344,6 +344,18 @@ describe("HTTP UI read boundary (synthetic transport tests, not HTTP E2E)", () =
     expect(task.receipts?.[0]).toMatchObject({durationMs:2000,detail:"请求超时 · 读取响应",finishedAt:"2026-09-09T00:00:02Z"});
     expect(task.receipts?.[1]).toMatchObject({stage:"模型请求处理中",startedAt:"2026-09-09T00:01:00Z"});
   });
+  it("polls a durable automatic Journey as running without issuing another execution POST", async () => {
+    const continuing={...mainline("t1"),available_actions:[{
+      id:"inspect_automatic_sample_progress",state:"available",method:"GET",url:`${root}/t1/journey-consents/journey/execution`,requires_confirmation:false,reason:"authorized_journey_is_automatically_continuing",scope:{dispatch_status:"queued"},
+    }]};
+    const {transport,paths}=mockTransport({[`${root}/t1/workspace`]:{
+      project_id:project.project_id,project_owner_id:project.project_owner_id,conversation_id:project.conversation_id,
+      task:{input:{id:"t1",schema_revision:"schema-1"}},agent_model:{revision:0,model_profile_id:null},actions:{},queue:[],calls:[],mainline:continuing,
+    }});
+    const adapter=new HttpAdapter(transport);await adapter.refresh();paths.length=0;await adapter.loadTask(project.project_id,"t1");
+    expect(adapter.snapshot().tasks.find(candidate=>candidate.id==="t1")?.phase).toBe("running");
+    expect(paths.every(path=>!path.endsWith("/execution"))).toBe(true);
+  });
   it("reads actual identity, thread and UUID images without POST, assistant fabrication or resume inference", async () => {
     const { transport, paths } = mockTransport(); const adapter = new HttpAdapter(transport);
     await adapter.refresh(); await adapter.loadTask("TEST-alpha", "t1");

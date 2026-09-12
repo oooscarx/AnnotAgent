@@ -2,7 +2,7 @@ import {expect,test} from "@playwright/test";
 import {resolve} from "node:path";
 
 const pixel="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
-const harness=`/@fs/${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`;
+const harness=`/@fs${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`;
 
 test("three terminal Sample images appear and the server focus is applied only once",async({page})=>{
   await page.goto("/ui-preview?task=new");

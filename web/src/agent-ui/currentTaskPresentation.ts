@@ -97,19 +97,30 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
   }
 
   const runningStep = view.steps?.find((step) => step.status === "running");
+  const automaticContinuation = action(
+    task,
+    "inspect_automatic_sample_progress",
+    "available",
+  );
+  const dispatchStatus = (
+    automaticContinuation?.scope as { dispatch_status?: string } | undefined
+  )?.dispatch_status;
   const active =
     task.phase === "planning" ||
     task.phase === "running" ||
     task.phase === "stopping" ||
     !!view.active_operation_ids?.length ||
-    !!runningStep;
+    !!runningStep ||
+    !!automaticContinuation;
   if (active) {
     return {
       kind: "running",
       title:
         task.phase === "stopping"
           ? "正在停止当前操作"
-          : runningStep?.title || "AnnotAgent 正在处理这个任务",
+          : dispatchStatus === "queued"
+            ? "任务已排队，等待服务器继续"
+            : runningStep?.title || "AnnotAgent 正在处理这个任务",
       detail:
         runningStep?.detail ||
         "任务由服务器继续推进；关闭页面不会取消，重新打开可恢复到同一等待点。",

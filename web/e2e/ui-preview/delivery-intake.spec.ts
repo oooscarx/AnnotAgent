@@ -11,7 +11,7 @@ test("intake label rename preserves identity and rules, split edits and failed r
     const view={saved,missing_slots:[],blockers:[],maximum_sample_images:3,execution_authorized:false,proposals:[{call_id:"proposal-TEST",question:"TEST saved clarification",semantics:{training_target:null,labels:[{existing_id:null,display_name:"瓶子",aliases:[],include:"真实瓶子",exclude:"图案"}]}}]};
     const service={read:async()=>view,save:async(_p:string,_t:string,input:any)=>{state.commands.push(input);if(state.fail)throw new Error("TEST save unavailable");return {...view,saved:{...saved,revision:3,intent:{...saved.intent,label_spec:input.label_spec,split_policy:input.split_policy}}};}};
     createRoot(host).render(React.createElement(DeliveryIntake,{service,project:"TEST",task:"TEST",images:[{id:"i",name:"TEST original"}]}));
-  },`/@fs/${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`);
+  },`/@fs${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`);
   await page.getByText("从已保存的 Agent 提议填写交付目标",{exact:true}).click();
   await page.getByRole("button",{name:/检查并采用提议/}).click();
   await expect(page.getByLabel("类别 1 名称",{exact:true})).toHaveValue("杯子");

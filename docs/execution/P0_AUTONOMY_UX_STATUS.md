@@ -28,6 +28,7 @@ Read-only evidence from `127.0.0.1:8788` also confirms that the existing task re
 - Added a failing-first selector contract for missing information, one bounded approval, real execution, review and Ready package states. The duplicate same-scope `test_pipeline_samples` confirmation is projected as a server continuation defect, never as another user action.
 - Replaced the independently mounted production-flow blocks with one `CurrentTaskStatus`. Full task editing is now opened explicitly; it is no longer mounted after every Thread.
 - A review work item opens the existing right image pane once per server work item/result revision. This is view-only URL restoration and does not issue an execution request.
+- The Backend `inspect_automatic_sample_progress` projection now keeps the HttpAdapter task in `running`, so the existing GET-only refresh observes Builder → Sample continuation instead of showing an idle task. It never renders a second Sample approval.
 - Execution receipts, model usage, plan lineage and technical links remain available in one lazy detail disclosure.
 - Keep task editing, trace, schema, feedback and historical records reachable on demand.
 - Integrated the first durable Backend continuation increment: queued/running Journey intents remain active across browser closure and Builder completion starts the original frozen Sample operation without a second confirmation.
@@ -37,6 +38,7 @@ Read-only evidence from `127.0.0.1:8788` also confirms that the existing task re
 
 - `npm test -- --run src/agent-ui/currentTaskPresentation.test.ts src/agent-ui/App.modelSetup.test.ts src/agent-ui/mainline.test.ts` — 14 passed.
 - `npm run typecheck` — passed.
+- Frontend 2 P0 result browser checks — 5 passed after correcting the Vite `/@fs` harness URL; this is Fixture UI evidence, not a live-model claim.
 - Real HTTP G1 remains unverified until the isolated upload-to-review trace passes; no production success is claimed from the UI selector or Backend unit tests.
 - The remaining A1 blocker is earlier than Builder: uploaded image identities are not yet frozen into the natural-language Send, and the Backend has not yet delivered automatic DeliveryIntake materialization from a complete request.
 

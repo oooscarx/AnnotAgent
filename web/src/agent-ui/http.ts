@@ -477,10 +477,11 @@ export class HttpAdapter implements WorkspaceAdapter {
         ...(ws?.builder_operations?.items || []).map(b=>({id:b.operation.id,title:"方案构建回执",status:b.operation.status,detail:b.operation.evidence?.error || b.operation.evidence?.outcome})),
         ...(ws?.sample_operations || []).map(s=>({id:s.id,title:"样例测试回执",status:s.status,detail:s.error})),
       ];
-      const active = ws?.calls.some(c=>c.status==="reserved") || ws?.sample_operations?.some(s=>["running","queued","cancelling"].includes(s.status)) || result.processing?.some(p=>["pending","running","pausing"].includes(p.status));
+      const mainline=ws?.mainline?this.assertMainline(ws,task):undefined;
+      const automaticJourney = mainline?.available_actions.some(candidate=>candidate.id==="inspect_automatic_sample_progress"&&candidate.state==="available"&&candidate.method==="GET"&&!candidate.requires_confirmation);
+      const active = ws?.calls.some(c=>c.status==="reserved") || ws?.sample_operations?.some(s=>["running","queued","cancelling"].includes(s.status)) || result.processing?.some(p=>["pending","running","pausing"].includes(p.status)) || automaticJourney;
       const phase: Phase = stop?.normalized_state || (active ? "running" : ws?.calls.some(c=>c.status==="in_doubt") ? "outcome_unknown" : human ? "waiting_for_human" : "idle");
       const edits=this.stored<{revision?:string;boxes?:Record<ImageId,Box[]>}>(`edits.${id}`,{});
-      const mainline=ws?.mainline?this.assertMainline(ws,task):undefined;
       this.emit({ error: undefined, artifacts, tasks: this.state.tasks.map(t => t.id !== id ? t : { ...t,
         items: [...thread.map(t => {const referenceText=persistedReferenceText(t.message.input);return { id: t.id, role: "user" as const, kind:"input" as const, text: t.message.input.text,source:{kind:"message" as const,id:t.id},...(referenceText?{referenceText}:{}) };}),...projectCallMessages(ws?.calls||[])],
         ...result, approval:pendingApproval?.view || t.approval, actions: {...ws?.actions || t.actions,answer:{available:!!result.human && ["classification","bounding_box"].includes(result.human.kind),reason:"仅保存当前人工作答的样例修正"}}, model: ws?.agent_model.model_profile_id || this.defaults.pipeline_builder || t.model,

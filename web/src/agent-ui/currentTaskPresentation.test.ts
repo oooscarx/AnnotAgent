@@ -151,6 +151,20 @@ describe("single current-task presentation", () => {
     });
   });
 
+  it("shows durable automatic Journey continuation as progress without another action", () => {
+    const continuing = action("inspect_automatic_sample_progress", "available");
+    continuing.scope = { dispatch_status: "queued" };
+    const result = selectCurrentTaskPresentation(
+      task(view({ available_actions: [continuing] })),
+    );
+
+    expect(result).toMatchObject({
+      kind: "running",
+      title: "任务已排队，等待服务器继续",
+    });
+    expect(result.primary).toBeUndefined();
+  });
+
   it("moves directly to the real review decision when results need a human", () => {
     const result = selectCurrentTaskPresentation(
       task(

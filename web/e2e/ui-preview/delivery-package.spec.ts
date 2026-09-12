@@ -35,7 +35,7 @@ test("package authorization uses server readiness and never scans images or star
       scope: { revision: 2, content_sha256: "intent", image_ids: ["one", "two"] },
       onInspect: () => {},
     }));
-  }, `/@fs/${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`);
+  }, `/@fs${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`);
 
   await expect(page.getByText("已完成 1/2")).toBeVisible();
   await expect(page.getByText("还有 1 张图片待确认")).toBeVisible();
@@ -93,7 +93,7 @@ test("package history and download render only persisted server receipts", async
       scope: { revision: 2, content_sha256: "intent", image_ids: ["one"] },
       onInspect: () => {},
     }));
-  }, `/@fs/${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`);
+  }, `/@fs${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`);
 
   await expect(page.getByText("数据集已打包", { exact: true })).toBeVisible();
   await expect(page.getByText("类别：冻结类别", { exact: true })).toBeVisible();
@@ -133,7 +133,7 @@ test("completed formal reviews stay distinct from package authorization and admi
       scope: { revision: 8, content_sha256: "formal-scope", image_ids: Array.from({ length: 12 }, (_, index) => `image-${index}`) },
       onInspect: () => {},
     }));
-  }, `/@fs/${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`);
+  }, `/@fs${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`);
 
   await expect(page.getByText("正式审核齐全", { exact: true })).toBeVisible();
   await expect(page.getByText("审核已完成，等待你授权本正式范围。", { exact: true })).toBeVisible();
@@ -159,7 +159,7 @@ test("saved package history preserves old immutable receipts", async ({ page }) 
       downloadUrl: (_p: string, _t: string, id: string) => `/download/${id}`,
     };
     createRoot(host).render(React.createElement(DeliveryPackage, { service, project: "project", task: "task", scope: { revision: 2, content_sha256: "intent", image_ids: ["one", "two"] }, onInspect: () => {} }));
-  }, `/@fs/${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`);
+  }, `/@fs${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`);
 
   await expect(page.getByText("类别：package-new", { exact: true })).toBeVisible();
   await page.getByLabel("本任务已保存的数据包").selectOption("package-old");
