@@ -15,6 +15,17 @@ import {
 type Image = { id: string; name: string; src?: string };
 type Mode = "sample" | "formal";
 type Selection = { mode: Mode; image: string };
+export type DeliveryReviewFocus = {mode:Mode;image_id:string;candidate_id?:string;result_revision:string;reason:string};
+export type DeliveryReviewPermissions = {
+  sampleFeedback:boolean;
+  editObject:boolean;
+  createObject:boolean;
+  acceptObject:boolean;
+  rejectObject:boolean;
+  confirmPositive:boolean;
+  confirmNegative:boolean;
+  excludeImage:boolean;
+};
 
 export type DeliveryReviewProps = {
   service: DeliveryService;
@@ -30,12 +41,16 @@ export type DeliveryReviewProps = {
   onSampleIssue?: (selection: SampleVisualSelection) => void;
   onFormalSelection?: (selection: FormalReviewSelection) => void;
   annotationOrigins?:Record<string,Record<string,DemoAnnotationOrigin>>;
+  preferredMode?:Mode;
+  focus?:DeliveryReviewFocus|null;
+  permissions?:DeliveryReviewPermissions;
 };
 
-const fromUrl = (images: Image[], hasSample: boolean): Selection => {
+const fromUrl = (images: Image[], hasSample: boolean, preferredMode?:Mode): Selection => {
   const query = new URL(location.href).searchParams;
+  const explicit=query.get("delivery_view");
   return {
-    mode: query.get("delivery_view") === "sample" && hasSample ? "sample" : "formal",
+    mode: explicit === "sample" && hasSample ? "sample" : explicit === "formal" ? "formal" : preferredMode === "sample" && hasSample ? "sample" : "formal",
     image: images.find((item) => item.id === query.get("delivery_image"))?.id ?? images[0]?.id ?? "",
   };
 };
@@ -45,11 +60,12 @@ export function DeliveryReview({
   service, project, task, images, labels = [], sampleResult = null,
   formalResult: formalResultProp, locked = false, onEditingState,
   onVisualSelection, onSampleIssue, onFormalSelection, annotationOrigins = {},
+  preferredMode, focus, permissions,
 }: DeliveryReviewProps) {
   const [formalResult, setFormalResult] = useState<DeliveryFormalResult | null | undefined>(
     formalResultProp !== undefined ? formalResultProp : service.formalResult ? undefined : null,
   );
-  const [selection, setSelection] = useState(() => fromUrl(images, !!sampleResult));
+  const [selection, setSelection] = useState(() => fromUrl(images, !!sampleResult, preferredMode));
   const [view, setView] = useState<DeliveryImageView>();
   const [summary, setSummary] = useState<DeliveryReviewSummary>();
   const [summaryItems, setSummaryItems] = useState<DeliveryReviewSummary["items"]>([]);
@@ -66,6 +82,7 @@ export function DeliveryReview({
   const confirmRetry = useRef<{ signature: string; input: DeliveryReviewInput } | undefined>(undefined);
   const editRetry = useRef<{ signature: string; input: import("./deliveryService").DeliveryObjectEdit } | undefined>(undefined);
   const createRetry = useRef<{ signature: string; input: import("./deliveryService").DeliveryObjectCreate } | undefined>(undefined);
+  const appliedFocus = useRef<string | undefined>(undefined);
 
   const image = images.find((item) => item.id === selection.image);
   const sampleImage = sampleResult?.images.find((item) => item.image_id === selection.image);
@@ -146,14 +163,35 @@ export function DeliveryReview({
   useEffect(() => {
     const restore = () => {
       if (pending.current) return;
-      const next = fromUrl(images, !!sampleResult);
+      const next = fromUrl(images, !!sampleResult, preferredMode);
       if (next.image !== selection.image || next.mode !== selection.mode) {
         setDraft(undefined); setSelected(undefined); setSelection(next);
       }
     };
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
-  }, [images, sampleResult, selection]);
+  }, [images, preferredMode, sampleResult, selection]);
+
+  useEffect(()=>{
+    if(!focus||dirty||busy||pending.current)return;
+    const key=`${focus.mode}:${focus.image_id}:${focus.candidate_id||"image"}:${focus.result_revision}`;
+    if(appliedFocus.current===key)return;
+    if(!images.some(item=>item.id===focus.image_id))return;
+    if(selection.mode!==focus.mode||selection.image!==focus.image_id){
+      setDraft(undefined);setSelected(undefined);setSelection({mode:focus.mode,image:focus.image_id});
+      const url=new URL(location.href);url.searchParams.set("delivery_view",focus.mode);url.searchParams.set("delivery_image",focus.image_id);history.replaceState(history.state,"",url);
+      if(!focus.candidate_id)appliedFocus.current=key;
+      return;
+    }
+    if(focus.candidate_id){
+      const available=focus.mode==="sample"
+        ? sampleImage?.annotations.some(item=>item.id===focus.candidate_id)
+        : view?.snapshot.image_id===focus.image_id&&view.snapshot.annotations.some(item=>item.id===focus.candidate_id);
+      if(!available)return;
+      setSelected(focus.candidate_id);
+    }
+    appliedFocus.current=key;
+  },[busy,dirty,focus,images,sampleImage,selection,view]);
 
   useEffect(() => {
     setView(undefined); setError("");
@@ -343,6 +381,7 @@ export function DeliveryReview({
         <button type="button" role="tab" aria-selected={selection.mode === "formal"} onClick={() => choose({ ...selection, mode: "formal" })}>正式 Batch</button>
       </div>
     </div>
+    {focus&&<p className="delivery-source-receipt" role="status">需要判断：{focus.reason}</p>}
     <div className="delivery-review-controls">
       <label>图片<select aria-label="图片" value={selection.image} disabled={busy} onChange={(event) => choose({ ...selection, image: event.target.value })}>
         {images.map((item, index) => <option key={item.id} value={item.id}>{index + 1}/{images.length} · {item.name}</option>)}
@@ -373,14 +412,14 @@ export function DeliveryReview({
       onChange={(next) => {
         if (selection.mode === "formal" && !busy && !locked) { setSelected(next.id); setDraft(next); }
       }}
-      readOnly={selection.mode === "sample" || busy || locked || !formalResult || !formalImage || !service.editObject}
+      readOnly={selection.mode === "sample" || busy || locked || !formalResult || !formalImage || !service.editObject || permissions?.editObject===false}
       compactList
     />}
     {image&&Object.keys(annotationOrigins[image.id]||{}).length>0&&<div className="delivery-source-receipt" aria-label="当前图片候选来源">
       {Object.entries(annotationOrigins[image.id]).map(([annotationId,origin])=><span key={annotationId}>{annotationId===selected?"当前对象 · ":""}{demoOriginLabel(origin)}</span>)}
     </div>}
     {selection.mode === "sample" && sampleResult && <div className="actions">
-      <button type="button" disabled={!selected} onClick={() => {
+      <button type="button" disabled={!selected || permissions?.sampleFeedback===false} onClick={() => {
         const annotation = sampleImage?.annotations.find((item) => item.id === selected);
         const next = annotation && emitSample(annotation);
         if (next) onSampleIssue?.(next);
@@ -388,7 +427,7 @@ export function DeliveryReview({
       <p>仅创建带 Draft、Sample Test、Artifact 和 feedback revision 的反馈引用，不写正式标注。</p>
     </div>}
     {selection.mode === "formal" && view && formalResult && formalImage && <>
-      {service.createObject && <button type="button" disabled={busy || locked || dirty || !formalRun || !readable || !labels.length} onClick={addObject}>新增漏标目标框</button>}
+      {service.createObject && <button type="button" disabled={busy || locked || dirty || !formalRun || !readable || !labels.length || permissions?.createObject===false} onClick={addObject}>新增漏标目标框</button>}
       {creating && <div className="actions">
         <button type="button" disabled={busy} onClick={() => { setDraft(undefined); setSelected(undefined); }}>取消新增框</button>
         <button type="button" disabled={busy || locked || !readable || !reason.trim()} onClick={() => void saveNewObject()}>保存新增目标框</button>
@@ -400,18 +439,18 @@ export function DeliveryReview({
         </select></label>
         {!creating && <div className="actions">
           <button type="button" disabled={busy || !dirty} onClick={() => setDraft(undefined)}>撤销对象修改</button>
-          <button type="button" disabled={busy || locked || !dirty} onClick={() => void saveObject("needs_review")}>保存对象修改</button>
-          <button type="button" disabled={busy || locked || !readable || (object.review_status === "human_accepted" && !dirty)} onClick={() => void saveObject("human_accepted")}>接受这个对象</button>
-          <button type="button" disabled={busy || locked || !readable} onClick={() => void saveObject("rejected")}>拒绝这个对象</button>
+          <button type="button" disabled={busy || locked || !dirty || permissions?.editObject===false} onClick={() => void saveObject("needs_review")}>保存对象修改</button>
+          <button type="button" disabled={busy || locked || !readable || permissions?.acceptObject===false || (object.review_status === "human_accepted" && !dirty)} onClick={() => void saveObject("human_accepted")}>接受这个对象</button>
+          <button type="button" disabled={busy || locked || !readable || permissions?.rejectObject===false} onClick={() => void saveObject("rejected")}>拒绝这个对象</button>
         </div>}
       </div>}
       {!readable && <p role="status">原图尚未成功加载，不能确认整图完整或无目标；仍可填写原因明确排除。</p>}
       <p>{view.confirmation_current ? `此快照已有整图决定：${view.review?.input.decision}` : "当前图片尚未整图确认"} · 已接受对象 {view.accepted_objects} · 未解决对象 {view.unresolved_objects}</p>
       <label>检查备注／排除原因<textarea value={reason} disabled={busy} onChange={(event) => setReason(event.target.value)} placeholder="排除图片必须说明原因" /></label>
       <div className="actions">
-        <button type="button" disabled={busy || locked || dirty || !positive || !readable} onClick={() => void confirm("positive_complete")}>确认整张图标注完整并继续</button>
-        <button type="button" disabled={busy || locked || dirty || !negative || !readable} onClick={() => void confirm("negative_confirmed")}>确认整张图没有目标并继续</button>
-        <button type="button" disabled={busy || locked || dirty || !reason.trim()} onClick={() => void confirm("excluded")}>明确排除此图并继续</button>
+        <button type="button" disabled={busy || locked || dirty || !positive || !readable || permissions?.confirmPositive===false} onClick={() => void confirm("positive_complete")}>确认整张图标注完整并继续</button>
+        <button type="button" disabled={busy || locked || dirty || !negative || !readable || permissions?.confirmNegative===false} onClick={() => void confirm("negative_confirmed")}>确认整张图没有目标并继续</button>
+        <button type="button" disabled={busy || locked || dirty || !reason.trim() || permissions?.excludeImage===false} onClick={() => void confirm("excluded")}>明确排除此图并继续</button>
         <button type="button" disabled={busy || dirty} onClick={() => setReload((value) => value + 1)}>重新读取服务器状态</button>
       </div>
     </>}
