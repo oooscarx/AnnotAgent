@@ -8,6 +8,13 @@ export type DeliveryFormalResult = {
   project_id:string;task_id:string;processing_operation_id:string;batch_id:string;workflow_version:string;
   status:string;images:{image_id:string;child_run_id:string|null}[];
 };
+export type FormalReviewWorkItem = {
+  project_id:string;task_id:string;processing_operation_id:string;batch_id:string;workflow_version:string;
+  image_id:string;child_run_id:string|null;
+  state:"positive_complete"|"negative_confirmed"|"excluded"|"unresolved"|"failed";
+  snapshot_sha256:string;intent_revision:number;intent_sha256:string;review_revision:number|null;
+  annotations:Annotation[];error:string|null;
+};
 export type VisualSelection = {
   project_id:string;task_id:string;image_id:string;annotation_id:string|null;label:string|null;
   annotation_kind:Annotation["value"]["kind"]|null;
@@ -31,4 +38,15 @@ export function formalVisualSelection(result:DeliveryFormalResult,imageId:string
   return {project_id:result.project_id,task_id:result.task_id,image_id:imageId,annotation_id:annotation?.id||null,label:annotation?.label||null,annotation_kind:annotation?.value.kind||null,
     source:{kind:"formal",processing_operation_id:result.processing_operation_id,batch_id:result.batch_id,child_run_id:image.child_run_id,workflow_version:result.workflow_version},
     revision:{snapshot_sha256:snapshot.sha256,intent_revision:snapshot.intent_revision,intent_sha256:snapshot.intent_sha256,review_revision:snapshot.review_revision,feedback_revision:null},save_target:annotation?"formal_object":"formal_image_review"};
+}
+export function formalWorkItemVisualSelection(item:FormalReviewWorkItem,annotation?:Annotation):VisualSelection {
+  if(annotation&&!item.annotations.some(saved=>saved.id===annotation.id))throw new Error("正式对象不属于当前 Review Work Item");
+  return formalVisualSelection({
+    project_id:item.project_id,task_id:item.task_id,processing_operation_id:item.processing_operation_id,
+    batch_id:item.batch_id,workflow_version:item.workflow_version,status:item.state,
+    images:[{image_id:item.image_id,child_run_id:item.child_run_id}],
+  },item.image_id,{
+    sha256:item.snapshot_sha256,intent_revision:item.intent_revision,
+    intent_sha256:item.intent_sha256,review_revision:item.review_revision,
+  },annotation);
 }
