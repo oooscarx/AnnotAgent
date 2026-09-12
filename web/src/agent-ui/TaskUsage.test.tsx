@@ -75,8 +75,8 @@ describe("TaskUsage", () => {
   });
 
   it("renders immutable per-attempt model, provider, tokens, source, price revision and decimal cost", () => {
-    const html = renderToStaticMarkup(<TaskUsageView value={page()} />);
-    for (const text of ["Qwen Vision", "Remote Provider", "1,500", "500", "actual", "Model Profile r7", "USD 0.007", "价格 revision r7", "effective_maximum_output_tokens"])
+    const html = renderToStaticMarkup(<TaskUsageView value={page({ attempts: { items: [attempt({ image_count: 1 })], next_cursor: null } })} />);
+    for (const text of ["Qwen Vision", "Remote Provider", "1,500", "500", "图片</dt><dd>1", "actual", "Model Profile r7", "USD 0.007", "价格 revision r7", "effective_maximum_output_tokens"])
       expect(html).toContain(text);
   });
 
