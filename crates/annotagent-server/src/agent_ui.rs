@@ -67,11 +67,38 @@ pub(super) async fn snapshot(
         .map_err(ApiError::conversation)
 }
 
+pub(super) async fn advance(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+    Json(input): Json<annotagent_application::AdvanceTaskInput>,
+) -> ApiResult<Json<annotagent_application::AdvanceTaskReceipt>> {
+    match state
+        .application
+        .advance_mainline_task(&project, conversation, task, &input)
+    {
+        Ok(receipt) => Ok(Json(receipt)),
+        Err(error)
+            if error.to_string().contains("Task changed; reload")
+                || error.to_string().contains("older delivery scope") =>
+        {
+            Err(ApiError {
+                status: StatusCode::CONFLICT,
+                body: json!({
+                    "status":409,"code":"task_revision_conflict","error":error.to_string(),
+                    "suggested_action":"reload_task_workspace"
+                }),
+            })
+        }
+        Err(error) => Err(ApiError::conversation(error)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::tests::{request, response_json, test_state};
     use annotagent_provider::InMemorySecretStore;
+    use axum::http::Method;
     #[test]
     fn contract_examples_decode_with_current_http_dtos() {
         let examples: Value = serde_json::from_str(include_str!(
@@ -112,6 +139,128 @@ mod tests {
         .unwrap();
         assert!(
             schema["$defs"]["SendReceipt"]["properties"]["resolved_agent_model_id"].is_object()
+        );
+    }
+
+    #[tokio::test]
+    async fn task_read_model_advances_only_current_authorized_local_schema_and_replays() {
+        let temp = tempfile::tempdir().unwrap();
+        let app = Arc::new(LocalApplication::new(temp.path()).unwrap());
+        app.create_project(
+            "TEST-mainline-task",
+            "version: 1\nproject:\n  name: TEST mainline task\ndataset:\n  root: images\nruntime: {}\ntasks:\n  - id: objects\n    kind: bounding_box\n    labels: [target]\n    required: true\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n",
+        )
+        .unwrap();
+        let incoming = temp.path().join("TEST-mainline-input");
+        std::fs::create_dir(&incoming).unwrap();
+        image::RgbImage::from_pixel(32, 24, image::Rgb([3, 4, 5]))
+            .save(incoming.join("one.png"))
+            .unwrap();
+        app.import_images("TEST-mainline-task", &incoming).unwrap();
+        let image = app
+            .list_project_image_summaries("TEST-mainline-task")
+            .unwrap()[0]
+            .image_id;
+        let conversation = app
+            .create_project_conversation("TEST-mainline-task")
+            .unwrap();
+        let sent = app
+            .send_project_conversation_message(
+                "TEST-mainline-task",
+                conversation,
+                &serde_json::from_value(json!({
+                    "message":{"id":uuid::Uuid::new_v4(),"text":"TEST package","image":null},
+                    "task_id":null,
+                    "schema_revision":app.project_goal("TEST-mainline-task").unwrap()["revision"],
+                    "mode":"plan"
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        app.save_task_delivery_intent(
+            "TEST-mainline-task",
+            conversation,
+            sent.task_id,
+            serde_json::from_value(json!({
+                "command_id":uuid::Uuid::new_v4(),"expected_revision":0,"image_ids":[image],
+                "label_spec":[{"stable_id":"target","display_name":"Target","aliases":[],"include":"","exclude":""}],
+                "training_target":{"annotation_kind":"bounding_box","framework":"ultralytics","export_profile":"ultralytics_yolo_detection","profile_revision":1},
+                "split_policy":{"train_percent":80,"seed":5,"preserve_existing":true,"keep_known_groups_together":true}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let service = router(
+            test_state(app.clone(), Arc::new(InMemorySecretStore::default())).await,
+            None,
+        );
+        let root = format!(
+            "/api/projects/TEST-mainline-task/conversations/{conversation}/tasks/{}",
+            sent.task_id
+        );
+        let before =
+            response_json(request(&service, Method::GET, &format!("{root}/workspace"), None).await)
+                .await;
+        assert_eq!(
+            before["mainline"]["available_actions"][0]["id"],
+            "prepare_delivery_schema"
+        );
+        assert_eq!(
+            before["mainline"]["available_actions"][0]["state"],
+            "authorized"
+        );
+        assert_eq!(before["mainline"]["completion"]["task_completed"], false);
+        let command = uuid::Uuid::new_v4();
+        let body = json!({
+            "command_id":command,
+            "expected_read_model_revision":before["read_model_revision"],
+            "action_id":"prepare_delivery_schema"
+        });
+        let first = response_json(
+            request(
+                &service,
+                Method::POST,
+                &format!("{root}/advance"),
+                Some(body.clone()),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(first["replayed"], false);
+        assert_eq!(first["result"]["source_request_id"], command.to_string());
+        assert_ne!(
+            first["workspace"]["read_model_revision"],
+            before["read_model_revision"]
+        );
+        let replay = response_json(
+            request(
+                &service,
+                Method::POST,
+                &format!("{root}/advance"),
+                Some(body),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(replay["replayed"], true);
+        assert_eq!(replay["result"]["id"], first["result"]["id"]);
+        let stale = request(
+            &service,
+            Method::POST,
+            &format!("{root}/advance"),
+            Some(json!({
+                "command_id":uuid::Uuid::new_v4(),
+                "expected_read_model_revision":before["read_model_revision"],
+                "action_id":"prepare_delivery_schema"
+            })),
+        )
+        .await;
+        assert_eq!(stale.status(), axum::http::StatusCode::CONFLICT);
+        assert_eq!(
+            app.human_conversation_schema_drafts("TEST-mainline-task", conversation, sent.task_id,)
+                .unwrap()
+                .len(),
+            1
         );
     }
     #[tokio::test]

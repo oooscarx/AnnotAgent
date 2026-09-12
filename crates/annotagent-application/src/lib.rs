@@ -1,8 +1,10 @@
 //! Shared application service used by CLI/TUI and HTTP frontends.
 
 mod agent_ui;
+mod mainline_task;
 mod task_delivery;
 mod training_delivery;
+pub use mainline_task::{AdvanceTaskInput, AdvanceTaskReceipt};
 pub use task_delivery::{
     PrepareDeliverySchema, SaveTaskDeliveryIntent, TaskDeliveryImageView, TaskDeliveryView,
     require_delivery_schema,

@@ -112,7 +112,7 @@ impl LocalApplication {
             .iter()
             .any(|action| action["available"] == true);
 
-        Ok(json!({
+        let mut snapshot = json!({
             "operations":operations,"calls":calls,
             "sample_operations":self.store.conversation_sample_operations(project,conversation,task)?,
             "project_id":project,"project_owner_id":self.conversation_project_identity(project)?,"conversation_id":conversation,"task":task_record,
@@ -131,6 +131,11 @@ impl LocalApplication {
             },
             "thread_url":format!("/api/projects/{project}/conversations/{conversation}/tasks/{task}/thread"),
             "consistency":"individually_committed_records"
-        }))
+        });
+        let mainline = self.mainline_task_read_model(project, conversation, task)?;
+        snapshot["read_model_revision"] = mainline["read_model_revision"].clone();
+        snapshot["delivery"] = mainline["delivery"].clone();
+        snapshot["mainline"] = mainline;
+        Ok(snapshot)
     }
 }

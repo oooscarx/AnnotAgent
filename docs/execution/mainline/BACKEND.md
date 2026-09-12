@@ -12,6 +12,23 @@ Schema preparation, formal image/object review, frozen training package engine,
 Conversation/Plan/Builder/Journey/Sample/Processing, stop/queue/resume, Model Profile
 CAS and history scope are being reused.
 
+## B1
+
+- `GET .../tasks/{task}/workspace` now adds a deterministic
+  `read_model_revision`, the existing delivery view, and a `mainline` projection.
+  It reconciles the matching human Schema, current whole-image review counts,
+  package consents/jobs and task completion without dispatching work.
+- `POST .../tasks/{task}/advance` accepts an exact command, read-model revision and
+  action. The only B1 `authorized` action is deterministic
+  `prepare_delivery_schema`; Builder, Journey, image processing and packaging keep
+  their separate existing preview/consent boundaries.
+- Lost-response retry is backed by the existing persisted human-Schema
+  `source_request_id`. A changed command scope or stale Task revision is rejected;
+  a model call, completed Builder or completed processing operation does not mark the
+  dataset Task complete. Only a ready package does.
+- Focused HTTP test covers passive projection, local advance, exact replay, stale
+  revision conflict and one-schema persistence. No Provider is created or called.
+
 ## B0 findings
 
 - The current mainline delivery code is present only on the `d3220cb` line; the

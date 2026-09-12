@@ -110,6 +110,34 @@ fn job(
 }
 
 impl SqliteStore {
+    /// Bounded owned history for Task reconciliation. Reading this list never
+    /// claims or resumes an interrupted package worker.
+    pub fn delivery_packages(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        task: Uuid,
+    ) -> Result<Vec<DeliveryPackageJob>, StorageError> {
+        self.with_connection(|db| {
+            let mut statement = db.prepare(
+                "SELECT e.id FROM conversation_exports e JOIN delivery_export_snapshots p ON p.export_id=e.id WHERE e.project_id=?1 AND e.conversation_id=?2 AND e.task_id=?3 ORDER BY e.created_at DESC,e.id DESC LIMIT 20",
+            )?;
+            let ids = statement
+                .query_map(
+                    params![project, conversation.to_string(), task.to_string()],
+                    |row| row.get::<_, String>(0),
+                )?
+                .collect::<Result<Vec<_>, _>>()?;
+            ids.into_iter()
+                .map(|id| {
+                    let id = Uuid::parse_str(&id)
+                        .map_err(|_| invalid("invalid delivery package identity"))?;
+                    job(db, project, conversation, task, id)
+                })
+                .collect()
+        })
+    }
+
     /// Cheap owned polling for writer checkpoints; do not deserialize all frozen annotations per chunk.
     pub fn delivery_package_phase(
         &self,

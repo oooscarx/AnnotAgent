@@ -26,7 +26,7 @@ starts inference, publishes, admits a package, or changes review state.
 | `GET /api/navigation?cursor=&limit=50` | `{workspace_id,items:[{project_id,project_owner_id,title,conversation_id}],next_cursor}` | Owner-keyset page, limit 1..100. |
 | `GET /api/projects/P/conversations/C/task-navigation?cursor=0&limit=50` | `{items:[{task_id,source_message_id,schema_revision,sequence,state}],next_cursor}` | Message-sequence keyset; state is activity only, not dataset completion. |
 | `GET /api/projects/P/conversations/C/tasks/T/thread?cursor=0&limit=50` | `{items:[ResultMessageProjection],next_cursor}` | Currently only persisted user messages; no fabricated assistant reply. |
-| `GET /api/projects/P/conversations/C/tasks/T/workspace` | existing calls, queue, HumanRequests, Builder/Journey/Sample/processing, budget, stop/resume actions | Individually committed reconciliation snapshot. It currently omits delivery intent, formal review/package and capability readiness. |
+| `GET /api/projects/P/conversations/C/tasks/T/workspace` | existing calls, queue, HumanRequests, Builder/Journey/Sample/processing and B1 `read_model_revision`, `delivery`, `mainline` | Individually committed reconciliation snapshot. B1 reconciles delivery, matching Schema, current review counts and package receipts. Exact formal source and capability readiness remain B3/B4. |
 | `POST /api/projects/P/conversations/C/send` | `ConversationSendInput` → frozen `ConversationSendReceipt` | New task or follow-up. Ordinary follow-up may queue; SampleCandidate reference takes feedback disposition. Send itself grants nothing. |
 | `GET /api/projects/P/conversations/C/send/M` | saved receipt | Lost-response recovery, no dispatch. |
 
@@ -128,33 +128,34 @@ profiles/instances, `ready|unknown|unavailable|disabled`, production eligibility
 setup URL and blocker. Model setup completion causes a recheck only; it never expands
 an old `allowed_models` grant.
 
-## Mainline Task read model additions (planned B1–B3)
+## Mainline Task read model and local advance (B1 implemented; B2–B4 additive)
 
-The existing `GET D/workspace` will be extended rather than creating a parallel Task
-API. Additive top-level fields:
+The existing `GET D/workspace` is extended rather than creating a parallel Task API.
+Implemented additive fields are `read_model_revision`, `delivery`, and `mainline`.
+The `mainline` object currently contains:
 
 - `read_model_revision`: server digest/revision for command CAS.
-- `delivery`: three-slot intake revision/hash, Schema/Draft/Sample, exact selected
-  images, formal processing source and bounded review/package summaries.
-- `steps[]`: `kind`, `state`, `operation_id`, `request_completed`, `task_completed`,
-  `blocking_reason`, and existing object URL.
-- `pending_approvals[]`, `blockers[]`, `available_actions[]` using exact action IDs,
+- `delivery`: three-slot intake revision/hash and the matching human Schema Draft;
+- bounded current whole-image review counts and the latest 20 package consent/job
+  receipts;
+- `blockers[]`, `available_actions[]` using exact action IDs,
   methods/URLs, scope/revision/hash and `requires_confirmation`.
-- `formal_source`: only the approved processing operation for this Task, with
-  image-to-child-Run mappings and frozen content hashes.
-- `package`: consent/readiness/job. Task completion is true only when the package is
+- `package`: consent and job reconciliation. Task completion is true only when a package is
   Ready; a completed model call, Schema, Draft, Sample or Batch is not task completion.
-- `result_messages[]`: persisted assistant content only where an existing structured
-  model response/proposal has user-visible content; system/tool records are labeled
-  with their source object. No private reasoning or synthetic success prose.
 
-Planned command `POST D/advance` will accept
+`formal_source`, paged review items, task capability readiness, step/result-message
+projection and automatic package admission remain B2–B4 and are not present yet.
+
+Implemented command `POST D/advance` accepts
 `{command_id,expected_read_model_revision,action_id}`. The server may execute only the
 exact local/durable action already returned as `authorized` by the read model. Actions
 requiring a new model/image/package scope return an existing preview/approval URL and
-do no work. GET/mount never calls this command. Exact replay is idempotent; a changed
-revision/action conflicts. Restart reconstructs waiting state and never revives
-cancelled/in-doubt calls.
+do no work. B1 exposes only `prepare_delivery_schema` as `authorized`; it creates the
+existing deterministic human Schema Draft and reports `replayed`. GET/mount never
+calls this command. Exact replay uses the existing `source_request_id` receipt and is
+restart-safe; stale revision/scope returns `409 task_revision_conflict`. Other action
+states return the existing preview/confirmation URL and cannot be invoked through
+`advance`.
 
 ## Errors and pagination
 
@@ -168,6 +169,5 @@ cancelled/in-doubt calls.
   history is bounded to 20 but not yet externally paged. B3 will use stable cursor
   pagination before claiming 1000-row history support.
 
-Actual and planned DTO examples are in `EXAMPLES.json`; every planned entry carries
-`contract_status:"planned"` and must not be called against the B0 server.
-
+Actual and planned DTO examples are in `EXAMPLES.json`; planned entries carry
+`contract_status:"planned"` and must not be called until their delivery commit.

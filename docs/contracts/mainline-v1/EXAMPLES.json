@@ -114,29 +114,26 @@
     }
   },
   "task_workspace_additions": {
-    "contract_status": "planned",
+    "contract_status": "implemented_b1",
+    "contract_version": "mainline-task-v1",
     "read_model_revision": "sha256",
-    "steps": [
-      {
-        "kind": "processing",
-        "state": "completed",
-        "operation_id": "60000000-0000-4000-8000-000000000001",
-        "request_completed": true,
-        "task_completed": false,
-        "blocking_reason": "whole_image_review_pending"
-      }
-    ],
+    "review_summary": {
+      "selected_images": 3,
+      "saved_review_receipts": 1,
+      "current_reviews": 1,
+      "pending_reviews": 2
+    },
     "available_actions": [
       {
-        "id": "review_next_image",
+        "id": "review_delivery_images",
         "state": "available",
         "method": "GET",
-        "url": "/api/projects/P/conversations/C/tasks/T/delivery-review-items?limit=1",
+        "url": "/api/projects/P/conversations/C/tasks/T/delivery-intent",
         "requires_confirmation": false,
         "reason": null
       },
       {
-        "id": "authorize_package_after_review",
+        "id": "authorize_training_package",
         "state": "requires_confirmation",
         "method": "POST",
         "url": "/api/projects/P/conversations/C/tasks/T/delivery-package-consents",
@@ -152,7 +149,7 @@
     }
   },
   "advance": {
-    "contract_status": "planned",
+    "contract_status": "implemented_b1",
     "request": {
       "command_id": "a0000000-0000-4000-8000-000000000001",
       "expected_read_model_revision": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
@@ -160,13 +157,10 @@
     },
     "response_shape": {
       "command_id": "a0000000-0000-4000-8000-000000000001",
-      "status": "completed",
-      "dispatched": false,
-      "result_ref": {
-        "kind": "schema_draft",
-        "id": "schema-id"
-      },
-      "workspace": "MainlineTaskView"
+      "action_id": "prepare_delivery_schema",
+      "replayed": false,
+      "result": "ConversationSchemaDraft",
+      "workspace": "mainline projection"
     }
   },
   "model_profile_stale_writer": {
