@@ -1,25 +1,13 @@
-# Product screenshots
+# 产品文档与素材
 
-Captured on 2026-09-07 from the running AnnotAgent GUI using the existing local workspace.
-These are actual UI captures, not generated mockups. Captures target the page content or
-model card so the README does not repeat browser chrome and navigation around every image.
+当前 README 专用素材位于 [readme/](readme/)。
 
-| Image | Source | What it demonstrates |
-| --- | --- | --- |
-| `bhuman-data.png` | `/projects/robocup-ball/build/data` | Four imported real B-Human football images |
-| `ball-labels.png` | `/projects/robocup-ball/build/labels` | Existing `ball` label and bounding-box output |
-| `efficientsam-ready.png` | `/settings/plugins` | Installed EfficientSAM-Ti ONNX in Ready state, with zero published references |
+- [事实表](readme/CLAIMS.md)
+- [任务与支持范围](readme/GUIDE.md)
+- [截图证据与限制](readme/EVIDENCE.md)
+- [素材来源、SHA 与 hash](readme/ASSET_MANIFEST.json)
+- [验证记录](readme/VALIDATION.md)
 
-Only presentation state was changed (the Runtime disclosure was collapsed). No labels,
-model bindings, project names, results or success states were changed for these captures.
-No paid model request was issued. The source photos remain subject to their dataset rights;
-this directory contains UI screenshots, not a redistributed image dataset.
+旧的 bhuman-data.png、ball-labels.png、efficientsam-ready.png 是 2026-09-07 的历史设置/数据页面截图，保留文件供追溯，不再作为 README 首屏或当前任务流程。旧图只证明当时导入与安装状态，不代表正式运行或数据包交付。
 
-There were no retained formal Runs in this workspace at capture time, and the current Drafts
-were empty. Accordingly, the README does not present a synthetic result or an empty Draft
-as a successful real-world annotation pipeline. These screenshots demonstrate product setup,
-not segmentation accuracy or a completed end-to-end B-Human benchmark.
-
-Keep these editorial assets separate from `docs/execution/screenshots`, which is written by
-automated acceptance tests. When updating, capture genuine state and review for sensitive
-paths, credentials, readable layout and complete component boundaries before committing.
+素材不修改运行时品牌资产；数据集与模型遵循各自许可。README 仅展示真实 UI 或明确标注的概念分工与 TEST 证据，不把测试色块当成实际视觉推理。
