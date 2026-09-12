@@ -15,6 +15,7 @@ mod conversations;
 mod event_replay;
 mod export_jobs;
 mod image_previews;
+mod mainline_capability;
 mod processing_operations;
 mod replay_commands;
 mod sample_operations;

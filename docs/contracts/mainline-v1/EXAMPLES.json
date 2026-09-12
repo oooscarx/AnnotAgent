@@ -224,6 +224,38 @@
       "preview_freezes_model_bindings_destination_and_cost": true
     }
   },
+  "capability_readiness": {
+    "contract_status": "implemented_b4",
+    "request": "GET /api/projects/P/conversations/C/tasks/T/capability-readiness",
+    "response_shape": {
+      "contract_version": "mainline-capability-v1",
+      "project_id": "P",
+      "project_owner_id": "10000000-0000-4000-8000-000000000001",
+      "conversation_id": "20000000-0000-4000-8000-000000000001",
+      "task_id": "30000000-0000-4000-8000-000000000001",
+      "task_schema_revision": "sha256",
+      "draft": {"id":"draft-1","revision":2,"content_hash":"sha256","status":"editing"},
+      "registry_revision": "sha256",
+      "registry_revision_kind": "snapshot_sha256",
+      "candidates": [{
+        "id":"model-profile:40000000-0000-4000-8000-000000000001",
+        "candidate_type":"model_profile","model_profile_id":"40000000-0000-4000-8000-000000000001",
+        "revision":3,"digest":"sha256","roles":["agent","vision_language"],
+        "capabilities":["text_generation","vision_language"],"quality_contracts":[],
+        "readiness":"unknown","production_eligible":false,"test_fixture":false,
+        "blocker":{"code":"not_verified","message":"Configuration exists, but readiness is not proven by a current saved check."},
+        "project_bindings":[],"allowed_by_current_scope":false,
+        "selected_for_next_agent_request":false,
+        "setup":{"kind":"model_profile","api_url":"/api/model-profiles/40000000-0000-4000-8000-000000000001"}
+      }],
+      "agent_model_preference":{"revision":0,"model_profile_id":null},
+      "authorization":{"source":null,"consent_id":null,"expires_at":null,"permission_digest":null,"allowed_models":[],"active":false,"can_resume_without_authorization":false},
+      "budget":"ConversationTaskBudget",
+      "task_cost":{"scope":"conversation_task_model_calls","receipt_count":0,"known":true,"amount":"0","currency":null,"reason":null},
+      "passive":true,"setup_recheck_only":true,"auto_expands_allowed_models":false,
+      "consistency":"server_composed_versioned_snapshot"
+    }
+  },
   "model_profile_stale_writer": {
     "contract_status": "implemented",
     "request": {

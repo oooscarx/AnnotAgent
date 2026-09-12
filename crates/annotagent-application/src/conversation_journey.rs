@@ -256,7 +256,12 @@ impl LocalApplication {
             .revoke_conversation_journey(&owner, conversation, task, id)?)
     }
 
-    fn journey_model_description(&self, selection: &str) -> Result<JourneyModelDescription> {
+    /// Credential-free current Registry/permission identity used by previews and
+    /// readiness projections. It performs no health probe or model invocation.
+    pub fn conversation_journey_model_description(
+        &self,
+        selection: &str,
+    ) -> Result<JourneyModelDescription> {
         if let Some(id) = selection.strip_prefix("model-profile:") {
             let id: ModelProfileId = id.parse()?;
             let model = self.store.get_model_profile(id, None)?;
@@ -357,7 +362,7 @@ impl LocalApplication {
         }
         let mut models = selections
             .iter()
-            .map(|selection| self.journey_model_description(selection))
+            .map(|selection| self.conversation_journey_model_description(selection))
             .collect::<Result<Vec<_>>>()?;
         models.sort_by(|a, b| a.scope.model_id.cmp(&b.scope.model_id));
         if models

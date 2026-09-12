@@ -68,6 +68,20 @@ CAS and history scope are being reused.
   current delivery/Draft/Sample scope. This closes the post-Sample action gap without
   dispatching on GET or treating Sample permission as formal processing permission.
 
+## B4 capability readiness
+
+- `GET .../tasks/{task}/capability-readiness` and the Task workspace now return one
+  task-owned, versioned Registry snapshot across Model Profiles, installed Plugin
+  models and Model Instances. Agent and visual roles, Draft revision/hash, quality
+  contracts, readiness, production eligibility, blockers and setup API are explicit.
+- The current unexpired/unrevoked Journey consent is projected with its exact
+  permission digest and allowed model binding digests. A Registry change updates the
+  snapshot revision but never expands that grant or marks the Task resumable.
+- The read path resolves no credential bytes and performs no network health check,
+  Plugin call, install or inference. Task model-call receipts are counted once by
+  durable call identity; zero calls are known zero and non-comparable priced usage is
+  retained as unknown.
+
 ## B0 findings
 
 - The current mainline delivery code is present only on the `d3220cb` line; the

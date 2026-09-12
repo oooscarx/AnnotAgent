@@ -150,11 +150,24 @@ stale/cancelled consent or incomplete review means no admission. GET never admit
   before pagination; direct old references remain readable and scoped management
   refuses excluded objects.
 
-Planned B2/B4 `workspace` additions will provide task-specific
-`capability_readiness` with `role`, current Registry revision/digest, compatible
-profiles/instances, `ready|unknown|unavailable|disabled`, production eligibility,
-setup URL and blocker. Model setup completion causes a recheck only; it never expands
-an old `allowed_models` grant.
+B4 adds `GET D/capability-readiness` and embeds the same object at
+`workspace.mainline.capability_readiness`. The server-owned response contains
+Project owner/Conversation/Task identity and Schema revision; optional current Draft
+ID/revision/content hash; a `snapshot_sha256` Registry revision; compatible Agent and
+visual Model Profile, Plugin model and Model Instance candidates; current exact
+Journey permission digest/`allowed_models`; existing Task call allowance; and a
+task-cost projection. The Conversation Agent preference and each Profile's
+`selected_for_next_agent_request` flag apply only to a future Send. Candidate
+readiness is exactly
+`ready|unknown|unavailable|disabled`; `production_eligible`, TEST-fixture status,
+quality contracts, setup API and blocker are explicit. A configured or unknown
+profile is never reported Ready from a read. Unknown priced usage remains unknown;
+zero receipts report a known zero without choosing a currency.
+
+The endpoint reads no credential bytes and performs no Provider/Plugin call, health
+probe, install, resume or grant write. Model setup completion changes the next
+Registry digest and causes a recheck only. It never expands an old `allowed_models`
+grant; each candidate says whether its current exact binding digest is in that grant.
 
 ## Mainline Task read model and local advance (B1 implemented; B2–B4 additive)
 
@@ -177,8 +190,9 @@ When delivery intake is missing or partial, actions include both local
 call can propose only missing label/target semantics; it has no image pixels or image
 execution authority and never saves the proposal automatically.
 
-Task capability readiness and step/result-message projection remain B4. Formal
-source, paged review items and package admission are implemented in B2/B3.
+Step/result-message projection remains bounded by existing real thread and operation
+receipts. Formal source, capability readiness, paged review items and package
+admission are implemented.
 
 Implemented command `POST D/advance` accepts
 `{command_id,expected_read_model_revision,action_id}`. The server may execute only the

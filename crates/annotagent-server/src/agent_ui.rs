@@ -60,11 +60,13 @@ pub(super) async fn snapshot(
     State(state): State<ServerState>,
     AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
 ) -> ApiResult<Json<Value>> {
-    state
+    let mut value = state
         .application
         .agent_ui_snapshot(&project, conversation, task)
-        .map(Json)
-        .map_err(ApiError::conversation)
+        .map_err(ApiError::conversation)?;
+    value["mainline"]["capability_readiness"] =
+        super::mainline_capability::snapshot(&state, &project, conversation, task)?;
+    Ok(Json(value))
 }
 
 pub(super) async fn advance(
