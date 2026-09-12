@@ -30,6 +30,13 @@
 .delivery-review-summary-items button { flex: none; }
 .delivery-review label { display: grid; gap: 8px; min-width: 0; }
 .delivery-review .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.delivery-review .canvas-shell { position: relative; min-width: 0; }
+.delivery-review .canvas-tools, .delivery-review .canvas-keyboard-tools { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding-block: 8px; }
+.delivery-review .canvas-zoom-controls { display: inline-flex; gap: 8px; align-items: center; }
+.delivery-review .canvas-dimension-probe { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.delivery-review .annotation-canvas { display: block; width: 100%; max-width: 100%; max-height: min(65vh,720px); touch-action: none; }
+.delivery-review .canvas-annotation-list { list-style: none; padding: 0; }
+.delivery-review .canvas-hint { color: var(--aa-text-muted); }
 .delivery-object-editor { display: grid; gap: 10px; }
 .delivery-package, .delivery-package-receipt { display: grid; gap: 12px; min-width: 0; padding-block: 12px; }
 .delivery-package h3 { margin: 0; }

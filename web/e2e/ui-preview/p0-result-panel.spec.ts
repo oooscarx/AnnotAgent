@@ -29,6 +29,21 @@ test("three terminal Sample images appear and the server focus is applied only o
   await expect(page.getByRole("heading",{name:"检查样例结果 · 3 张"})).toBeVisible();
   await expect(page.getByText("样例反馈",{exact:true})).toBeVisible();
   await expect(page.getByRole("tab",{name:"正式 Batch"})).toHaveCount(0);
+  const probe=page.locator(".delivery-review .canvas-dimension-probe");
+  await expect(probe).toHaveCSS("position","absolute");
+  const probeBox=await probe.boundingBox();
+  expect(probeBox?.width).toBeLessThanOrEqual(1.5);
+  expect(probeBox?.height).toBeLessThanOrEqual(1.5);
+  const shellBox=await page.locator(".delivery-review .canvas-shell").boundingBox();
+  const canvasBox=await page.locator(".delivery-review .annotation-canvas").boundingBox();
+  expect(canvasBox?.width).toBeGreaterThan(100);
+  expect(canvasBox!.width).toBeLessThanOrEqual(shellBox!.width+1);
+  await page.getByRole("button",{name:"Zoom in"}).click();
+  await expect(page.getByText("110%",{exact:true})).toBeVisible();
+  await page.evaluate(()=>(window as unknown as {p0ResultTest:{render:()=>void}}).p0ResultTest.render());
+  await expect(page.getByText("110%",{exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"Fit image"}).click();
+  await expect(page.getByText("100%",{exact:true})).toBeVisible();
   await page.getByRole("button",{name:/Annotation list/}).click();
   await expect(page.getByRole("button",{name:/瓶子/})).toHaveAttribute("aria-pressed","true");
   await page.getByRole("button",{name:/杯子/}).first().click();
@@ -39,6 +54,29 @@ test("three terminal Sample images appear and the server focus is applied only o
   await expect(page.getByText("这张图片没有当前 Sample Test 结果。")).toHaveCount(0);
   await expect(page.getByRole("button",{name:/Annotation list · 0/})).toBeVisible();
   await expect(page.getByRole("button",{name:"这个样例框有问题",exact:true})).toBeDisabled();
+});
+
+test("the fitted result canvas stays within mobile and 200%-equivalent viewports",async({page})=>{
+  await page.setViewportSize({width:720,height:450});
+  await page.goto("/ui-preview?task=new");
+  await page.evaluate(async([path,imageUrl])=>{
+    const {React,createRoot,P0ResultPanel}=await import(path);
+    const host=document.createElement("main");document.body.replaceChildren(host);
+    const annotation={id:"candidate",image_id:"image",task_id:"objects",label:"cup",value:{kind:"bounding_box",rect:[0.1,0.1,0.2,0.2]},attributes:{},source:"model",review_status:"needs_review",provenance:{},created_at:"TEST"};
+    const view={kind:"sample_feedback",images:[{id:"image",name:"one",src:imageUrl}],labels:[{stable_id:"cup",display_name:"杯子"}],sample_result:{project_id:"project",conversation_id:"conversation",task_id:"task",project_schema_revision:"schema",draft_id:"draft",draft_revision:1,sample_test_id:"sample",images:[{image_id:"image",image_sha256:"pixels",result_revision:"result",candidates:[{candidate_id:"candidate",selection:null}],annotations:[annotation]}]},focus:null,actions:[]};
+    createRoot(host).render(React.createElement(P0ResultPanel,{service:{},projectId:"project",taskId:"task",view}));
+  },[harness,pixel]);
+  const assertContained=async()=>{
+    const canvas=await page.locator(".delivery-review .annotation-canvas").boundingBox();
+    const viewport=page.viewportSize()!;
+    expect(canvas).not.toBeNull();
+    expect(canvas!.x).toBeGreaterThanOrEqual(0);
+    expect(canvas!.x+canvas!.width).toBeLessThanOrEqual(viewport.width+1);
+  };
+  await assertContained();
+  await page.setViewportSize({width:390,height:844});
+  await assertContained();
+  await expect(page.getByRole("button",{name:"Fit image"})).toBeVisible();
 });
 
 test("legacy coarse outcomes never enter the terminal Sample review layer",async({page})=>{

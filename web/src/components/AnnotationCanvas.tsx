@@ -74,6 +74,10 @@ export function AnnotationCanvas({
 
   useEffect(() => {
     setCanvasSize([DEFAULT_WIDTH, DEFAULT_HEIGHT]);
+    setMeasuredImageUrl(undefined);
+    setZoom(1);
+    setPan([0, 0]);
+    setDrag(undefined);
   }, [imageUrl]);
 
   const [width, height] = canvasSize;
