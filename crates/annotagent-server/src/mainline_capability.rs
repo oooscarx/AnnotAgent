@@ -137,6 +137,60 @@ fn plugin_state(availability: ModelAvailability) -> (&'static str, Value) {
     }
 }
 
+pub(super) fn capability_result_diagnostics(readiness: &Value) -> Vec<Value> {
+    let candidates = readiness["candidates"]
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
+    let capability_url = format!(
+        "/api/projects/{}/conversations/{}/tasks/{}/capability-readiness",
+        readiness["project_id"].as_str().unwrap_or_default(),
+        readiness["conversation_id"].as_str().unwrap_or_default(),
+        readiness["task_id"].as_str().unwrap_or_default()
+    );
+    readiness["setup_requests"]
+        .as_array()
+        .map_or(&[][..], Vec::as_slice)
+        .iter()
+        .filter(|request| request["status"] == "required")
+        .map(|request| {
+            let required = request["required_capabilities"]
+                .as_array()
+                .map_or(&[][..], Vec::as_slice);
+            let matching = candidates
+                .iter()
+                .filter(|candidate| {
+                    candidate["capabilities"].as_array().is_some_and(|capabilities| {
+                        required.iter().any(|required| capabilities.contains(required))
+                    })
+                })
+                .collect::<Vec<_>>();
+            let missing_weights = matching.iter().find(|candidate| {
+                candidate["blocker"]["code"] == "missing_weights"
+            });
+            let (code, safe_action, url) = if let Some(candidate) = missing_weights {
+                (
+                    "model_weights_missing",
+                    "open_model_setup",
+                    candidate["setup"]["api_url"].clone(),
+                )
+            } else {
+                (
+                    "model_capability_unavailable",
+                    "inspect_capability_setup",
+                    json!(capability_url),
+                )
+            };
+            json!({
+                "code":code,"category":"capability","state":"blocked",
+                "source":{"kind":"capability_setup_request","id":request["id"],"role":request["role"]},
+                "required_capabilities":required,"automatic_retry":false,
+                "preserves_existing_results":true,
+                "safe_action":{"id":safe_action,"method":"GET","url":url}
+            })
+        })
+        .collect()
+}
+
 fn current_draft(
     state: &ServerState,
     project: &str,
@@ -665,6 +719,38 @@ mod tests {
     use crate::tests::{request, response_json, test_state};
     use annotagent_provider::InMemorySecretStore;
 
+    #[test]
+    fn capability_diagnostics_separate_missing_weights_from_missing_capability() {
+        let readiness = json!({
+            "project_id":"TEST-project","conversation_id":"10000000-0000-4000-8000-000000000001",
+            "task_id":"20000000-0000-4000-8000-000000000001",
+            "setup_requests":[
+                {"id":"weights","role":"visual_inference","status":"required",
+                 "required_capabilities":["object_detection"],"return_path":"/models"},
+                {"id":"planner","role":"task_planning","status":"required",
+                 "required_capabilities":["text_generation"],"return_path":"/models"}
+            ],
+            "candidates":[
+                {"capabilities":["object_detection"],"blocker":{"code":"missing_weights"},
+                 "setup":{"api_url":"/api/model-instances/TEST"}}
+            ]
+        });
+        let diagnostics = capability_result_diagnostics(&readiness);
+        assert_eq!(diagnostics.len(), 2);
+        assert_eq!(diagnostics[0]["code"], "model_weights_missing");
+        assert_eq!(
+            diagnostics[0]["safe_action"]["url"],
+            "/api/model-instances/TEST"
+        );
+        assert_eq!(diagnostics[1]["code"], "model_capability_unavailable");
+        assert_eq!(diagnostics[1]["safe_action"]["method"], "GET");
+        assert_eq!(
+            diagnostics[1]["safe_action"]["id"],
+            "inspect_capability_setup"
+        );
+        assert_eq!(diagnostics[1]["automatic_retry"], false);
+    }
+
     #[tokio::test]
     async fn task_capability_snapshot_is_passive_owned_and_changes_with_registry_revision() {
         let temp = tempfile::tempdir().unwrap();
@@ -769,6 +855,26 @@ mod tests {
             json!(["object_detection"])
         );
         assert_eq!(visual_setup["status"], "required");
+        let workspace_before_binding = response_json(
+            request(
+                &service,
+                axum::http::Method::GET,
+                &format!(
+                    "/api/projects/TEST-capability/conversations/{conversation}/tasks/{}/workspace",
+                    sent.task_id
+                ),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            workspace_before_binding["mainline"]["result_diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|diagnostic| diagnostic["code"] == "model_capability_unavailable")
+        );
         let detector = app
             .store()
             .list_model_profiles(Some(provider.id), false)

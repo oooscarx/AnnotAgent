@@ -537,3 +537,46 @@ new explicitly authorized Builder/Journey. Fresh Builders can materialize the
 capability-compatible VLM route. Once the original Journey execution intent is
 queued, its worker observes Builder completion and reserves the original
 `sample_operation_id`; no second human execution is required.
+
+### P0 A6 result diagnostics
+
+`GET D/workspace` now includes `mainline.result_diagnostics[]`. This is a passive,
+additive projection over persisted call receipts, Sample reports and the embedded
+Capability readiness snapshot. It never retries, installs, accepts an annotation or
+converts an empty image into a negative example.
+
+Every diagnostic has a stable `code`, `category`, `state`, exact `source`,
+`automatic_retry:false`, `preserves_existing_results:true`, and a `safe_action`
+with its actual method and route. Current codes are:
+
+| code | persisted evidence | safe action |
+|---|---|---|
+| `model_weights_missing` | matching Registry candidate has `blocker.code=missing_weights` | inspect that model instance/profile setup route |
+| `model_capability_unavailable` | a required setup request has no Ready compatible binding | inspect the exact Task Capability readiness route before configuring a binding |
+| `provider_request_not_sent` | failed call has `failure.stage=prepare_request` | fix configuration, then obtain a new authorization; `provider_received:false` |
+| `provider_outcome_unknown` | call status is `in_doubt` | inspect the call receipt and resolve explicitly; receipt is never auto-retried |
+| `model_response_invalid_structure` | failed call category is `invalid_structured_output` | inspect the completed response receipt before separately authorizing another attempt |
+| `legal_empty_detection` | persisted Sample image is empty, not failed, has no terminal candidate and no Provider/infrastructure/budget failure | inspect the saved Sample; `human_negative_recorded:false` |
+| `candidate_projection_failed` | persisted Sample image includes `invalid_artifact` | inspect the saved artifact/report; other saved candidates/results remain unchanged |
+
+Example:
+
+```json
+{
+  "code":"provider_outcome_unknown",
+  "category":"remote_outcome",
+  "state":"blocked",
+  "source":{"kind":"model_call","id":"CALL_UUID"},
+  "stage":"settled",
+  "failure":{"stage":"provider_request","category":"interrupted","http_status":null},
+  "provider_received":null,
+  "automatic_retry":false,
+  "preserves_existing_results":true,
+  "safe_action":{"id":"inspect_receipt_and_resolve_unknown","method":"GET","url":"D/calls"}
+}
+```
+
+Capability readiness retains its own `registry_revision`; it is composed by the
+server after the Application Task digest and does not silently invalidate an
+unchanged execution grant. Calls and Sample records are already part of the
+Application read-model digest.

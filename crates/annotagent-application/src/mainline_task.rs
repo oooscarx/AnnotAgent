@@ -1,8 +1,8 @@
 //! Passive Task delivery projection and bounded, server-authorized local advancement.
 use crate::{LocalApplication, PrepareDeliverySchema, require_delivery_schema};
 use annotagent_storage::{
-    ConversationCallStatus, ConversationHumanRequestStatus, ConversationJourneyRecord,
-    DeliveryPackagePhase, SampleOperation,
+    ConversationCallReceipt, ConversationCallStatus, ConversationHumanRequestStatus,
+    ConversationJourneyRecord, DeliveryPackagePhase, SampleOperation,
 };
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
@@ -13,6 +13,106 @@ fn journey_sample_operation(journeys: &[Value]) -> Option<&Value> {
     journeys
         .iter()
         .find_map(|journey| journey.get("sample").filter(|sample| !sample.is_null()))
+}
+
+fn call_result_diagnostic(call: &ConversationCallReceipt, calls_url: &str) -> Option<Value> {
+    let (code, category, safe_action, provider_received) = match call.status {
+        ConversationCallStatus::InDoubt => (
+            "provider_outcome_unknown",
+            "remote_outcome",
+            "inspect_receipt_and_resolve_unknown",
+            Value::Null,
+        ),
+        ConversationCallStatus::Failed
+            if call.failure.as_ref().is_some_and(|failure| {
+                failure.stage == annotagent_core::ModelFailureStage::PrepareRequest
+            }) =>
+        {
+            (
+                "provider_request_not_sent",
+                "request_admission",
+                "fix_configuration_and_authorize_new_attempt",
+                json!(false),
+            )
+        }
+        ConversationCallStatus::Failed
+            if call.failure.as_ref().is_some_and(|failure| {
+                failure.category == annotagent_core::ModelFailureCategory::InvalidStructuredOutput
+            }) =>
+        {
+            (
+                "model_response_invalid_structure",
+                "response_validation",
+                "inspect_receipt_before_new_authorization",
+                json!(true),
+            )
+        }
+        _ => return None,
+    };
+    Some(json!({
+        "code":code,"category":category,"state":"blocked",
+        "source":{"kind":"model_call","id":call.id},
+        "stage":call.stage,"failure":call.failure,
+        "provider_received":provider_received,
+        "automatic_retry":false,"preserves_existing_results":true,
+        "safe_action":{"id":safe_action,"method":"GET","url":calls_url}
+    }))
+}
+
+fn sample_result_diagnostics(operation: &SampleOperation, report: &Value) -> Vec<Value> {
+    let mut diagnostics = Vec::new();
+    let sample_url = format!(
+        "/api/projects/{}/sample-operations/{}",
+        operation.project_id, operation.id
+    );
+    for (index, sample) in report["samples"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        let failures = sample["failure_classes"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let invalid_artifact = failures.iter().any(|failure| failure == "invalid_artifact");
+        let provider_or_infrastructure_failure = failures.iter().any(|failure| {
+            matches!(
+                failure.as_str(),
+                Some("provider_failure" | "infrastructure_failure" | "budget_limit")
+            )
+        });
+        if invalid_artifact {
+            diagnostics.push(json!({
+                "code":"candidate_projection_failed","category":"result_projection",
+                "state":"blocked","source":{"kind":"sample_test","id":operation.id,"image_index":index},
+                "failure_classes":failures,"automatic_retry":false,
+                "preserves_existing_results":true,
+                "safe_action":{"id":"inspect_saved_artifact","method":"GET","url":sample_url}
+            }));
+            continue;
+        }
+        let no_candidates = sample["projection"]["final_candidates"]
+            .as_array()
+            .is_none_or(Vec::is_empty)
+            && sample["projection"]["review_candidates"]
+                .as_array()
+                .is_none_or(Vec::is_empty);
+        if sample["empty"].as_bool().unwrap_or(false)
+            && !sample["failed"].as_bool().unwrap_or(false)
+            && no_candidates
+            && !provider_or_infrastructure_failure
+        {
+            diagnostics.push(json!({
+                "code":"legal_empty_detection","category":"result",
+                "state":"completed","source":{"kind":"sample_test","id":operation.id,"image_index":index},
+                "failure_classes":failures,"automatic_retry":false,
+                "human_negative_recorded":false,"preserves_existing_results":true,
+                "safe_action":{"id":"inspect_empty_result","method":"GET","url":sample_url}
+            }));
+        }
+    }
+    diagnostics
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -213,11 +313,25 @@ impl LocalApplication {
                 }))
             })
             .collect::<Vec<_>>();
+        let calls_url =
+            format!("/api/projects/{project}/conversations/{conversation}/tasks/{task}/calls");
+        let mut result_diagnostics = calls
+            .iter()
+            .filter_map(|call| call_result_diagnostic(call, &calls_url))
+            .collect::<Vec<_>>();
         let processing = self.conversation_processing_history(project, conversation, task)?;
         let journeys = self.conversation_journey_history(project, conversation, task)?;
         let sample_operations =
             self.store
                 .conversation_sample_operations(project, conversation, task)?;
+        for operation in &sample_operations {
+            if let Some(sample) = self.store.get_workflow_sample_test_by_id(&operation.id)? {
+                result_diagnostics.extend(sample_result_diagnostics(
+                    operation,
+                    &serde_json::to_value(sample.report)?,
+                ));
+            }
+        }
         let processing_candidate = self.latest_processing_candidate(&sample_operations)?;
         let pending_sample_reviews = self
             .conversation_human_requests(project, conversation, task)?
@@ -455,6 +569,7 @@ impl LocalApplication {
                 })).collect::<Vec<_>>()
             },
             "available_actions":actions,
+            "result_diagnostics":result_diagnostics,
             "active_operation_ids":active_operations.iter().map(|operation| operation.id.clone()).collect::<Vec<_>>(),
             "blockers":blockers,
             "completion":{
@@ -624,8 +739,11 @@ impl LocalApplication {
 
 #[cfg(test)]
 mod tests {
-    use super::journey_sample_operation;
+    use super::{call_result_diagnostic, journey_sample_operation, sample_result_diagnostics};
+    use annotagent_core::{ModelFailure, ModelFailureCategory, ModelFailureStage};
+    use annotagent_storage::{ConversationCallReceipt, ConversationCallStatus, SampleOperation};
     use serde_json::json;
+    use uuid::Uuid;
 
     #[test]
     fn journey_sample_operation_never_treats_a_missing_sample_as_terminal() {
@@ -638,5 +756,101 @@ mod tests {
             "saved-operation"
         );
         assert!(journey_sample_operation(&[json!({"sample":null})]).is_none());
+    }
+
+    #[test]
+    fn call_diagnostics_separate_not_sent_unknown_and_invalid_structure() {
+        let id = Uuid::new_v4();
+        let receipt = |status, failure| ConversationCallReceipt {
+            id,
+            task_id: Uuid::new_v4(),
+            request_hash: "a".repeat(64),
+            status,
+            evidence: None,
+            started_at: Some("2026-09-12T00:00:00Z".into()),
+            completed_at: Some("2026-09-12T00:00:01Z".into()),
+            duration_ms: Some(1_000),
+            stage: Some("settled".into()),
+            failure,
+        };
+        let not_sent = call_result_diagnostic(
+            &receipt(
+                ConversationCallStatus::Failed,
+                Some(ModelFailure {
+                    stage: ModelFailureStage::PrepareRequest,
+                    category: ModelFailureCategory::Configuration,
+                    http_status: None,
+                }),
+            ),
+            "/calls",
+        )
+        .unwrap();
+        assert_eq!(not_sent["code"], "provider_request_not_sent");
+        assert_eq!(not_sent["provider_received"], false);
+        assert_eq!(not_sent["automatic_retry"], false);
+
+        let invalid = call_result_diagnostic(
+            &receipt(
+                ConversationCallStatus::Failed,
+                Some(ModelFailure {
+                    stage: ModelFailureStage::StructuredOutput,
+                    category: ModelFailureCategory::InvalidStructuredOutput,
+                    http_status: None,
+                }),
+            ),
+            "/calls",
+        )
+        .unwrap();
+        assert_eq!(invalid["code"], "model_response_invalid_structure");
+        assert_eq!(invalid["provider_received"], true);
+
+        let unknown = call_result_diagnostic(
+            &receipt(
+                ConversationCallStatus::InDoubt,
+                Some(ModelFailure {
+                    stage: ModelFailureStage::ProviderRequest,
+                    category: ModelFailureCategory::Interrupted,
+                    http_status: None,
+                }),
+            ),
+            "/calls",
+        )
+        .unwrap();
+        assert_eq!(unknown["code"], "provider_outcome_unknown");
+        assert!(unknown["provider_received"].is_null());
+        assert_eq!(unknown["automatic_retry"], false);
+    }
+
+    #[test]
+    fn sample_diagnostics_keep_legal_empty_separate_from_projection_failure() {
+        let operation = SampleOperation {
+            id: "TEST-sample".into(),
+            project_id: "TEST-project".into(),
+            draft_id: "TEST-draft".into(),
+            authorization_fingerprint: "scope".into(),
+            request: json!({}),
+            status: "succeeded".into(),
+            error: None,
+            created_at: "2026-09-12T00:00:00Z".into(),
+            updated_at: "2026-09-12T00:00:01Z".into(),
+        };
+        let report = json!({"samples":[
+            {"empty":true,"failed":false,"failure_classes":["no_candidate"],
+             "projection":{"final_candidates":[],"review_candidates":[]}},
+            {"empty":false,"failed":true,"failure_classes":["invalid_artifact"],
+             "projection":{"final_candidates":[{"outcome":{"id":"preserved"}}],"review_candidates":[]}},
+            {"empty":true,"failed":true,"failure_classes":["provider_failure"],
+             "projection":{"final_candidates":[],"review_candidates":[]}}
+        ]});
+        let diagnostics = sample_result_diagnostics(&operation, &report);
+        assert_eq!(diagnostics.len(), 2);
+        assert_eq!(diagnostics[0]["code"], "legal_empty_detection");
+        assert_eq!(diagnostics[0]["human_negative_recorded"], false);
+        assert_eq!(diagnostics[1]["code"], "candidate_projection_failed");
+        assert_eq!(diagnostics[1]["preserves_existing_results"], true);
+        assert_eq!(
+            report["samples"][1]["projection"]["final_candidates"][0]["outcome"]["id"],
+            "preserved"
+        );
     }
 }

@@ -64,8 +64,13 @@ pub(super) async fn snapshot(
         .application
         .agent_ui_snapshot(&project, conversation, task)
         .map_err(ApiError::conversation)?;
-    value["mainline"]["capability_readiness"] =
-        super::mainline_capability::snapshot(&state, &project, conversation, task)?;
+    let capability = super::mainline_capability::snapshot(&state, &project, conversation, task)?;
+    let diagnostics = super::mainline_capability::capability_result_diagnostics(&capability);
+    value["mainline"]["capability_readiness"] = capability;
+    value["mainline"]["result_diagnostics"]
+        .as_array_mut()
+        .expect("Application Mainline diagnostics are an array")
+        .extend(diagnostics);
     Ok(Json(value))
 }
 
@@ -922,6 +927,30 @@ mod tests {
             .await;
             assert_eq!(settled["normalized_state"], normalized);
             assert_eq!(settled["resume"]["available"], false);
+            if terminal == annotagent_storage::ConversationCallStatus::InDoubt {
+                let workspace = response_json(
+                    request(
+                        &service,
+                        axum::http::Method::GET,
+                        &format!(
+                            "/api/projects/TEST-stop/conversations/{c}/tasks/{}/workspace",
+                            sent.task_id
+                        ),
+                        None,
+                    )
+                    .await,
+                )
+                .await;
+                let diagnostic = workspace["mainline"]["result_diagnostics"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|value| value["code"] == "provider_outcome_unknown")
+                    .unwrap();
+                assert_eq!(diagnostic["source"]["id"], call.to_string());
+                assert_eq!(diagnostic["automatic_retry"], false);
+                assert_eq!(diagnostic["preserves_existing_results"], true);
+            }
             let retry = response_json(
                 request(&service, axum::http::Method::POST, &root, Some(command)).await,
             )
