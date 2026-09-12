@@ -148,13 +148,12 @@ token totals are null when any included attempt lacks that token count. Mixed
 currencies remain separate in `costs_by_currency`, with top-level cost/currency null.
 States are `no_model_requests|complete|partial|unknown`.
 
-The OpenAI-compatible Schema, Builder, queued planning, feedback, and future-rule
-routes install this observer after their existing authorization checks; the outer
-conversation adapter supplies the reserved call identity without serializing it to
-the Provider. Preset candidates produce `no_model_requests` and zero rows. Active
-Provider probes retain their separate Model Profile usage list. Published/sample
-vision Provider attachment and the explicit confirmed TEST request remain tracked
-acceptance gaps; those paths must not claim complete R6 evidence yet.
+The OpenAI-compatible Schema, Builder, queued planning, feedback, future-rule, and
+authorized Published/Sample vision routes install this observer after their existing
+authorization checks. The outer conversation/Sample adapter supplies the reserved
+call identity without serializing it to the Provider. Preset candidates produce `no_model_requests` and zero rows. Active
+Provider probes retain their separate Model Profile usage list. The explicit confirmed R3 TEST request remains a tracked acceptance gap; passive GET
+alone must not be presented as a transport proof.
 
 ## Errors and compatibility
 
