@@ -110,6 +110,40 @@ G1 is complete under the isolated TEST-provider boundary. This proves orchestrat
 - A9: current-application evidence now includes ready, approval, running, Sample review, Sample-confirmed, formal review and package-ready states. Dark theme and 390×844 are covered at Sample review. Native browser 200% remains unverified and is not claimed.
 - Commercial-provider accuracy and real-person novice usability remain unverified. The deterministic external TEST provider proves state progression, ownership, persistence and delivery semantics only.
 
+## G2 close — exact task scope, typed outcomes and lifecycle UI
+
+- Integrated the Backend typed diagnostic contract as local commit `84d5a5a` (source Backend commit `26732aa2dec8678904a1e205684e9e85630ae05d`). The frontend close commit is `2286c00`.
+- `GET D/workspace.mainline.result_diagnostics[]` is validated before presentation. The Http Adapter accepts only the seven documented stable codes, exact source identity, `automatic_retry:false`, `preserves_existing_results:true`, and a same-origin GET safe action. It never follows that action automatically.
+- The single current-task selector presents only a diagnostic tied to the current Sample, required capability request or failed/in-doubt model-call receipt. Historical failures remain in execution details after a later usable Sample result.
+- Legal empty detection remains distinct from an explicitly reviewed negative image. Projection failure never creates a replacement box. When another image still has a valid terminal candidate, that candidate and its review stay visible beside the per-image diagnostic.
+- A server-issued unique resume checkpoint now outranks a stale running projection. The checkpoint identifier is passed back verbatim and revalidated by the Http Adapter; a non-resumable or unknown state never gains a continue action.
+- Added a production-route A4 browser case that creates seven existing Project images, uploads three new Task images, then proves the Project contains ten images while the Send intake, one Journey approval, Sample inputs and formal processing authorization contain exactly the three new image IDs. No prefix, “latest image” or Project-wide inference is used.
+- Current isolated application: `127.0.0.1:8900`; scripted TEST provider: `127.0.0.1:8901`; manifest `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-_usnhgr6/manifest.json`; backend SHA `84d5a5ae6369a19edebec32e6e1c48c0cea9dee5`. The user service on `8788` was not restarted or mutated.
+
+### G2 close verification
+
+- `npm test` — 119 files / 439 tests passed.
+- `npm run typecheck` — passed.
+- `npm run build` — passed; 143 modules transformed.
+- Focused current-state/diagnostic/adapter unit suite — 3 files / 59 tests passed.
+- `p0-autonomous-sample.spec.ts` — 4/4 production-route tests passed against the built React application and real Rust HTTP/SQLite service. This includes the complete Sample → formal review → real ZIP path and the ten-Project-images / three-current-task-images scope case.
+- Actual stop browser case — passed: POST first returned `stopping`, the UI and refresh settled to `远端结果未知`, the underlying receipt remained `in_doubt`, and no resume action appeared.
+- Paused Batch browser case — passed on a fresh isolated fixture after seed completion: the exact server checkpoint resumed, retained prior child IDs and completed with three children. The non-resumable control exposed no continue action.
+- `cargo fmt --all --check` — passed.
+- `cargo test -p annotagent-application mainline_task::tests::` — 3/3 passed.
+- `cargo test -p annotagent-server stop_http_trace_keeps_unknown_receipt_and_spent_budget_on_retry` — 1/1 passed.
+- `cargo test -p annotagent-storage --test persistent_batches` — 6/6 passed.
+- Exact A4 backend scope tests — Server 1/1 and Application 1/1 passed.
+
+### Acceptance status after G2 close
+
+- A4: passed. Exact non-prefix Task ownership is proven in both production-route browser evidence and backend scope/materialization tests.
+- A6: protocol and frontend mapping are covered for all seven stable outcomes; mixed legal-empty/projection-failure preservation has component regression coverage. A browser fixture that independently renders all seven failure scenes has not been run, so the complete visual failure matrix remains partial.
+- A7: stop → unknown, no fictional resume, exact paused-Batch resume, restart persistence and budget/receipt retention have browser or focused Rust evidence. Expired authorization and exhausted-budget remain covered by lower-level regressions but were not both rerun as current-application browser scenes; the full A7 visual matrix therefore remains partial.
+- A8: passed under TEST with a real downloadable ZIP and immutable reviewed scope.
+- A9: the complete P0 path has current-application desktop screenshots; Sample review additionally has dark/mobile evidence. Native browser 200% zoom remains unverified and is not claimed.
+- Commercial-provider accuracy and real-person novice usability remain unverified. No Fixture or TEST result is relabeled as Live inference.
+
 ## Safety boundary
 
 - React reads and presents server state; polling remains GET-only.
