@@ -66,7 +66,10 @@ export type PendingDemoStart = StartDemoInput & {
   state: "pending" | "unknown" | "confirmed";
 };
 
-export const pendingDemoStorageKey = "annotagent.demo.pending.v1";
+export function pendingDemoStorageKey(workspaceId:string):string {
+  if(!workspaceId)throw new Error("工作区身份尚未读取，不能保存示例启动命令");
+  return `annotagent.demo.pending.v1.${encodeURIComponent(workspaceId)}`;
+}
 
 function inputSignature(input: Omit<StartDemoInput, "command_id">): string {
   return JSON.stringify([
@@ -78,9 +81,9 @@ function inputSignature(input: Omit<StartDemoInput, "command_id">): string {
   ]);
 }
 
-export function readPendingDemo(storage: Pick<Storage, "getItem">): PendingDemoStart | null {
+export function readPendingDemo(storage: Pick<Storage, "getItem">,workspaceId:string): PendingDemoStart | null {
   try {
-    const value = JSON.parse(storage.getItem(pendingDemoStorageKey) || "null") as PendingDemoStart | null;
+    const value = JSON.parse(storage.getItem(pendingDemoStorageKey(workspaceId)) || "null") as PendingDemoStart | null;
     if (!value || typeof value.command_id !== "string" || !value.command_id) return null;
     if (!["preset_candidates", "live_model"].includes(value.mode)) return null;
     if (!["pending", "unknown", "confirmed"].includes(value.state)) return null;
@@ -93,30 +96,32 @@ export function readPendingDemo(storage: Pick<Storage, "getItem">): PendingDemoS
 
 export function beginDemoStart(
   storage: Pick<Storage, "getItem" | "setItem">,
+  workspaceId:string,
   input: Omit<StartDemoInput, "command_id">,
   commandId: string = crypto.randomUUID(),
 ): PendingDemoStart {
-  const current = readPendingDemo(storage);
+  const current = readPendingDemo(storage,workspaceId);
   if (current && inputSignature(current) === inputSignature(input) && current.state !== "confirmed") {
     return current;
   }
   const next: PendingDemoStart = { ...input, command_id: commandId, state: "pending" };
-  storage.setItem(pendingDemoStorageKey, JSON.stringify(next));
+  storage.setItem(pendingDemoStorageKey(workspaceId), JSON.stringify(next));
   return next;
 }
 
 export function updatePendingDemo(
   storage: Pick<Storage, "setItem">,
+  workspaceId:string,
   input: PendingDemoStart,
   state: PendingDemoStart["state"],
 ): PendingDemoStart {
   const next = { ...input, state };
-  storage.setItem(pendingDemoStorageKey, JSON.stringify(next));
+  storage.setItem(pendingDemoStorageKey(workspaceId), JSON.stringify(next));
   return next;
 }
 
-export function clearPendingDemo(storage: Pick<Storage, "removeItem">): void {
-  storage.removeItem(pendingDemoStorageKey);
+export function clearPendingDemo(storage: Pick<Storage, "removeItem">,workspaceId:string): void {
+  storage.removeItem(pendingDemoStorageKey(workspaceId));
 }
 
 export function validateDemoReceipt(input: StartDemoInput, receipt: StartDemoReceipt): StartDemoReceipt {

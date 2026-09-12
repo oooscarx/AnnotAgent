@@ -68,10 +68,12 @@ export function DemoCard({
 
 export function DemoOnboarding({
   service,
+  workspaceId,
   storage = localStorage,
   onStarted,
 }: {
   service: DemoOnboardingService;
+  workspaceId:string;
   storage?: Storage;
   onStarted: (receipt: StartDemoReceipt) => Promise<void> | void;
 }) {
@@ -80,18 +82,18 @@ export function DemoOnboarding({
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
-  const initialPending = useRef(readPendingDemo(storage));
+  const initialPending = useRef(readPendingDemo(storage,workspaceId));
   const [pending, setPending] = useState(initialPending.current);
 
   const acceptReceipt = async (request: PendingDemoStart, value: StartDemoReceipt) => {
     const receipt = validateDemoReceipt(request, value);
     if (receipt.status === "failed") {
-      const saved=updatePendingDemo(storage, request, receipt.retry_safe ? "confirmed" : "unknown");
+      const saved=updatePendingDemo(storage, workspaceId, request, receipt.retry_safe ? "confirmed" : "unknown");
       setPending(saved);
       setError(receipt.detail || "示例初始化失败；服务器已保留可核实的回执");
       return;
     }
-    setPending(updatePendingDemo(storage, request, "confirmed"));
+    setPending(updatePendingDemo(storage, workspaceId, request, "confirmed"));
     setStatus(receipt.status === "model_setup_required" ? "示例任务已创建，正在打开同一任务的模型设置。" : "示例任务已创建，正在打开。");
     await onStarted(receipt);
   };
@@ -121,7 +123,7 @@ export function DemoOnboarding({
     setBusy(true);
     setError("");
     setStatus("正在创建独立的 Demo Project 与 Task…");
-    const request = beginDemoStart(storage, {
+    const request = beginDemoStart(storage, workspaceId, {
       demo_id: item.id,
       demo_version: item.version,
       catalog_digest: item.catalog_digest,
@@ -133,7 +135,7 @@ export function DemoOnboarding({
       const receipt = await service.start(request);
       await acceptReceipt(request, receipt);
     } catch (cause) {
-      setPending(updatePendingDemo(storage, request, "unknown"));
+      setPending(updatePendingDemo(storage, workspaceId, request, "unknown"));
       setError(`${cause instanceof Error ? cause.message : String(cause)}。刷新只会查询同一命令的服务端回执，不会自动重试收费请求。`);
     } finally {
       setBusy(false);
@@ -148,6 +150,6 @@ export function DemoOnboarding({
     {status && <p role="status">{status}</p>}
     {catalog?.length === 0 && <p>服务器当前没有可用且许可完整的示例包。</p>}
     <div className="demo-grid">{catalog?.map((item) => <DemoCard key={`${item.id}@${item.version}`} item={item} busy={busy} onStart={(entry, mode) => void start(entry, mode)}/>)}</div>
-    {pending?.state === "confirmed" && <button className="subtle" onClick={() => { clearPendingDemo(storage); setPending(null); setStatus("可以显式创建一个新的示例任务。"); }}>再试一次（创建新任务）</button>}
+    {pending?.state === "confirmed" && <button className="subtle" onClick={() => { clearPendingDemo(storage,workspaceId); setPending(null); setStatus("可以显式创建一个新的示例任务。"); }}>再试一次（创建新任务）</button>}
   </section>;
 }

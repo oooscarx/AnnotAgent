@@ -56,10 +56,11 @@ it("shows no more than two server catalog entries", () => {
 it("reuses the exact pending command and changes it only for a changed explicit scope", () => {
   const storage = memoryStorage();
   const input = { demo_id: entry.id, demo_version: entry.version, catalog_digest: entry.catalog_digest, mode: "preset_candidates" as const, confirmed_scope: true as const };
-  const first = beginDemoStart(storage, input, "command-one");
-  expect(beginDemoStart(storage, input, "command-two").command_id).toBe("command-one");
-  expect(beginDemoStart(storage, {...input, mode:"live_model"}, "command-two").command_id).toBe("command-two");
-  expect(readPendingDemo(storage)?.mode).toBe("live_model");
+  const first = beginDemoStart(storage, "workspace-one", input, "command-one");
+  expect(beginDemoStart(storage, "workspace-one", input, "command-two").command_id).toBe("command-one");
+  expect(beginDemoStart(storage, "workspace-one", {...input, mode:"live_model"}, "command-two").command_id).toBe("command-two");
+  expect(readPendingDemo(storage, "workspace-one")?.mode).toBe("live_model");
+  expect(readPendingDemo(storage, "workspace-two")).toBeNull();
   expect(first.state).toBe("pending");
 });
 
