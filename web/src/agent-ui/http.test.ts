@@ -223,6 +223,30 @@ it("sample consent uses the saved delivery Schema instead of another Schema mode
   expect(JSON.parse(query.get("allowed_models")!)).toEqual(["model-profile:vision","model-instance:ready-local"]);
   expect(reads.paths.some(p=>p.includes("schema-preview"))).toBe(false);
 });
+it("continues the exact saved Journey into Sample without creating another Journey or Builder",async()=>{
+  const consentId="journey-1",sampleId="sample-1",readPath=`${root}/t1/journey-consents/${consentId}`,executePath=`${readPath}/execution`;
+  const images=[{image_id:"image-uuid",content_hash:"pixels"}],allowed_models=[{model_id:"model-profile:vision",binding_digest:"binding-digest"}];
+  const scope={journey_consent_id:consentId,sample_operation_id:sampleId,draft_id:"draft-current",draft_revision:7,draft_content_hash:"d".repeat(64),images,allowed_models,maximum_sample_calls:2,expires_at:"2099-01-01T00:00:00Z"};
+  const view={...mainline("t1"),available_actions:[{id:"test_pipeline_samples",state:"requires_confirmation",method:"GET",url:readPath,execution_method:"POST",execution_url:executePath,requires_confirmation:true,reason:"exact_saved_journey_sample_requires_confirmation",scope}]};
+  const workspace={project_id:"TEST-alpha",project_owner_id:"owner-a",conversation_id:"conversation-a",task:{input:{id:"t1",schema_revision:"schema-1"}},agent_model:{revision:2,model_profile_id:null},actions:{},queue:[],calls:[],mainline:view};
+  const consent={id:consentId,task_id:"t1",builder_operation_id:"builder-1",sample_operation_id:sampleId,builder_model_id:"text",previous_grant_id:null,builder_scope_hash:"builder-scope",schema_id:"schema",schema_revision:1,schema_digest:"schema-digest",images,allowed_models,maximum_builder_calls:4,maximum_sample_calls:2,expires_at:scope.expires_at,allow_unknown_cost:true};
+  const record={consent,resolved_consent:null,revoked:false,sample:null};
+  const calls:{path:string;method:string;body?:unknown}[]=[];
+  const reads=mockTransport({[`${root}/t1/workspace`]:workspace,[readPath]:record});
+  const transport:Transport=async<T>(path:string,init?:RequestInit)=>{
+    calls.push({path,method:init?.method||"GET",...(init?.body?{body:JSON.parse(String(init.body))}:{})});
+    if(path===executePath&&init?.method==="POST")return {record,builder:{status:"completed"},sample:{id:sampleId,status:"queued"}} as T;
+    return reads.transport<T>(path,init);
+  };
+  const adapter=new HttpAdapter(transport,memoryStorage());await adapter.refresh();await adapter.loadTask("TEST-alpha","t1");calls.length=0;
+  const command={id:"continue-sample",project:"TEST-alpha",task:"t1",revision:"schema-1"};
+  await adapter.prepareAction(command,"sample");
+  expect(calls).toEqual([{path:readPath,method:"GET"}]);
+  expect(adapter.snapshot().tasks.find(item=>item.id==="t1")?.approval).toMatchObject({title:"测试当前方案样例",revision:`Draft 7 · ${"d".repeat(8)}`});
+  await adapter.approveAction(command);
+  expect(calls.filter(call=>call.method==="POST")).toEqual([{path:executePath,method:"POST",body:{}}]);
+  expect(calls.some(call=>call.path.includes("journey-preview")||call.path.endsWith("/journey-consents")&&call.method==="POST")).toBe(false);
+});
 it("uses the server-derived exact delivery processing action and only prepares confirmation",async()=>{
   const previewPath="/api/projects/TEST-alpha/processing-preview?draft_id=draft-current&sample_test_id=sample-current";
   const view={...mainline("t1"),available_actions:[{id:"start_delivery_processing",state:"requires_confirmation",method:"GET",url:previewPath,requires_confirmation:true,reason:"exact_delivery_processing_scope_requires_confirmation",scope:{delivery_revision:3,delivery_sha256:"frozen-delivery",images:[{image_id:"image-uuid",content_sha256:"pixels"}],draft:{draft_id:"draft-current",draft_revision:7,sample_test_id:"sample-current"}}}]};

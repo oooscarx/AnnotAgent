@@ -76,8 +76,12 @@ The HTTP send boundary now accepts only a frozen `VisualSelection`, converts it 
 - Focused model setup, capability recheck and HTTP adapter suite: 34 tests passed.
 - Earlier isolated HTTP browser evidence on the generated TEST workspace verified canonical Sample selection and passive formal/package reads. No paid or real Provider was called.
 
-## F1-3 in progress
+## F1-3 delivery and current Sample continuation gate
 
-The formal review, package readiness/consent, exact processing action and Package Ready completion semantics are now composed in the production UI. Remaining acceptance work is an end-to-end TEST-provider journey that produces and independently extracts a real YOLO ZIP, plus cross-checks for model-setup return, stop/unknown, restart and idempotency. Package Ready remains the only overall Task completion condition.
+The formal review, package readiness/consent, exact processing action and Package Ready completion semantics are composed in the production UI. A separate G3 TEST-provider run saved all whole-image decisions and downloaded a real YOLO ZIP; its SHA-256 is `a2a0242282c3e2d112ba1b11009dcfe161e0a175631ac858c1606227adc6b89d`, with 11 image/label pairs, 30 valid YOLO rows and 27 verified manifest hashes. This is structural TEST evidence, not Live model accuracy.
+
+Backend ML-020 (`e705e63`, integrated `28e62b2`) now exposes an exact `test_pipeline_samples` action after Builder completion. Frontend reads the original consent, compares ordered image hashes and model binding digests, displays a second Sample-only confirmation and POSTs only the supplied execution URL. Focused unit tests pass and the first Browser approval produces no duplicate Journey/Builder.
+
+Actual HTTP exposed ML-021: the second POST returns `dispatch:running` but never reserves the Sample. The UI remains incomplete and does not retry a chargeable request. The existing Backend task has the exact trace and reproduction. Package Ready remains the only overall Task completion condition.
 
 No push, main merge, real workspace cleanup or unapproved external model call has occurred.

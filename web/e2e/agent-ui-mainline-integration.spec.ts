@@ -57,7 +57,7 @@ test("formal review and package readiness are passive on mount and restore the t
   page.on("request",event=>{if(!["GET","HEAD"].includes(event.method()))writes.push(`${event.method()} ${new URL(event.url()).pathname}`);});
   await page.goto(`/projects/${scene.project}/work?task=${scene.task_id}&delivery_view=formal&delivery_image=${scene.image_id}`);
   await expect(page.getByRole("region",{name:"当前任务图片结果",exact:true})).toContainText("当前任务还没有绑定正式处理结果");
-  await expect(page.getByRole("region",{name:"训练数据包交付",exact:true})).toContainText(/尚未满足打包条件|正式审核齐全/);
+  await expect(page.getByRole("region",{name:"训练数据包交付",exact:true})).toContainText(/正式审核(?:未)?齐全/);
   expect(writes).toEqual([]);
   await page.reload();
   expect(writes).toEqual([]);

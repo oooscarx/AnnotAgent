@@ -1,5 +1,21 @@
 # Agent UI integration — decisions and interface issues
 
+## ML-021 — exact Sample continuation remains `running` without reserving Sample (blocking)
+
+Integration `28e62b2` plus Frontend 1's exact-action wiring, isolated TEST task `cfd19b12-f4c3-4632-a39f-b5a7f040ef39`. The browser reads `test_pipeline_samples`, GETs the exact saved Journey and confirms its ordered images, model bindings, Sample ID, expiry and Draft scope. It then POSTs `{}` once to the server-provided `execution_url`; no new Journey, Builder or UUID is created.
+
+The POST returns 200 with `dispatch.status=running`, `sample=null`. More than 30 seconds later `workspace.sample_operations=[]` and the same `test_pipeline_samples` action remains available. The full network trace is `web/test-results/agent-ui-http-c-a-separate-3f345-uces-saved-terminal-results/trace.zip`; the retained TEST workspace is `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-55g0rga7`. Frontend keeps the task incomplete and does not retry automatically.
+
+`codex queue` failed locally because its packaged child binary is missing (ENOENT); the same numbered request was successfully sent through the existing Codex task API to Backend UUID `01a0855e-9c39-7c33-9f18-93e084d14816`. Requested delivery: one backend commit that reserves/runs the original Sample ID after the second confirmation, plus idempotent replay and persisted-refresh tests.
+
+## ML-020 — resolved: exact saved-Journey Sample action delivered
+
+Integration `cebf967`, isolated TEST task `b57623f1-4725-4e46-abf2-ee345c62a85e`. After an explicitly authorized Mainline journey completes Builder, the server persists a validated Draft (`ed4122ef-3975-4c7f-9a46-07d6a4a7ff74`) and five settled Builder calls, but `sample_operations` remains empty. The next `workspace.mainline.available_actions` still contains only `build_and_test_pipeline` pointing at the task's `builder-preview` with reason `builder_and_image_permissions_are_separate`.
+
+Backend source `e705e633031993629f03bb4561c01019a3b105fa`, integrated as `28e62b2`, adds `test_pipeline_samples` with exact passive GET and explicit POST URLs. Frontend now reads and verifies the existing Journey scope and exposes a separate approval; it never creates new Journey/Builder/Sample identifiers for this transition. Unit coverage passes. The subsequent server dispatch defect is tracked separately as ML-021.
+
+Separate G3 delivery evidence is already valid: the task-scoped formal review classified `completed_with_review` diagnostics correctly, saved 12/12 whole-image decisions, consumed one package consent and downloaded a structurally checked YOLO ZIP. That does not erase this earlier Builder→Sample transition gap.
+
 ## UIAPI-010 — Model Profile update CAS (open)
 
 Baseline `87e97a4` plus native ModelProfileEditor migration. Actual isolated HTTP: PATCH `/api/model-profiles/:id` including `revision` returns 422. `UpdateModelProfileRequest` in server lib.rs denies unknown fields and provides no expected-revision field. Native UI now sends supported editable fields only, with a GET/revision preflight; this is explicitly not atomic CAS. Two concurrent editors remain a final acceptance limitation.

@@ -521,6 +521,27 @@ export class HttpAdapter implements WorkspaceAdapter {
     const task = this.checked(c); if(task.id.startsWith("new:")) throw new Error("请先保存目标");
     if(this.stored(`approval.${task.id}`,null)) throw new Error("上次批准的结果待核对；请读取原回执，不能自动发起新的付费操作");
     const root = this.taskRoot(task);
+    if(kind === "sample") {
+      const action=task.mainline?.available_actions.find(item=>item.id==="test_pipeline_samples");
+      if(action) {
+        if(action.state!=="requires_confirmation"||action.method!=="GET"||action.execution_method!=="POST"||!action.requires_confirmation||!action.execution_url)throw new Error("已保存方案的样例范围不可执行；请重新读取任务状态");
+        const allowedRoot=`${root}/journey-consents/`;
+        const read=new URL(action.url,"http://annotagent.local"),execute=new URL(action.execution_url,"http://annotagent.local");
+        if(read.origin!=="http://annotagent.local"||execute.origin!=="http://annotagent.local"||!read.pathname.startsWith(allowedRoot)||read.pathname.length<=allowedRoot.length||read.search||read.hash||execute.pathname!==`${read.pathname}/execution`||execute.search||execute.hash)throw new Error("服务器返回的样例继续地址不属于当前任务");
+        const scope=action.scope as {journey_consent_id?:string;sample_operation_id?:string;draft_id?:string;draft_revision?:number;draft_content_hash?:string;images?:{image_id:string;content_hash:string}[];allowed_models?:{model_id:string;binding_digest:string}[];maximum_sample_calls?:number;expires_at?:string}|undefined;
+        if(!scope||![scope.journey_consent_id,scope.sample_operation_id,scope.draft_id,scope.draft_content_hash,scope.expires_at].every(value=>typeof value==="string"&&value.length>0)||!Number.isSafeInteger(scope.draft_revision)||scope.draft_revision!<1||!Number.isSafeInteger(scope.maximum_sample_calls)||scope.maximum_sample_calls!<1||!Array.isArray(scope.images)||scope.images.length<1||!Array.isArray(scope.allowed_models)||scope.allowed_models.length<1||read.pathname!==`${allowedRoot}${esc(scope.journey_consent_id!)}`)throw new Error("服务器返回的样例范围不完整；未执行模型调用");
+        const record=await this.transport<{consent:JourneyConsent;resolved_consent?:JourneyConsent|null;revoked:boolean;sample:{operation_id?:string;draft_id:string;draft_revision:number;images?:{image_id:string;content_hash:string}[];models?:{model_id:string;binding_digest:string}[];maximum_calls?:number}|null}>(action.url);
+        const consent=record.resolved_consent||record.consent;
+        const sameImages=(left:{image_id:string;content_hash:string}[],right:{image_id:string;content_hash:string}[])=>left.length===right.length&&left.every((item,index)=>item.image_id===right[index]?.image_id&&item.content_hash===right[index]?.content_hash);
+        const sameModels=(left:{model_id:string;binding_digest:string}[],right:{model_id:string;binding_digest:string}[])=>left.length===right.length&&left.every((item,index)=>item.model_id===right[index]?.model_id&&item.binding_digest===right[index]?.binding_digest);
+        const sealedSampleMismatch=record.sample&&(record.sample.operation_id!==scope.sample_operation_id||record.sample.draft_id!==scope.draft_id||record.sample.draft_revision!==scope.draft_revision);
+        if(record.revoked||record.consent.id!==scope.journey_consent_id||consent.sample_operation_id!==scope.sample_operation_id||consent.maximum_sample_calls!==scope.maximum_sample_calls||consent.expires_at!==scope.expires_at||!sameImages(consent.images,scope.images)||!sameModels(consent.allowed_models,scope.allowed_models)||sealedSampleMismatch)throw new Error("已保存方案与服务器冻结的样例范围不一致；未执行模型调用");
+        const frozenImages=scope.images,frozenModels=scope.allowed_models;
+        this.approvals.set(task.id,{id:c.id,url:action.execution_url,body:{}});
+        this.emit({tasks:this.state.tasks.map(t=>t.id===task.id?{...t,approval:{id:c.id,title:"测试当前方案样例",revision:`Draft ${scope.draft_revision} · ${scope.draft_content_hash!.slice(0,8)}`,budget:null,scope:[`${frozenImages.length} 张已冻结图片；最多 ${scope.maximum_sample_calls} 次样例调用`,...frozenModels.map(model=>`${model.model_id} · ${model.binding_digest.slice(0,8)}`),`有效期：${scope.expires_at}`,"沿用已保存方案；不重建、不发布、不批量处理、不写正式标注"]}}:t)});
+        return;
+      }
+    }
     if(kind === "process") {
       const action=task.mainline?.available_actions.find(item=>item.id==="start_delivery_processing"&&item.state==="requires_confirmation");
       if(!action||action.method!=="GET"||!action.requires_confirmation)throw new Error("服务器尚未提供当前交付版本的正式处理确认范围");
@@ -564,7 +585,7 @@ export class HttpAdapter implements WorkspaceAdapter {
       const p = await this.transport<JourneyPreview>(`${root}/journey-preview?${query}`);
       const consent: JourneyConsent = {...p.consent,allow_unknown_cost:true,...(p.consent.schema_proposal?{schema_proposal:{...p.consent.schema_proposal,allow_unknown_cost:true}}:{})};
       this.approvals.set(task.id,{id:c.id,url:`${root}/journey-consents`,body:consent,execution:`${root}/journey-consents/${esc(consent.id)}/execution`});
-      this.emit({tasks:this.state.tasks.map(t=>t.id===task.id?{...t,approval:{id:c.id,title:"批准构建方案并测试样例",revision:consent.builder_scope_hash,budget:null,scope:[`${consent.images.length} 张图片；最多 ${consent.maximum_builder_calls} 次规划调用 + ${consent.maximum_sample_calls} 次样例调用`,p.builder.model_name,p.builder.destination,...p.data.models.map(m=>`${m.display_name} → ${m.destination}`),`有效期：${consent.expires_at}`,"仅保存草稿与样例测试，不发布、不批量处理、不写正式标注"]}}:t)});
+      this.emit({tasks:this.state.tasks.map(t=>t.id===task.id?{...t,approval:{id:c.id,title:"批准构建方案",revision:consent.builder_scope_hash,budget:null,scope:[`${consent.images.length} 张图片已冻结；最多 ${consent.maximum_builder_calls} 次规划调用`,p.builder.model_name,p.builder.destination,...p.data.models.map(m=>`${m.display_name} → ${m.destination}`),`有效期：${consent.expires_at}`,"本次只生成并保存方案草稿；方案完成后会再次确认样例测试，不发布、不批量处理、不写正式标注"]}}:t)});
     }
   }
   async prepareQueue(c:Command,message:string) {

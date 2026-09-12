@@ -72,7 +72,7 @@ test("a: complete delivery intake advances only the server-authorized local Sche
   const workspace=await(await request.get(`${root}/tasks/${task}/workspace`)).json();
   expect(workspace.mainline.schema).toBeTruthy();
   expect(workspace.mainline.available_actions).toContainEqual(expect.objectContaining({id:"build_and_test_pipeline",state:"requires_confirmation"}));
-  await expect(page.getByRole("button",{name:"构建方案并测试样例…",exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"构建方案…",exact:true})).toBeVisible();
   await page.reload();expect(advances).toHaveLength(1);
   await testInfo.attach("authorized-local-advance",{body:JSON.stringify({task,read_model_revision:workspace.mainline.read_model_revision,action:workspace.mainline.available_actions[0]},null,2),contentType:"application/json"});
 });
@@ -112,22 +112,18 @@ test("c: IME does not send; explicit Send stores one real task; refresh never ex
   await page.reload();await expect(page.locator(".user-message")).toContainText("TEST HTTP UI classify");
   const after=await (await request.get(`${root}/tasks/${task}/workspace`)).json();expect(after.calls).toEqual([]);
 });
-test("c: explicit Plan approval calls TEST provider once and persisted receipts survive refresh",async({page,request})=>{
+test("c: a saved Plan request cannot call the provider before its delivery scope is complete",async({page,request})=>{
   const {p,root}=await identity(request);
   await page.goto(`/projects/${p.project_id}/work?task=${encodeURIComponent(`new:${p.project_id}`)}`);
   await page.getByRole("textbox",{name:"给 AnnotAgent 的需求"}).fill("按室内和室外给图片分类 TEST authorized schema");
   await page.getByRole("button",{name:"发送"}).click();
   await expect(page.locator(".user-message")).toContainText("TEST authorized schema");
   const task=new URL(page.url()).searchParams.get("task");
-  await page.getByRole("button",{name:"查看规划授权",exact:true}).click();
-  await expect(page.locator(".plan-block")).toContainText("仅文本规划");
   const before=await (await request.get(`${root}/tasks/${task}/workspace`)).json();expect(before.calls).toEqual([]);
-  await page.getByRole("button",{name:"查看并确认授权"}).click();
-  await page.getByRole("button",{name:"接受未知费用并执行此范围"}).click();
-  await expect(page.getByRole("region",{name:"当前执行状态",exact:true})).toBeVisible();
-  await expect.poll(async()=>{const ws=await(await request.get(`${root}/tasks/${task}/workspace`)).json();return ws.calls[0]?.status;}).toBe("completed");
-  await page.reload();await expect(page.getByRole("region",{name:"当前执行状态",exact:true})).toBeVisible();
-  const after=await(await request.get(`${root}/tasks/${task}/workspace`)).json();expect(after.calls).toHaveLength(1);
+  await expect(page.getByRole("button",{name:"补充缺失信息",exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"查看规划授权",exact:true})).toHaveCount(0);
+  await page.reload();
+  const after=await(await request.get(`${root}/tasks/${task}/workspace`)).json();expect(after.calls).toEqual([]);
 });
 test("e: current HumanRequest reads final classification and saves exact sandbox answer",async({page,request})=>{
   const {p,tasks,root}=await identity(request);
@@ -153,9 +149,19 @@ test("c: a separately approved Sample Journey produces saved terminal results",a
   await page.getByRole("button",{name:"发送"}).click();
   await expect(page.locator(".user-message")).toContainText("TEST UI sample");
   const task=new URL(page.url()).searchParams.get("task");
-  await page.locator(".secondary-task-actions > summary").click();
-  await page.getByRole("button",{name:"构建方案并测试样例…",exact:true}).click();
+  await page.getByRole("button",{name:"补充缺失信息",exact:true}).click();
+  await page.getByRole("button",{name:/选择当前 .* 张图片/}).click();
+  await page.getByLabel("类别名称（每行一个）",{exact:true}).fill("cup");
+  await page.getByLabel("训练什么任务？",{exact:true}).selectOption("ultralytics_yolo_detection");
+  await page.getByRole("button",{name:"保存交付信息",exact:true}).click();
+  await page.getByRole("button",{name:"确认目标并准备方案",exact:true}).click();
+  await page.getByRole("button",{name:"构建方案…",exact:true}).click();
   await expect(page.locator(".plan-block")).toContainText("不写正式标注");
+  await page.getByRole("button",{name:"查看并确认授权"}).click();
+  await page.getByRole("button",{name:"接受未知费用并执行此范围"}).click();
+  await expect(page.getByRole("button",{name:"测试当前方案样例…",exact:true})).toBeVisible({timeout:30_000});
+  await page.getByRole("button",{name:"测试当前方案样例…",exact:true}).click();
+  await expect(page.locator(".plan-block").filter({hasText:"测试当前方案样例"})).toContainText("不重建、不发布、不批量处理");
   await page.getByRole("button",{name:"查看并确认授权"}).click();
   await page.getByRole("button",{name:"接受未知费用并执行此范围"}).click();
   await expect.poll(async()=>{const ws=await(await request.get(`${root}/tasks/${task}/workspace`)).json();return ws.sample_operations[0]?.status;},{timeout:30_000}).toBe("succeeded");

@@ -587,10 +587,14 @@ export function AgentPreviewApp({
                         {!fixture && adapter.deliveryIntake && !task.id.startsWith("new:") && <DeliveryIntake key={task.id} service={adapter.deliveryIntake} delivery={adapter.delivery} project={task.project} task={task.id} locked={active} sampleResult={task.sampleResult} onVisualSelection={selection=>setReference(selection)} onSampleIssue={selection=>{setReference(selection);requestAnimationFrame(()=>compose.current?.focus());}} onFormalSelection={selection=>{setReference(selection);requestAnimationFrame(()=>compose.current?.focus());}} images={state.artifacts.filter(i => i.project === task.project).map(i => ({id:String(i.id),name:i.name,src:i.src}))} />}
                         {!fixture && !setupContext && !active && !task.approval && adapter.prepareAction && task.items.length > 0 && task.mainline?.available_actions.some(action=>action.id==="build_and_test_pipeline"&&action.state==="requires_confirmation") && <div className="task-next-actions">
                           {(() => {
-                            const action={kind:"sample" as const,label:"构建方案并测试样例…",icon:"image" as const};
+                            const action={kind:"sample" as const,label:"构建方案…",icon:"image" as const};
                             return <button className="primary" disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),action.kind))}><Icon name={action.icon} size={16} />{action.label}</button>;
                           })()}
                         </div>}
+                        {!fixture && !setupContext && !active && !task.approval && adapter.prepareAction && task.mainline?.available_actions.some(action=>action.id==="test_pipeline_samples"&&action.state==="requires_confirmation") && <div className="task-next-actions">
+                          <button className="primary" disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),"sample"))}><Icon name="image" size={16} />测试当前方案样例…</button>
+                        </div>}
+                        {!fixture && !setupContext && task.mainline?.available_actions.some(action=>action.id==="test_pipeline_samples"&&action.state==="blocked") && <div className="notice" role="status">已保存方案的样例范围已变化或失效。请重新检查当前任务后再构建方案；系统不会自动重试付费调用。</div>}
                         {!fixture && !active && !task.approval && adapter.prepareAction && task.mainline?.available_actions.some(action=>action.id==="start_delivery_processing"&&action.state==="requires_confirmation") && <div className="task-next-actions">
                           <button className="primary" disabled={busy} onClick={()=>void act(()=>adapter.prepareAction!(command(task),"process"))}><Icon name="play" size={16} />确认范围并开始全量处理…</button>
                         </div>}
