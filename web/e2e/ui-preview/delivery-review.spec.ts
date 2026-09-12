@@ -160,3 +160,37 @@ test("sample issue emits a complete sample VisualSelection and never writes form
     result_revision: "sample:feedback:3",
   })]);
 });
+
+test("negative confirmation and exclusion remain explicit per-image review decisions", async ({ page }) => {
+  await page.goto("/ui-preview?task=new");
+  await page.evaluate(async ([path, imageUrl]) => {
+    const { React, createRoot, DeliveryReview } = await import(path);
+    const host = document.createElement("main");
+    document.body.replaceChildren(host);
+    const state = { decisions: [] as unknown[] };
+    Object.assign(window, { imageDecisionTest: state });
+    const service = {
+      image: async (_p: string, _t: string, id: string, run: string | null) => ({
+        intent_revision: 5, intent_sha256: "intent",
+        snapshot: { image_id: id, source_run_id: run, sha256: `snapshot-${id}`, content_sha256: `pixels-${id}`, annotations: [] },
+        sources: [], review: null, confirmation_current: false,
+        accepted_objects: 0, unresolved_objects: 0, notice: "TEST",
+      }),
+      confirmImage: async (_p: string, _t: string, input: unknown) => { state.decisions.push(structuredClone(input)); return {}; },
+    };
+    createRoot(host).render(React.createElement(DeliveryReview, {
+      service, project: "project", task: "task",
+      images: [{ id: "negative", name: "negative", src: imageUrl }, { id: "excluded", name: "excluded", src: imageUrl }],
+      formalResult: { project_id: "project", task_id: "task", processing_operation_id: "operation", batch_id: "batch", workflow_version: "workflow@1", status: "completed", images: [{ image_id: "negative", child_run_id: "run-negative" }, { image_id: "excluded", child_run_id: "run-excluded" }] },
+    }));
+  }, [`/@fs/${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`, pixel]);
+
+  await page.getByRole("button", { name: "确认整张图没有目标并继续", exact: true }).click();
+  await expect(page).toHaveURL(/delivery_image=excluded/);
+  await page.getByLabel("检查备注／排除原因").fill("原图模糊，不纳入训练集");
+  await page.getByRole("button", { name: "明确排除此图并继续", exact: true }).click();
+  const decisions = await page.evaluate(() => (window as unknown as { imageDecisionTest: { decisions: { decision: string; image_id: string; reason: string | null }[] } }).imageDecisionTest.decisions);
+  expect(decisions).toHaveLength(2);
+  expect(decisions[0]).toMatchObject({ decision: "negative_confirmed", image_id: "negative", reason: null });
+  expect(decisions[1]).toMatchObject({ decision: "excluded", image_id: "excluded", reason: "原图模糊，不纳入训练集" });
+});

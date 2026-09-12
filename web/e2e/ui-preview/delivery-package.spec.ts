@@ -140,3 +140,32 @@ test("completed formal reviews stay distinct from package authorization and admi
   await expect(page.getByRole("button", { name: "允许审核齐全后自动打包", exact: true })).toBeEnabled();
   expect(await page.evaluate(() => (window as unknown as { packageReviewCompleteTest: { starts: number; authorizations: number } }).packageReviewCompleteTest)).toEqual({ starts: 0, authorizations: 0 });
 });
+
+test("saved package history preserves old immutable receipts", async ({ page }) => {
+  await page.goto("/ui-preview?task=new&delivery_package=package-new");
+  await page.evaluate(async (path) => {
+    const { React, createRoot, DeliveryPackage } = await import(path);
+    const host = document.createElement("main"); document.body.replaceChildren(host);
+    const state = { writes: 0 };
+    Object.assign(window, { immutablePackageHistoryTest: state });
+    const receipt = (id: string) => ({ job: { id, phase: "ready", intent_revision: id === "package-new" ? 2 : 1, snapshot_sha256: `snapshot-${id}`, result: { sha256: `sha-${id}`, bytes: id === "package-new" ? 200 : 100, images: 2, objects: 1, negatives: 1, excluded: 0, summary: { labels: [id], splits: { train: 1, val: 1 }, warnings: [], exclusions: {} } }, error: null }, active: false, interrupted: false });
+    const service = {
+      history: async () => ({ items: [{ id: "package-new", created_at: "new" }, { id: "package-old", created_at: "old" }], next_cursor: null }),
+      pendingPackage: () => undefined,
+      packageReadiness: async () => ({ intent_revision: 2, intent_sha256: "intent", ready: false, counts: { total: 2, complete: 1, positive: 1, negative: 0, excluded: 0, unresolved: 1, failed: 0 }, review_revisions: {}, blockers: [], consent: null, package: null }),
+      packageStatus: async (_p: string, _t: string, id: string) => receipt(id),
+      startPackage: async () => { state.writes += 1; throw new Error("must not write"); },
+      cancelPackage: async () => { state.writes += 1; throw new Error("must not cancel"); },
+      downloadUrl: (_p: string, _t: string, id: string) => `/download/${id}`,
+    };
+    createRoot(host).render(React.createElement(DeliveryPackage, { service, project: "project", task: "task", scope: { revision: 2, content_sha256: "intent", image_ids: ["one", "two"] }, onInspect: () => {} }));
+  }, `/@fs/${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`);
+
+  await expect(page.getByText("类别：package-new", { exact: true })).toBeVisible();
+  await page.getByLabel("本任务已保存的数据包").selectOption("package-old");
+  await expect(page.getByText("类别：package-old", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "下载数据集 ZIP" })).toHaveAttribute("href", "/download/package-old");
+  await page.getByLabel("本任务已保存的数据包").selectOption("package-new");
+  await expect(page.getByText("类别：package-new", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => (window as unknown as { immutablePackageHistoryTest: { writes: number } }).immutablePackageHistoryTest.writes)).toBe(0);
+});
