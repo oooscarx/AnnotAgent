@@ -52,6 +52,30 @@ test("a: persisted Agent replies stay distinct and intake asks only server-repor
   await expect(replies).toHaveCount(2);
   expect(writes).toEqual([]);
 });
+test("a: complete delivery intake advances only the server-authorized local Schema step",async({page,request},testInfo)=>{
+  const {p,root}=await identity(request);const advances:string[]=[];
+  page.on("request",r=>{if(r.method()==="POST"&&r.url().endsWith("/advance"))advances.push(r.url());});
+  await page.goto(`/projects/${p.project_id}/work`);
+  await page.getByRole("textbox",{name:"给 AnnotAgent 的需求"}).fill("TEST deliver one image as YOLO cup boxes");
+  await page.getByRole("button",{name:"发送",exact:true}).click();
+  await expect(page).toHaveURL(/\?task=[0-9a-f-]{36}/);
+  const task=new URL(page.url()).searchParams.get("task")!;
+  await page.getByRole("button",{name:/^(补充缺失信息|定义交付目标)$/}).click();
+  await page.getByRole("button",{name:/选择当前 .* 张图片/}).click();
+  await page.getByLabel("类别名称（每行一个）",{exact:true}).fill("cup");
+  await page.getByLabel("训练什么任务？",{exact:true}).selectOption("ultralytics_yolo_detection");
+  await page.getByRole("button",{name:"保存交付信息",exact:true}).click();
+  await expect(page.getByText("已保存到服务器",{exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"确认目标并准备方案",exact:true}).click();
+  await expect(page.getByText(/目标规范已准备。接下来查看方案生成授权/)).toBeVisible();
+  expect(advances).toHaveLength(1);
+  const workspace=await(await request.get(`${root}/tasks/${task}/workspace`)).json();
+  expect(workspace.mainline.schema).toBeTruthy();
+  expect(workspace.mainline.available_actions).toContainEqual(expect.objectContaining({id:"build_and_test_pipeline",state:"requires_confirmation"}));
+  await expect(page.getByRole("button",{name:"构建方案并测试样例…",exact:true})).toBeVisible();
+  await page.reload();expect(advances).toHaveLength(1);
+  await testInfo.attach("authorized-local-advance",{body:JSON.stringify({task,read_model_revision:workspace.mainline.read_model_revision,action:workspace.mainline.available_actions[0]},null,2),contentType:"application/json"});
+});
 test("b: six real Settings reads, local preference save/cancel and return context",async({page,request})=>{
   const {p,tasks}=await identity(request);
   await page.goto(`/projects/${p.project_id}/work?task=${tasks[0].task_id}&pane=image`);

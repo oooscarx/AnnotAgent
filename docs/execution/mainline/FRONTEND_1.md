@@ -51,4 +51,11 @@ The HTTP send boundary now accepts only a frozen `VisualSelection`, converts it 
 - `workspace.mainline` is now retained on the owned Task and validated against Project owner, Conversation and Task IDs.
 - The old client heuristic that exposed Plan/Sample/Process/Export together is suppressed once the Mainline projection exists. The visible sample action is derived only from the server's `build_and_test_pipeline · requires_confirmation` action; package/review actions remain in their domain components.
 - Deterministic delivery-Schema preparation now posts `advance` only when the exact read model exposes `prepare_delivery_schema · authorized`. The command and read-model revision are persisted for lost-response replay; other actions continue through their explicit approval flows.
-- Rust B1 targeted test passed; Web typecheck and 25 focused unit tests passed. The new browser journey is pending a freshly seeded B1 fixture.
+- Rust B1 targeted test passed; Web typecheck and 25 focused unit tests passed.
+- A freshly seeded TEST service on `http://127.0.0.1:8843` proved the visible journey: create a real Task, save the three delivery slots, execute exactly one server-authorized local `advance`, restore the matching Schema and expose the separately approved Sample action. Refresh emitted no second advance.
+
+### Domain deliveries received
+
+- Frontend 2 commits through `238a838` are integrated: task-bound Sample/Formal review surfaces, strict formal Run lineage, review work-item seam and package readiness/consent UI. The new optional formal/package services remain absent in `HttpAdapter` until Backend B2/B3 exists; this leaves those actions visibly unavailable instead of falling back to the legacy latest-Run/package path.
+- Frontend 3 patch `2c52266` (source `943a6ab`, patch-id verified by its owner) is integrated: task-scoped model preparation, exact return guard and Settings return banner. Task-side mounting remains blocked on Backend capability readiness; returning from settings never auto-resumes or reuses an old authorization.
+- Frontend 2's initial Sample selection had two lineage defects caught during rolling integration: feedback revision was task-wide (fixed in `309b7ed`), and source Artifact is still image-wide even though candidates can have different Artifacts (`ML-009`, blocking Composer wiring).
