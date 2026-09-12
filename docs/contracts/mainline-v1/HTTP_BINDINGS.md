@@ -324,6 +324,8 @@ The two existing routes used by this projection are:
 | `GET D/journey-consents/K` | Original owned `ConversationJourneyRecord` including frozen consent and optional sealed Sample scope. | None. It does not claim a dispatch or create a Sample. |
 | `POST D/journey-consents` | Exact preview consent → saved consent plus current dispatch. | A newly inserted, current P0 consent atomically queues one server-owned continuation. Exact replay returns the same identities. |
 | `POST D/journey-consents/K/execution` | Empty object `{}` → current `ConversationJourneyExecutionStatus`. | Persists one `queued` execution intent, then one worker claims it as `running`. Existing Builder and Sample IDs are reused; active or already-created work is returned without redispatch. |
+| `GET D/calls/Q/clarification` | `SchemaClarification {id,task_id,conversation_id,source_message_id,kind:"clarify_task",question,reason_code:"annotation_semantics_ambiguous",expected_schema_revision,schema_draft_id,status}`. | Passive. Repeated reads return the one saved question for call `Q`. |
+| `POST D/human-schema-drafts` | `{request_id,decision:{decision:"draft",...},clarification:{call_id:Q,expected_schema_revision},journey_consent_id:K}` → saved revision-1 private Schema plus `journey_resume`. | Saves the linked answer, completes only explicitly supplied delivery semantics, and resumes the same Journey. No new Schema model call, publication or annotation acceptance. |
 
 For an existing mid-Journey consent, clients render and confirm the server action,
 GET its exact consent when a review screen is needed, then POST the returned
@@ -334,6 +336,23 @@ Builder, or Sample UUIDs. Repeating GET is passive. Worker-capacity pressure rem
 durably `queued`. Repeating either consent or execution POST returns current receipts
 and cannot create another Builder or Sample. See `P0_AUTONOMY.md` for restart and
 read-model fields.
+
+When the saved goal says only `YOLO`, the Schema protocol treats detection,
+segmentation and whole-image classification as materially different outputs. A
+`decision:"clarify"` receipt therefore creates exactly one clarification object and
+stops before Builder/Sample. GET, repeated consent, and repeated execution reads do
+not create another question or call. An answer must bind `call_id` and
+`expected_schema_revision`; its `decision` must state the selected output and, for
+delivery work, the matching typed `delivery.training_target`. The resulting human
+Schema freezes the completed delivery revision/hash and keeps the consent's original
+ordered image IDs/hashes. A cancelled/stale clarification or a classification versus
+detection mismatch is rejected before continuation.
+
+Journey Sample execution resolves the frozen image IDs/hashes to current Project
+indices at admission and repeats that check during execution. The index values are
+presentation state, not authority. Later uploads or sort-order changes cannot replace
+the images in the sealed Sample; missing or changed content stops with
+`A Journey image is missing or changed; no Sample was started`.
 
 ### P0 upload identity and automatic Journey HTTP example
 
