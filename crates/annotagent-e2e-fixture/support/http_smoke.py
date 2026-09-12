@@ -246,6 +246,59 @@ def verify_demo_onboarding(c, model_profile_id):
     first = review["items"][0]
     assert first["child_run_id"] is None and first["annotations"][0]["origin"] == "preset_candidate", first
     assert first["annotations"][0]["review_status"] == "needs_review" and first["annotations"][0]["source_artifact_id"], first
+    for item in review["items"]:
+        image_path = preset_task + "/delivery-images/" + item["image_id"]
+        view = c.get(image_path)
+        for annotation in list(view["snapshot"]["annotations"]):
+            c.post(image_path + "/preset-objects", {
+                "command_id": uid(),
+                "intent_revision": review["intent_revision"],
+                "intent_sha256": review["intent_sha256"],
+                "annotation_id": annotation["id"],
+                "expected_snapshot_sha256": view["snapshot"]["sha256"],
+                "label": annotation["label"],
+                "value": annotation["value"],
+                "review_status": "human_accepted",
+                "reason": "TEST human inspected imported candidate",
+            })
+            view = c.get(image_path)
+        decision = "negative_confirmed" if not view["snapshot"]["annotations"] else "positive_complete"
+        c.post(image_path, {
+            "command_id": uid(),
+            "intent_revision": review["intent_revision"],
+            "intent_sha256": review["intent_sha256"],
+            "image_id": item["image_id"],
+            "source_run_id": None,
+            "expected_snapshot_sha256": view["snapshot"]["sha256"],
+            "expected_review_revision": 0,
+            "decision": decision,
+            "reason": None,
+            "confirmed": True,
+        })
+    reviewed = c.get(preset_task + "/delivery-review-items?limit=6")
+    assert reviewed["summary"] == {"selected": 6, "positive": 5, "negative": 1, "excluded": 0, "unreviewed": 0}, reviewed
+    ready_workspace = c.get(preset_task + "/workspace")["mainline"]
+    assert [item["id"] for item in ready_workspace["available_actions"]] == ["authorize_training_package"], ready_workspace
+    assert ready_workspace["result_diagnostics"] == [], ready_workspace
+    package_id = uid()
+    c.post(preset_task + "/delivery-package-consents", {
+        "id": package_id,
+        "intent_revision": review["intent_revision"],
+        "intent_sha256": review["intent_sha256"],
+        "confirmed": True,
+    })
+    package_path = preset_task + "/delivery-packages/" + package_id
+    package = c.poll(package_path, lambda value: not value["active"])
+    assert package["job"]["phase"] == "ready" and package["job"]["result"]["images"] == 6, package
+    archive, archive_evidence = c.download(package_path + "/download")
+    assert archive_evidence["content_type"] == "application/zip", archive_evidence
+    with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
+        package_manifest = json.loads(bundle.read("annotagent/manifest.json"))
+    lineage = list(package_manifest["lineage"]["images"].values())
+    assert len(lineage) == 6 and all(item["source_kind"] == "preset_candidate" and item["source_run_id"] is None and item["source_evidence_sha256"] for item in lineage), lineage
+    completed_workspace = c.get(preset_task + "/workspace")["mainline"]
+    assert completed_workspace["completion"]["status"] == "package_ready", completed_workspace
+    assert completed_workspace["available_actions"] == [] and completed_workspace["result_diagnostics"] == [], completed_workspace
 
     live_command = uid()
     live = c.post("/api/demos/start", {"command_id": live_command, "demo_id": entry["demo_id"], "demo_version": entry["version"], "source_mode": "live_model", "model_profile_id": model_profile_id})
@@ -254,7 +307,7 @@ def verify_demo_onboarding(c, model_profile_id):
     assert c.get(live_task + "/model-usage")["attempts"]["items"] == [], live
     assert c.get(live_task + "/calls") == [], live
     assert c.get(f"/api/projects/{live['project_id']}/conversations/{live['conversation_id']}/agent-model")["model_profile_id"] == model_profile_id
-    return {"catalog_revision": catalog["catalog_revision"], "manifest_sha256": entry["manifest_sha256"], "preset": preset, "live": live, "preset_task_root": preset_task, "live_task_root": live_task}
+    return {"catalog_revision": catalog["catalog_revision"], "manifest_sha256": entry["manifest_sha256"], "preset": preset, "live": live, "preset_task_root": preset_task, "live_task_root": live_task, "preset_package_id": package_id, "preset_package": package["job"], "preset_package_download": archive_evidence}
 
 
 def verify_diagnostic_scenes(c, manifest):
@@ -677,6 +730,7 @@ def restart_snapshot(c, manifest):
             "live_receipt": c.get("/api/demos/start/" + demo["live"]["command_id"]),
             "preset_workspace": c.get(demo["preset_task_root"] + "/workspace"),
             "preset_review": c.get(demo["preset_task_root"] + "/delivery-review-items?limit=6"),
+            "preset_package": c.get(demo["preset_task_root"] + "/delivery-packages/" + demo["preset_package_id"]),
             "live_workspace": c.get(demo["live_task_root"] + "/workspace"),
             "preset_usage": c.get(demo["preset_task_root"] + "/model-usage"),
             "live_usage": c.get(demo["live_task_root"] + "/model-usage"),

@@ -2,8 +2,9 @@
 use crate::LocalApplication;
 use annotagent_core::ReviewStatus;
 use annotagent_export::training_package::{
-    ImageConfirmation, PackageImage, PackageImageLineage, PackageLineage, PackageProgress,
-    PackageReceipt, inspect_training_package_with_lineage, write_training_package_with_lineage,
+    ImageConfirmation, PackageImage, PackageImageLineage, PackageLineage, PackageLineageSourceKind,
+    PackageProgress, PackageReceipt, inspect_training_package_with_lineage,
+    write_training_package_with_lineage,
 };
 use annotagent_storage::{
     DeliveryImageDecision, DeliveryPackageInput, DeliveryPackageJob, DeliveryPackagePhase,
@@ -396,6 +397,13 @@ impl LocalApplication {
                             image.review.input.image_id,
                             PackageImageLineage {
                                 original_name: image.original_name.clone(),
+                                source_kind: if image.review.input.source_run_id.is_some() {
+                                    Some(PackageLineageSourceKind::ModelRun)
+                                } else if image.source_evidence_sha256.is_some() {
+                                    Some(PackageLineageSourceKind::PresetCandidate)
+                                } else {
+                                    None
+                                },
                                 schema_sha256: image.schema_sha256.clone(),
                                 workflow_sha256: image.workflow_sha256.clone(),
                                 model_binding_sha256: image.model_binding_sha256.clone(),

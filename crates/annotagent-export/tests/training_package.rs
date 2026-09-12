@@ -11,6 +11,25 @@ use std::{
     path::Path,
 };
 
+#[test]
+fn legacy_lineage_without_source_kind_remains_readable() {
+    let value = serde_json::json!({
+        "schema_sha256":"a".repeat(64),
+        "workflow_sha256":null,
+        "model_binding_sha256":"b".repeat(64),
+        "original_name":"legacy.png",
+        "source_run_id":annotagent_core::RunId::new(),
+        "confirmation_id":ImageId::new().to_string(),
+        "confirmation_revision":1,
+        "annotation_revision_ids":[annotagent_core::AnnotationRevisionId::new().to_string()],
+        "annotation_snapshot_sha256":"c".repeat(64),
+        "source_evidence_sha256":"d".repeat(64)
+    });
+    let decoded: PackageImageLineage = serde_json::from_value(value).unwrap();
+    assert_eq!(decoded.source_kind, None);
+    assert!(decoded.source_run_id.is_some());
+}
+
 fn fixture(root: &Path) -> (TaskDeliveryIntent, Vec<PackageImage>) {
     let mut scope = Vec::new();
     let mut sources = Vec::new();
@@ -384,6 +403,9 @@ fn package_lineage_is_explicit_and_independently_checked() {
                 workflow_sha256: None,
                 model_binding_sha256: Some("e".repeat(64)),
                 original_name: "same-name.png".into(),
+                source_kind: Some(
+                    annotagent_export::training_package::PackageLineageSourceKind::ModelRun,
+                ),
                 source_run_id: Some(annotagent_core::RunId::new()),
                 confirmation_id: id,
                 confirmation_revision: 1,

@@ -1505,6 +1505,180 @@ mod tests {
         );
         assert!(application.store().list_runs().unwrap().is_empty());
 
+        let remaining_items = review_page["items"].as_array().unwrap()[1..].to_vec();
+        for item in remaining_items {
+            let image_id = item["image_id"].as_str().unwrap().to_owned();
+            let image_uri = format!("{task_root}/delivery-images/{image_id}");
+            let mut view = crate::tests::response_json(
+                crate::tests::request(&service, Method::GET, &image_uri, None).await,
+            )
+            .await;
+            let annotations = view["snapshot"]["annotations"].as_array().unwrap().clone();
+            for annotation in annotations {
+                let response = crate::tests::request(
+                    &service,
+                    Method::POST,
+                    &format!("{image_uri}/preset-objects"),
+                    Some(json!({
+                        "command_id":Uuid::new_v4(),
+                        "intent_revision":review_page["intent_revision"],
+                        "intent_sha256":review_page["intent_sha256"],
+                        "annotation_id":annotation["id"],
+                        "expected_snapshot_sha256":view["snapshot"]["sha256"],
+                        "label":annotation["label"],
+                        "value":annotation["value"],
+                        "review_status":"human_accepted",
+                        "reason":"TEST human inspected imported candidate"
+                    })),
+                )
+                .await;
+                assert_eq!(response.status(), StatusCode::OK);
+                view = crate::tests::response_json(
+                    crate::tests::request(&service, Method::GET, &image_uri, None).await,
+                )
+                .await;
+            }
+            let decision = if view["snapshot"]["annotations"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+            {
+                "negative_confirmed"
+            } else {
+                "positive_complete"
+            };
+            let response = crate::tests::request(
+                &service,
+                Method::POST,
+                &image_uri,
+                Some(json!({
+                    "command_id":Uuid::new_v4(),
+                    "intent_revision":review_page["intent_revision"],
+                    "intent_sha256":review_page["intent_sha256"],
+                    "image_id":image_id,
+                    "source_run_id":null,
+                    "expected_snapshot_sha256":view["snapshot"]["sha256"],
+                    "expected_review_revision":0,
+                    "decision":decision,
+                    "reason":null,
+                    "confirmed":true
+                })),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+        let reviewed_page = crate::tests::response_json(
+            crate::tests::request(
+                &service,
+                Method::GET,
+                &format!("{task_root}/delivery-review-items?limit=6"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(reviewed_page["summary"]["positive"], 5);
+        assert_eq!(reviewed_page["summary"]["negative"], 1);
+        assert_eq!(reviewed_page["summary"]["unreviewed"], 0);
+        let ready_workspace = crate::tests::response_json(
+            crate::tests::request(
+                &service,
+                Method::GET,
+                &format!("{task_root}/workspace"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            ready_workspace["mainline"]["available_actions"],
+            json!([{
+                "id":"authorize_training_package","state":"requires_confirmation",
+                "method":"POST","url":format!("{task_root}/delivery-package-consents"),
+                "requires_confirmation":true,"reason":"exact_delivery_revision_required"
+            }])
+        );
+        assert_eq!(ready_workspace["mainline"]["result_diagnostics"], json!([]));
+        let package_id = Uuid::new_v4();
+        let consent = crate::tests::request(
+            &service,
+            Method::POST,
+            &format!("{task_root}/delivery-package-consents"),
+            Some(json!({
+                "id":package_id,
+                "intent_revision":review_page["intent_revision"],
+                "intent_sha256":review_page["intent_sha256"],
+                "confirmed":true
+            })),
+        )
+        .await;
+        assert_eq!(consent.status(), StatusCode::OK);
+        let package_uri = format!("{task_root}/delivery-packages/{package_id}");
+        let mut terminal = None;
+        for _ in 0..500 {
+            let value = crate::tests::response_json(
+                crate::tests::request(&service, Method::GET, &package_uri, None).await,
+            )
+            .await;
+            if !value["active"].as_bool().unwrap() {
+                terminal = Some(value);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let terminal = terminal.expect("preset package worker must settle");
+        assert_eq!(terminal["job"]["phase"], "ready", "{terminal}");
+        assert_eq!(terminal["job"]["result"]["images"], 6);
+        assert_eq!(terminal["job"]["result"]["objects"], 9);
+        assert_eq!(terminal["job"]["result"]["negatives"], 1);
+        let download = crate::tests::request(
+            &service,
+            Method::GET,
+            &format!("{package_uri}/download"),
+            None,
+        )
+        .await;
+        assert_eq!(download.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(download.into_body(), 20 * 1024 * 1024)
+            .await
+            .unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let package_manifest: annotagent_export::training_package::PackageManifest =
+            serde_json::from_reader(zip.by_name("annotagent/manifest.json").unwrap()).unwrap();
+        let lineage = package_manifest.lineage.unwrap();
+        assert_eq!(lineage.images.len(), 6);
+        assert!(lineage.images.values().all(|image| {
+            image.source_run_id.is_none()
+                && image.source_kind
+                    == Some(
+                        annotagent_export::training_package::PackageLineageSourceKind::PresetCandidate,
+                    )
+                && image.source_evidence_sha256.is_some()
+        }));
+        let completed_workspace = crate::tests::response_json(
+            crate::tests::request(
+                &service,
+                Method::GET,
+                &format!("{task_root}/workspace"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            completed_workspace["mainline"]["available_actions"],
+            json!([])
+        );
+        assert_eq!(
+            completed_workspace["mainline"]["result_diagnostics"],
+            json!([])
+        );
+        assert_eq!(
+            completed_workspace["mainline"]["completion"]["status"],
+            "package_ready"
+        );
+        assert!(application.store().list_runs().unwrap().is_empty());
+
         let conflict = crate::tests::request(
             &service,
             Method::POST,
@@ -1542,13 +1716,25 @@ mod tests {
             .await,
         )
         .await;
-        assert_eq!(recovered_review["summary"]["positive"], 1);
-        assert_eq!(recovered_review["summary"]["unreviewed"], 5);
+        assert_eq!(recovered_review["summary"]["positive"], 5);
+        assert_eq!(recovered_review["summary"]["negative"], 1);
+        assert_eq!(recovered_review["summary"]["unreviewed"], 0);
         assert_eq!(
             recovered_review["items"][0]["annotations"][0]["review_status"],
             "human_accepted"
         );
         assert_eq!(recovered_review["items"][0]["confirmation_current"], true);
+        let recovered_package = crate::tests::response_json(
+            crate::tests::request(
+                &service,
+                Method::GET,
+                &format!("{task_root}/delivery-packages/{package_id}"),
+                None,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(recovered_package["job"]["phase"], "ready");
     }
 
     #[tokio::test]
