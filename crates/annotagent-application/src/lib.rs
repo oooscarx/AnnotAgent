@@ -15,6 +15,9 @@ mod conversation_builder;
 mod conversation_journey;
 pub use conversation_journey::{ConversationJourneyDataScope, JourneyModelDescription};
 mod conversation_human_requests;
+pub use conversation_human_requests::{
+    ConversationSampleReviewBlocker, ConversationSampleReviewReadiness,
+};
 mod conversation_processing;
 mod conversation_provider;
 pub use conversation_processing::ConversationProcessingContext;
