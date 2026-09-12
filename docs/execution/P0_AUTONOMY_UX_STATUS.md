@@ -51,9 +51,9 @@ Read-only evidence from `127.0.0.1:8788` also confirms that the existing task re
 
 ### G1 real packaged HTTP evidence
 
-- Integration/backend source SHA: `6a1219c58095e2e8e48f97386e9627523912cd2f`.
-- Isolated external-model-only manifest: `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-qm3k95vn/manifest.json`; service `127.0.0.1:8880`, scripted provider `127.0.0.1:8881`. The user service on `8788` was not restarted or mutated.
-- Permanent production-route test: `web/e2e/p0-autonomous-sample.spec.ts` — 1 passed in 5.2s against the built React application and real Rust HTTP/SQLite service.
+- Integration/backend source SHA: `af79fb78e17c98613d509f2a87fa8fdd1168c6f7`.
+- Isolated external-model-only manifest: `/private/var/folders/fk/x_vdk3nd7ws51fx8fzxwn6mm0000gn/T/TEST-agent-ui-cotzf1rt/manifest.json`; service `127.0.0.1:8882`, scripted provider `127.0.0.1:8883`. The user service on `8788` was not restarted or mutated.
+- Permanent production-route test: `web/e2e/p0-autonomous-sample.spec.ts` — 1 passed in 5.4s against the built React application and real Rust HTTP/SQLite service. Its request explicitly asks for cup + bottle bounding boxes for an Ultralytics YOLO target, matching the deterministic provider's saved delivery semantics.
 - The browser uploaded 6 real demo-pack images. The exact 6 `{image_id, sha256}` receipts were frozen into Send; the server selected exactly 3 Sample inputs.
 - The browser made one `POST .../journey-consents` and zero `POST .../execution` calls. After the page closed, the durable worker completed Schema → Builder → Sample and created exactly 3 pending HumanRequests bound to the same task and Sample operation.
 - Reopening the exact task showed `检查样例结果 · 3 张` and `3 个结果需要人工判断`; reloading retained the same task/result without a mutation.

@@ -50,7 +50,7 @@ export:
   const files = [1, 2, 3, 4, 5, 6].map((index) => resolve(`../examples/demo-packs/object-detection-review/1.0.0/images/desk_0${index}.png`));
   await page.locator('input[type="file"]').setInputFiles(files);
   await expect(page.locator("svg image")).toHaveAttribute("href", /^\/api\//);
-  await page.getByRole("textbox", { name: "给 AnnotAgent 的需求" }).fill("判断每张图片里是否有杯子，用于图像分类。只标注真实杯子，不包含杯子图案。");
+  await page.getByRole("textbox", { name: "给 AnnotAgent 的需求" }).fill("标注这些图片中的杯子和瓶子，框住完整可见物体，用于 Ultralytics YOLO 目标检测。先给我看三张样例。");
   await page.getByRole("button", { name: "发送", exact: true }).click();
   await expect.poll(() => new URL(page.url()).searchParams.get("task")).not.toBeNull();
   const task = new URL(page.url()).searchParams.get("task");
