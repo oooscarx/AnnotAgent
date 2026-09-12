@@ -89,6 +89,7 @@ export function DeliveryReview({
 
   const image = images.find((item) => item.id === selection.image);
   const sampleImage = sampleResult?.images.find((item) => item.image_id === selection.image);
+  const sampleSelectionAvailable = !!selected && !!sampleImage?.candidates.find((item) => item.candidate_id === selected)?.selection;
   const formalImage = formalResult?.images.find((item) => item.image_id === selection.image);
   const formalRun = formalImage?.child_run_id ?? null;
   const original = view?.snapshot.annotations.find((item) => item.id === selected);
@@ -424,12 +425,12 @@ export function DeliveryReview({
       {Object.entries(annotationOrigins[image.id]).map(([annotationId,origin])=><span key={annotationId}>{annotationId===selected?"当前对象 · ":""}{demoOriginLabel(origin)}</span>)}
     </div>}
     {selection.mode === "sample" && sampleResult && <div className="actions">
-      <button type="button" disabled={!selected || permissions?.sampleFeedback===false} onClick={() => {
+      <button type="button" disabled={!sampleSelectionAvailable || permissions?.sampleFeedback===false} onClick={() => {
         const annotation = sampleImage?.annotations.find((item) => item.id === selected);
         const next = annotation && emitSample(annotation);
         if (next) onSampleIssue?.(next);
       }}>这个样例框有问题</button>
-      <p>仅创建带 Draft、Sample Test、Artifact 和 feedback revision 的反馈引用，不写正式标注。</p>
+      <p>{selected&&!sampleSelectionAvailable?"此终端候选没有服务端签发的反馈引用，因此只能查看，不能提交修改。":"仅创建带 Draft、Sample Test、Artifact 和 feedback revision 的反馈引用，不写正式标注。"}</p>
     </div>}
     {selection.mode === "formal" && view && formalResult && formalImage && <>
       {service.createObject && <button type="button" disabled={busy || locked || dirty || !formalRun || !readable || !labels.length || permissions?.createObject===false} onClick={addObject}>新增漏标目标框</button>}

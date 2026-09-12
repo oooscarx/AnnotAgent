@@ -19,6 +19,7 @@ The component emits no progression command. Journey continuation remains Rust-ow
 - A server focus can select an exact image/candidate once per `result_revision`. It does not repeatedly override later user selection.
 - The Sample review layer intersects rendered annotations with the canonical terminal-candidate identities. Legacy aggregate/coarse outcomes and stale references are hidden; an all-invalid projection becomes a read-only `projection_failed` diagnostic instead of an empty review.
 - Formal editing and image decisions are enabled only by explicit server actions in the P0 projection.
+- A Sample result with a different Project/Task identity is rejected before any image or candidate is mounted. A terminal candidate without a server-issued feedback reference remains visible but its feedback action is disabled.
 - Viewing a candidate never marks it accepted.
 - A legal empty result explicitly says it is not a human negative confirmation and offers no synthetic candidate.
 - Sample feedback and formal review continue to use separate identities and endpoints.
