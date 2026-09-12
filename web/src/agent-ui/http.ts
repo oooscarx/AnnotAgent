@@ -495,20 +495,71 @@ export class HttpAdapter implements WorkspaceAdapter {
     } catch (e) { if (seq !== this.sequence || ctrl.signal.aborted) return; this.emit({ error: (e as Error).message, artifacts: [] }); throw e; }
   };
   async createTask(project: string) { this.root(project); return `new:${project}`; }
+  private uploadReceiptsKey(task:string){return `delivery-upload.receipts.${task}`;}
+  private uploadPendingKey(task:string){return `delivery-upload.pending.${task}`;}
+  private async saveUploadedTaskScope(task:Task,receipts:import("./DeliveryIntake").TaskImageReceipt[]){
+    if(!this.storage)throw new Error("无法持久保存图片范围；图片未绑定到任务，请保留当前页面后重试。");
+    const pendingKey=this.uploadPendingKey(task.id);
+    const receiptsKey=this.uploadReceiptsKey(task.id);
+    let pending=this.stored<import("./DeliveryIntake").IntakeInput|null>(pendingKey,null);
+    if(pending){
+      try{
+        const recovered=await this.transport<import("./DeliveryIntake").IntakeView>(`${this.taskRoot(task)}/delivery-intent`,{method:"POST",body:JSON.stringify(pending)});
+        const recoveredImages=new Map((recovered.saved?.intent.dataset_scope||[]).map(image=>[image.image_id,image.content_sha256]));
+        if((pending.task_images||[]).some(image=>recoveredImages.get(image.image_id)!==image.sha256))throw new Error("重试后的图片范围回执与原上传内容身份不匹配；原命令已保留，请核实服务端状态。");
+        this.save(pendingKey,null);
+        const savedIds=new Set((recovered.saved?.intent.dataset_scope||[]).map(image=>image.image_id));
+        receipts=receipts.filter(image=>!savedIds.has(image.image_id));
+        if(!receipts.length){this.save(receiptsKey,[]);return;}
+      }catch(error){
+        if(error instanceof ApiRequestError&&error.status===409&&error.code==="delivery_revision_conflict")this.save(pendingKey,null);
+        throw error;
+      }
+    }
+    const view=await this.transport<import("./DeliveryIntake").IntakeView>(`${this.taskRoot(task)}/delivery-intent`);
+    const saved=view.saved;
+    const existing=(saved?.intent.dataset_scope||[]).map(image=>{
+      if(!image.content_sha256||!/^[a-f\d]{64}$/i.test(image.content_sha256))throw new Error("服务器未返回已有图片的稳定内容身份；不会猜测或替换任务范围。");
+      return {image_id:image.image_id,sha256:image.content_sha256};
+    });
+    const merged=[...existing];
+    for(const receipt of receipts){
+      const current=merged.find(image=>image.image_id===receipt.image_id);
+      if(current&&current.sha256!==receipt.sha256)throw new Error("同一图片的内容身份已变化；不会覆盖已保存任务范围。");
+      if(!current)merged.push(receipt);
+    }
+    if(merged.length===existing.length){this.save(receiptsKey,[]);return;}
+    const metadata=Object.fromEntries((saved?.intent.dataset_scope||[]).map(image=>[image.image_id,{existing_split:image.existing_split??null,group_ids:image.group_ids||[]}])) as Record<string,{existing_split:"train"|"val"|"test"|null;group_ids:string[]}>;
+    pending={
+      command_id:crypto.randomUUID(),expected_revision:saved?.revision||0,image_ids:null,task_images:merged,
+      label_spec:saved?.intent.label_spec||null,training_target:saved?.intent.training_target||null,
+      split_policy:saved?.intent.split_policy||{train_percent:80,seed:0,preserve_existing:true,keep_known_groups_together:true},image_metadata:metadata,
+    };
+    this.save(pendingKey,pending);
+    try{
+      const result=await this.transport<import("./DeliveryIntake").IntakeView>(`${this.taskRoot(task)}/delivery-intent`,{method:"POST",body:JSON.stringify(pending)});
+      const frozen=new Map((result.saved?.intent.dataset_scope||[]).map(image=>[image.image_id,image.content_sha256]));
+      if(merged.some(image=>frozen.get(image.image_id)!==image.sha256))throw new Error("图片范围回执与上传内容身份不匹配；原命令已保留，请核实服务端状态。");
+      this.save(pendingKey,null);this.save(receiptsKey,[]);this.rememberLabelNames(task.project,task.id,result);
+    }catch(error){
+      if(error instanceof ApiRequestError&&error.status===409&&error.code==="delivery_revision_conflict")this.save(pendingKey,null);
+      throw error;
+    }
+  }
   async uploadImages(c:Command, files:File[]) {
     const task=this.checked(c);
     if(this.stored(`send.${task.id}`,null))throw new Error("上一条发送结果尚未确认，不能改变它冻结的图片范围");
-    const uploaded=task.id.startsWith("new:")?this.stored<ConversationTaskImage[]>(`uploads.${task.id}`,[]):[];
+    const creating=task.id.startsWith("new:");
+    const uploaded=creating?this.stored<ConversationTaskImage[]>(`uploads.${task.id}`,[]):this.stored<ConversationTaskImage[]>(this.uploadReceiptsKey(task.id),[]);
     for (const file of files) {
       const receipt=await this.transport<{imported:number;duplicates:number;corrupt:{name:string;message:string}[];images:{image_id:string;content_hash:string}[]}>(`${this.root(task.project)}/image-upload?name=${esc(file.name)}`,{method:"POST",headers:{"content-type":"application/octet-stream"},body:file});
       if(receipt.corrupt.length) throw new Error(receipt.corrupt.map(e=>`${e.name}: ${e.message}`).join("；"));
       if(!receipt.imported&&!receipt.duplicates) throw new Error(`${file.name} 未被服务器导入`);
-      if(task.id.startsWith("new:")) {
-        if(!Array.isArray(receipt.images)||!receipt.images.length||receipt.images.some(image=>!image.image_id||!/^[a-f\d]{64}$/i.test(image.content_hash)))throw new Error(`${file.name} 的上传回执缺少稳定图片身份；不会猜测任务范围`);
-        for(const image of receipt.images)if(!uploaded.some(current=>current.image_id===image.image_id))uploaded.push({image_id:image.image_id,sha256:image.content_hash});
-        this.save(`uploads.${task.id}`,uploaded);
-      }
+      if(!Array.isArray(receipt.images)||!receipt.images.length||receipt.images.some(image=>!image.image_id||!/^[a-f\d]{64}$/i.test(image.content_hash)))throw new Error(`${file.name} 的上传回执缺少稳定图片身份；不会猜测任务范围`);
+      for(const image of receipt.images){const current=uploaded.find(item=>item.image_id===image.image_id);if(current&&current.sha256!==image.content_hash)throw new Error(`${file.name} 的内容身份与已保存上传回执不一致`);if(!current)uploaded.push({image_id:image.image_id,sha256:image.content_hash});}
+      this.save(creating?`uploads.${task.id}`:this.uploadReceiptsKey(task.id),uploaded);
     }
+    if(!creating&&uploaded.length)await this.saveUploadedTaskScope(task,uploaded);
     await this.reloadCurrent(task);
   }
   saveDraft(id: string, text: string) { this.task(id); this.save(`draft.${id}`, text); this.emit({ tasks: this.state.tasks.map(t => t.id === id ? { ...t, draft: text } : t) }); }

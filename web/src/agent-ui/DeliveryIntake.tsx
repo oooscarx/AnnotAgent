@@ -12,8 +12,9 @@ type Target = { annotation_kind: string; framework: string; export_profile: stri
 export type DeliveryProposal={call_id:string;question:string|null;semantics:{labels:(Omit<DeliveryLabel,"stable_id">&{existing_id:string|null})[];training_target:Target|null}};
 type Split = { train_percent: number; seed: number; preserve_existing: boolean; keep_known_groups_together: boolean };
 type ImageMetadata={existing_split:"train"|"val"|"test"|null;group_ids:string[]};
-export type IntakeInput = { command_id: string; expected_revision: number; image_ids: string[] | null; label_spec: DeliveryLabel[] | null; training_target: Target | null; split_policy: Split;image_metadata?:Record<string,ImageMetadata> };
-export type IntakeView = { saved: null | { revision: number; content_sha256: string; intent: { dataset_scope: null | ({ image_id: string }&Partial<ImageMetadata>)[]; label_spec: DeliveryLabel[] | null; training_target: Target | null; split_policy: Split } }; missing_slots: string[]; blockers: string[]; maximum_sample_images: number; execution_authorized: boolean;proposals?:DeliveryProposal[] };
+export type TaskImageReceipt = { image_id: string; sha256: string };
+export type IntakeInput = { command_id: string; expected_revision: number; image_ids: string[] | null; task_images?: TaskImageReceipt[] | null; label_spec: DeliveryLabel[] | null; training_target: Target | null; split_policy: Split;image_metadata?:Record<string,ImageMetadata> };
+export type IntakeView = { saved: null | { revision: number; content_sha256: string; intent: { dataset_scope: null | ({ image_id: string; content_sha256?: string }&Partial<ImageMetadata>)[]; label_spec: DeliveryLabel[] | null; training_target: Target | null; split_policy: Split } }; missing_slots: string[]; blockers: string[]; maximum_sample_images: number; execution_authorized: boolean;proposals?:DeliveryProposal[] };
 export interface DeliveryIntakeService {
   read(project: string, task: string, signal?: AbortSignal): Promise<IntakeView>;
   save(project: string, task: string, input: IntakeInput): Promise<IntakeView>;

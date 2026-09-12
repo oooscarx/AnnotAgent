@@ -143,3 +143,58 @@ export:
   await expect(reopened.getByRole("region", { name: "当前任务图片结果", exact: true })).toBeVisible();
   await reopened.close();
 });
+
+test("description first then later upload keeps one Task and exact six-image scope",async({page,request},testInfo)=>{
+  test.skip(!process.env.AGENT_UI_TEST_MANIFEST,"Requires the marked isolated Agent UI fixture");
+  test.setTimeout(180_000);
+  const manifest=JSON.parse(readFileSync(process.env.AGENT_UI_TEST_MANIFEST!,"utf8"));
+  expect(manifest.fixture).toBe("external-model-only");
+  const project=`TEST-p0-description-first-${randomUUID()}`;
+  const yaml=`version: 1
+project:
+  name: TEST P0 description first
+dataset:
+  root: images
+runtime: {}
+tasks: []
+review:
+  auto_accept_confidence: 0.9
+  force_review_below: 0.5
+export:
+  formats: [native]
+`;
+  expect((await request.post("/api/projects",{data:{id:project,yaml}})).ok()).toBe(true);
+  const binding=await request.put(`/api/projects/${project}/model-bindings`,{data:{bindings:[{capability:"vision_language",role:"primary_inference",match_kind:"capability",model_profile_id:manifest.model_profile_id,locked:false}]}});
+  expect(binding.ok(),await binding.text()).toBe(true);
+  const writes:string[]=[];
+  page.on("request",event=>{if(!["GET","HEAD"].includes(event.method()))writes.push(`${event.method()} ${new URL(event.url()).pathname}`);});
+  await page.goto(`/projects/${project}/work`);
+  await page.getByRole("textbox",{name:"给 AnnotAgent 的需求"}).fill("标注这些图片中的杯子和瓶子，框住完整可见物体，用于 Ultralytics YOLO 目标检测。先给我看三张样例。");
+  await page.getByRole("button",{name:"发送",exact:true}).click();
+  await expect.poll(()=>new URL(page.url()).searchParams.get("task")).not.toBeNull();
+  const task=new URL(page.url()).searchParams.get("task")!;
+  const navigation=await(await request.get("/api/navigation?limit=100")).json();
+  const owner=navigation.items.find((item:{project_id:string})=>item.project_id===project);
+  const root=`/api/projects/${project}/conversations/${owner.conversation_id}/tasks/${task}`;
+  const missing=await(await request.get(`${root}/workspace`)).json();
+  expect(missing.mainline.intake.missing_slots).toContain("dataset_scope");
+  expect(missing.sample_operations||[]).toHaveLength(0);
+  await expect(page.getByRole("region",{name:"当前任务状态",exact:true})).toContainText("请上传或选择这次要处理的图片");
+  await page.screenshot({path:testInfo.outputPath("00-missing-images.png"),fullPage:true,animations:"disabled"});
+
+  const files=[1,2,3,4,5,6].map(index=>resolve(`../examples/demo-packs/object-detection-review/1.0.0/images/desk_0${index}.png`));
+  await page.locator('input[type="file"]').setInputFiles(files);
+  await expect.poll(async()=>{
+    const workspace=await(await request.get(`${root}/workspace`)).json();
+    return {images:workspace.mainline.intake.dataset_scope?.length||0,actions:workspace.mainline.available_actions.filter((action:{id:string})=>action.id==="build_and_test_pipeline").length};
+  }).toEqual({images:6,actions:1});
+  const ready=await(await request.get(`${root}/workspace`)).json();
+  expect(ready.task.input.id).toBe(task);
+  expect(ready.sample_operations||[]).toHaveLength(0);
+  expect(ready.mainline.intake.dataset_scope.map((image:{image_id:string;content_sha256:string})=>[image.image_id,image.content_sha256])).toHaveLength(6);
+  expect(new Set(ready.mainline.intake.dataset_scope.map((image:{image_id:string})=>image.image_id)).size).toBe(6);
+  expect(writes.filter(write=>write===`POST ${root}/delivery-intent`)).toHaveLength(1);
+  expect(writes.some(write=>write.includes("journey-consents")||write.endsWith("/execution"))).toBe(false);
+  await expect(page.getByRole("region",{name:"当前任务状态",exact:true})).toContainText("图片和要求已记录，可以准备样例");
+  await page.screenshot({path:testInfo.outputPath("01-description-first-ready.png"),fullPage:true,animations:"disabled"});
+});

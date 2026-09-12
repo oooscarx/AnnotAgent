@@ -44,6 +44,38 @@ it("freezes exact upload receipt identities into one new Task Send",async()=>{
     message:{id:command.id,text:"框出黄色物块",image:null},
   });
 });
+it("attaches later uploads to the same described Task with exact CAS and replays an unknown receipt",async()=>{
+  const storage=memoryStorage();
+  const image={image_id:"00000000-0000-4000-8000-000000000019",content_hash:"c".repeat(64)};
+  const reads=mockTransport();
+  const posts:unknown[]=[];
+  let lost=true;
+  let saved:null|import("./DeliveryIntake").IntakeView["saved"]=null;
+  const view=():import("./DeliveryIntake").IntakeView=>({
+    saved,missing_slots:saved?["label_spec","training_target"]:["dataset_scope","label_spec","training_target"],
+    blockers:[],maximum_sample_images:3,execution_authorized:false,proposals:[],
+  });
+  const transport:Transport=async<T>(path:string,init?:RequestInit)=>{
+    if(path.includes("/image-upload?")&&init?.method==="POST")return {imported:saved?0:1,duplicates:saved?1:0,corrupt:[],images:[image]} as T;
+    if(path===`${root}/t1/delivery-intent`){
+      if((init?.method||"GET")==="GET")return view() as T;
+      const body=JSON.parse(String(init?.body));posts.push(body);
+      saved={revision:1,content_sha256:"scope-one",intent:{dataset_scope:body.task_images.map((entry:{image_id:string;sha256:string})=>({image_id:entry.image_id,content_sha256:entry.sha256})),label_spec:body.label_spec,training_target:body.training_target,split_policy:body.split_policy}};
+      if(lost){lost=false;throw new Error("TEST delivery receipt lost");}
+      return view() as T;
+    }
+    return reads.transport<T>(path,init);
+  };
+  const command={id:"00000000-0000-4000-8000-000000000018",project:"TEST-alpha",task:"t1",revision:"schema-1"};
+  const first=new HttpAdapter(transport,storage);await first.refresh();await first.loadTask("TEST-alpha","t1");
+  await expect(first.uploadImages(command,[new File(["TEST pixels"],"later.png",{type:"image/png"})])).rejects.toThrow("receipt lost");
+  expect(posts).toHaveLength(1);
+  expect(posts[0]).toMatchObject({expected_revision:0,image_ids:null,task_images:[{image_id:image.image_id,sha256:image.content_hash}],label_spec:null,training_target:null});
+  const restored=new HttpAdapter(transport,storage);await restored.refresh();await restored.loadTask("TEST-alpha","t1");
+  await restored.uploadImages(command,[new File(["TEST pixels"],"later.png",{type:"image/png"})]);
+  expect(posts).toHaveLength(2);
+  expect(posts[1]).toEqual(posts[0]);
+});
 function memoryStorage():Storage {
   const values=new Map<string,string>();
   return {get length(){return values.size;},clear:()=>values.clear(),getItem:key=>values.get(key)??null,setItem:(key,value)=>{values.set(key,String(value));},removeItem:key=>{values.delete(key);},key:index=>[...values.keys()][index]??null};
