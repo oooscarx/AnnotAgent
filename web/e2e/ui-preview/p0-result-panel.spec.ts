@@ -26,6 +26,7 @@ test("three terminal Sample images appear and the server focus is applied only o
   },[harness,pixel]);
 
   await expect(page.getByText("需要判断：瓶子边界需要判断",{exact:true})).toBeVisible();
+  await expect(page.getByRole("heading",{name:"检查样例结果 · 3 张"})).toBeVisible();
   await expect(page.getByText("样例反馈",{exact:true})).toBeVisible();
   await expect(page.getByRole("tab",{name:"正式 Batch"})).toHaveCount(0);
   await page.getByRole("button",{name:/Annotation list/}).click();
@@ -51,6 +52,8 @@ test("server actions keep unavailable formal edits and decisions disabled",async
     createRoot(host).render(React.createElement(P0ResultPanel,{service,projectId:"project",taskId:"task",view}));
   },[harness,pixel]);
   await page.getByRole("button",{name:/Annotation list/}).click();
+  await expect(page.getByText("本任务的正式处理结果 · 来源已绑定",{exact:true})).toBeVisible();
+  await expect(page.getByText(/Batch|Workflow|child Run/)).toHaveCount(0);
   await expect(page.getByRole("button",{name:"新增漏标目标框",exact:true})).toBeDisabled();
   await expect(page.getByRole("button",{name:"接受这个对象",exact:true})).toBeDisabled();
   await expect(page.getByRole("button",{name:"拒绝这个对象",exact:true})).toBeDisabled();
