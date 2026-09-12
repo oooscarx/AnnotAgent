@@ -7,7 +7,7 @@ const expect = baseExpect.configure({ timeout: 75_000 });
 
 test("one bounded approval continues six newly uploaded images to three real Sample reviews", async ({ browser, page, request }, testInfo) => {
   test.skip(!process.env.AGENT_UI_TEST_MANIFEST, "Requires the marked isolated Agent UI fixture");
-  test.setTimeout(240_000);
+  test.setTimeout(360_000);
   const manifest = JSON.parse(readFileSync(process.env.AGENT_UI_TEST_MANIFEST!, "utf8"));
   expect(manifest.fixture).toBe("external-model-only");
   const health = await request.get("/api/health");
@@ -130,6 +130,9 @@ export:
   expect(sampleRecord.sample_test.inputs).toHaveLength(3);
 
   const reopened = await browser.newPage();
+  reopened.on("request",(event)=>{
+    if(!["GET","HEAD"].includes(event.method()))writes.push(`${event.method()} ${new URL(event.url()).pathname}`);
+  });
   await reopened.goto(`/projects/${project}/work?task=${task}`);
   await expect(reopened).toHaveURL(new RegExp(`task=${task}`));
   await expect(reopened.getByRole("region", { name: "当前任务状态", exact: true })).toContainText("需要你的判断");
@@ -138,6 +141,7 @@ export:
   await expect(result.getByRole("heading", { name: "检查样例结果 · 3 张", exact: true })).toBeVisible();
   await expect(reopened.getByRole("region", { name: "当前任务状态", exact: true })).toContainText("3 个结果需要人工判断");
   await reopened.screenshot({ path: testInfo.outputPath("04-sample-review.png"), fullPage: true, animations: "disabled" });
+
   await reopened.emulateMedia({colorScheme:"dark"});
   await reopened.screenshot({path:testInfo.outputPath("05-sample-review-dark.png"),fullPage:true,animations:"disabled"});
   await reopened.setViewportSize({width:390,height:844});
@@ -146,6 +150,115 @@ export:
   await reopened.reload();
   await expect(reopened).toHaveURL(new RegExp(`task=${task}`));
   await expect(reopened.getByRole("region", { name: "当前任务图片结果", exact: true })).toBeVisible();
+
+  const processingSelection={draft_id:completedSample.draft_id,sample_test_id:completedSample.id};
+  const processingQuery=new URLSearchParams(processingSelection).toString();
+  const blockedPreview=await request.get(`/api/projects/${project}/processing-preview?${processingQuery}`);
+  expect(blockedPreview.status()).toBe(409);
+  expect(await blockedPreview.json()).toMatchObject({code:"sample_reviews_pending",admitted:false,suggested_action:"review_sample_results",sample_review:{sample_test_id:completedSample.id,ready:false,unresolved:expect.any(Array)}});
+  const blockedConfirm=await request.post(`/api/projects/${project}/processing-operations`,{data:{request_id:randomUUID(),selection:processingSelection,expected_revision:sampleRecord.sample_test.draft_revision,authorization_fingerprint:"0".repeat(64)}});
+  expect(blockedConfirm.status()).toBe(409);
+  expect(await blockedConfirm.json()).toMatchObject({code:"sample_reviews_pending",admitted:false});
+  expect(await (await request.get(`${root}/processing-operations`)).json()).toEqual([]);
+
+  await reopened.setViewportSize({width:1440,height:900});
+  await reopened.emulateMedia({colorScheme:"light"});
+  for(let reviewed=1;reviewed<=3;reviewed++){
+    const confirmSample=reopened.getByRole("button",{name:"这个样例结果正确",exact:true});
+    await expect(confirmSample).toBeEnabled();
+    await confirmSample.click();
+    await expect.poll(async()=>{
+      const workspace=await(await request.get(`${root}/workspace`)).json();
+      return workspace.human_requests.filter((item:{status:string;input:{sample_test_id:string}})=>item.status==="applied"&&item.input.sample_test_id===completedSample.id).length;
+    }).toBe(reviewed);
+  }
+  await expect(reopened.getByRole("region",{name:"当前任务状态",exact:true})).toContainText("样例已经确认，可以处理剩余图片");
+  const readyPreview=await request.get(`/api/projects/${project}/processing-preview?${processingQuery}`);
+  expect(readyPreview.ok(),await readyPreview.text()).toBe(true);
+  expect(await readyPreview.json()).toMatchObject({sample_review:{sample_test_id:completedSample.id,ready:true,unresolved:[],applied_request_ids:expect.any(Array)}});
+  await reopened.screenshot({path:testInfo.outputPath("07-samples-confirmed.png"),fullPage:true,animations:"disabled"});
+
+  await reopened.getByRole("button",{name:"确认范围并处理剩余图片",exact:true}).click();
+  const processingApproval=reopened.getByRole("dialog");
+  await expect(processingApproval).toContainText("6 张图片");
+  const processingResponse=reopened.waitForResponse(response=>response.request().method()==="POST"&&new URL(response.url()).pathname===`/api/projects/${project}/processing-operations`);
+  await processingApproval.getByRole("button",{name:"接受未知费用并执行此范围",exact:true}).click();
+  const processingStarted=await processingResponse;
+  expect(processingStarted.ok(),await processingStarted.text()).toBe(true);
+  const processingReceipt=await processingStarted.json();
+  expect(processingReceipt.batch_id).toBeTruthy();
+  await expect.poll(async()=>{
+    const batch=await(await request.get(`/api/batches/${processingReceipt.batch_id}`)).json();
+    return batch.batch.status;
+  },{timeout:90_000}).toMatch(/completed|awaiting_review/);
+  await reopened.reload();
+  await expect(reopened.getByRole("region",{name:"当前任务图片结果",exact:true})).toBeVisible();
+  await expect(reopened.getByRole("heading",{name:"检查正式结果",exact:true})).toBeVisible();
+  expect((await(await request.get(`${root}/processing-operations`)).json())).toHaveLength(1);
+  await reopened.screenshot({path:testInfo.outputPath("08-formal-review.png"),fullPage:true,animations:"disabled"});
+
+  const formalResponse=await request.get(`${root}/formal-result`);
+  expect(formalResponse.ok(),await formalResponse.text()).toBe(true);
+  const formal=await formalResponse.json();
+  expect(formal.images).toHaveLength(6);
+  const review=reopened.getByRole("region",{name:"当前任务图片结果",exact:true});
+  for(const image of formal.images as {image_id:string;child_run_id:string|null}[]){
+    await review.getByLabel("图片",{exact:true}).selectOption(image.image_id);
+    await expect(review.getByLabel("图片",{exact:true})).toHaveValue(image.image_id);
+    const stateResponse=await request.get(`${root}/delivery-images/${image.image_id}${image.child_run_id?`?source_run_id=${image.child_run_id}`:""}`);
+    expect(stateResponse.ok(),await stateResponse.text()).toBe(true);
+    const state=await stateResponse.json();
+    if(state.confirmation_current)continue;
+    if(!image.child_run_id){
+      await review.getByLabel("检查备注／排除原因").fill("TEST explicit exclusion: the bound Batch did not produce an auditable child Run for this image");
+      const saved=reopened.waitForResponse(response=>response.request().method()==="POST"&&new URL(response.url()).pathname.endsWith(`/delivery-images/${image.image_id}`));
+      await review.getByRole("button",{name:"明确排除此图并继续",exact:true}).click();
+      expect((await saved).ok()).toBe(true);
+      continue;
+    }
+    const activeCount=state.snapshot.annotations.filter((annotation:{review_status:string})=>annotation.review_status!=="rejected").length;
+    await expect(review.locator("rect.aa-annotation-shape")).toHaveCount(activeCount);
+    await expect(review.getByRole("button",{name:"重新读取服务器状态",exact:true})).toBeEnabled();
+    await expect(review).toContainText(`未解决对象 ${state.unresolved_objects}`);
+    const listToggle=review.getByRole("button",{name:new RegExp(`^Annotation list · ${activeCount}$`)});
+    if(await listToggle.getAttribute("aria-expanded")!=="true")await listToggle.click();
+    const objectRows=review.getByRole("list",{name:"Annotations on canvas",exact:true}).getByRole("button");
+    await expect(objectRows).toHaveCount(activeCount);
+    let unresolved=state.unresolved_objects;
+    for(let index=0;index<activeCount;index++){
+      await objectRows.nth(index).click();
+      const acceptObject=review.getByRole("button",{name:"接受这个对象",exact:true});
+      await expect(acceptObject).toBeEnabled();
+      await acceptObject.click();
+      unresolved--;
+      await expect(review).toContainText(`未解决对象 ${unresolved}`);
+    }
+    const saved=reopened.waitForResponse(response=>response.request().method()==="POST"&&new URL(response.url()).pathname.endsWith(`/delivery-images/${image.image_id}`));
+    await review.getByRole("button",{name:"确认整张图标注完整并继续",exact:true}).click();
+    expect((await saved).ok()).toBe(true);
+  }
+
+  await reopened.reload();
+  await expect(reopened.getByRole("region",{name:"当前任务状态",exact:true})).toContainText("可以生成训练数据包");
+  await reopened.getByRole("button",{name:"生成训练数据包",exact:true}).click();
+  const delivery=reopened.getByRole("region",{name:"训练数据包交付",exact:true});
+  await expect(delivery).toBeVisible();
+  await delivery.getByRole("button",{name:"刷新审核与打包状态",exact:true}).click();
+  await expect(delivery).toContainText("正式审核齐全");
+  await delivery.getByRole("button",{name:"允许审核齐全后自动打包",exact:true}).click();
+  await expect(delivery.getByRole("link",{name:"下载数据集 ZIP",exact:true})).toBeVisible({timeout:30_000});
+  expect(writes.filter(write=>write.endsWith("/delivery-package-consents"))).toHaveLength(1);
+  expect(writes.filter(write=>write.endsWith("/delivery-packages"))).toHaveLength(0);
+  const writesBeforeReload=writes.length;
+  await reopened.reload();
+  await expect(reopened.getByRole("link",{name:"下载数据集 ZIP",exact:true})).toBeVisible();
+  expect(writes).toHaveLength(writesBeforeReload);
+  const downloadStarted=reopened.waitForEvent("download");
+  await reopened.getByRole("link",{name:"下载数据集 ZIP",exact:true}).click();
+  const download=await downloadStarted;
+  await download.saveAs(testInfo.outputPath("p0-autonomous-delivery-TEST.zip"));
+  expect(await download.failure()).toBeNull();
+  await reopened.screenshot({path:testInfo.outputPath("09-package-ready.png"),fullPage:true,animations:"disabled"});
   await reopened.close();
 });
 

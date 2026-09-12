@@ -206,6 +206,19 @@ describe("single current-task presentation", () => {
     expect(result).toMatchObject({kind:"ready_to_process",primary:{kind:"prepare_processing"}});
   });
 
+  it("opens the server-owned training package step after formal review", () => {
+    const result=selectCurrentTaskPresentation(task(view({
+      available_actions:[action("authorize_training_package","requires_confirmation")],
+      review_work_item_id:"persistent-review-lineage",
+      review_summary:{selected_images:6,saved_review_receipts:6,current_reviews:0,pending_reviews:0},
+    }),{
+      phase:"waiting_for_human",
+      human:{id:"applied-sample-request",image:"image-1",kind:"bounding_box",labels:["cup"],label:"cup",candidate:"candidate-1"},
+      processing:[{id:"processing",batch:"batch",status:"awaiting_review",url:"/batch"}],
+    }));
+    expect(result).toMatchObject({kind:"ready_to_deliver",primary:{kind:"prepare_export"},action:{id:"authorize_training_package"}});
+  });
+
   it("lets the server proposal resolve label and target without another form", () => {
     const result = selectCurrentTaskPresentation(
       task(

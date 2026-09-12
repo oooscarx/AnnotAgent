@@ -91,6 +91,20 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
     };
   }
 
+  // The server only exposes this action after every formal image review is
+  // current. Persistent review-work-item lineage must not reopen the already
+  // completed Sample stop or hide the next server-owned delivery decision.
+  const packageAction = action(task, "authorize_training_package", "requires_confirmation");
+  if (packageAction) {
+    return {
+      kind: "ready_to_deliver",
+      title: "正式审核完成，可以生成训练数据包",
+      detail: "打开交付卡后，可授权服务器按当前冻结审核快照生成一次真实 ZIP。",
+      primary: { kind: "prepare_export" },
+      action: packageAction,
+    };
+  }
+
   const activeReviewCount =
     task.sampleResult?.images.length ||
     view.review_summary.current_reviews ||
@@ -104,7 +118,7 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
     task.phase === "waiting_for_human" ||
     !!task.human ||
     !!view.review_work_item_id ||
-    (!!task.sampleResult?.images.length && !formalProcessingAction)
+    (!!task.sampleResult?.images.length && !formalProcessingAction && !task.processing?.length)
   ) {
     return {
       kind: "needs_review",

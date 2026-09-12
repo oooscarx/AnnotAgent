@@ -306,8 +306,14 @@ export function AgentPreviewApp({
     : undefined;
   const currentTask = !fixture && task ? selectCurrentTaskPresentation(task) : undefined;
   const taskAssets = task ? state.artifacts.filter(asset => !asset.project || asset.project === task.project) : [];
+  const deliverySaved=task?.mainline?.delivery&&typeof task.mainline.delivery==="object"?(task.mainline.delivery as {saved?:{revision?:number;content_sha256?:string;intent?:{dataset_scope?:{image_id?:string}[]}}}).saved:undefined;
+  const packageScope=deliverySaved&&Number.isSafeInteger(deliverySaved.revision)&&typeof deliverySaved.content_sha256==="string"&&Array.isArray(deliverySaved.intent?.dataset_scope)&&deliverySaved.intent.dataset_scope.every(image=>typeof image.image_id==="string")
+    ? {revision:deliverySaved.revision!,content_sha256:deliverySaved.content_sha256,image_ids:deliverySaved.intent!.dataset_scope!.map(image=>image.image_id!)}
+    : undefined;
   const formalReview = !!task?.processing?.length && currentTask?.kind === "needs_review";
-  const p0ResultView: P0ResultPanelView | undefined = !fixture && task && formalReview
+  const p0ResultView: P0ResultPanelView | undefined = !fixture&&task&&packageScope&&(currentTask?.kind==="ready_to_deliver"||currentTask?.kind==="delivered")
+    ? {kind:"package",scope:packageScope,package_id:task.mainline?.completion.package_id||null}
+    : !fixture && task && formalReview
     ? {
         kind:"formal_review",
         images:taskAssets.map(asset=>({id:String(asset.id),name:asset.name,src:asset.src})),
@@ -376,6 +382,10 @@ export function AgentPreviewApp({
     }
     if (next.kind === "download_package") {
       if (!next.url) setError("服务器尚未提供这个训练数据包的下载地址。");
+      return;
+    }
+    if(next.kind==="prepare_export"&&currentTask?.action?.id==="authorize_training_package"){
+      navigate({pane:"image"});
       return;
     }
     const kind = next.kind === "prepare_processing"
