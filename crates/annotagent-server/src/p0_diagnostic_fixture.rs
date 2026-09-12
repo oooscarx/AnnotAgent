@@ -5,7 +5,7 @@
 use annotagent_application::{LocalApplication, stable_project_id};
 use annotagent_core::{
     AnnotationFailureClass, ModelAvailability, ModelCapability, ModelFailure, ModelFailureCategory,
-    ModelFailureStage, WorkflowDryRunReport,
+    ModelFailureStage, WorkflowDraft, WorkflowDraftStatus, WorkflowDryRunReport,
 };
 use annotagent_plugin_registry::{InstallApproval, PluginRegistryError};
 use annotagent_storage::{
@@ -240,13 +240,35 @@ fn save_sample(
     task: Uuid,
     scene: &str,
     sample: Value,
-) -> Result<()> {
+) -> Result<(String, String)> {
     let id = fixture_uuid(scene, "sample").to_string();
     let now = Utc::now();
+    let draft_id = fixture_uuid(scene, "draft").to_string();
+    application.store().save_workflow_draft(&WorkflowDraft {
+        annotation_schema: None,
+        schema_version: 2,
+        id: draft_id.clone(),
+        project_id: PROJECT.to_owned(),
+        name: format!("TEST diagnostic Draft: {scene}"),
+        status: WorkflowDraftStatus::Editing,
+        revision: 1,
+        content_hash: String::new(),
+        nodes: Vec::new(),
+        edges: Vec::new(),
+        enabled_skills: BTreeMap::new(),
+        resource_versions: BTreeMap::new(),
+        runtime_policies: BTreeMap::new(),
+        allow_unvalidated_commit: false,
+        geometry_risk_acceptance: None,
+        label_pipeline: None,
+        created_at: now,
+        updated_at: now,
+    })?;
+    let draft = application.store().get_workflow_draft(&draft_id)?;
     let operation = SampleOperation {
         id: id.clone(),
         project_id: PROJECT.to_owned(),
-        draft_id: fixture_uuid(scene, "draft").to_string(),
+        draft_id: draft.id.clone(),
         authorization_fingerprint: annotagent_image_tools::sha256(scene.as_bytes()),
         request: json!({"conversation":{"conversation_id":conversation,"task_id":task}}),
         status: "queued".to_owned(),
@@ -268,11 +290,11 @@ fn save_sample(
         .store()
         .save_workflow_sample_test(&WorkflowSampleTest {
             id: id.clone(),
-            draft_id: operation.draft_id,
+            draft_id: draft.id.clone(),
             project_id: PROJECT.to_owned(),
-            draft_revision: 1,
-            request_revision: 1,
-            draft_content_hash: "d".repeat(64),
+            draft_revision: draft.revision,
+            request_revision: draft.revision,
+            draft_content_hash: draft.content_hash,
             image_set_hash: "e".repeat(64),
             model_snapshot_hash: "f".repeat(64),
             status: if report.samples[0].failed {
@@ -287,7 +309,7 @@ fn save_sample(
             completed_at: now,
         })?;
     application.store().finish_sample_operation(&id, None)?;
-    Ok(())
+    Ok((draft.id, id))
 }
 
 fn scene_entry(conversation: Uuid, task: Uuid, code: &str) -> Value {
@@ -388,7 +410,7 @@ pub(crate) fn seed(application: &LocalApplication) -> Result<Value> {
         }),
         2,
     )?;
-    save_sample(
+    let legal_empty = save_sample(
         application,
         conversation,
         tasks["legal_empty_detection"],
@@ -402,7 +424,7 @@ pub(crate) fn seed(application: &LocalApplication) -> Result<Value> {
                 "no_target":true,"intermediate_artifact_ids":[]}
         }),
     )?;
-    save_sample(
+    let projection_failed = save_sample(
         application,
         conversation,
         tasks["candidate_projection_failed"],
@@ -441,10 +463,23 @@ pub(crate) fn seed(application: &LocalApplication) -> Result<Value> {
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
 
-    let scene_manifest = tasks
+    let mut scene_manifest = tasks
         .iter()
         .map(|(code, task)| ((*code).to_owned(), scene_entry(conversation, *task, code)))
         .collect::<serde_json::Map<_, _>>();
+    for (code, (draft_id, sample_test_id)) in [
+        ("legal_empty_detection", legal_empty),
+        ("candidate_projection_failed", projection_failed),
+    ] {
+        scene_manifest[code]["draft_id"] = json!(draft_id);
+        scene_manifest[code]["draft_url"] = json!(format!(
+            "/api/workflow-drafts/{draft_id}?project_id={PROJECT}"
+        ));
+        scene_manifest[code]["sample_test_id"] = json!(sample_test_id);
+        scene_manifest[code]["sample_test_url"] = json!(format!(
+            "/api/workflow-drafts/{draft_id}/sample-test?test_id={sample_test_id}"
+        ));
+    }
     let manifest = json!({
         "contract_version":"p0-diagnostic-scenes-v1",
         "fixture":"TEST external-model-only plus deterministic diagnostic records",
@@ -534,6 +569,25 @@ mod tests {
             assert_eq!(matching[0]["automatic_retry"], false);
             assert_eq!(matching[0]["preserves_existing_results"], true);
             assert_eq!(matching[0]["safe_action"]["method"], "GET");
+            if let Some(draft_url) = scene["draft_url"].as_str() {
+                let draft =
+                    response_json(request(&service, Method::GET, draft_url, None).await).await;
+                assert_eq!(draft["id"], scene["draft_id"]);
+                assert_eq!(draft["project_id"], PROJECT);
+                let sample = response_json(
+                    request(
+                        &service,
+                        Method::GET,
+                        scene["sample_test_url"].as_str().unwrap(),
+                        None,
+                    )
+                    .await,
+                )
+                .await;
+                assert_eq!(sample["sample_test"]["id"], scene["sample_test_id"]);
+                assert_eq!(sample["sample_test"]["draft_id"], scene["draft_id"]);
+                assert_eq!(sample["current"], true);
+            }
         }
     }
 

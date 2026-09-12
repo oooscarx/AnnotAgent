@@ -224,6 +224,12 @@ def verify_diagnostic_scenes(c, manifest):
         assert diagnostic["automatic_retry"] is False, diagnostic
         assert diagnostic["preserves_existing_results"] is True, diagnostic
         assert diagnostic["safe_action"]["method"] == "GET", diagnostic
+        if scene.get("draft_url"):
+            draft = c.get(scene["draft_url"])
+            assert draft["id"] == scene["draft_id"] and draft["project_id"] == scene["project_id"], draft
+            sample = c.get(scene["sample_test_url"])
+            assert sample["sample_test"]["id"] == scene["sample_test_id"], sample
+            assert sample["sample_test"]["draft_id"] == scene["draft_id"] and sample["current"] is True, sample
         observed[code] = {**scene, "diagnostic": diagnostic}
     return {**seeded, "scenes": observed}
 

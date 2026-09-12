@@ -651,6 +651,13 @@ exact observed `diagnostic`. Supported scene keys are:
 ]
 ```
 
+The two Sample scenes additionally publish `draft_id`, an owned `draft_url`,
+`sample_test_id`, and `sample_test_url`. The Draft is a real persisted editing
+Draft and the Sample Test freezes its actual revision and content hash. Production
+pages may therefore follow either reference without suppressing a storage-integrity
+error. The smoke and restart checks require both GETs to resolve and require the
+Sample response to report `current:true`.
+
 The test-data boundary is explicit: the fixture creates typed external outcome
 receipts and Sample reports, while ownership checks, SQLite writes, Registry
 readiness, budget math, restart recovery, and the HTTP projection execute the real

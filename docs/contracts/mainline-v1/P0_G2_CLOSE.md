@@ -76,6 +76,9 @@ The same manifest now includes eight browser-selectable scenes under
 production `workspace_url`, stable Task ID and the exact diagnostic observed from
 `mainline.result_diagnostics[]`. The seed exists only in the explicitly opted-in
 ignored test server; production startup and every GET remain side-effect free.
+The legal-empty and projection-failed records reference real persisted, project-owned
+Drafts and exact current Sample snapshots; the fixture verifies those linked GETs
+before exposing the browser URLs.
 
 ## Focused commands
 
