@@ -195,10 +195,11 @@ impl LocalApplication {
             .zip(labels)
             .map(|(proposal, stable_id)| {
                 ensure!(
-                    proposal
-                        .existing_id
-                        .as_ref()
-                        .is_none_or(|existing| existing == stable_id),
+                    proposal.existing_id.as_ref().is_none_or(|existing| {
+                        existing == stable_id
+                            || proposal.display_name == *stable_id
+                            || proposal.aliases.iter().any(|alias| alias == stable_id)
+                    }),
                     "Schema and delivery label identities disagree"
                 );
                 Ok(DeliveryLabel {
@@ -1119,7 +1120,12 @@ mod tests {
             rationale: "Explicit detection and export request".into(),
             delivery: Some(crate::conversation_schema::DeliverySemanticsProposal {
                 labels: vec![crate::conversation_schema::DeliveryLabelProposal {
-                    existing_id: None,
+                    // Providers sometimes copy the enclosing task id here even
+                    // though the top-level label and display name carry the
+                    // unambiguous stable identity. The materializer must retain
+                    // the canonical top-level label instead of stranding the
+                    // already-paid Journey after a valid structured response.
+                    existing_id: Some("objects".into()),
                     display_name: "杯子".into(),
                     aliases: vec!["cup".into()],
                     include: "真实杯子".into(),

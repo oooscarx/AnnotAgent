@@ -204,6 +204,27 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
   }
 
   const diagnostic=currentResultDiagnostic(task);
+  if(diagnostic?.code==="provider_outcome_unknown"){
+    const copy=diagnosticCopy[diagnostic.code];
+    return {kind:"blocked",title:copy.title,detail:copy.detail,diagnostic};
+  }
+
+  const failedAction = view.available_actions.find(
+    (candidate) => candidate.state === "blocked" && candidate.failure,
+  );
+  if (failedAction || view.blockers.length) {
+    return {
+      kind: "blocked",
+      title: "当前任务需要处理一个阻塞",
+      detail:
+        failedAction?.failure?.message ||
+        failedAction?.reason ||
+        blockerText(task) ||
+        "请查看执行详情。",
+      action: failedAction,
+    };
+  }
+
   if(diagnostic){
     const copy=diagnosticCopy[diagnostic.code];
     return {kind:"blocked",title:copy.title,detail:copy.detail,diagnostic};
@@ -372,22 +393,6 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
       detail: "数据包由服务器根据已确认的正式标注快照生成。",
       primary: { kind: "prepare_export" },
       action: exportAction,
-    };
-  }
-
-  const failedAction = view.available_actions.find(
-    (candidate) => candidate.state === "blocked" && candidate.failure,
-  );
-  if (failedAction || view.blockers.length) {
-    return {
-      kind: "blocked",
-      title: "当前任务需要处理一个阻塞",
-      detail:
-        failedAction?.failure?.message ||
-        failedAction?.reason ||
-        blockerText(task) ||
-        "请查看执行详情。",
-      action: failedAction,
     };
   }
 
