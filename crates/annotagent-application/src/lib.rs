@@ -2915,11 +2915,56 @@ fn goal_mentions_registry_identity(goal: &str, identity: &str) -> bool {
     normalized_identity.len() >= 4 && normalize(goal).contains(&normalized_identity)
 }
 
-fn draft_needs_requested_geometry_refinement(
+fn draft_uses_geometry_that_requires_verification(
     suggestion: &WorkflowSuggestion,
     input: &WorkflowAdvisorInput,
 ) -> bool {
-    requested_prompted_segmentation(input)
+    suggestion.draft.nodes.iter().any(|node| {
+        let required_capability =
+            registry_requirement_for_node(node).map(|(capability, _)| capability);
+        let profile = node
+            .model_profile_binding
+            .as_ref()
+            .and_then(|binding| {
+                input
+                    .model_profiles
+                    .iter()
+                    .find(|profile| profile.id == binding.model_profile_id)
+            })
+            .or_else(|| {
+                let runtime_id = node.model_binding.as_deref()?;
+                input.model_profiles.iter().find(|profile| {
+                    profile.remote_model_id == runtime_id
+                        || input.model_registry.iter().any(|runtime| {
+                            runtime.id == runtime_id
+                                && (runtime.model == profile.remote_model_id
+                                    || runtime.id == profile.remote_model_id)
+                        })
+                })
+            });
+        profile.is_some_and(|profile| {
+            annotagent_core::effective_model_quality_contracts(profile)
+                .iter()
+                .any(|contract| {
+                    (contract.operation == node.node_type
+                        || required_capability == Some(contract.capability))
+                        && contract.requires_geometry_verification
+                        && matches!(
+                            contract.output_geometry,
+                            annotagent_core::GeometrySemantics::CoarseHypothesis
+                                | annotagent_core::GeometrySemantics::PredictedGeometry
+                        )
+                })
+        })
+    })
+}
+
+fn draft_needs_geometry_refinement(
+    suggestion: &WorkflowSuggestion,
+    input: &WorkflowAdvisorInput,
+) -> bool {
+    (requested_prompted_segmentation(input)
+        || draft_uses_geometry_that_requires_verification(suggestion, input))
         && available_prompted_segmenter(input)
         && input.project_schema.tasks.iter().any(|task| {
             task.kind == TaskKind::BoundingBox
@@ -13696,9 +13741,9 @@ impl LocalApplication {
                     provider_turns,
                     builder_constraints.maximum_agent_turns,
                 );
-            let requested_refinement_missing = current.as_ref().is_some_and(|suggestion| {
-                draft_needs_requested_geometry_refinement(suggestion, &input)
-            });
+            let requested_refinement_missing = current
+                .as_ref()
+                .is_some_and(|suggestion| draft_needs_geometry_refinement(suggestion, &input));
             if runtime_materializes_discovery
                 && (discovery_limit_reached
                     || has_complete_runnable_candidate
@@ -27219,6 +27264,22 @@ export:
                 &WorkflowConstraints::default(),
             )
             .expect("safe suggestion");
+        let coarse_visual_node = safe_suggestion
+            .draft
+            .nodes
+            .iter_mut()
+            .find(|node| registry_requirement_for_node(node).is_some())
+            .expect("coarse detector");
+        coarse_visual_node.model_binding = Some(detector.remote_model_id.clone());
+        coarse_visual_node.model_profile_binding = Some(annotagent_core::WorkflowModelBinding {
+            model_profile_id: detector.id,
+            locked: true,
+        });
+        assert!(draft_uses_geometry_that_requires_verification(
+            &safe_suggestion,
+            &input
+        ));
+        assert!(draft_needs_geometry_refinement(&safe_suggestion, &input));
         let unsafe_visual_node = safe_suggestion
             .draft
             .nodes
