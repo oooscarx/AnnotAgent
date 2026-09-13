@@ -25422,13 +25422,17 @@ export:
                     vec![port("detections", ArtifactKind::DetectionSet)],
                     vec![port("detections", ArtifactKind::DetectionSet)],
                 ),
-                node(
-                    "review",
-                    "core.human_review",
-                    WorkflowNodeKind::HumanReview,
-                    vec![port("detections", ArtifactKind::DetectionSet)],
-                    vec![port("detections", ArtifactKind::DetectionSet)],
-                ),
+                {
+                    let mut review = node(
+                        "review",
+                        "core.human_review",
+                        WorkflowNodeKind::HumanReview,
+                        vec![port("detections", ArtifactKind::DetectionSet)],
+                        vec![port("detections", ArtifactKind::DetectionSet)],
+                    );
+                    review.inputs[0].multiple = true;
+                    review
+                },
                 {
                     let mut commit = node(
                         "commit",
@@ -25455,7 +25459,23 @@ export:
                     "geometry-decision",
                     "detections",
                 ),
-                edge("geometry-decision", "detections", "review", "detections"),
+                // The review fan-in has one active terminal route, its inactive
+                // sibling, and an inactive coarse recovery route.
+                {
+                    let mut edge = edge("geometry-decision", "detections", "review", "detections");
+                    edge.route = Some("accept".to_owned());
+                    edge
+                },
+                {
+                    let mut edge = edge("geometry-decision", "detections", "review", "detections");
+                    edge.route = Some("review".to_owned());
+                    edge
+                },
+                {
+                    let mut edge = edge("detector", "detections", "review", "detections");
+                    edge.route = Some("review".to_owned());
+                    edge
+                },
                 edge("review", "detections", "commit", "detections"),
             ],
             enabled_skills: BTreeMap::new(),

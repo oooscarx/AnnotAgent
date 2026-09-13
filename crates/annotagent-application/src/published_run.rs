@@ -3236,13 +3236,20 @@ fn pipeline_annotations(
             .get("task_id")
             .and_then(serde_json::Value::as_str)
             .map_or_else(|| TaskId::from("unbound"), TaskId::from);
-        let outputs = if awaiting_review {
-            workflow
-                .draft
-                .edges
+        let artifacts = if awaiting_review {
+            // The suspended trace is the runtime's authoritative, route-filtered
+            // terminal input. Walking every incoming edge here also reads inactive
+            // recovery branches and repeats one gate output for sibling routes.
+            result
+                .checkpoint
+                .traces
                 .iter()
-                .filter(|edge| edge.to_node == terminal.id)
-                .filter_map(|edge| result.checkpoint.node_outputs.get(&edge.from_node))
+                .rev()
+                .find(|trace| {
+                    trace.node_id == terminal.id && trace.status == DagNodeStatus::AwaitingReview
+                })
+                .into_iter()
+                .flat_map(|trace| trace.input_pipeline_artifacts.iter())
                 .collect::<Vec<_>>()
         } else {
             result
@@ -3250,12 +3257,10 @@ fn pipeline_annotations(
                 .node_outputs
                 .get(&terminal.id)
                 .into_iter()
+                .flat_map(|output| output.pipeline_artifacts.iter())
                 .collect::<Vec<_>>()
         };
-        for artifact in outputs
-            .into_iter()
-            .flat_map(|output| &output.pipeline_artifacts)
-        {
+        for artifact in artifacts {
             match artifact {
                 PipelineArtifact::DetectionSet(set) => {
                     annotations.extend(set.detections.iter().map(|detection| {
