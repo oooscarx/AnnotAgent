@@ -129,6 +129,7 @@ export function TaskLifecycleMenu({
               <label className="confirm-check"><input type="checkbox" checked={confirmed} disabled={busy} onChange={event => setConfirmed(event.target.checked)} />我知道这不会立即永久清理数据</label>
             </>
           )}
+          {task.phase === "outcome_unknown" && <p className="notice">此任务的远端结果或最终费用仍未知。归档或移入回收站只改变列表状态，不会重试、取消远端请求或清除费用记录。</p>}
           {error && <p role="alert" className="error">{error}</p>}
           <div className="actions">
             <button disabled={busy} onClick={closeDialog}>取消</button>
