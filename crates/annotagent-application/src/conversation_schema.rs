@@ -2654,6 +2654,19 @@ mod tests {
                 .is_some(),
             "An authorized clear goal should already have an editable Schema Draft"
         );
+        let task_view = app
+            .mainline_task_read_model("schema-test", conversation, task)
+            .unwrap();
+        assert_eq!(
+            task_view["schema"]["source_call_id"],
+            execution.call_id.to_string()
+        );
+        assert_eq!(task_view["steps"][0]["state"], "completed");
+        assert_eq!(task_view["steps"][0]["request_completed"], true);
+        assert_eq!(
+            task_view["available_actions"][0]["id"],
+            "save_delivery_intake"
+        );
         assert_eq!(
             app.execute_conversation_schema(
                 "schema-test",
