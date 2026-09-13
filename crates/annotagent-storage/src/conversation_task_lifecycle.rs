@@ -114,19 +114,21 @@ fn state(value: &str) -> Result<ConversationTaskLifecycleState, StorageError> {
     }
 }
 
+type LifecycleRow = (
+    String,
+    i64,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    String,
+);
+
 pub(crate) fn read_in(
     db: &rusqlite::Connection,
     task: Uuid,
     created_at: &str,
 ) -> Result<ConversationTaskLifecycle, StorageError> {
-    let row: Option<(
-        String,
-        i64,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        String,
-    )> = db
+    let row: Option<LifecycleRow> = db
         .query_row(
             "SELECT state,revision,archived_at,trashed_at,deletion_operation_id,updated_at
              FROM conversation_task_lifecycle WHERE task_id=?1",
