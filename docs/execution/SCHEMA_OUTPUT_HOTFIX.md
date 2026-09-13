@@ -305,6 +305,14 @@ business validator are unchanged: they still reject missing Draft/Clarify fields
 unknown fields, invalid labels, and inconsistent delivery semantics. No failed call is rewritten
 or automatically retried.
 
+The object-root repair was deployed as `6cba3e0`. A new explicit recovery command
+`76297c81-a91c-4ef7-9803-0717b48349a2` then targeted the unchanged task and linked
+`retry_of=64ab6426-791f-4b97-86f1-4a64d2452e63`. The configured proxy returned HTTP 504 after
+60.084 seconds before AnnotAgent received a complete response or usage. The receipt is durably
+`in_doubt`, its failure is `provider_request/http_status/504`, token and cost fields remain unknown,
+and its Schema Draft lookup is `null`. No automatic retry or image operation followed. This
+transport outcome cannot verify or disprove the repaired structured result shape.
+
 ## Remaining limits
 
 - Two explicitly authorized `glm-5.2` requests reached the configured proxy. Neither produced a
