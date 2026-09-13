@@ -18,6 +18,14 @@ fn bounds(after: i64, limit: u32) -> Result<usize, StorageError> {
     }
     Ok(limit as usize)
 }
+
+fn is_ui_active_operation(target: &crate::ConversationStopTarget) -> bool {
+    !matches!(
+        target.state.as_str(),
+        "failed" | "cancelled" | "interrupted"
+    )
+}
+
 impl SqliteStore {
     pub fn agent_ui_active_operations(
         &self,
@@ -28,7 +36,14 @@ impl SqliteStore {
     ) -> Result<Vec<crate::ConversationStopTarget>, StorageError> {
         self.with_connection(|db| {
             crate::conversation_message_queue::require_task(db, project, conversation, task)?;
-            crate::conversation_stop::discover(db, route, conversation, Some(task))
+            let mut operations =
+                crate::conversation_stop::discover(db, route, conversation, Some(task))?;
+            // Stop discovery retains certain terminal pre-Batch authorizations so
+            // an explicit historical stop command can still fence a stale worker.
+            // The Agent UI projection is narrower: terminal work is history, not
+            // an active operation that can mask a safe explicit retry action.
+            operations.retain(is_ui_active_operation);
+            Ok(operations)
         })
     }
 
@@ -102,6 +117,30 @@ impl SqliteStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{ConversationStopTarget, ConversationStopTargetKind};
+
+    #[test]
+    fn ui_active_projection_excludes_terminal_operation_states() {
+        for (state, active) in [
+            ("running", true),
+            ("reserved", true),
+            ("cancelling", true),
+            ("authorized_or_waiting", true),
+            ("failed", false),
+            ("cancelled", false),
+            ("interrupted", false),
+        ] {
+            let target = ConversationStopTarget {
+                kind: ConversationStopTargetKind::Processing,
+                id: "operation".into(),
+                task_id: Uuid::new_v4(),
+                state: state.into(),
+                parent_journey_ids: Vec::new(),
+            };
+            assert_eq!(is_ui_active_operation(&target), active, "{state}");
+        }
+    }
+
     #[test]
     fn resolved_default_model_is_frozen_atomically_with_send() {
         let dir = tempfile::tempdir().unwrap();
