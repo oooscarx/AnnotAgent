@@ -2137,6 +2137,10 @@ fn compatible_builder_models(
                 && model.status == ModelProfileStatus::Available
                 && required_capability
                     .is_none_or(|capability| model.task_capabilities.contains(&capability))
+                && required_capability.is_none_or(|capability| {
+                    capability == ModelCapability::TextGeneration
+                        || model.input_modalities.contains(&InputModality::Image)
+                })
                 && provider.is_some_and(|provider| {
                     provider.enabled
                         && provider.credential_configured
@@ -2147,6 +2151,27 @@ fn compatible_builder_models(
                 })
         })
         .collect()
+}
+
+fn model_profile_satisfies_workflow_node(
+    input: &WorkflowAdvisorInput,
+    node: &annotagent_core::WorkflowDraftNode,
+    profile: &ModelProfile,
+    required_capability: ModelCapability,
+) -> bool {
+    if !compatible_builder_models(input, Some(required_capability))
+        .into_iter()
+        .any(|candidate| candidate.id == profile.id)
+    {
+        return false;
+    }
+    input
+        .node_catalog
+        .iter()
+        .find(|definition| definition.id == node.node_type)
+        .is_none_or(|definition| {
+            annotagent_core::model_profile_satisfies_node_contract(definition, profile)
+        })
 }
 
 fn materialize_feasibility_draft(
@@ -2361,35 +2386,18 @@ fn persist_registry_conversion_fragments(
     input: &WorkflowAdvisorInput,
     nodes: &NodeRegistry,
 ) -> Result<()> {
-    let targets_detection_geometry = input.target_task_id.as_ref().is_some_and(|target_task_id| {
-        input
-            .project_schema
-            .tasks
-            .iter()
-            .any(|task| task.id == *target_task_id && task.kind == TaskKind::BoundingBox)
+    let targets_detection_geometry = input.project_schema.tasks.iter().any(|task| {
+        task.kind == TaskKind::BoundingBox
+            && input
+                .target_task_id
+                .as_ref()
+                .is_none_or(|target_task_id| task.id == *target_task_id)
     });
     if !targets_detection_geometry {
         return Ok(());
     }
 
-    let has_available_prompted_segmenter =
-        input.expert_models.iter().any(|model| {
-            model.availability == ModelAvailability::Available
-                && model.availability_evidence.available()
-                && model.checkpoint.is_some()
-                && !matches!(&model.connection, ModelConnection::Mock { .. })
-                && model
-                    .capabilities
-                    .contains(&ModelCapability::PromptedSegmentation)
-        }) || compatible_builder_models(input, Some(ModelCapability::PromptedSegmentation))
-            .into_iter()
-            .any(|profile| {
-                input
-                    .provider_profiles
-                    .iter()
-                    .find(|provider| provider.id == profile.provider_id)
-                    .is_some_and(|provider| provider.adapter != ProviderAdapterKind::Mock)
-            });
+    let has_available_prompted_segmenter = available_prompted_segmenter(input);
     if !has_available_prompted_segmenter {
         return Ok(());
     }
@@ -2450,14 +2458,30 @@ fn persist_registry_conversion_fragments(
     Ok(())
 }
 
+fn available_prompted_segmenter(input: &WorkflowAdvisorInput) -> bool {
+    input.expert_models.iter().any(|model| {
+        model.availability == ModelAvailability::Available
+            && model.availability_evidence.available()
+            && model.checkpoint.is_some()
+            && !matches!(&model.connection, ModelConnection::Mock { .. })
+            && model
+                .capabilities
+                .contains(&ModelCapability::PromptedSegmentation)
+    }) || compatible_builder_models(input, Some(ModelCapability::PromptedSegmentation))
+        .into_iter()
+        .any(|profile| {
+            input
+                .provider_profiles
+                .iter()
+                .find(|provider| provider.id == profile.provider_id)
+                .is_some_and(|provider| provider.adapter != ProviderAdapterKind::Mock)
+        })
+}
+
 fn candidate_model_bindings(
     draft: &WorkflowDraft,
     input: &WorkflowAdvisorInput,
 ) -> (Vec<annotagent_core::CandidateModelBinding>, Vec<String>) {
-    let compatible_profile_ids = compatible_builder_models(input, None)
-        .into_iter()
-        .map(|profile| profile.id)
-        .collect::<BTreeSet<_>>();
     let mut bindings = Vec::new();
     let mut unresolved = Vec::new();
     for node in &draft.nodes {
@@ -2490,9 +2514,9 @@ fn candidate_model_bindings(
                 .iter()
                 .find(|provider| provider.id == profile.provider_id)
                 .is_some_and(|provider| provider.adapter == ProviderAdapterKind::Mock);
-            let production_eligible = compatible_profile_ids.contains(&profile.id)
-                && profile.task_capabilities.contains(&capability)
-                && !fixture_only;
+            let production_eligible =
+                model_profile_satisfies_workflow_node(input, node, profile, capability)
+                    && !fixture_only;
             bindings.push(annotagent_core::CandidateModelBinding {
                 node_id: node.id.clone(),
                 capability,
@@ -2582,15 +2606,19 @@ fn bind_available_registry_models(draft: &mut WorkflowDraft, input: &WorkflowAdv
         });
         let current_profile_is_eligible =
             node.model_profile_binding.as_ref().is_some_and(|binding| {
-                compatible_builder_models(input, Some(capability))
-                    .into_iter()
-                    .any(|profile| profile.id == binding.model_profile_id)
+                input.model_profiles.iter().any(|profile| {
+                    profile.id == binding.model_profile_id
+                        && model_profile_satisfies_workflow_node(input, node, profile, capability)
+                })
             });
         if current_expert_is_eligible || current_profile_is_eligible {
             continue;
         }
         let mut profiles = compatible_builder_models(input, Some(capability))
             .into_iter()
+            .filter(|profile| {
+                model_profile_satisfies_workflow_node(input, node, profile, capability)
+            })
             .filter(|profile| {
                 input
                     .provider_profiles
@@ -2833,6 +2861,85 @@ fn without_optional_recovery(draft: &WorkflowDraft) -> Option<WorkflowDraft> {
     Some(primary)
 }
 
+fn requested_prompted_segmentation(input: &WorkflowAdvisorInput) -> bool {
+    const REFINEMENT_TERMS: [&str; 10] = [
+        "prompted segmentation",
+        "segmentation refinement",
+        "segment refinement",
+        "mask refinement",
+        "refine the boundary",
+        "refine geometry",
+        "分割",
+        "精修",
+        "分割精修",
+        "边界精修",
+    ];
+    let goal = input.project_schema.project.annotation_goal.to_lowercase();
+    if goal.is_empty() {
+        return false;
+    }
+    REFINEMENT_TERMS.iter().any(|term| goal.contains(term))
+        || input.expert_models.iter().any(|model| {
+            model
+                .capabilities
+                .contains(&ModelCapability::PromptedSegmentation)
+                && [
+                    model.model_id.as_str(),
+                    model.display_name.as_str(),
+                    model.architecture.as_deref().unwrap_or_default(),
+                ]
+                .into_iter()
+                .filter(|identity| identity.len() >= 4)
+                .any(|identity| goal_mentions_registry_identity(&goal, identity))
+        })
+        || input.model_profiles.iter().any(|model| {
+            model
+                .task_capabilities
+                .contains(&ModelCapability::PromptedSegmentation)
+                && [model.display_name.as_str(), model.remote_model_id.as_str()]
+                    .into_iter()
+                    .filter(|identity| identity.len() >= 4)
+                    .any(|identity| goal_mentions_registry_identity(&goal, identity))
+        })
+}
+
+fn goal_mentions_registry_identity(goal: &str, identity: &str) -> bool {
+    let normalize = |value: &str| {
+        value
+            .chars()
+            .filter(|character| character.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect::<String>()
+    };
+    let normalized_identity = normalize(identity);
+    normalized_identity.len() >= 4 && normalize(goal).contains(&normalized_identity)
+}
+
+fn draft_needs_requested_geometry_refinement(
+    suggestion: &WorkflowSuggestion,
+    input: &WorkflowAdvisorInput,
+) -> bool {
+    requested_prompted_segmentation(input)
+        && available_prompted_segmenter(input)
+        && input.project_schema.tasks.iter().any(|task| {
+            task.kind == TaskKind::BoundingBox
+                && input
+                    .target_task_id
+                    .as_ref()
+                    .is_none_or(|target| target == &task.id)
+        })
+        && suggestion.draft.nodes.iter().any(|node| {
+            node.outputs
+                .iter()
+                .any(|port| port.artifact_type == ArtifactKind::DetectionSet)
+        })
+        && !suggestion
+            .draft
+            .nodes
+            .iter()
+            .any(|node| node.node_type == "capability.segment")
+}
+
 fn synthesize_registry_plan_candidates(
     session: &mut AgentSession,
     safe_suggestion: &WorkflowSuggestion,
@@ -2975,7 +3082,24 @@ fn synthesize_registry_plan_candidates(
                         .contains(&ModelCapability::PromptedSegmentation)
             })
             .collect::<Vec<_>>();
-        available_experts.sort_by(|left, right| left.model_id.cmp(&right.model_id));
+        available_experts.sort_by_key(|model| {
+            (
+                ![
+                    model.model_id.as_str(),
+                    model.display_name.as_str(),
+                    model.architecture.as_deref().unwrap_or_default(),
+                ]
+                .into_iter()
+                .filter(|identity| identity.len() >= 4)
+                .any(|identity| {
+                    goal_mentions_registry_identity(
+                        &input.project_schema.project.annotation_goal,
+                        identity,
+                    )
+                }),
+                model.model_id.as_str(),
+            )
+        });
         let mut available_profiles =
             compatible_builder_models(input, Some(ModelCapability::PromptedSegmentation))
                 .into_iter()
@@ -2987,7 +3111,23 @@ fn synthesize_registry_plan_candidates(
                         .is_some_and(|provider| provider.adapter != ProviderAdapterKind::Mock)
                 })
                 .collect::<Vec<_>>();
-        available_profiles.sort_by_key(|profile| profile.id.to_string());
+        available_profiles.sort_by_key(|profile| {
+            (
+                ![
+                    profile.display_name.as_str(),
+                    profile.remote_model_id.as_str(),
+                ]
+                .into_iter()
+                .filter(|identity| identity.len() >= 4)
+                .any(|identity| {
+                    goal_mentions_registry_identity(
+                        &input.project_schema.project.annotation_goal,
+                        identity,
+                    )
+                }),
+                profile.id.to_string(),
+            )
+        });
         let selected_model_id = available_experts
             .first()
             .map(|model| model.model_id.clone())
@@ -13556,8 +13696,13 @@ impl LocalApplication {
                     provider_turns,
                     builder_constraints.maximum_agent_turns,
                 );
+            let requested_refinement_missing = current.as_ref().is_some_and(|suggestion| {
+                draft_needs_requested_geometry_refinement(suggestion, &input)
+            });
             if runtime_materializes_discovery
-                && (discovery_limit_reached || has_complete_runnable_candidate)
+                && (discovery_limit_reached
+                    || has_complete_runnable_candidate
+                    || requested_refinement_missing)
             {
                 if let annotagent_core::BuildFeasibility::Unsupported { reasons, .. } = &feasibility
                 {
@@ -13595,7 +13740,7 @@ impl LocalApplication {
                         settings,
                         &models,
                         builder_constraints.priority,
-                        if has_complete_runnable_candidate {
+                        if has_complete_runnable_candidate || requested_refinement_missing {
                             annotagent_core::BuilderStopReason::RunnableCandidateTriggeredSalvage
                         } else {
                             annotagent_core::BuilderStopReason::DiscoveryLimitTriggeredSalvage
@@ -15041,6 +15186,8 @@ impl LocalApplication {
                             .iter()
                             .filter(|model| {
                                 model.availability == ModelAvailability::Available
+                                    && model.availability_evidence.available()
+                                    && model.checkpoint.is_some()
                                     && !matches!(&model.connection, ModelConnection::Mock { .. })
                                     && model
                                         .capabilities
@@ -26966,6 +27113,284 @@ export:
             report.session.builder_stop_reason,
             Some(annotagent_core::BuilderStopReason::DiscoveryLimitTriggeredSalvage)
         );
+        assert!(report.validation.is_some_and(|validation| validation.valid));
+    }
+
+    #[test]
+    fn registry_synthesis_rejects_text_only_visual_bindings_and_keeps_requested_refinement() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "registry-modality-safety",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("RoboCup Project");
+        let settings = load_settings(None).expect("settings");
+        let selected_model =
+            register_pipeline_builder_model(&application, "text-only-planning-model");
+
+        // A user-declared capability cannot turn a text-only planner into a visual model.
+        let mut text_only_impostor = selected_model.model.clone();
+        text_only_impostor.task_capabilities.extend([
+            ModelCapability::VisionLanguage,
+            ModelCapability::ObjectDetection,
+            ModelCapability::PromptedSegmentation,
+        ]);
+        let detector = register_available_vision_model(
+            &application,
+            &selected_model,
+            "image-capable-detector",
+            [
+                ModelCapability::VisionLanguage,
+                ModelCapability::ObjectDetection,
+            ],
+        );
+        let segmenter = register_available_vision_model(
+            &application,
+            &selected_model,
+            "EfficientSAM",
+            [ModelCapability::PromptedSegmentation],
+        );
+        let mut provider = application
+            .store
+            .get_provider_profile(selected_model.provider.id)
+            .expect("Provider");
+        provider.adapter = ProviderAdapterKind::OpenAiCompatible;
+        provider.credential_ref = Some(CredentialReference {
+            provider_id: provider.id,
+            source: CredentialSource::EnvironmentVariable,
+            locator: "REGISTRY_MODALITY_SAFETY_KEY".to_owned(),
+        });
+        application
+            .store
+            .save_provider_profile(&provider)
+            .expect("non-Mock Provider state");
+
+        let mut input = application
+            .workflow_advisor_input_for_label(
+                "registry-modality-safety",
+                &settings,
+                WorkflowConstraints::default(),
+                Some("objects"),
+                Some("ball"),
+            )
+            .expect("Builder input");
+        *input
+            .model_profiles
+            .iter_mut()
+            .find(|profile| profile.id == text_only_impostor.id)
+            .expect("planner profile in Builder input") = text_only_impostor.clone();
+        input.target_task_id = None;
+        input.target_label = None;
+        input.project_schema.project.annotation_goal =
+            "Use EfficientSAM to refine geometry before human review".to_owned();
+        assert!(requested_prompted_segmentation(&input));
+        for capability in [
+            ModelCapability::VisionLanguage,
+            ModelCapability::ObjectDetection,
+            ModelCapability::PromptedSegmentation,
+        ] {
+            let compatible = compatible_builder_models(&input, Some(capability));
+            assert!(
+                compatible
+                    .iter()
+                    .all(|profile| profile.input_modalities.contains(&InputModality::Image)),
+                "text-only model leaked into {capability:?}: {compatible:#?}"
+            );
+            assert!(
+                !compatible
+                    .iter()
+                    .any(|profile| profile.id == text_only_impostor.id)
+            );
+        }
+
+        let mut safe_suggestion = application
+            .suggest_label_pipeline_preview(
+                "registry-modality-safety",
+                &settings,
+                "objects",
+                "ball",
+                &WorkflowConstraints::default(),
+            )
+            .expect("safe suggestion");
+        let unsafe_visual_node = safe_suggestion
+            .draft
+            .nodes
+            .iter_mut()
+            .find(|node| registry_requirement_for_node(node).is_some())
+            .expect("visual node");
+        unsafe_visual_node.model_binding = Some(text_only_impostor.remote_model_id.clone());
+        unsafe_visual_node.model_profile_binding = Some(annotagent_core::WorkflowModelBinding {
+            model_profile_id: text_only_impostor.id,
+            locked: true,
+        });
+        let snapshot = application
+            .pipeline_builder_context_snapshot(&input)
+            .expect("context snapshot");
+        let feasibility = LocalApplication::resolve_pipeline_feasibility(&input, &snapshot);
+        let mut session = AgentSession::start(
+            AgentKind::PipelineBuilder,
+            PipelineBuilderConstraints::default().agent_budget(),
+        )
+        .with_builder_progress(
+            annotagent_core::PipelineBuilderBudget::default(),
+            annotagent_core::BuilderProgressInvariant::default(),
+        );
+        session.set_builder_working_draft(
+            "registry-modality-working",
+            annotagent_core::PipelineBuildMode::FromScratch,
+            snapshot.context_revision.clone(),
+        );
+        let (nodes, _) = application
+            .workflow_catalog(&settings)
+            .expect("Workflow Registry");
+        persist_registry_conversion_fragments(&mut session, &input, &nodes)
+            .expect("whole-Project Registry discovery");
+        assert_eq!(session.discovered_conversion_paths.len(), 1);
+        synthesize_registry_plan_candidates(
+            &mut session,
+            &safe_suggestion,
+            &input,
+            &feasibility,
+            annotagent_core::OptimizationPriority::Accurate,
+        )
+        .expect("Registry synthesis");
+
+        let selected = session
+            .selected_candidate_id
+            .as_ref()
+            .and_then(|id| {
+                session
+                    .plan_candidates
+                    .iter()
+                    .find(|candidate| &candidate.id == id)
+            })
+            .expect("selected Candidate");
+        assert!(selected.is_runnable(), "selected={selected:#?}");
+        for node_type in [
+            "capability.segment",
+            annotagent_runtime::CORE_GEOMETRY_QUALITY_EVALUATION,
+            annotagent_runtime::CORE_GEOMETRY_DECISION,
+        ] {
+            assert!(
+                selected
+                    .node_blueprints
+                    .iter()
+                    .any(|node| node.node_type == node_type)
+            );
+        }
+        assert!(
+            selected
+                .node_blueprints
+                .iter()
+                .any(|node| node.kind == WorkflowNodeKind::HumanReview)
+        );
+        assert!(selected.model_bindings.iter().all(|binding| {
+            binding.model_profile_id != Some(text_only_impostor.id)
+                && binding.production_eligible
+                && !binding.fixture_only
+        }));
+        assert!(selected.model_bindings.iter().any(|binding| {
+            binding.capability == ModelCapability::PromptedSegmentation
+                && binding.model_profile_id == Some(segmenter.id)
+        }));
+        assert!(selected.model_bindings.iter().any(|binding| {
+            matches!(
+                binding.capability,
+                ModelCapability::VisionLanguage | ModelCapability::ObjectDetection
+            ) && binding.model_profile_id == Some(detector.id)
+        }));
+    }
+
+    #[tokio::test]
+    async fn nine_call_budget_salvages_a_registry_draft_instead_of_returning_budget_exceeded() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "bounded-registry-salvage",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("RoboCup Project");
+        let settings = load_settings(None).expect("settings");
+        let selected_model =
+            register_pipeline_builder_model(&application, "bounded-planning-model");
+        register_available_vision_model(
+            &application,
+            &selected_model,
+            "bounded-image-detector",
+            [
+                ModelCapability::VisionLanguage,
+                ModelCapability::ObjectDetection,
+            ],
+        );
+        register_available_vision_model(
+            &application,
+            &selected_model,
+            "bounded-image-refiner",
+            [ModelCapability::PromptedSegmentation],
+        );
+        let mut registry_provider = application
+            .store
+            .get_provider_profile(selected_model.provider.id)
+            .expect("Provider Profile");
+        registry_provider.adapter = ProviderAdapterKind::OpenAiCompatible;
+        registry_provider.credential_ref = Some(CredentialReference {
+            provider_id: registry_provider.id,
+            source: CredentialSource::EnvironmentVariable,
+            locator: "BOUNDED_REGISTRY_SALVAGE_KEY".to_owned(),
+        });
+        application
+            .store
+            .save_provider_profile(&registry_provider)
+            .expect("non-Mock Registry Provider");
+        let provider = MockVisionProvider::new(MockScript {
+            steps: vec![MockStep {
+                expect_task: Some("pipeline_builder".to_owned()),
+                expect_message_contains: None,
+                response: MockResponseSpec::ToolCall {
+                    name: "get_pipeline_builder_context".to_owned(),
+                    arguments: json!({}),
+                },
+                usage: MockUsage {
+                    input_tokens: 100,
+                    output_tokens: 20,
+                },
+            }],
+        });
+
+        let report = application
+            .run_workflow_advisor_with_selected_model(
+                "bounded-registry-salvage",
+                &settings,
+                &selected_model,
+                &provider,
+                &WorkflowConstraints::default(),
+                Some(("objects", "ball")),
+                PipelineBuilderConstraints {
+                    maximum_agent_turns: 9,
+                    maximum_tool_calls: 9,
+                    ..PipelineBuilderConstraints::default()
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .expect("bounded salvage report");
+
+        assert_eq!(provider.remaining_steps(), 0);
+        assert_eq!(report.session.status, AgentSessionStatus::WaitingForHuman);
+        assert_ne!(
+            report.session.outcome,
+            Some(annotagent_core::PipelineBuilderOutcome::BudgetExceeded)
+        );
+        assert!(report.suggestion.as_ref().is_some_and(|suggestion| {
+            suggestion
+                .draft
+                .nodes
+                .iter()
+                .any(|node| node.node_type == "capability.segment")
+        }));
         assert!(report.validation.is_some_and(|validation| validation.valid));
     }
 
