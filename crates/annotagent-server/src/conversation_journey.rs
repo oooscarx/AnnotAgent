@@ -200,11 +200,36 @@ pub(super) async fn preview(
     {
         let readiness = super::mainline_capability::snapshot(&state, &project, conversation, task)?;
         let allowed = automatic_visual_models(&readiness)?;
-        let stable = |purpose: &str| uuid::Uuid::new_v5(&task, purpose.as_bytes());
-        selection.consent_id = stable("annotagent-p0-journey-consent-v1");
-        selection.builder_operation_id = stable("annotagent-p0-builder-operation-v1");
-        selection.sample_operation_id = stable("annotagent-p0-sample-operation-v1");
-        selection.schema_call_id = Some(stable("annotagent-p0-schema-call-v1"));
+        let schema_calls = state
+            .application
+            .conversation_schema_calls(&project, conversation, task)
+            .map_err(ApiError::bad_request)?;
+        let mut saved_schema = None;
+        for call in schema_calls.into_iter().rev() {
+            if let Some(schema) = state
+                .application
+                .conversation_schema_for_call(&project, conversation, task, call.id)
+                .map_err(ApiError::bad_request)?
+            {
+                saved_schema = Some(schema);
+                break;
+            }
+        }
+        let identity = saved_schema.as_ref().map(|schema| schema.id);
+        let stable = |purpose: &str| automatic_journey_id(task, identity, purpose);
+        selection.consent_id = stable("consent");
+        selection.builder_operation_id = stable("builder");
+        selection.sample_operation_id = stable("sample");
+        if let Some(schema) = saved_schema {
+            // A completed, persisted Schema is evidence, not a reason to create
+            // another paid Schema request. Continue under a new cumulative
+            // Builder authorization derived by `scope` below.
+            selection.schema_id = schema.id;
+            selection.schema_revision = schema.revision;
+            selection.schema_call_id = None;
+        } else {
+            selection.schema_call_id = Some(stable("schema"));
+        }
         selection.allowed_models = serde_json::to_string(&allowed).map_err(ApiError::internal)?;
     }
     let models: Vec<String> =
@@ -376,6 +401,20 @@ pub(super) async fn preview(
     Ok(Json(
         json!({"consent":consent,"builder":builder,"data":data,"project_call_limit":project_limit,"estimated_cost":null,"operation":"Approve one bounded Schema, Builder and Sample continuation using only the listed images/models/calls. Saving the exact consent persists its execution intent. No publication, dataset Run or annotation acceptance."}),
     ))
+}
+
+fn automatic_journey_id(task: uuid::Uuid, schema: Option<uuid::Uuid>, purpose: &str) -> uuid::Uuid {
+    let scope = schema.map_or_else(
+        || match purpose {
+            "consent" => "annotagent-p0-journey-consent-v1".to_owned(),
+            "builder" => "annotagent-p0-builder-operation-v1".to_owned(),
+            "sample" => "annotagent-p0-sample-operation-v1".to_owned(),
+            "schema" => "annotagent-p0-schema-call-v1".to_owned(),
+            purpose => format!("annotagent-p0-initial-journey-v1:{purpose}"),
+        },
+        |schema| format!("annotagent-p0-schema-continuation-v1:{schema}:{purpose}"),
+    );
+    uuid::Uuid::new_v5(&task, scope.as_bytes())
 }
 
 fn start_newly_approved_journey(
@@ -1111,7 +1150,10 @@ async fn advance(
 
 #[cfg(test)]
 mod tests {
-    use super::{automatic_visual_models, child_waits_for_commit, committed_child_failure};
+    use super::{
+        automatic_journey_id, automatic_visual_models, child_waits_for_commit,
+        committed_child_failure,
+    };
     use serde_json::json;
 
     #[test]
@@ -1129,6 +1171,27 @@ mod tests {
             "builder":{"status":"completed","evidence":{"outcome":"draft_ready_for_human_review"}},
             "sample":{"id":"TEST-same-sample-operation"}
         })));
+    }
+
+    #[test]
+    fn completed_schema_continuation_has_stable_distinct_operation_ids() {
+        let task = uuid::Uuid::new_v4();
+        let schema = uuid::Uuid::new_v4();
+        let initial = automatic_journey_id(task, None, "consent");
+        assert_eq!(
+            initial,
+            uuid::Uuid::new_v5(&task, b"annotagent-p0-journey-consent-v1")
+        );
+        let continuation = automatic_journey_id(task, Some(schema), "consent");
+        assert_ne!(initial, continuation);
+        assert_eq!(
+            continuation,
+            automatic_journey_id(task, Some(schema), "consent")
+        );
+        assert_ne!(
+            automatic_journey_id(task, Some(schema), "builder"),
+            automatic_journey_id(task, Some(schema), "sample")
+        );
     }
 
     #[test]

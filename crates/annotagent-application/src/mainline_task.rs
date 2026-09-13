@@ -119,12 +119,13 @@ fn sample_result_diagnostics(operation: &SampleOperation, report: &Value) -> Vec
 fn authorization_result_diagnostic(
     budget: &ConversationCallBudget,
     budget_url: &str,
+    has_active_call: bool,
 ) -> Option<Value> {
     let (code, reason) = if budget.revoked {
         ("authorization_revoked", "saved_authorization_was_revoked")
     } else if budget.current_grant.expires_at <= chrono::Utc::now() {
         ("authorization_expired", "saved_authorization_expired")
-    } else if budget.used_calls >= budget.current_grant.maximum_calls {
+    } else if !has_active_call && budget.used_calls >= budget.current_grant.maximum_calls {
         (
             "task_call_budget_exhausted",
             "saved_model_call_allowance_is_exhausted",
@@ -362,8 +363,12 @@ impl LocalApplication {
             .collect::<Vec<_>>();
         let budget_url =
             format!("/api/projects/{project}/conversations/{conversation}/tasks/{task}/budget");
+        let has_active_call = calls
+            .iter()
+            .any(|call| call.status == ConversationCallStatus::Reserved);
         if let Some(budget) = self.store.conversation_call_budget(&owner, task)?
-            && let Some(diagnostic) = authorization_result_diagnostic(&budget, &budget_url)
+            && let Some(diagnostic) =
+                authorization_result_diagnostic(&budget, &budget_url, has_active_call)
         {
             result_diagnostics.push(diagnostic);
         }
@@ -962,6 +967,7 @@ mod tests {
                 revoked: false,
             },
             "/budget",
+            false,
         )
         .unwrap();
         assert_eq!(expired["code"], "authorization_expired");
@@ -975,11 +981,26 @@ mod tests {
                 revoked: false,
             },
             "/budget",
+            false,
         )
         .unwrap();
         assert_eq!(exhausted["code"], "task_call_budget_exhausted");
         assert_eq!(exhausted["scope"]["maximum_calls"], 1);
         assert_eq!(exhausted["scope"]["used_calls"], 1);
         assert_eq!(exhausted["preserves_existing_results"], true);
+
+        assert!(
+            authorization_result_diagnostic(
+                &ConversationCallBudget {
+                    current_grant: grant(now + chrono::Duration::minutes(5), 1),
+                    used_calls: 1,
+                    revoked: false,
+                },
+                "/budget",
+                true,
+            )
+            .is_none(),
+            "an admitted provider request owns the final reservation; it is progress, not exhaustion"
+        );
     }
 }
