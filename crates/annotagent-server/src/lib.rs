@@ -13592,6 +13592,27 @@ export:
             "/api/projects/{project}/conversations/{conversation}/tasks/{}",
             sent.task_id
         );
+        let duplicate_initial_preview = request(
+            &service,
+            axum::http::Method::GET,
+            &format!("{base}/schema-preview?model_id={}", model.id),
+            None,
+        )
+        .await;
+        assert_eq!(duplicate_initial_preview.status(), StatusCode::CONFLICT);
+        let duplicate_initial_preview = response_json(duplicate_initial_preview).await;
+        assert_eq!(
+            duplicate_initial_preview["code"],
+            "schema_authorization_already_exists"
+        );
+        assert_eq!(
+            duplicate_initial_preview["existing_call_id"],
+            original.to_string()
+        );
+        assert_eq!(
+            duplicate_initial_preview["suggested_action"],
+            "review_schema_retry_preview"
+        );
         let preview_response = request(
             &service,
             axum::http::Method::GET,
@@ -13675,6 +13696,24 @@ export:
             assert!(bodies[0].get("tools").is_none());
             assert!(bodies[0].get("parallel_tool_calls").is_none());
         }
+        let completed_preview = request(
+            &service,
+            axum::http::Method::GET,
+            &format!("{base}/schema-preview?model_id={}", model.id),
+            None,
+        )
+        .await;
+        assert_eq!(completed_preview.status(), StatusCode::CONFLICT);
+        let completed_preview = response_json(completed_preview).await;
+        assert_eq!(
+            completed_preview["existing_call_id"],
+            retry_call.to_string()
+        );
+        assert!(completed_preview["schema_draft_id"].is_string());
+        assert_eq!(
+            completed_preview["suggested_action"],
+            "continue_with_saved_schema"
+        );
         let replay = request(
             &service,
             axum::http::Method::POST,

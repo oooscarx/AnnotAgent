@@ -299,16 +299,28 @@ impl LocalApplication {
         );
         let owner = self.conversation_project_identity(project)?;
         let delivery = self.task_delivery_intent(project, conversation, task)?;
-        let schema = if delivery.saved.is_some() {
-            self.human_conversation_schema_drafts(project, conversation, task)?
-                .into_iter()
-                .find(|draft| {
-                    require_delivery_schema(delivery.saved.as_ref(), &draft.definition).is_ok()
-                })
-        } else {
-            None
-        };
         let calls = self.store.conversation_call_history(&owner, task)?;
+        let mut schema_drafts =
+            self.human_conversation_schema_drafts(project, conversation, task)?;
+        // Model-created Schema Drafts have a source_call_id rather than a
+        // source_request_id, so they are intentionally absent from the human
+        // draft list. Project them from this exact Task's receipts without
+        // treating them as execution permission.
+        for call in calls.iter().rev() {
+            if let Some(draft) =
+                self.conversation_schema_for_call(project, conversation, task, call.id)?
+                && !schema_drafts.iter().any(|saved| saved.id == draft.id)
+            {
+                schema_drafts.push(draft);
+            }
+        }
+        let schema = if delivery.saved.is_some() {
+            schema_drafts.into_iter().find(|draft| {
+                require_delivery_schema(delivery.saved.as_ref(), &draft.definition).is_ok()
+            })
+        } else {
+            schema_drafts.into_iter().next()
+        };
         let model_request_completed = calls.iter().any(|call| {
             matches!(
                 call.status,

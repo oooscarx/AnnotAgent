@@ -313,6 +313,23 @@ The object-root repair was deployed as `6cba3e0`. A new explicit recovery comman
 and its Schema Draft lookup is `null`. No automatic retry or image operation followed. This
 transport outcome cannot verify or disprove the repaired structured result shape.
 
+### Completed-call projection and duplicate preview
+
+Call `74427c90-514d-4bba-ac2c-01053a1e7cfa` subsequently returned one valid native
+`propose_annotation_schema` action with typed Draft arguments under the restored object-root tool.
+The exact Task-owned Draft was saved as `9d326d13-e95b-4755-8269-a2c00bbb9f99`. A separate read-model
+bug hid model-created Drafts because it listed only human `source_request_id` rows. The task read
+model now also resolves Drafts from its own call receipts. This marks the Schema step complete while
+leaving delivery intake, image scope, Builder and Sample permissions separate.
+
+Once an initial or retry Schema authorization exists, `GET .../schema-preview` now returns HTTP 409
+`schema_authorization_already_exists` instead of advertising a new incompatible approval. The safe
+response includes `existing_call_id`, `existing_call_status`, nullable `schema_draft_id`, receipt and
+Draft URLs, plus one of `continue_with_saved_schema`, `poll_existing_call`,
+`wait_for_remote_outcome`, `review_schema_retry_preview` or `inspect_existing_failure`. The existing
+pending-authorization and retry-preview endpoints remain the only recovery paths; GET performs no
+write and no budget reset.
+
 ## Remaining limits
 
 - Two explicitly authorized `glm-5.2` requests reached the configured proxy. Neither produced a

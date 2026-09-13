@@ -590,6 +590,74 @@ pub(super) async fn preview(
     AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
     Query(selection): Query<ModelSelection>,
 ) -> ApiResult<Json<Value>> {
+    for call in state
+        .application
+        .conversation_schema_calls(&project, conversation, task)
+        .map_err(ApiError::bad_request)?
+        .into_iter()
+        .rev()
+    {
+        let initial_authorization = state
+            .application
+            .conversation_schema_authorization(&project, conversation, task, call.id)
+            .map_err(ApiError::bad_request)?;
+        let retry_authorization = state
+            .application
+            .conversation_schema_retry(&project, conversation, task, call.id)
+            .map_err(ApiError::bad_request)?;
+        if initial_authorization.is_none() && retry_authorization.is_none() {
+            continue;
+        }
+        let draft = state
+            .application
+            .conversation_schema_for_call(&project, conversation, task, call.id)
+            .map_err(ApiError::bad_request)?;
+        let suggested_action = if draft.is_some() {
+            "continue_with_saved_schema"
+        } else {
+            match call.status {
+                annotagent_storage::ConversationCallStatus::Reserved => "poll_existing_call",
+                annotagent_storage::ConversationCallStatus::InDoubt => "wait_for_remote_outcome",
+                annotagent_storage::ConversationCallStatus::Completed => {
+                    "review_schema_retry_preview"
+                }
+                annotagent_storage::ConversationCallStatus::Failed => "inspect_existing_failure",
+            }
+        };
+        let root = format!("/api/projects/{project}/conversations/{conversation}/tasks/{task}");
+        let retry_preview_url = if draft.is_none()
+            && call.status == annotagent_storage::ConversationCallStatus::Completed
+        {
+            Some(selection.model_id.map_or_else(
+                || format!("{root}/schema-retry-preview?retry_of={}", call.id),
+                |model| {
+                    format!(
+                        "{root}/schema-retry-preview?retry_of={}&model_id={model}",
+                        call.id
+                    )
+                },
+            ))
+        } else {
+            None
+        };
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            body: json!({
+                "status":409,
+                "code":"schema_authorization_already_exists",
+                "error":"This Task already has an exact Schema authorization. A new preview cannot replace its scope or reset its budget.",
+                "admitted":false,
+                "existing_call_id":call.id,
+                "existing_call_status":call.status,
+                "schema_draft_id":draft.as_ref().map(|value|value.id),
+                "receipt_url":format!("{root}/calls/{}",call.id),
+                "schema_draft_url":draft.as_ref().map(|_|format!("{root}/calls/{}/schema-draft",call.id)),
+                "pending_authorization_url":format!("{root}/schema-authorizations/pending"),
+                "retry_preview_url":retry_preview_url,
+                "suggested_action":suggested_action
+            }),
+        });
+    }
     preview_scope(&state, &project, conversation, task, selection.model_id).and_then(
         |(_, mut preview)| {
             preview["project_call_limit"] = json!(
