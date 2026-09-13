@@ -447,6 +447,7 @@ impl PipelineBuilderModelRuntime {
             supports_tool_calls: self.model.protocol_features.tool_calls,
             supports_json_schema: self.model.protocol_features.structured_output
                 || self.model.protocol_features.json_schema,
+            streaming: self.model.protocol_features.streaming,
             response_mode: annotagent_provider::OpenAiResponseMode::Automatic,
             custom_headers: self.provider.safe_headers.clone(),
             extra_request_fields,

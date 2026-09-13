@@ -326,6 +326,7 @@ mod tests {
                 reasoning_mode: None,
                 supports_tool_calls: false,
                 supports_json_schema: false,
+                streaming: false,
                 response_mode: annotagent_provider::OpenAiResponseMode::Automatic,
                 custom_headers: BTreeMap::new(),
                 extra_request_fields: BTreeMap::new(),

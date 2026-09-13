@@ -10,6 +10,7 @@ use annotagent_core::{
     ModelToolCall, TokenUsage, ToolCallId, UsageSource, VisionModelProvider,
 };
 use async_trait::async_trait;
+use futures::StreamExt;
 use reqwest::{Client, StatusCode, header::HeaderMap};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -52,6 +53,11 @@ pub struct OpenAiCompatibleConfig {
     pub supports_tool_calls: bool,
     #[serde(default)]
     pub supports_json_schema: bool,
+    /// Send and decode the OpenAI-compatible SSE transport. This is independent
+    /// from the selected structured-output mode and must be declared by the
+    /// frozen Model Profile.
+    #[serde(default)]
+    pub streaming: bool,
     #[serde(default)]
     pub response_mode: OpenAiResponseMode,
     #[serde(default)]
@@ -242,6 +248,12 @@ impl OpenAiCompatibleProvider {
         }
         for (key, value) in &request.extra {
             body.insert(key.clone(), value.clone());
+        }
+        // Transport is a typed capability. Arbitrary request extras cannot turn
+        // it on for an endpoint whose frozen profile did not declare support.
+        body.remove("stream");
+        if self.config.streaming {
+            body.insert("stream".to_owned(), Value::Bool(true));
         }
         body.insert("model".to_owned(), json!(request.model));
         body.insert("messages".to_owned(), Value::Array(messages));
@@ -483,7 +495,7 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
             Ok,
         )?;
         let body = self.request_body(&request);
-        if body.get("stream").and_then(Value::as_bool) == Some(true) {
+        if body.get("stream").and_then(Value::as_bool) == Some(true) && !self.config.streaming {
             return Err(safe_failure(
                 annotagent_core::ModelFailureStage::PrepareRequest,
                 annotagent_core::ModelFailureCategory::Configuration,
@@ -599,10 +611,41 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
                 )?;
                 return Err(CoreError::ModelFailure(failure));
             }
-            let bytes = tokio::select! {
+            let value = if self.config.streaming {
+                match read_streaming_response(response, cancellation.clone()).await {
+                    Ok(value) => value,
+                    Err(error) => {
+                        let failure = match &error {
+                            CoreError::ModelFailure(failure) => failure.clone(),
+                            _ => annotagent_core::ModelFailure {
+                                stage: annotagent_core::ModelFailureStage::ResponseDecode,
+                                category: annotagent_core::ModelFailureCategory::InvalidResponse,
+                                http_status: None,
+                            },
+                        };
+                        let outcome_status = if failure.stage
+                            == annotagent_core::ModelFailureStage::ResponseDecode
+                        {
+                            ModelAttemptOutcomeStatus::Failed
+                        } else {
+                            ModelAttemptOutcomeStatus::InDoubt
+                        };
+                        self.finish_observed_attempt(
+                            attempt_id.as_deref(),
+                            outcome_status,
+                            request_id.clone(),
+                            unknown_usage(),
+                            None,
+                            Some(failure),
+                        )?;
+                        return Err(error);
+                    }
+                }
+            } else {
+                let bytes = tokio::select! {
                 () = cancellation.cancelled() => {
                     let failure=annotagent_core::ModelFailure{stage:annotagent_core::ModelFailureStage::ResponseBody,category:annotagent_core::ModelFailureCategory::Cancelled,http_status:None};
-                    self.finish_observed_attempt(attempt_id.as_deref(),ModelAttemptOutcomeStatus::InDoubt,request_id.clone(),TokenUsage{input_tokens:None,output_tokens:None,total_tokens:None,source:UsageSource::Unknown},None,Some(failure.clone()))?;
+                    self.finish_observed_attempt(attempt_id.as_deref(),ModelAttemptOutcomeStatus::InDoubt,request_id.clone(),unknown_usage(),None,Some(failure.clone()))?;
                     return Err(CoreError::ModelFailure(failure));
                 },
                 result = response.bytes() => match result {
@@ -613,27 +656,29 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
                         return Err(CoreError::ModelFailure(failure));
                     }
                 },
-            };
-            let Ok(value): Result<Value, _> = serde_json::from_slice(&bytes) else {
-                let failure = annotagent_core::ModelFailure {
-                    stage: annotagent_core::ModelFailureStage::ResponseDecode,
-                    category: annotagent_core::ModelFailureCategory::InvalidResponse,
-                    http_status: None,
                 };
-                self.finish_observed_attempt(
-                    attempt_id.as_deref(),
-                    ModelAttemptOutcomeStatus::Failed,
-                    request_id.clone(),
-                    TokenUsage {
-                        input_tokens: None,
-                        output_tokens: None,
-                        total_tokens: None,
-                        source: UsageSource::Unknown,
-                    },
-                    None,
-                    Some(failure.clone()),
-                )?;
-                return Err(CoreError::ModelFailure(failure));
+                let Ok(value): Result<Value, _> = serde_json::from_slice(&bytes) else {
+                    let failure = annotagent_core::ModelFailure {
+                        stage: annotagent_core::ModelFailureStage::ResponseDecode,
+                        category: annotagent_core::ModelFailureCategory::InvalidResponse,
+                        http_status: None,
+                    };
+                    self.finish_observed_attempt(
+                        attempt_id.as_deref(),
+                        ModelAttemptOutcomeStatus::Failed,
+                        request_id.clone(),
+                        TokenUsage {
+                            input_tokens: None,
+                            output_tokens: None,
+                            total_tokens: None,
+                            source: UsageSource::Unknown,
+                        },
+                        None,
+                        Some(failure.clone()),
+                    )?;
+                    return Err(CoreError::ModelFailure(failure));
+                };
+                value
             };
             let Ok(mut parsed) = parse_chat_response(&value, request_id.clone()) else {
                 let failure = annotagent_core::ModelFailure {
@@ -659,6 +704,9 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
             parsed
                 .provider_metadata
                 .insert("retry_count".to_owned(), attempt.to_string());
+            parsed
+                .provider_metadata
+                .insert("streaming".to_owned(), self.config.streaming.to_string());
             let response_mode = self.effective_response_mode();
             parsed.provider_metadata.insert(
                 "response_mode".to_owned(),
@@ -730,6 +778,240 @@ impl VisionModelProvider for OpenAiCompatibleProvider {
         }
         Err(CoreError::Provider("provider retries exhausted".to_owned()))
     }
+}
+
+const MAX_STREAM_EVENT_BYTES: usize = 1024 * 1024;
+const MAX_STREAM_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_STREAM_TOOL_CALLS: usize = 16;
+
+fn unknown_usage() -> TokenUsage {
+    TokenUsage {
+        input_tokens: None,
+        output_tokens: None,
+        total_tokens: None,
+        source: UsageSource::Unknown,
+    }
+}
+
+#[derive(Default)]
+struct StreamToolCall {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
+#[derive(Default)]
+struct StreamAccumulator {
+    id: Option<String>,
+    content: String,
+    tools: BTreeMap<usize, StreamToolCall>,
+    finish_reason: Option<String>,
+    usage: Option<Value>,
+    received_bytes: usize,
+    saw_data: bool,
+    saw_done: bool,
+}
+
+impl StreamAccumulator {
+    fn push(&mut self, data: &[u8]) -> CoreResult<()> {
+        if data == b"[DONE]" {
+            self.saw_done = true;
+            return Ok(());
+        }
+        self.received_bytes = self.received_bytes.saturating_add(data.len());
+        if data.len() > MAX_STREAM_EVENT_BYTES || self.received_bytes > MAX_STREAM_RESPONSE_BYTES {
+            return Err(safe_failure(
+                annotagent_core::ModelFailureStage::ResponseDecode,
+                annotagent_core::ModelFailureCategory::InvalidResponse,
+                None,
+            ));
+        }
+        let value: Value = serde_json::from_slice(data).map_err(|_| {
+            safe_failure(
+                annotagent_core::ModelFailureStage::ResponseDecode,
+                annotagent_core::ModelFailureCategory::InvalidResponse,
+                None,
+            )
+        })?;
+        self.saw_data = true;
+        if self.id.is_none() {
+            self.id = value.get("id").and_then(Value::as_str).map(str::to_owned);
+        }
+        if let Some(usage) = value.get("usage").filter(|usage| usage.is_object()) {
+            self.usage = Some(usage.clone());
+        }
+        for choice in value
+            .get("choices")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if choice.get("index").and_then(Value::as_u64).unwrap_or(0) != 0 {
+                continue;
+            }
+            if let Some(reason) = choice.get("finish_reason").and_then(Value::as_str) {
+                self.finish_reason = Some(reason.to_owned());
+            }
+            let Some(delta) = choice.get("delta") else {
+                continue;
+            };
+            if let Some(content) = delta.get("content").and_then(Value::as_str) {
+                self.content.push_str(content);
+            }
+            for fragment in delta
+                .get("tool_calls")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let index = fragment
+                    .get("index")
+                    .and_then(Value::as_u64)
+                    .and_then(|index| usize::try_from(index).ok())
+                    .ok_or_else(|| {
+                        safe_failure(
+                            annotagent_core::ModelFailureStage::ResponseDecode,
+                            annotagent_core::ModelFailureCategory::InvalidResponse,
+                            None,
+                        )
+                    })?;
+                if index >= MAX_STREAM_TOOL_CALLS {
+                    return Err(safe_failure(
+                        annotagent_core::ModelFailureStage::ResponseDecode,
+                        annotagent_core::ModelFailureCategory::InvalidResponse,
+                        None,
+                    ));
+                }
+                let tool = self.tools.entry(index).or_default();
+                if let Some(id) = fragment.get("id").and_then(Value::as_str) {
+                    if !tool.id.is_empty() && tool.id != id {
+                        return Err(safe_failure(
+                            annotagent_core::ModelFailureStage::ResponseDecode,
+                            annotagent_core::ModelFailureCategory::InvalidResponse,
+                            None,
+                        ));
+                    }
+                    id.clone_into(&mut tool.id);
+                }
+                if let Some(function) = fragment.get("function") {
+                    if let Some(name) = function.get("name").and_then(Value::as_str) {
+                        tool.name.push_str(name);
+                    }
+                    if let Some(arguments) = function.get("arguments").and_then(Value::as_str) {
+                        tool.arguments.push_str(arguments);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(self) -> CoreResult<Value> {
+        if !self.saw_data || !self.saw_done || self.finish_reason.is_none() {
+            return Err(safe_failure(
+                annotagent_core::ModelFailureStage::ResponseBody,
+                annotagent_core::ModelFailureCategory::InvalidResponse,
+                None,
+            ));
+        }
+        let tool_calls = self
+            .tools
+            .into_iter()
+            .map(|(index, tool)| {
+                json!({
+                    "index":index,"id":tool.id,"type":"function",
+                    "function":{"name":tool.name,"arguments":tool.arguments}
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut message = json!({
+            "role":"assistant",
+            "content":if self.content.is_empty(){Value::Null}else{Value::String(self.content)},
+        });
+        if !tool_calls.is_empty() {
+            message["tool_calls"] = Value::Array(tool_calls);
+        }
+        let mut value = json!({
+            "id":self.id,
+            "choices":[{"index":0,"message":message,"finish_reason":self.finish_reason}],
+        });
+        if let Some(usage) = self.usage {
+            value["usage"] = usage;
+        }
+        Ok(value)
+    }
+}
+
+async fn read_streaming_response(
+    response: reqwest::Response,
+    cancellation: CancellationToken,
+) -> CoreResult<Value> {
+    let mut stream = response.bytes_stream();
+    let mut buffer = Vec::new();
+    let mut event_data = Vec::<Vec<u8>>::new();
+    let mut accumulator = StreamAccumulator::default();
+    loop {
+        let next = tokio::select! {
+            () = cancellation.cancelled() => {
+                return Err(safe_failure(
+                    annotagent_core::ModelFailureStage::ResponseBody,
+                    annotagent_core::ModelFailureCategory::Cancelled,
+                    None,
+                ));
+            }
+            next = stream.next() => next,
+        };
+        let Some(chunk) = next else { break };
+        let chunk = chunk.map_err(|error| {
+            CoreError::ModelFailure(model_failure_for_transport(
+                &error,
+                annotagent_core::ModelFailureStage::ResponseBody,
+            ))
+        })?;
+        buffer.extend_from_slice(&chunk);
+        if buffer.len() > MAX_STREAM_EVENT_BYTES {
+            return Err(safe_failure(
+                annotagent_core::ModelFailureStage::ResponseDecode,
+                annotagent_core::ModelFailureCategory::InvalidResponse,
+                None,
+            ));
+        }
+        while let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
+            let mut line = buffer.drain(..=newline).collect::<Vec<_>>();
+            line.pop();
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            if line.is_empty() {
+                if !event_data.is_empty() {
+                    let data = event_data
+                        .drain(..)
+                        .reduce(|mut joined, line| {
+                            joined.push(b'\n');
+                            joined.extend(line);
+                            joined
+                        })
+                        .unwrap_or_default();
+                    accumulator.push(&data)?;
+                }
+                continue;
+            }
+            if line.starts_with(b":") {
+                continue;
+            }
+            if let Some(data) = line.strip_prefix(b"data:") {
+                event_data.push(data.strip_prefix(b" ").unwrap_or(data).to_vec());
+            }
+        }
+    }
+    if !buffer.is_empty() || !event_data.is_empty() {
+        return Err(safe_failure(
+            annotagent_core::ModelFailureStage::ResponseBody,
+            annotagent_core::ModelFailureCategory::InvalidResponse,
+            None,
+        ));
+    }
+    accumulator.finish()
 }
 
 fn safe_structured_output_error(error: &CoreError) -> String {
@@ -1105,7 +1387,9 @@ mod tests {
 
     use axum::{
         Json, Router,
+        body::Body,
         extract::State,
+        http::header,
         response::{Html, IntoResponse, Response},
         routing::post,
     };
@@ -1194,6 +1478,58 @@ mod tests {
         (format!("http://{address}/v1"), calls)
     }
 
+    #[derive(Clone)]
+    struct StreamingFixture {
+        bodies: Arc<Mutex<Vec<Value>>>,
+        chunks: Arc<Vec<Vec<u8>>>,
+    }
+
+    async fn streaming_completion(
+        State(state): State<StreamingFixture>,
+        Json(body): Json<Value>,
+    ) -> Response {
+        state.bodies.lock().expect("bodies").push(body);
+        let chunks = Arc::clone(&state.chunks);
+        let stream = futures::stream::unfold(0usize, move |index| {
+            let chunks = Arc::clone(&chunks);
+            async move {
+                let chunk = chunks.get(index)?.clone();
+                tokio::time::sleep(Duration::from_millis(40)).await;
+                Some((
+                    Ok::<_, std::io::Error>(axum::body::Bytes::from(chunk)),
+                    index + 1,
+                ))
+            }
+        });
+        Response::builder()
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .body(Body::from_stream(stream))
+            .expect("stream response")
+    }
+
+    async fn spawn_streaming_fixture(chunks: Vec<Vec<u8>>) -> (String, Arc<Mutex<Vec<Value>>>) {
+        let bodies = Arc::new(Mutex::new(Vec::new()));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let address = listener.local_addr().expect("address");
+        let state = StreamingFixture {
+            bodies: Arc::clone(&bodies),
+            chunks: Arc::new(chunks),
+        };
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new()
+                    .route("/v1/chat/completions", post(streaming_completion))
+                    .with_state(state),
+            )
+            .await
+            .expect("stream fixture server");
+        });
+        (format!("http://{address}/v1"), bodies)
+    }
+
     fn retry_test_config(endpoint: String, max_retries: u32) -> OpenAiCompatibleConfig {
         OpenAiCompatibleConfig {
             endpoint,
@@ -1206,6 +1542,7 @@ mod tests {
             reasoning_mode: None,
             supports_tool_calls: true,
             supports_json_schema: false,
+            streaming: false,
             response_mode: OpenAiResponseMode::Automatic,
             custom_headers: BTreeMap::new(),
             extra_request_fields: BTreeMap::new(),
@@ -1462,24 +1799,107 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unsupported_stream_does_not_make_a_network_request() {
-        let mut config = retry_test_config("http://127.0.0.1:1/v1".into(), 0);
+    async fn untyped_stream_extra_cannot_enable_streaming() {
+        let (endpoint, bodies) = spawn_capture_fixture(json!({
+            "choices":[{"message":{"role":"assistant","content":"OK"},"finish_reason":"stop"}]
+        }))
+        .await;
+        let mut config = retry_test_config(endpoint, 0);
         config
             .extra_request_fields
             .insert("stream".into(), json!(true));
         let provider =
             OpenAiCompatibleProvider::new_with_api_key(config, Some("TEST-only".into())).unwrap();
+        provider
+            .complete(retry_test_request(), CancellationToken::new())
+            .await
+            .unwrap();
+        assert!(bodies.lock().unwrap()[0].get("stream").is_none());
+    }
+
+    #[tokio::test]
+    async fn timed_sse_stream_reassembles_split_utf8_content_and_usage() {
+        let wire = concat!(
+            "data: {\"id\":\"stream-1\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"你\"},\"finish_reason\":null}]}\r\n\r\n",
+            ": heartbeat\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"好\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":2,\"total_tokens\":9}}\n\n",
+            "data: [DONE]\n\n"
+        )
+        .as_bytes()
+        .to_vec();
+        let split = wire
+            .windows("你".len())
+            .position(|window| window == "你".as_bytes())
+            .expect("Chinese bytes")
+            + 1;
+        let chunks = vec![wire[..split].to_vec(), wire[split..].to_vec()];
+        let (endpoint, bodies) = spawn_streaming_fixture(chunks).await;
+        let mut config = retry_test_config(endpoint, 0);
+        config.streaming = true;
+        config.supports_tool_calls = false;
+        let provider =
+            OpenAiCompatibleProvider::new_with_api_key(config, Some("fixture-secret".to_owned()))
+                .unwrap();
+
+        let started = std::time::Instant::now();
+        let response = provider
+            .complete(retry_test_request(), CancellationToken::new())
+            .await
+            .expect("valid SSE response");
+        assert!(started.elapsed() >= Duration::from_millis(80));
+        assert_eq!(response.content.as_deref(), Some("你好"));
+        assert_eq!(response.usage.input_tokens, Some(7));
+        assert_eq!(response.usage.output_tokens, Some(2));
+        assert_eq!(response.provider_metadata["finish_reason"], "stop");
+        assert_eq!(response.provider_metadata["streaming"], "true");
+        assert_eq!(bodies.lock().unwrap()[0]["stream"], true);
+    }
+
+    #[test]
+    fn stream_tool_fragments_are_joined_by_index_only_after_done() {
+        let mut stream = StreamAccumulator::default();
+        stream
+            .push(br#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"b","function":{"name":"second","arguments":"{\"b\":"}},{"index":0,"id":"a","function":{"name":"first","arguments":"{\"a\":"}}]},"finish_reason":null}]}"#)
+            .unwrap();
+        assert!(stream.finish_reason.is_none());
+        stream
+            .push(br#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1}"}},{"index":1,"function":{"arguments":"2}"}}]},"finish_reason":"tool_calls"}]}"#)
+            .unwrap();
+        stream.push(b"[DONE]").unwrap();
+        let value = stream.finish().unwrap();
+        let response = parse_chat_response(&value, Some("request".into())).unwrap();
+        assert_eq!(response.tool_calls.len(), 2);
+        assert_eq!(response.tool_calls[0].name, "first");
+        assert_eq!(response.tool_calls[0].arguments, json!({"a":1}));
+        assert_eq!(response.tool_calls[1].name, "second");
+        assert_eq!(response.tool_calls[1].arguments, json!({"b":2}));
+    }
+
+    #[tokio::test]
+    async fn truncated_stream_is_in_doubt_and_never_retried() {
+        let event = b"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n".to_vec();
+        let (endpoint, bodies) = spawn_streaming_fixture(vec![event]).await;
+        let mut config = retry_test_config(endpoint, 3);
+        config.streaming = true;
+        config.supports_tool_calls = false;
+        let observer = Arc::new(RecordingAttemptObserver::default());
+        let provider =
+            OpenAiCompatibleProvider::new_with_api_key(config, Some("fixture-secret".to_owned()))
+                .unwrap()
+                .with_attempt_observer(observer.clone());
         let error = provider
             .complete(retry_test_request(), CancellationToken::new())
             .await
-            .unwrap_err();
-        assert!(matches!(
-            error,
-            CoreError::ModelFailure(annotagent_core::ModelFailure {
-                category: annotagent_core::ModelFailureCategory::Configuration,
-                ..
-            })
-        ));
+            .expect_err("EOF without finish and DONE is not success");
+        assert!(matches!(error, CoreError::ModelFailure(_)));
+        assert_eq!(bodies.lock().unwrap().len(), 1);
+        assert_eq!(observer.finishes.lock().unwrap().len(), 1);
+        assert_eq!(
+            observer.finishes.lock().unwrap()[0].status,
+            ModelAttemptOutcomeStatus::InDoubt
+        );
     }
 
     #[test]
@@ -1589,6 +2009,7 @@ mod tests {
                 reasoning_mode: Some("high".to_owned()),
                 supports_tool_calls: true,
                 supports_json_schema: true,
+                streaming: false,
                 response_mode: OpenAiResponseMode::JsonObject,
                 custom_headers: BTreeMap::new(),
                 extra_request_fields: BTreeMap::from([
@@ -1696,6 +2117,7 @@ mod tests {
                 reasoning_mode: None,
                 supports_tool_calls: true,
                 supports_json_schema: false,
+                streaming: false,
                 response_mode: OpenAiResponseMode::Automatic,
                 custom_headers: BTreeMap::new(),
                 extra_request_fields: BTreeMap::new(),
@@ -1759,6 +2181,7 @@ mod tests {
                 reasoning_mode: Some("medium".to_owned()),
                 supports_tool_calls: true,
                 supports_json_schema: false,
+                streaming: false,
                 response_mode: OpenAiResponseMode::Automatic,
                 custom_headers: BTreeMap::new(),
                 extra_request_fields: BTreeMap::new(),
@@ -1809,6 +2232,7 @@ mod tests {
             reasoning_mode: None,
             supports_tool_calls: true,
             supports_json_schema: false,
+            streaming: false,
             response_mode: OpenAiResponseMode::Automatic,
             custom_headers: BTreeMap::new(),
             extra_request_fields: BTreeMap::new(),
@@ -1851,6 +2275,7 @@ mod tests {
                 reasoning_mode: None,
                 supports_tool_calls: false,
                 supports_json_schema: true,
+                streaming: false,
                 response_mode: OpenAiResponseMode::Automatic,
                 custom_headers: BTreeMap::new(),
                 extra_request_fields: BTreeMap::new(),
@@ -1932,6 +2357,7 @@ mod tests {
                 reasoning_mode: None,
                 supports_tool_calls: true,
                 supports_json_schema: true,
+                streaming: false,
                 response_mode: OpenAiResponseMode::Automatic,
                 custom_headers: BTreeMap::new(),
                 extra_request_fields: BTreeMap::new(),
