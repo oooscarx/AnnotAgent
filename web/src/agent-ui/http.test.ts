@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { ApiRequestError } from "../api";
 import { HttpAdapter, type Transport } from "./http";
 
 const project = { project_id: "TEST-alpha", project_owner_id: "owner-a", title: "TEST 相同名字", conversation_id: "conversation-a" };
@@ -243,6 +244,41 @@ it("planning an existing task never overrides its frozen Send model with the nex
   expect(paths).toContain(`${root}/t1/schema-preview`);
   expect(paths.some(path=>path.includes("model_id=new-preference"))).toBe(false);
   expect(adapter.snapshot().tasks.find(t=>t.id==="t1")?.approval?.scope).toContain("Frozen");
+});
+it("continues from a saved Schema authorization instead of surfacing a duplicate preview failure", async () => {
+  const reads = mockTransport();
+  const calls: { path: string; method: string }[] = [];
+  const transport: Transport = async <T>(path: string, init?: RequestInit) => {
+    calls.push({ path, method: init?.method || "GET" });
+    if (path === `${root}/t1/schema-preview`) {
+      throw new ApiRequestError(
+        "This Task already has an exact Schema authorization.",
+        409,
+        "schema_authorization_already_exists",
+        "continue_with_saved_schema",
+      );
+    }
+    return reads.transport<T>(path, init);
+  };
+  const adapter = new HttpAdapter(transport);
+  await adapter.refresh();
+  await adapter.loadTask("TEST-alpha", "t1");
+  calls.length = 0;
+
+  await expect(
+    adapter.prepareAction(
+      { id: "duplicate-plan", project: "TEST-alpha", task: "t1", revision: "schema-1" },
+      "plan",
+    ),
+  ).resolves.toBeUndefined();
+
+  expect(calls.filter(call => call.path === `${root}/t1/schema-preview`)).toHaveLength(1);
+  expect(calls.some(call => call.method !== "GET")).toBe(false);
+  expect(calls).toEqual(expect.arrayContaining([
+    { path: `${root}/t1/workspace`, method: "GET" },
+    { path: `${root}/t1/thread?limit=100`, method: "GET" },
+  ]));
+  expect(adapter.snapshot().tasks.find(task => task.id === "t1")?.approval).toBeUndefined();
 });
 function mockTransport(overrides: Record<string, unknown | (() => Promise<unknown>)> = {}) {
   const paths: string[] = [];

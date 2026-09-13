@@ -422,7 +422,13 @@ export function AgentPreviewApp({
     }
     void act(async () => {
       await adapter.prepareAction!(command(task), kind);
-      setApproval(command(task));
+      // Some read-only preview requests intentionally reconcile to an already
+      // saved authorization. Only open the approval dialog when the adapter
+      // actually produced a new exact scope.
+      const prepared = adapter.snapshot().tasks.find(
+        (candidate) => candidate.id === task.id && candidate.project === task.project,
+      );
+      if (prepared?.approval) setApproval(command(prepared));
     });
   };
   const openDemoReceipt=async(receipt:import("./demoOnboardingService").StartDemoReceipt)=>{

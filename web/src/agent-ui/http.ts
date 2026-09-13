@@ -797,7 +797,26 @@ export class HttpAdapter implements WorkspaceAdapter {
     } else if (kind === "plan") {
       // Composer preference applies to the next Send, not this admitted task.
       // Let the server resolve its persisted Send model before freezing consent.
-      const p = await this.transport<ConversationSchemaPreview>(`${root}/schema-preview`);
+      let p: ConversationSchemaPreview;
+      try {
+        p = await this.transport<ConversationSchemaPreview>(`${root}/schema-preview`);
+      } catch (error) {
+        if (
+          error instanceof ApiRequestError &&
+          error.status === 409 &&
+          error.code === "schema_authorization_already_exists" &&
+          error.suggestedAction === "continue_with_saved_schema"
+        ) {
+          // The server has already admitted and settled the one exact Schema
+          // scope for this Task. A second preview must neither replace that
+          // scope nor look like a fatal action failure in the UI. Reconcile the
+          // durable Task and let its current mainline action (Builder, Sample,
+          // Review, etc.) drive the next screen without another model call.
+          await this.reloadCurrent(task);
+          return;
+        }
+        throw error;
+      }
       const body = {call_id:c.id,model_id:p.model_id,scope_hash:p.scope_hash,expires_at:p.expires_at,allow_unknown_cost:true};
       this.approvals.set(task.id,{id:c.id,url:`${root}/schema-proposals`,body});
       this.emit({tasks:this.state.tasks.map(t=>t.id===task.id?{...t,approval:{id:c.id,title:"批准目标规划（仅文本规划）",revision:p.scope_hash,budget:null,scope:[p.model_name,p.destination,p.data_scope,`${p.image_count} 张图片；最多 ${p.maximum_calls} 次调用`,`有效期：${p.expires_at}`,"不会发布、批处理或自动接受标注"]}}:t)});
