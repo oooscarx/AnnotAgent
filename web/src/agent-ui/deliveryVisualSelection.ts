@@ -7,6 +7,7 @@ export type DeliverySampleResult = {
     image_id:string;image_sha256:string;result_revision:string;
     candidates:{candidate_id:string;selection:SampleVisualSelection|null}[];
     annotations:Annotation[];
+    execution_evidence?:import("./refinementExecutionEvidence").ImageRefinementEvidence;
   }[];
 };
 export type DeliveryFormalResult = {

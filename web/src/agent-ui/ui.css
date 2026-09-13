@@ -1029,8 +1029,12 @@ caption {
 .ui-app .task-model-bindings strong, .ui-app .task-model-bindings code { overflow-wrap: anywhere; }
 .ui-app .task-model-bindings small { line-height: 1.5; }
 .ui-app .task-model-bindings > .ui-disclosure { grid-column: 1 / -1; padding: 6px 12px; background: var(--aa-bg); }
-.ui-app .task-refiner-in_draft strong { color: var(--aa-success); }
+.ui-app .task-refiner-in_draft strong { color: var(--aa-text); }
 .ui-app .task-refiner-authorized_only strong { color: var(--aa-warning); }
+.ui-app .refinement-execution-evidence { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--aa-border); background: var(--aa-bg); }
+.ui-app .refinement-execution-evidence > p, .ui-app .refinement-evidence-candidate p { margin: 0; }
+.ui-app .refinement-evidence-candidate + .refinement-evidence-candidate { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--aa-border); }
+.ui-app .refinement-evidence-candidate ul { margin: 8px 0 0; padding-left: 20px; }
 @media(max-width:760px) { .ui-app .task-model-bindings { grid-template-columns: minmax(0,1fr); } .ui-app .task-model-bindings > .ui-disclosure { grid-column: 1; } }
 .ui-app .current-task-copy { display: grid; gap: 5px; }
 .ui-app .current-task-copy > small {

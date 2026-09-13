@@ -15,7 +15,10 @@ test("three terminal Sample images appear and the server focus is applied only o
     const second=annotation("cup-two","image-2","cup",[0.2,0.3,0.3,0.3]);
     const selection=(candidate:{id:string;image_id:string;label:string},artifact:string,revision:string)=>({project_id:"project",conversation_id:"conversation",task_id:"task",project_schema_revision:"schema",image:{image_id:candidate.image_id,sha256:`sha-${candidate.image_id}`},sample:{draft_id:"draft",draft_revision:4,sample_test_id:"sample"},candidate:{candidate_id:candidate.id,source_artifact_id:artifact},annotation:{kind:"bounding_box",label:candidate.label},result_revision:revision});
     const sample_result={project_id:"project",conversation_id:"conversation",task_id:"task",project_schema_revision:"schema",draft_id:"draft",draft_revision:4,sample_test_id:"sample",images:[
-      {image_id:"image-1",image_sha256:"sha-image-1",result_revision:"result-1",candidates:[{candidate_id:cup.id,selection:selection(cup,"artifact-cup","result-1")},{candidate_id:bottle.id,selection:selection(bottle,"artifact-bottle","result-1")}],annotations:[cup,bottle]},
+      {image_id:"image-1",image_sha256:"sha-image-1",result_revision:"result-1",candidates:[{candidate_id:cup.id,selection:selection(cup,"artifact-cup","result-1")},{candidate_id:bottle.id,selection:selection(bottle,"artifact-bottle","result-1")}],annotations:[cup,bottle],execution_evidence:{configured_refiner:true,candidates:[
+        {candidate_id:cup.id,lineage_id:"detection:cup-one",source:"vlm_only",executed:false,reason:"方案包含精修，但本图实际 lineage 停在 Coverage Gate：PartiallyCovered。",items:[{kind:"gate",label:"Coverage Gate",node_id:"coverage",status:null,artifact_id:"coverage-cup",artifact_ref:"coverage:cup",detail:"PartiallyCovered"}]},
+        {candidate_id:bottle.id,lineage_id:"detection:bottle-one",source:"prompted_segmentation_refined",executed:true,reason:"提示分割调用、Mask Artifact 与 mask_to_bbox Artifact 已在同一终端 lineage 中核实。",items:[{kind:"node_receipt",label:"提示分割调用回执",node_id:"sam",status:"succeeded",artifact_id:null,artifact_ref:null,detail:null},{kind:"artifact",label:"Mask Artifact",node_id:"sam",status:null,artifact_id:"mask-bottle",artifact_ref:"mask:bottle",detail:null},{kind:"node_receipt",label:"mask_to_bbox 回执",node_id:"bbox",status:"succeeded",artifact_id:null,artifact_ref:null,detail:null},{kind:"artifact",label:"mask_to_bbox Artifact",node_id:"bbox",status:null,artifact_id:"bbox-bottle",artifact_ref:"bbox:bottle",detail:null}]},
+      ]}},
       {image_id:"image-2",image_sha256:"sha-image-2",result_revision:"result-2",candidates:[{candidate_id:second.id,selection:selection(second,"artifact-second","result-2")}],annotations:[second]},
       {image_id:"image-3",image_sha256:"sha-image-3",result_revision:"result-3",candidates:[],annotations:[]},
     ]};
@@ -27,6 +30,10 @@ test("three terminal Sample images appear and the server focus is applied only o
 
   await expect(page.getByText("需要判断：瓶子边界需要判断",{exact:true})).toBeVisible();
   await expect(page.getByRole("heading",{name:"检查样例结果 · 3 张"})).toBeVisible();
+  await expect(page.getByText("当前终端候选来源：prompted segmentation refined",{exact:true})).toBeVisible();
+  await expect(page.getByText(/提示分割已执行/)).toBeVisible();
+  await page.getByText("查看实际节点证据",{exact:true}).click();
+  await expect(page.getByText(/Mask Artifact/).first()).toBeVisible();
   await expect(page.getByText("样例反馈",{exact:true})).toBeVisible();
   await expect(page.getByRole("tab",{name:"正式 Batch"})).toHaveCount(0);
   const probe=page.locator(".delivery-review .canvas-dimension-probe");
@@ -48,12 +55,15 @@ test("three terminal Sample images appear and the server focus is applied only o
   await expect(page.getByRole("button",{name:/瓶子/})).toHaveAttribute("aria-pressed","true");
   await page.getByRole("button",{name:/杯子/}).first().click();
   await expect(page.getByRole("button",{name:/杯子/}).first()).toHaveAttribute("aria-pressed","true");
+  await expect(page.getByText("当前终端候选来源：VLM-only",{exact:true})).toBeVisible();
+  await expect(page.getByText(/方案包含但本图未执行提示分割/)).toBeVisible();
+  await expect(page.getByText(/PartiallyCovered/).first()).toBeVisible();
   await page.evaluate(()=>(window as unknown as {p0ResultTest:{render:()=>void}}).p0ResultTest.render());
   await expect(page.getByRole("button",{name:/杯子/}).first()).toHaveAttribute("aria-pressed","true");
   await page.getByLabel("图片",{exact:true}).selectOption("image-3");
   await expect(page.getByText("这张图片没有当前 Sample Test 结果。")).toHaveCount(0);
   await expect(page.getByRole("button",{name:/Annotation list · 0/})).toBeVisible();
-  await expect(page.getByRole("button",{name:"这个样例框有问题",exact:true})).toBeDisabled();
+  await expect(page.getByRole("button",{name:"说明其他问题",exact:true})).toBeDisabled();
 });
 
 test("the fitted result canvas stays within mobile and 200%-equivalent viewports",async({page})=>{

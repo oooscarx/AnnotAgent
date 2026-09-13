@@ -43,7 +43,7 @@ export function taskModelBindingSummary(task: Task): TaskModelBindingSummary {
       state,
       models: [...new Set(state === "in_draft" ? draftEvidence : authorizedEvidence)],
       detail: state === "in_draft"
-        ? "已保存 Draft 含分割精修节点或模型绑定；这不等于本次样例已经实际调用精修模型。"
+        ? "已保存 Draft 含分割精修节点或模型绑定；是否实际执行只看每张图片的节点回执与 Artifact lineage。"
         : state === "authorized_only"
           ? "精修模型只出现在当前授权范围，尚无证据表明它已进入保存的 Draft。"
           : "当前保存的 Draft 和授权摘要都没有发现分割精修绑定。",

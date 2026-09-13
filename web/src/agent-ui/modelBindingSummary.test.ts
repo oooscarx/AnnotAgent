@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Task } from "./adapter";
 import { taskModelBindingSummary } from "./modelBindingSummary";
+import { renderToStaticMarkup } from "react-dom/server";
+import { TaskModelBindings } from "./TaskModelBindings";
 
 const task = (overrides: Partial<Task>): Task => ({
   id: "task", project: "project", title: "Ball", phase: "idle", revision: "schema",
@@ -26,6 +28,10 @@ describe("task model binding summary", () => {
       refiner: { state: "in_draft" },
     });
     expect(result.authorizationBindings).toHaveLength(2);
+    const html=renderToStaticMarkup(TaskModelBindings({summary:result}));
+    expect(html).toContain("方案包含精修");
+    expect(html).not.toContain("已进入 Draft");
+    expect(html).not.toContain("提示分割已执行");
   });
 
   it("does not claim an authorized EfficientSAM is part of the Draft", () => {

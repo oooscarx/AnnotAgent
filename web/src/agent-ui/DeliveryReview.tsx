@@ -11,6 +11,7 @@ import {
   type SampleVisualSelection,
 } from "./deliveryVisualSelection";
 import type { FormalVisualSelection } from "./mainline";
+import { RefinementEvidencePanel } from "./RefinementEvidencePanel";
 
 type Image = { id: string; name: string; src?: string };
 type Mode = "sample" | "formal";
@@ -489,6 +490,7 @@ export function DeliveryReview({
         : ((!formalResult || !formalImage || !service.editObject) && (!presetFormal || !service.reviewPresetObject)) || permissions?.editObject===false)}
       compactList
     />}
+    {selection.mode === "sample" && sampleImage?.execution_evidence && <RefinementEvidencePanel evidence={sampleImage.execution_evidence} selected={selected}/>}
     {sampleBox && sampleRect && <div className="sample-box-editor" aria-label="样例框坐标">
       {([["左边界", 0], ["上边界", 1], ["宽度", 2], ["高度", 3]] as const).map(([label, index]) => <label key={label}>
         {label}

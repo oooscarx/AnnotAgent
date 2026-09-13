@@ -59,3 +59,16 @@ it.each([
   expect(html).toContain("valid.png");
   expect(html).not.toContain("确认整张图没有目标");
 });
+
+it("renders fixture-backed terminal lineage evidence instead of inferring SAM execution from the Draft",()=>{
+  const candidate={id:"ball",image_id:"image",task_id:"objects",label:"ball",value:{kind:"bounding_box" as const,rect:[0.4,0.4,0.1,0.1] as [number,number,number,number]},attributes:{},source:"model",review_status:"needs_review" as const,provenance:{},created_at:"TEST"};
+  const view:P0ResultPanelView={kind:"sample_feedback",images:[{id:"image",name:"ball.png"}],labels:[{stable_id:"ball",display_name:"足球"}],focus:null,actions:[],sample_result:{
+    project_id:"project",conversation_id:"conversation",task_id:"task",project_schema_revision:"schema",draft_id:"draft",draft_revision:2,sample_test_id:"sample",
+    images:[{image_id:"image",image_sha256:"pixels",result_revision:"result",candidates:[{candidate_id:"ball",selection:null}],annotations:[candidate],execution_evidence:{configured_refiner:true,candidates:[{candidate_id:"ball",lineage_id:"detection:ball",source:"vlm_only",executed:false,reason:"方案包含精修，但本图实际 lineage 停在 Coverage Gate：PartiallyCovered。",items:[{kind:"gate",label:"Coverage Gate",node_id:"coverage",status:null,artifact_id:"coverage-id",artifact_ref:"coverage:set",detail:"PartiallyCovered"}]}]}}],
+  }};
+  const html=renderToStaticMarkup(<P0ResultPanel service={service} projectId="project" taskId="task" view={view}/>);
+  expect(html).toContain("本图终端候选来源：VLM-only");
+  expect(html).toContain("方案包含但本图未执行提示分割");
+  expect(html).toContain("PartiallyCovered");
+  expect(html).not.toContain("提示分割已执行");
+});

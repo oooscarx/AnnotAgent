@@ -21,6 +21,7 @@ import {projectCallMessages} from "./messageProjection";
 import {createModelPreparationService} from "./modelPreparation";
 import {resolveFormalReviewPage,type FormalReviewEvidence,type FormalRunEvidence} from "./deliveryReviewState";
 import {assertVisualSelection,deliverySampleResultFromCanonical,formalVisualSelectionFromCanonical,selectedMessage,type CanonicalVisualSelectionItem,type CanonicalVisualSelectionPage,type MainlineAdvanceReceipt,type MainlineTaskView,type VisualSelection} from "./mainline";
+import {imageRefinementEvidence} from "./refinementExecutionEvidence";
 
 type Page<T> = { items: T[]; next_cursor: string | number | null };
 type Project = { project_id: string; project_owner_id: string; title: string; conversation_id: string | null };
@@ -592,7 +593,14 @@ export class HttpAdapter implements WorkspaceAdapter {
         }
         result.boxesByImage=boxesByImage;result.imageResults=imageResults;result.resultRevision=`${sampleId}:${feedbackVersion}`;
         result.sample={id:sampleId,draft:draftId,revision:record.draft_revision};
-        result.sampleResult=deliverySampleResultFromCanonical(canonical,annotationsByImage);
+        const sampleResult=deliverySampleResultFromCanonical(canonical,annotationsByImage);
+        const configuredRefiner=(result.plan?.steps||[]).some(step=>/(prompted[_ -]?segmentation|efficient\s*sam|\bsam\b|mask[_ -]?to[_ -]?bbox|geometry[_ -]?refin)/i.test(step));
+        for(const image of sampleResult.images){
+          const index=record.inputs.findIndex(input=>input.image_id===image.image_id);
+          const sample=index>=0?record.report.samples[index]:undefined;
+          if(sample)image.execution_evidence=imageRefinementEvidence(sample,image.candidates.map(candidate=>candidate.candidate_id),configuredRefiner);
+        }
+        result.sampleResult=sampleResult;
         if(human) result.human={id:human.input.id,image:human.input.image_id,kind:requestedKind || "unsupported",labels:value.annotation_schema?.task.labels || (requestedLabel?[requestedLabel]:[]),label:requestedLabel,candidate:human.input.outcome_id || ""};
       }
       const persistedStop = this.stored<{id:string}|null>(`stop.${id}`, null) || [...thread].reverse().find(t=>t.message.input.reference?.scope==="stop_request");
