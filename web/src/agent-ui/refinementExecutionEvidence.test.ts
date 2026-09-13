@@ -15,7 +15,7 @@ const sample = (overrides: Partial<Sample> = {}): Sample => ({
     final_candidates:[],review_candidates:[{candidate:{source_artifact_id:"terminal-id",source_artifact_ref:"bbox:set",lineage_id:"detection:ball",outcome:{id:"ball",label:"ball",status:"needs_review",value:{kind:"bounding_box",rect:[0.4,0.4,0.1,0.1]}},localization:"whole",geometry:"refined",final_status:"review"},explanation:{title:"review",summary:"review"}}],
     committed_annotations:[],no_target:false,intermediate_artifact_ids:[],
     debug_stages:[
-      {artifact_id:"mask-id",artifact_ref:"mask:set",node_id:"sam",lineage_id:"detection:ball",stage:"mask",source:"Prompted segmentation",terminal:false,detail:"Prompted-segmentation mask"},
+      {artifact_id:"mask-id",artifact_ref:"mask:set",node_id:"sam",lineage_id:"detection:box-prompt:ball",stage:"mask",source:"Prompted segmentation",terminal:false,detail:"Prompted-segmentation mask"},
       {artifact_id:"bbox-id",artifact_ref:"bbox:set",node_id:"bbox",lineage_id:"detection:ball",stage:"refined",source:"core.mask to bbox",terminal:false,value:{kind:"bounding_box",rect:[0.4,0.4,0.1,0.1]}},
     ],
   },
@@ -23,15 +23,33 @@ const sample = (overrides: Partial<Sample> = {}): Sample => ({
 });
 
 describe("prompted-segmentation execution evidence", () => {
-  it("requires successful receipts and both artifacts on the same terminal lineage", () => {
+  it("links the persisted mask prompt lineage to its terminal detection lineage", () => {
     const result=imageRefinementEvidence(sample(),["ball"],true).candidates[0];
     expect(result).toMatchObject({candidate_id:"ball",lineage_id:"detection:ball",source:"prompted_segmentation_refined",executed:true});
     expect(result.items.map(item=>item.label)).toEqual(["提示分割调用回执","Mask Artifact","mask_to_bbox 回执","mask_to_bbox Artifact"]);
   });
 
+  it("recognizes the production refined outcome shape without trusting its geometry claim", () => {
+    const value=sample();
+    const candidate=value.projection!.review_candidates[0].candidate;
+    candidate.lineage_id="detection:detection-0";
+    candidate.outcome.id="refined:detection-0";
+    candidate.geometry="Refined by prompted segmentation";
+    value.projection!.debug_stages[0]={...value.projection!.debug_stages[0],node_id:"refine_validated_prompt",lineage_id:"detection:box-prompt:detection-0",artifact_ref:"mask-set:run:image:refine_validated_prompt"};
+    value.projection!.debug_stages[1]={...value.projection!.debug_stages[1],node_id:"project_mask_bbox",lineage_id:"detection:detection-0",source:"core.mask to bbox"};
+    value.nodes=[
+      {...value.nodes[0],node_id:"refine_validated_prompt"},
+      {...value.nodes[1],node_id:"project_mask_bbox"},
+    ];
+
+    expect(imageRefinementEvidence(value,["refined:detection-0"],true).candidates[0]).toMatchObject({
+      source:"prompted_segmentation_refined",executed:true,
+    });
+  });
+
   it("does not promote a Draft refiner or an unrelated Mask Artifact to executed", () => {
     const value=sample();
-    value.projection!.debug_stages[0].lineage_id="detection:other";
+    value.projection!.debug_stages[0].lineage_id="detection:box-prompt:other";
     const result=imageRefinementEvidence(value,["ball"],true).candidates[0];
     expect(result.source).toBe("vlm_only");
     expect(result.executed).toBe(false);
