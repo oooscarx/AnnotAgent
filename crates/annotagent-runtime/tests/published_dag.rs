@@ -9,15 +9,18 @@ use std::{
 
 use annotagent_core::{
     ArtifactId, ArtifactKind, ArtifactProvenance, ArtifactRef, ArtifactRole,
-    ArtifactValidationState, FallbackPolicy, ImageArtifact, ImageId, ModelVersionMetadata,
-    NodePort, NormalizedRect, PipelineArtifact, PublishedWorkflowVersion, RetryPolicy, RunId,
-    VisionArtifact, VisionArtifactValue, VisionModelDescriptor, WORKFLOW_SCHEMA_VERSION,
-    WorkflowDraft, WorkflowDraftNode, WorkflowDraftStatus, WorkflowEdge, WorkflowNodeKind,
-    WorkflowSnapshot,
+    ArtifactValidationState, AutomaticAcceptanceEligibility, BoxPromptSetArtifact,
+    DETECTION_ARTIFACT_SCHEMA_VERSION, Detection, DetectionScore, DetectionSetArtifact,
+    DetectionSource, FallbackPolicy, ImageArtifact, ImageId, LabelId, ModelVersionMetadata,
+    NodePort, NormalizedRect, PipelineArtifact, PromptCoverageState, PromptRefinementEligibility,
+    PublishedWorkflowVersion, RetryPolicy, RunId, VisionArtifact, VisionArtifactValue,
+    VisionCapability, VisionModelDescriptor, WORKFLOW_SCHEMA_VERSION, WorkflowDraft,
+    WorkflowDraftNode, WorkflowDraftStatus, WorkflowEdge, WorkflowNodeKind, WorkflowSnapshot,
 };
 use annotagent_runtime::{
-    DagExecutionRequest, DagNodeContext, DagNodeFailure, DagNodeOutput, DagNodeRunner,
-    DagNodeStatus, DagNodeUsage, DagRunStatus, PublishedDagExecutor,
+    CORE_PROMPT_COVERAGE_GATE, CorePipelineRunner, DagExecutionRequest, DagNodeContext,
+    DagNodeFailure, DagNodeOutput, DagNodeRunner, DagNodeStatus, DagNodeUsage, DagRunStatus,
+    PublishedDagExecutor,
 };
 use async_trait::async_trait;
 use chrono::Utc;
@@ -379,6 +382,35 @@ impl DagNodeRunner for RecordingRefinerInput {
     }
 }
 
+struct RecordingCoverageRefiner {
+    calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl DagNodeRunner for RecordingCoverageRefiner {
+    async fn run(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
+        let coverage = context
+            .input_pipeline_artifacts
+            .iter()
+            .find_map(|artifact| match artifact {
+                PipelineArtifact::PromptCoverage(coverage) => Some(coverage),
+                _ => None,
+            })
+            .expect("refiner receives the Gate-authorized coverage Artifact");
+        assert_eq!(coverage.state, PromptCoverageState::PartiallyCovered);
+        assert_eq!(
+            coverage.refinement_eligibility,
+            PromptRefinementEligibility::PlausibleForRefinement
+        );
+        assert_eq!(
+            coverage.automatic_acceptance,
+            AutomaticAcceptanceEligibility::HumanReviewRequired
+        );
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(DagNodeOutput::default())
+    }
+}
+
 #[async_trait]
 impl DagNodeRunner for RecordingSearchDetector {
     async fn run(&self, context: DagNodeContext<'_>) -> Result<DagNodeOutput, DagNodeFailure> {
@@ -725,6 +757,231 @@ async fn relocalize_route_executes_a_detector_with_a_changed_search_view() {
         Some("search-view-b".to_owned()),
         "the refiner must consume the second-attempt view, never the stale first prompt"
     );
+}
+
+#[tokio::test]
+async fn partial_prompt_coverage_executes_the_refiner_when_the_gate_authorizes_it() {
+    let pipeline_port = |id: &str, artifact_type: ArtifactKind, required: bool| NodePort {
+        id: id.to_owned(),
+        artifact_type,
+        required,
+        multiple: true,
+    };
+    let input = node(
+        "input",
+        "input",
+        WorkflowNodeKind::ImageInput,
+        Vec::new(),
+        vec![
+            pipeline_port("prompts", ArtifactKind::BoxPromptSet, true),
+            pipeline_port("candidates", ArtifactKind::DetectionSet, true),
+            pipeline_port("evidence", ArtifactKind::DetectionSet, true),
+        ],
+    );
+    let mut gate = node(
+        "coverage",
+        CORE_PROMPT_COVERAGE_GATE,
+        WorkflowNodeKind::Gate,
+        vec![
+            pipeline_port("prompts", ArtifactKind::BoxPromptSet, true),
+            pipeline_port("candidates", ArtifactKind::DetectionSet, true),
+            pipeline_port("evidence", ArtifactKind::DetectionSet, false),
+        ],
+        vec![
+            pipeline_port("prompts", ArtifactKind::BoxPromptSet, true),
+            pipeline_port("detections", ArtifactKind::DetectionSet, true),
+            pipeline_port("coverage", ArtifactKind::PromptCoverage, true),
+        ],
+    );
+    gate.parameters = BTreeMap::from([
+        ("allow_uncertain_prompt_refinement".to_owned(), json!(true)),
+        (
+            "recovery_route_policy".to_owned(),
+            json!({
+                "attempt": 1,
+                "maximum_attempts": 1,
+                "on_budget_exhausted": "review"
+            }),
+        ),
+    ]);
+    let refiner = node(
+        "sam",
+        "test_recording_coverage_refiner",
+        WorkflowNodeKind::VisionModel,
+        vec![
+            pipeline_port("box_prompts", ArtifactKind::BoxPromptSet, true),
+            pipeline_port("coverage", ArtifactKind::PromptCoverage, true),
+        ],
+        Vec::new(),
+    );
+    let workflow = published(
+        vec![input, gate, refiner],
+        vec![
+            WorkflowEdge {
+                from_node: "input".to_owned(),
+                from_port: "prompts".to_owned(),
+                to_node: "coverage".to_owned(),
+                to_port: "prompts".to_owned(),
+                route: None,
+            },
+            WorkflowEdge {
+                from_node: "input".to_owned(),
+                from_port: "candidates".to_owned(),
+                to_node: "coverage".to_owned(),
+                to_port: "candidates".to_owned(),
+                route: None,
+            },
+            WorkflowEdge {
+                from_node: "input".to_owned(),
+                from_port: "evidence".to_owned(),
+                to_node: "coverage".to_owned(),
+                to_port: "evidence".to_owned(),
+                route: None,
+            },
+            WorkflowEdge {
+                from_node: "coverage".to_owned(),
+                from_port: "prompts".to_owned(),
+                to_node: "sam".to_owned(),
+                to_port: "box_prompts".to_owned(),
+                route: Some("refine".to_owned()),
+            },
+            WorkflowEdge {
+                from_node: "coverage".to_owned(),
+                from_port: "coverage".to_owned(),
+                to_node: "sam".to_owned(),
+                to_port: "coverage".to_owned(),
+                route: Some("refine".to_owned()),
+            },
+        ],
+    );
+
+    let image_id = ImageId::new();
+    let candidate_reference = ArtifactRef {
+        artifact_id: "candidate-set".to_owned(),
+        source_node: "input".to_owned(),
+        port: "candidates".to_owned(),
+        artifact_type: ArtifactKind::DetectionSet,
+        item_id: None,
+    };
+    let candidate = Detection::from_source(
+        "candidate",
+        Some("query-ball".to_owned()),
+        Some("ball".to_owned()),
+        Some(LabelId::from("ball")),
+        NormalizedRect::new(0.40, 0.40, 0.10, 0.10).expect("candidate box"),
+        DetectionScore::relative(0.9).expect("candidate score"),
+        DetectionSource {
+            model_id: "local-model".to_owned(),
+            capability: VisionCapability::VisionLanguage,
+            artifact_id: candidate_reference.artifact_id.clone(),
+        },
+    )
+    .expect("candidate detection");
+    let candidate_set = DetectionSetArtifact {
+        schema_version: DETECTION_ARTIFACT_SCHEMA_VERSION,
+        reference: candidate_reference,
+        image_id,
+        model_binding: "local-model".to_owned(),
+        validation_state: ArtifactValidationState::Unvalidated,
+        detections: vec![candidate],
+        metadata: BTreeMap::new(),
+    };
+    let prompts = BoxPromptSetArtifact::from_detections(
+        ArtifactRef {
+            artifact_id: "prompt-set".to_owned(),
+            source_node: "input".to_owned(),
+            port: "prompts".to_owned(),
+            artifact_type: ArtifactKind::BoxPromptSet,
+            item_id: None,
+        },
+        &candidate_set,
+        0.0,
+    )
+    .expect("box prompt");
+    let evidence_reference = ArtifactRef {
+        artifact_id: "evidence-set".to_owned(),
+        source_node: "input".to_owned(),
+        port: "evidence".to_owned(),
+        artifact_type: ArtifactKind::DetectionSet,
+        item_id: None,
+    };
+    let evidence = Detection::from_source(
+        "coarse",
+        Some("query-ball".to_owned()),
+        Some("ball".to_owned()),
+        Some(LabelId::from("ball")),
+        NormalizedRect::new(0.45, 0.45, 0.10, 0.10).expect("partially overlapping evidence"),
+        DetectionScore::relative(0.8).expect("evidence score"),
+        DetectionSource {
+            model_id: "coarse-model".to_owned(),
+            capability: VisionCapability::VisionLanguage,
+            artifact_id: evidence_reference.artifact_id.clone(),
+        },
+    )
+    .expect("evidence detection");
+    let evidence_set = DetectionSetArtifact {
+        schema_version: DETECTION_ARTIFACT_SCHEMA_VERSION,
+        reference: evidence_reference,
+        image_id,
+        model_binding: "coarse-model".to_owned(),
+        validation_state: ArtifactValidationState::Unvalidated,
+        detections: vec![evidence],
+        metadata: BTreeMap::new(),
+    };
+
+    let refiner_calls = Arc::new(AtomicUsize::new(0));
+    let mut executor = PublishedDagExecutor::new();
+    executor
+        .register_runner(
+            CORE_PROMPT_COVERAGE_GATE,
+            Arc::new(CorePipelineRunner),
+            true,
+        )
+        .expect("core coverage runner");
+    executor
+        .register_runner(
+            "test_recording_coverage_refiner",
+            Arc::new(RecordingCoverageRefiner {
+                calls: refiner_calls.clone(),
+            }),
+            false,
+        )
+        .expect("recording refiner");
+    let request = DagExecutionRequest {
+        project_id: annotagent_core::ProjectId::new(),
+        run_id: RunId::new(),
+        image_id,
+        initial_artifacts: Vec::new(),
+        initial_pipeline_artifacts: vec![
+            PipelineArtifact::BoxPromptSet(prompts),
+            PipelineArtifact::DetectionSet(candidate_set),
+            PipelineArtifact::DetectionSet(evidence_set),
+        ],
+        cancellation: CancellationToken::new(),
+    };
+
+    let result = executor
+        .execute(&workflow, &request)
+        .await
+        .expect("partial-coverage refinement execution");
+    assert_eq!(result.status, DagRunStatus::Completed);
+    assert_eq!(
+        result.checkpoint.node_outputs["coverage"].route.as_deref(),
+        Some("refine")
+    );
+    assert_eq!(
+        result.checkpoint.node_outputs["coverage"].metadata["coverage_state"],
+        "partially_covered"
+    );
+    assert_eq!(
+        result.checkpoint.node_outputs["coverage"].metadata["recovery_exhausted"],
+        false
+    );
+    assert_eq!(
+        result.checkpoint.node_statuses["sam"],
+        DagNodeStatus::Succeeded
+    );
+    assert_eq!(refiner_calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
