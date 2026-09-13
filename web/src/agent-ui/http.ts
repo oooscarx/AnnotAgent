@@ -13,6 +13,7 @@ import type { StopRequestRecord } from "../conversation-stop-api";
 import {ownedStopSelection} from "./stopSelection";
 import {taskFeedbackService} from "./TaskFeedback";
 import {taskHistoryApi} from "./taskHistory";
+import {createTaskLifecycleService} from "./taskLifecycle";
 import {stopTargetMatches} from "../conversation-control";
 import type { WorkspaceAdapter, Snapshot, Task, Command, Settings, ImageId, Box, Phase, Action, SchemaClarification, SchemaClarificationChoice } from "./adapter";
 import {readPendingDelivery,rememberPendingDelivery,clearPendingDelivery} from "./pendingDelivery";
@@ -23,7 +24,7 @@ import {assertVisualSelection,deliverySampleResultFromCanonical,formalVisualSele
 
 type Page<T> = { items: T[]; next_cursor: string | number | null };
 type Project = { project_id: string; project_owner_id: string; title: string; conversation_id: string | null };
-type NavigationTask = { task_id: string; title: string; schema_revision: string; project_owner_id: string; conversation_id: string; state: Phase };
+type NavigationTask = { task_id: string; title: string; schema_revision: string; project_owner_id: string; conversation_id: string; state: Phase; lifecycle_state:"active"; lifecycle_revision:number };
 type Preference = { revision: number; model_profile_id: string | null };
 type Workspace = {
   project_id: string; project_owner_id: string; conversation_id: string;
@@ -76,6 +77,7 @@ const initialSettings: Settings = { revision: "", theme: "system", language: "zh
 
 /** Only this boundary knows HTTP routes. Reads never create conversations, tasks or execution. */
 export class HttpAdapter implements WorkspaceAdapter {
+  readonly taskLifecycle: import("./taskLifecycle").TaskLifecycleService;
   readonly demoOnboarding: import("./demoOnboardingService").DemoOnboardingService = {
     catalog: (signal) => this.transport<import("./demoOnboardingService").DemoCatalog>(
       "/api/demo-catalog?limit=2",
@@ -321,6 +323,7 @@ export class HttpAdapter implements WorkspaceAdapter {
     return this.dimensions.get(src)!;
   }
   constructor(private transport: Transport = request, private storage?: Storage) {
+    this.taskLifecycle=createTaskLifecycleService(transport);
     this.modelPreparation=createModelPreparationService(transport as import("./modelPreparation").ModelPreparationTransport);
     this.bundleInstaller=transport===request?api:undefined;
   }
@@ -444,10 +447,11 @@ export class HttpAdapter implements WorkspaceAdapter {
       const tasks: Task[] = rows.flatMap(({ p, tasks }) => tasks.map(t => {
         if (t.project_owner_id !== p.project_owner_id || t.conversation_id !== p.conversation_id) throw new Error("服务器任务归属不匹配");
         const old = this.state.tasks.find(x => x.id === t.task_id && x.project === p.project_id);
-        return { ...old, id: t.task_id, project: p.project_id, conversationId:p.conversation_id || undefined, title: t.title, revision: t.schema_revision, phase: t.state, items: old?.items || [], queue: old?.queue || [], draft: this.stored(`draft.${t.task_id}`, ""), model: old?.model || "", boxes: old?.boxes || [], image: old?.image || "", actions: old?.actions || {} };
+        if(t.lifecycle_state!=="active"||!Number.isSafeInteger(t.lifecycle_revision))throw new Error("默认任务导航包含非活动任务或缺少生命周期版本");
+        return { ...old, id: t.task_id, project: p.project_id, conversationId:p.conversation_id || undefined, title: t.title, revision: t.schema_revision, lifecycleRevision:t.lifecycle_revision, phase: t.state, items: old?.items || [], queue: old?.queue || [], draft: this.stored(`draft.${t.task_id}`, ""), model: old?.model || "", boxes: old?.boxes || [], image: old?.image || "", actions: old?.actions || {} };
       }));
       // Unsaved composers are local input only, never fabricated persisted tasks/messages.
-      for (const p of nav) tasks.push({ id: `new:${p.project_id}`, project: p.project_id, title: "新任务", revision: "", phase: "idle", items: [], queue: [], draft: this.stored(`draft.new:${p.project_id}`, ""), model: "", boxes: [], image: "", actions: { send: { available: true, reason: "只保存目标，执行需另行批准" } } });
+      for (const p of nav) tasks.push({ id: `new:${p.project_id}`, project: p.project_id, conversationId:p.conversation_id||undefined, title: "新任务", revision: "", phase: "idle", items: [], queue: [], draft: this.stored(`draft.new:${p.project_id}`, ""), model: "", boxes: [], image: "", actions: { send: { available: true, reason: "只保存目标，执行需另行批准" } } });
       this.emit({ loading: false, projects: nav.map(p => ({ id: p.project_id, title: p.title })), tasks, models,
         settings: { ...initialSettings, ...prefs, revision: safe.revision, defaultModel: defaults.pipeline_builder || "", budget: safe.sections.usage_budget.future_run_budget.max_cost || "", providers: providers.providers.map(p => ({ id: p.id, name: p.display_name, endpoint: p.base_url, credential: p.credential_configured, status: p.health.status })), plugins: [...plugins.installations.map(p => ({id: p.manifest.id, name: p.manifest.display_name, version: p.manifest.version, status: p.enabled ? "已启用插件（不代表模型 Ready）" : "已禁用"})), ...instances.instances.map(i => ({id: i.id, name: i.model_id, version: i.model_bundle_version, status: i.status}))] },
       });

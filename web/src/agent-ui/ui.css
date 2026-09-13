@@ -979,6 +979,19 @@ caption {
   .ui-app .project-sidebar button:is(:hover, :focus-visible) .sidebar-title-text { transition: none; }
 }
 .ui-app .project-sidebar nav .task-link { display: grid; grid-template-columns: 5px minmax(0,1fr); gap: 8px; padding: 8px 10px 8px 31px; margin-top: 4px; min-height: 34px; font-size: 12px; }
+.ui-app .project-sidebar nav .task-tree-row { position: relative; display: grid; grid-template-columns: minmax(0,1fr) 28px; align-items: center; margin-top: 4px; border-radius: 6px; }
+.ui-app .project-sidebar nav .task-tree-row.selected { background: var(--aa-primary-soft); }
+.ui-app .project-sidebar nav .task-tree-row .task-link { margin: 0; padding-right: 4px; background: transparent; }
+.ui-app .task-lifecycle-menu { position: relative; width: 28px; }
+.ui-app .task-lifecycle-menu > summary { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border-radius: 5px; list-style: none; color: var(--aa-text-muted); }
+.ui-app .task-lifecycle-menu > summary::-webkit-details-marker { display: none; }
+.ui-app .task-lifecycle-menu > summary:hover { background: var(--aa-surface-muted); color: var(--aa-text); }
+.ui-app .task-lifecycle-menu > div { position: fixed; z-index: 40; width: 168px; padding: 6px; border: 1px solid var(--aa-border); border-radius: 8px; background: var(--aa-surface); box-shadow: 0 8px 24px var(--aa-overlay); }
+.ui-app .task-lifecycle-menu > div button { width: 100%; text-align: left; }
+.ui-app .danger-text { color: var(--aa-danger); }
+.ui-app button.danger { color: var(--aa-danger); border-color: color-mix(in srgb, var(--aa-danger) 35%, var(--aa-border)); }
+.ui-app .confirm-check { display: flex; grid-template-columns: auto minmax(0,1fr); align-items: center; gap: 8px; }
+.ui-app .confirm-check input { width: 17px; }
 .ui-app .task-dot { width: 4px; height: 4px; background: var(--aa-text-muted); border-radius: 50%; }
 .ui-app .project-sidebar footer { margin-top: 12px; gap: 8px; }
 .ui-app .project-menu-anchor > summary { list-style: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 6px; padding: 0; }
@@ -1232,6 +1245,8 @@ caption {
 .ui-app .task-trace-record li { padding-block: 8px; }
 .ui-app .native-task-history .settings-row { grid-template-columns: minmax(0,1fr) auto; }
 .ui-app .native-task-history .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.ui-app .task-lifecycle-management { margin-top: 18px; }
+.ui-app .task-lifecycle-management > p { max-width: 78ch; }
 .ui-app .context-archive-view { display: grid; gap: 16px; padding-block: 20px; border-block: 1px solid var(--aa-border); margin-block: 20px; min-width: 0; }
 .ui-app .context-archive-view > button { justify-self: start; }
 .ui-app .context-archive-view > label { max-width: 720px; }

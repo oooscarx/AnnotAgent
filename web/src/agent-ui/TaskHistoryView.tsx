@@ -4,27 +4,34 @@ import type {TaskHistoryService} from "./taskHistory";
 import {Disclosure} from "./Disclosure";
 import {ContextArchiveView} from "./ContextArchiveView";
 import {TraceRecord} from "./TraceRecord";
-export function TaskHistory({projectId,tasks,service}:{projectId:string;tasks:Task[];service:TaskHistoryService}){
+import {TaskLifecycleManagement} from "./TaskLifecycleManagement";
+import type {TaskLifecycleReceipt,TaskLifecycleService} from "./taskLifecycle";
+type HistoryView="trace"|"save"|"load"|"archived"|"trashed";
+export function TaskHistory({projectId,tasks,service,lifecycle,onLifecycleChanged}:{projectId:string;tasks:Task[];service:TaskHistoryService;lifecycle?:TaskLifecycleService;onLifecycleChanged?:(receipt:TaskLifecycleReceipt)=>Promise<void>}){
   const initial=new URL(location.href).searchParams;
   const [search,setSearch]=useState("");
   const [selected,setSelected]=useState(()=>initial.get("task")||"");
-  const [view,setView]=useState<"trace"|"save"|"load">(()=>{
-    const value=initial.get("view");return value==="save"||value==="load"?value:"trace";
+  const [view,setView]=useState<HistoryView>(()=>{
+    const value=initial.get("view");return value==="save"||value==="load"||value==="archived"||value==="trashed"?value:"trace";
   });
   const rows=tasks.filter(t=>t.project===projectId&&!t.id.startsWith("new:"));const current=rows.find(t=>t.id===selected);
   const choose=(id:string)=>{setSelected(id);const u=new URL(location.href);u.searchParams.set("task",id);history.pushState(null,"",u);};
-  useEffect(()=>{const change=()=>{const params=new URL(location.href).searchParams;setSelected(params.get("task")||"");const value=params.get("view");setView(value==="save"||value==="load"?value:"trace");};window.addEventListener("popstate",change);return()=>window.removeEventListener("popstate",change);},[]);
+  useEffect(()=>{const change=()=>{const params=new URL(location.href).searchParams;setSelected(params.get("task")||"");const value=params.get("view");setView(value==="save"||value==="load"||value==="archived"||value==="trashed"?value:"trace");};window.addEventListener("popstate",change);return()=>window.removeEventListener("popstate",change);},[]);
   const switchView=(next:typeof view)=>{setView(next);const u=new URL(location.href);u.searchParams.set("view",next);history.pushState(null,"",u);};
   const conversations=[...new Set(rows.flatMap(t=>t.conversationId?[t.conversationId]:[]))];
+  const conversation=tasks.find(t=>t.project===projectId&&t.conversationId)?.conversationId;
   return <section className="native-project-manager native-task-history" aria-label="Agent 任务历史">
     <h1>Agent 任务历史</h1>
     <p>查看多轮输入、模型调用、方案构建、样例测试和人工协助的实际服务器记录。查看、保存和加载都不会执行任务。</p>
     <nav className="native-management-tabs" aria-label="任务历史操作">
-      <button aria-pressed={view==="trace"} onClick={()=>switchView("trace")}>执行轨迹</button>
-      <button aria-pressed={view==="save"} onClick={()=>switchView("save")}>保存会话 JSON</button>
+      <button aria-pressed={view==="trace"} onClick={()=>switchView("trace")}>活动任务</button>
+      <button aria-pressed={view==="archived"} disabled={!lifecycle||!conversation} onClick={()=>switchView("archived")}>已归档</button>
+      <button aria-pressed={view==="trashed"} disabled={!lifecycle||!conversation} onClick={()=>switchView("trashed")}>任务回收站</button>
+      <button aria-pressed={view==="save"} onClick={()=>switchView("save")}>导出会话 JSON</button>
       <button aria-pressed={view==="load"} onClick={()=>switchView("load")}>加载会话 JSON</button>
     </nav>
-    {view==="save"||view==="load"?<>
+    {(view==="save"||view==="load")&&<p>JSON 操作覆盖当前 Project 的完整会话容器，不是单个任务的归档或恢复；导入只创建只读历史。</p>}
+    {(view==="archived"||view==="trashed")&&lifecycle&&conversation?<TaskLifecycleManagement key={`${projectId}:${view}`} project={projectId} conversation={conversation} state={view} service={lifecycle} history={service} onChanged={onLifecycleChanged}/>:view==="save"||view==="load"?<>
       <p role="status">{view==="save"?"选择下方保存按钮下载完整的已持久化会话。":"选择 JSON 文件后先预览；确认加载只创建只读历史，不恢复授权或执行。"}</p>
       <ContextArchiveView key={`${projectId}:${view}`} project={projectId} conversations={conversations} service={service.archives}/>
     </>:<>

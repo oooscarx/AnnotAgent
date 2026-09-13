@@ -75,6 +75,7 @@ export type Task = {
   title: string;
   phase: Phase;
   revision: string;
+  lifecycleRevision?: number;
   items: ThreadItem[];
   queue: string[];
   draft: string;
@@ -190,6 +191,7 @@ export interface WorkspaceAdapter {
   readonly exportManagement?: import("./ExportManagement").ExportService;
   readonly taskExportHistory?: import("./TaskExportHistory").TaskExportService;
   readonly taskHistory?: import("./taskHistory").TaskHistoryService;
+  readonly taskLifecycle?: import("./taskLifecycle").TaskLifecycleService;
   readonly taskSchemaDrafts?: import("./TaskSchemaDrafts").TaskSchemaService;
   readonly trashManagement?: import("./TrashManagement").TrashService;
   readonly projectManagement?: import("./ProjectManagement").ProjectManagementService;

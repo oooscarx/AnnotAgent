@@ -4,7 +4,7 @@ import { HttpAdapter, type Transport } from "./http";
 
 const project = { project_id: "TEST-alpha", project_owner_id: "owner-a", title: "TEST 相同名字", conversation_id: "conversation-a" };
 const settings = { revision: "revision-1", sections: { data_privacy: { workspace_id: "TEST-workspace" }, usage_budget: { future_run_budget: { max_requests: 10, max_cost: "2.50" } } } };
-const navTask = (id: string) => ({ task_id: id, title: `TEST ${id}`, schema_revision: "schema-1", project_owner_id: "owner-a", conversation_id: "conversation-a", state: "idle" });
+const navTask = (id: string) => ({ task_id: id, title: `TEST ${id}`, schema_revision: "schema-1", project_owner_id: "owner-a", conversation_id: "conversation-a", state: "idle", lifecycle_state:"active", lifecycle_revision:1, archived_at:null, trashed_at:null, deletion_operation_id:null });
 const root = "/api/projects/TEST-alpha/conversations/conversation-a/tasks";
 const mainline=(id:string)=>({contract_version:"mainline-task-v1",project_id:"TEST-alpha",project_owner_id:"owner-a",conversation_id:"conversation-a",task_id:id,read_model_revision:`read-${id}`,delivery:{saved:{revision:3,content_sha256:"frozen-delivery"}},schema:null,review_summary:{selected_images:0,saved_review_receipts:0,current_reviews:0,pending_reviews:0},package:{consents:[],jobs:[]},available_actions:[{id:"prepare_delivery_schema",state:"authorized",method:"POST",url:`${root}/${id}/advance`,requires_confirmation:false,reason:null}],blockers:[],completion:{model_request_completed:false,processing_completed:false,package_ready:false,task_completed:false}});
 it("uses the exact Demo catalog/start contract and never sends client-only receipt expectations",async()=>{
