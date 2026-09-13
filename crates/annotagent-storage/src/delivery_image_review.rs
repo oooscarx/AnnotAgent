@@ -845,8 +845,8 @@ mod tests {
                 db.execute("INSERT INTO images(id,project_id,relative_path,sha256,metadata_json,imported_at) VALUES(?1,?2,'TEST.png',?3,'{}','TEST')",params![image.to_string(),project,"a".repeat(64)])?;
                 db.execute("INSERT INTO runs(id,project_id,project_name,skill_id,provider,model,status,project_schema_json,created_at,updated_at) VALUES(?1,?2,'TEST','TEST','TEST','TEST','completed',?3,'TEST','TEST')",params![run.to_string(),project,serde_json::to_string(&schema)?])?;
                 db.execute("INSERT INTO run_images(run_id,image_id,status) VALUES(?1,?2,'completed')",params![run.to_string(),image.to_string()])?;
-                db.execute("INSERT INTO processing_operations(id,project_id,request_json,state_json,created_at,updated_at) VALUES(?1,?2,'{}',?3,'TEST','TEST')",params![processing.to_string(),project,serde_json::to_string(&processing_state)?])?;
-                db.execute("INSERT INTO dataset_batches(id,project_id,project_path,provider,status,max_concurrency,workflow_version,workflow_snapshot_json,project_snapshot_json,budget_limits_json,budget_ledger_json,event_sequence,created_at,updated_at) VALUES(?1,?2,'TEST','TEST','awaiting_review',1,'TEST','{}','{}',?3,?4,0,?5,?5)",params![processing.to_string(),project,serde_json::to_string(&BatchBudgetLimits::default())?,serde_json::to_string(&BatchBudgetLedger::default())?,batch_created_at])?;
+                db.execute("INSERT INTO processing_operations(id,project_id,request_json,state_json,created_at,updated_at) VALUES(?1,'TEST-route','{}',?2,'TEST','TEST')",params![processing.to_string(),serde_json::to_string(&processing_state)?])?;
+                db.execute("INSERT INTO dataset_batches(id,project_id,project_path,provider,status,max_concurrency,workflow_version,workflow_snapshot_json,project_snapshot_json,budget_limits_json,budget_ledger_json,event_sequence,created_at,updated_at) VALUES(?1,'TEST-route','TEST','TEST','awaiting_review',1,'TEST','{}','{}',?2,?3,0,?4,?4)",params![processing.to_string(),serde_json::to_string(&BatchBudgetLimits::default())?,serde_json::to_string(&BatchBudgetLedger::default())?,batch_created_at])?;
                 db.execute("INSERT INTO batch_images(batch_id,image_id,image_path,position,status,child_run_id,attempt_count,reservation_json,actual_usage_json,checkpoint_json,updated_at) VALUES(?1,?2,'TEST.png',0,'awaiting_review',?3,0,?4,?4,?5,?6)",params![processing.to_string(),image.to_string(),run.to_string(),serde_json::to_string(&BatchUsage::default())?,serde_json::to_string(&BatchImageCheckpoint::default())?,batch_created_at])?;
                 Ok(())
             }).unwrap();
@@ -920,9 +920,10 @@ mod tests {
     fn whole_image_review_releases_batch_admission_without_deleting_history() {
         let dir = tempfile::tempdir().unwrap();
         let f = TestData::new(dir.path());
+        assert_ne!(f.saved.intent.project_id, "TEST-route");
         assert_eq!(
             f.store
-                .active_batch_for_project(&f.saved.intent.project_id)
+                .active_batch_for_project("TEST-route")
                 .unwrap()
                 .unwrap()
                 .id,
@@ -942,7 +943,7 @@ mod tests {
         );
         assert!(
             f.store
-                .active_batch_for_project(&f.saved.intent.project_id)
+                .active_batch_for_project("TEST-route")
                 .unwrap()
                 .is_none()
         );
@@ -979,7 +980,7 @@ mod tests {
                     "UPDATE dataset_batches SET status='awaiting_review' WHERE id=?1",
                     [f.batch.to_string()],
                 )?;
-                db.execute("DELETE FROM schema_migrations WHERE version=74", [])?;
+                db.execute("DELETE FROM schema_migrations WHERE version=75", [])?;
                 Ok(())
             })
             .unwrap();
@@ -996,7 +997,7 @@ mod tests {
         );
         assert!(
             reopened
-                .active_batch_for_project(&f.saved.intent.project_id)
+                .active_batch_for_project("TEST-route")
                 .unwrap()
                 .is_none()
         );

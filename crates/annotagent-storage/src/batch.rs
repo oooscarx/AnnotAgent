@@ -887,7 +887,8 @@ pub(crate) fn complete_delivery_reviewed_batch_image_in(
              FROM batch_images bi
              JOIN dataset_batches b ON b.id=bi.batch_id
              JOIN processing_operations p ON p.id=bi.batch_id
-             WHERE b.project_id=?1 AND p.project_id=?1
+             JOIN runs r ON r.id=bi.child_run_id
+             WHERE r.project_id=?1 AND b.project_id=p.project_id
                AND bi.image_id=?2 AND bi.child_run_id=?3
                AND json_extract(p.state_json,'$.authorization.conversation.conversation_id')=?4
                AND json_extract(p.state_json,'$.authorization.conversation.task_id')=?5
