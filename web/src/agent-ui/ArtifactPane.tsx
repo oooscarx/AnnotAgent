@@ -296,7 +296,13 @@ export function ArtifactPane({
       {!fixture&&asset&&task.excludedCandidates?.[image]&&<ExcludedCandidates key={`${task.sample?.id}:${image}`} excluded={task.excludedCandidates[image]} imageUrl={asset.src}/>}
       <div className="artifact-footer">
         <small>
-          {!fixture && !editable ? "只读样例；当前没有待回答的人工问题" : dirty ? "浏览器编辑草稿 · 尚未提交" : fixture ? "演示候选 · 非正式标注" : "样例终端候选 · 非正式标注"}
+          {!fixture && !editable
+            ? "只读样例；当前没有待回答的人工问题"
+            : dirty
+              ? "浏览器编辑草稿 · 尚未提交；保存成功后继续下一项"
+              : fixture
+                ? "演示候选 · 非正式标注"
+                : "当前是样例候选；检查完成后保存，系统会自动继续下一项"}
         </small>
         <button
           className="primary"
@@ -313,7 +319,7 @@ export function ArtifactPane({
             }
           }}
         >
-          {saving ? "保存中…" : fixture ? "提交修正并继续" : "保存当前样例修正"}
+          {saving ? "保存中…" : fixture ? "提交修正并继续" : "保存并继续审核"}
         </button>
       </div>
     </aside>
