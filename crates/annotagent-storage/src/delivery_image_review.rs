@@ -417,6 +417,13 @@ impl SqliteStore {
             if let Some(row) = tx.query_row("SELECT revision,input_json,snapshot_json,created_at FROM delivery_image_reviews WHERE task_id=?1 AND command_id=?2",params![task.to_string(),input.command_id.to_string()],receipt).optional()? {
                 let old = decode(row)?;
                 if old.input != *input { return Err(invalid("whole-image confirmation retry changed its scope")); }
+                if let Some(run) = old.input.source_run_id {
+                    crate::batch::complete_delivery_reviewed_batch_image_in(
+                        &tx, project, conversation, task, old.input.intent_revision,
+                        &old.input.intent_sha256, old.input.image_id, run, chrono::Utc::now(),
+                    )?;
+                }
+                tx.commit()?;
                 return Ok(old);
             }
             if !saved.intent.missing_slots().is_empty() || saved.revision != input.intent_revision || saved.content_sha256 != input.intent_sha256 { return Err(invalid("delivery intent changed or is incomplete; reload before confirming")); }
@@ -449,6 +456,12 @@ impl SqliteStore {
             }
             let result = DeliveryImageReview { revision:current.checked_add(1).ok_or_else(|| invalid("review revision overflow"))?, input:input.clone(), snapshot, created_at:chrono::Utc::now().to_rfc3339() };
             tx.execute("INSERT INTO delivery_image_reviews(task_id,intent_revision,image_id,revision,command_id,input_json,snapshot_json,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)", params![task.to_string(),saved.revision,input.image_id.to_string(),result.revision,input.command_id.to_string(),serde_json::to_string(input)?,serde_json::to_string(&result.snapshot)?,result.created_at])?;
+            if let Some(run) = input.source_run_id {
+                crate::batch::complete_delivery_reviewed_batch_image_in(
+                    &tx, project, conversation, task, input.intent_revision,
+                    &input.intent_sha256, input.image_id, run, chrono::Utc::now(),
+                )?;
+            }
             tx.commit()?;
             Ok(result)
         })
@@ -463,8 +476,9 @@ mod tests {
         ConversationSendDisposition, ConversationSendInput, ConversationSendMode,
     };
     use annotagent_core::{
-        AnnotationId, AnnotationProvenance, AnnotationSource, AnnotationValue, NormalizedRect,
-        TaskKind, dataset_delivery::*,
+        AnnotationId, AnnotationProvenance, AnnotationSource, AnnotationValue, BatchBudgetLedger,
+        BatchBudgetLimits, BatchId, BatchImageCheckpoint, BatchStatus, BatchUsage, ImageId,
+        NormalizedRect, TaskKind, dataset_delivery::*,
     };
 
     struct TestData {
@@ -473,6 +487,7 @@ mod tests {
         saved: TaskDeliveryRevision,
         image: ImageId,
         run: RunId,
+        batch: BatchId,
         annotation: Annotation,
     }
     #[test]
@@ -825,13 +840,14 @@ mod tests {
                     "images":[{"image_id":image,"content_hash":"a".repeat(64)}]
                 }
             });
+            let batch_created_at = chrono::Utc::now().to_rfc3339();
             store.with_connection(|db| {
                 db.execute("INSERT INTO images(id,project_id,relative_path,sha256,metadata_json,imported_at) VALUES(?1,?2,'TEST.png',?3,'{}','TEST')",params![image.to_string(),project,"a".repeat(64)])?;
                 db.execute("INSERT INTO runs(id,project_id,project_name,skill_id,provider,model,status,project_schema_json,created_at,updated_at) VALUES(?1,?2,'TEST','TEST','TEST','TEST','completed',?3,'TEST','TEST')",params![run.to_string(),project,serde_json::to_string(&schema)?])?;
                 db.execute("INSERT INTO run_images(run_id,image_id,status) VALUES(?1,?2,'completed')",params![run.to_string(),image.to_string()])?;
-                db.execute("INSERT INTO processing_operations(id,project_id,request_json,state_json,created_at,updated_at) VALUES(?1,'TEST-route','{}',?2,'TEST','TEST')",params![processing.to_string(),serde_json::to_string(&processing_state)?])?;
-                db.execute("INSERT INTO dataset_batches(id,project_id,project_path,provider,status,max_concurrency,workflow_version,workflow_snapshot_json,project_snapshot_json,budget_limits_json,budget_ledger_json,event_sequence,created_at,updated_at) VALUES(?1,'TEST-route','TEST','TEST','completed',1,'TEST','{}','{}','{}','{}',0,'TEST','TEST')",[processing.to_string()])?;
-                db.execute("INSERT INTO batch_images(batch_id,image_id,image_path,position,status,child_run_id,attempt_count,reservation_json,actual_usage_json,checkpoint_json,updated_at) VALUES(?1,?2,'TEST.png',0,'completed',?3,0,'{}','{}','{}','TEST')",params![processing.to_string(),image.to_string(),run.to_string()])?;
+                db.execute("INSERT INTO processing_operations(id,project_id,request_json,state_json,created_at,updated_at) VALUES(?1,?2,'{}',?3,'TEST','TEST')",params![processing.to_string(),project,serde_json::to_string(&processing_state)?])?;
+                db.execute("INSERT INTO dataset_batches(id,project_id,project_path,provider,status,max_concurrency,workflow_version,workflow_snapshot_json,project_snapshot_json,budget_limits_json,budget_ledger_json,event_sequence,created_at,updated_at) VALUES(?1,?2,'TEST','TEST','awaiting_review',1,'TEST','{}','{}',?3,?4,0,?5,?5)",params![processing.to_string(),project,serde_json::to_string(&BatchBudgetLimits::default())?,serde_json::to_string(&BatchBudgetLedger::default())?,batch_created_at])?;
+                db.execute("INSERT INTO batch_images(batch_id,image_id,image_path,position,status,child_run_id,attempt_count,reservation_json,actual_usage_json,checkpoint_json,updated_at) VALUES(?1,?2,'TEST.png',0,'awaiting_review',?3,0,?4,?4,?5,?6)",params![processing.to_string(),image.to_string(),run.to_string(),serde_json::to_string(&BatchUsage::default())?,serde_json::to_string(&BatchImageCheckpoint::default())?,batch_created_at])?;
                 Ok(())
             }).unwrap();
             let annotation = Annotation {
@@ -855,6 +871,7 @@ mod tests {
                 saved,
                 image,
                 run,
+                batch: BatchId(processing),
                 annotation,
             }
         }
@@ -897,6 +914,103 @@ mod tests {
             self.store
                 .confirm_delivery_image(&i.project_id, i.conversation_id, i.task_id, input)
         }
+    }
+
+    #[test]
+    fn whole_image_review_releases_batch_admission_without_deleting_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = TestData::new(dir.path());
+        assert_eq!(
+            f.store
+                .active_batch_for_project(&f.saved.intent.project_id)
+                .unwrap()
+                .unwrap()
+                .id,
+            f.batch
+        );
+
+        f.confirm(&f.input(DeliveryImageDecision::NegativeConfirmed))
+            .unwrap();
+
+        assert_eq!(
+            f.store.get_batch(f.batch).unwrap().status,
+            BatchStatus::Completed
+        );
+        assert_eq!(
+            f.store.list_batch_images(f.batch).unwrap()[0].status,
+            annotagent_core::BatchImageStatus::Completed
+        );
+        assert!(
+            f.store
+                .active_batch_for_project(&f.saved.intent.project_id)
+                .unwrap()
+                .is_none()
+        );
+
+        let mut next = f.store.get_batch(f.batch).unwrap();
+        next.id = BatchId::new();
+        let next_image = ImageId::new();
+        f.store
+            .create_batch(next.clone(), &[(next_image, "TEST-next.png".into())])
+            .unwrap();
+        assert_eq!(
+            f.store.get_batch(f.batch).unwrap().status,
+            BatchStatus::Completed
+        );
+        assert_eq!(
+            f.store.get_batch(next.id).unwrap().status,
+            BatchStatus::Pending
+        );
+    }
+
+    #[test]
+    fn migration_repairs_preexisting_reviewed_batch_lifecycle_drift() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = TestData::new(dir.path());
+        f.confirm(&f.input(DeliveryImageDecision::NegativeConfirmed))
+            .unwrap();
+        f.store
+            .with_connection(|db| {
+                db.execute(
+                    "UPDATE batch_images SET status='awaiting_review' WHERE batch_id=?1",
+                    [f.batch.to_string()],
+                )?;
+                db.execute(
+                    "UPDATE dataset_batches SET status='awaiting_review' WHERE id=?1",
+                    [f.batch.to_string()],
+                )?;
+                db.execute("DELETE FROM schema_migrations WHERE version=74", [])?;
+                Ok(())
+            })
+            .unwrap();
+        drop(f.store);
+
+        let reopened = SqliteStore::open(&f.path).unwrap();
+        assert_eq!(
+            reopened.get_batch(f.batch).unwrap().status,
+            BatchStatus::Completed
+        );
+        assert_eq!(
+            reopened.list_batch_images(f.batch).unwrap()[0].status,
+            annotagent_core::BatchImageStatus::Completed
+        );
+        assert!(
+            reopened
+                .active_batch_for_project(&f.saved.intent.project_id)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            reopened
+                .delivery_image_reviews(
+                    &f.saved.intent.project_id,
+                    f.saved.intent.conversation_id,
+                    f.saved.intent.task_id,
+                )
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]

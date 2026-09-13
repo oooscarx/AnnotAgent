@@ -771,6 +771,18 @@ impl SqliteStore {
             transaction.execute_batch(include_str!("../../../migrations/0072_conversation_schema_retries.sql"))?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(72,'conversation_schema_retries',?1)",[Utc::now().to_rfc3339()])?;
             crate::conversation_task_lifecycle::migrate(&transaction)?;
+            let has_delivery_review_batch_lifecycle = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=74)",
+                [],
+                |row| row.get::<_, bool>(0),
+            )?;
+            if !has_delivery_review_batch_lifecycle {
+                crate::batch::migrate_delivery_review_batch_lifecycle(&transaction)?;
+                transaction.execute(
+                    "INSERT INTO schema_migrations(version,name,applied_at) VALUES(74,'delivery_review_batch_lifecycle',?1)",
+                    [Utc::now().to_rfc3339()],
+                )?;
+            }
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(68,'delivery_package_consents',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(67,'delivery_export_snapshots',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(66,'delivery_image_reviews',?1)",[Utc::now().to_rfc3339()])?;

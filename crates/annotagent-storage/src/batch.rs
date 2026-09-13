@@ -7,6 +7,7 @@ use annotagent_core::{
 };
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, Transaction, params, types::Type};
+use uuid::Uuid;
 
 use crate::{SqliteStore, StorageError};
 
@@ -864,6 +865,173 @@ fn set_batch_status_in(
         now,
     )?;
     read_batch(transaction, batch_id)
+}
+
+/// Consume one explicit, task-owned whole-image delivery review into the Dataset Batch
+/// lifecycle. Review receipts remain immutable history; this only closes the corresponding
+/// suspended image and, once no work remains, releases the Project's active Batch slot.
+pub(crate) fn complete_delivery_reviewed_batch_image_in(
+    transaction: &Transaction<'_>,
+    project: &str,
+    conversation: Uuid,
+    task: Uuid,
+    intent_revision: u32,
+    intent_sha256: &str,
+    image_id: ImageId,
+    source_run_id: RunId,
+    now: DateTime<Utc>,
+) -> Result<bool, StorageError> {
+    let batch_id = transaction
+        .query_row(
+            "SELECT bi.batch_id
+             FROM batch_images bi
+             JOIN dataset_batches b ON b.id=bi.batch_id
+             JOIN processing_operations p ON p.id=bi.batch_id
+             WHERE b.project_id=?1 AND p.project_id=?1
+               AND bi.image_id=?2 AND bi.child_run_id=?3
+               AND json_extract(p.state_json,'$.authorization.conversation.conversation_id')=?4
+               AND json_extract(p.state_json,'$.authorization.conversation.task_id')=?5
+               AND json_extract(p.state_json,'$.authorization.delivery_scope.intent_revision')=?6
+               AND json_extract(p.state_json,'$.authorization.delivery_scope.intent_sha256')=?7
+             ORDER BY b.created_at DESC, b.id DESC LIMIT 1",
+            params![
+                project,
+                image_id.to_string(),
+                source_run_id.to_string(),
+                conversation.to_string(),
+                task.to_string(),
+                i64::from(intent_revision),
+                intent_sha256,
+            ],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .map(|value| parse_id::<BatchId>(&value, "batch id"))
+        .transpose()?;
+    let Some(batch_id) = batch_id else {
+        return Ok(false);
+    };
+    let changed = transaction.execute(
+        "UPDATE batch_images SET status='completed', lease_owner=NULL, updated_at=?4
+         WHERE batch_id=?1 AND image_id=?2 AND child_run_id=?3 AND status='awaiting_review'",
+        params![
+            batch_id.to_string(),
+            image_id.to_string(),
+            source_run_id.to_string(),
+            now.to_rfc3339(),
+        ],
+    )? == 1;
+    if !changed {
+        return Ok(false);
+    }
+    append_event(
+        transaction,
+        batch_id,
+        "image_review_completed",
+        Some(image_id),
+        &serde_json::json!({"task_id": task, "source_run_id": source_run_id}),
+        now,
+    )?;
+
+    let statuses = batch_status_counts(transaction, batch_id)?;
+    if statuses.iter().any(|(status, count)| {
+        *count > 0
+            && matches!(
+                status,
+                BatchImageStatus::Pending
+                    | BatchImageStatus::Leased
+                    | BatchImageStatus::Running
+                    | BatchImageStatus::AwaitingReview
+            )
+    }) {
+        return Ok(true);
+    }
+    let mut batch = read_batch(transaction, batch_id)?;
+    if batch.status.is_terminal() {
+        return Ok(true);
+    }
+    let completed = count_status(&statuses, BatchImageStatus::Completed);
+    let failed = count_status(&statuses, BatchImageStatus::Failed);
+    let cancelled = count_status(&statuses, BatchImageStatus::Cancelled);
+    batch.status = if failed > 0 && completed > 0 {
+        BatchStatus::Partial
+    } else if failed > 0 {
+        BatchStatus::Failed
+    } else if cancelled > 0 && completed == 0 {
+        BatchStatus::Cancelled
+    } else {
+        BatchStatus::Completed
+    };
+    batch.lease_owner = None;
+    batch.lease_expires_at = None;
+    batch.updated_at = now;
+    update_batch_runtime(transaction, &batch)?;
+    append_event(
+        transaction,
+        batch_id,
+        "batch_review_completed",
+        None,
+        &serde_json::json!({"status": batch.status, "task_id": task}),
+        now,
+    )?;
+    Ok(true)
+}
+
+/// One-time repair for stores written before whole-image delivery review participated in the
+/// Batch lifecycle. Exact stored ownership/scope checks are reused for every historical receipt.
+pub(crate) fn migrate_delivery_review_batch_lifecycle(
+    transaction: &Transaction<'_>,
+) -> Result<(), StorageError> {
+    let reviews = {
+        let mut statement = transaction.prepare(
+            "SELECT c.project_id, c.id, r.task_id, r.intent_revision,
+                    json_extract(r.input_json,'$.intent_sha256'), r.image_id,
+                    json_extract(r.input_json,'$.source_run_id'), r.created_at
+             FROM delivery_image_reviews r
+             JOIN conversation_tasks t ON t.id=r.task_id
+             JOIN project_conversations c ON c.id=t.conversation_id
+             WHERE json_extract(r.input_json,'$.source_run_id') IS NOT NULL
+             ORDER BY r.created_at, r.task_id, r.image_id, r.revision",
+        )?;
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, u32>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    for (project, conversation, task, revision, sha256, image, run, created_at) in reviews {
+        let conversation = Uuid::parse_str(&conversation).map_err(|_| {
+            StorageError::InvalidConversation("invalid review conversation id".into())
+        })?;
+        let task = Uuid::parse_str(&task)
+            .map_err(|_| StorageError::InvalidConversation("invalid review task id".into()))?;
+        let image = parse_id::<ImageId>(&image, "image id")?;
+        let run = parse_id::<RunId>(&run, "run id")?;
+        let now = DateTime::parse_from_rfc3339(&created_at)
+            .map_err(|_| StorageError::InvalidConversation("invalid review timestamp".into()))?
+            .with_timezone(&Utc);
+        complete_delivery_reviewed_batch_image_in(
+            transaction,
+            &project,
+            conversation,
+            task,
+            revision,
+            &sha256,
+            image,
+            run,
+            now,
+        )?;
+    }
+    Ok(())
 }
 
 fn update_batch_runtime(
