@@ -288,6 +288,23 @@ strict rejection, explicit retry linkage and no-duplicate replay. It does **not*
 GLM Schema result on this proxy: JSON Object omitted the envelope name, while native tool emitted
 empty arguments. HTTP completion and billed usage are distinct from a valid Schema decision.
 
+### Follow-up tool-schema regression
+
+After deployment, real call `64ab6426-791f-4b97-86f1-4a64d2452e63` used the new 4,096 default but
+the unchanged production Model Profile revision 3, so the request remained native-tool with no
+saved thinking control. It settled after 35.123 seconds with 1,639 input and 2,318 output tokens,
+including 2,225 Provider-reported reasoning tokens. The response selected exactly one correctly
+named tool, but its arguments were `{}`; strict validation rejected missing field `decision` and
+created no Schema Draft.
+
+Inspection found that later delivery-semantics work had reintroduced a top-level `oneOf` in the
+Schema tool parameters, regressing the previously verified `6e8863e` compatibility shape. The
+tool now again has an explicit `type: object` root, native JSON types for all fields, optional
+delivery properties, and a conditional-field description. The final tagged Rust deserializer and
+business validator are unchanged: they still reject missing Draft/Clarify fields, wrong types,
+unknown fields, invalid labels, and inconsistent delivery semantics. No failed call is rewritten
+or automatically retried.
+
 ## Remaining limits
 
 - Two explicitly authorized `glm-5.2` requests reached the configured proxy. Neither produced a

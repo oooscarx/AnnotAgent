@@ -1177,15 +1177,21 @@ pub(crate) fn output_tool() -> ToolDefinition {
         name: "propose_annotation_schema".into(),
         description: "Return one Schema Draft or one necessary clarification. This creates no formal annotation or execution permission.".into(),
         read_only: true,
-        parameters: json!({"oneOf": [
-            {"type":"object", "additionalProperties":false, "required":["decision","kind","labels","multi_label","attributes","boundary_rules","rationale"], "properties":{
-                "decision":{"const":"draft"}, "kind":{"enum":["classification","bounding_box"]},
+        // Keep a plain object root for OpenAI-compatible tool implementations
+        // that do not materialize arguments from a top-level oneOf. The Rust
+        // decision deserializer and validator below remain the authority for
+        // the conditional Draft/Clarify field sets.
+        parameters: json!({"type":"object", "additionalProperties":false,
+            "required":["decision","rationale"], "properties":{
+                "decision":{"type":"string","enum":["draft","clarify"]},
+                "kind":{"type":"string","enum":["classification","bounding_box"]},
                 "labels":{"type":"array","minItems":1,"maxItems":32,"uniqueItems":true,"items":string},
                 "multi_label":{"type":"boolean"}, "attributes":{"type":"object","additionalProperties":{"type":"object","additionalProperties":false,"required":["type","required","values"],"properties":{"type":{"enum":["enum","string","number","boolean"]},"required":{"type":"boolean"},"values":{"type":"array","items":string}}}},
-                "boundary_rules":{"type":"array","maxItems":16,"items":string}, "rationale":string,"delivery":delivery
-            }},
-            {"type":"object", "additionalProperties":false, "required":["decision","question","rationale"], "properties":{"decision":{"const":"clarify"},"question":string,"rationale":string,"delivery":delivery}}
-        ]}),
+                "boundary_rules":{"type":"array","maxItems":16,"items":string},
+                "rationale":string, "question":string, "delivery":delivery
+            },
+            "description":"For decision=draft include kind, labels, multi_label, attributes, boundary_rules and rationale; omit question. For decision=clarify include only decision, question, rationale and optional delivery. Arrays and objects must be native JSON, never JSON-encoded strings. Booleans must be JSON true/false, never strings."
+        }),
     }
 }
 
@@ -1845,6 +1851,25 @@ mod tests {
     fn draft(kind: &str, labels: &[&str]) -> serde_json::Value {
         json!({"decision":"draft","kind":kind,"labels":labels,"multi_label":false,"attributes":{},"boundary_rules":["Exclude bottles"],"rationale":"Infer semantics from the saved text goal; no image was inspected"})
     }
+    #[test]
+    fn schema_tool_has_compatible_object_root_without_loosening_business_types() {
+        let parameters = output_tool().parameters;
+        assert_eq!(parameters["type"], "object");
+        assert!(parameters.get("oneOf").is_none());
+        assert!(parameters["properties"]["delivery"].is_object());
+        let valid = draft("bounding_box", &["ball"]);
+        assert!(parse_conversation_schema_response(&provider(valid.clone()).response).is_ok());
+        for (field, value) in [
+            ("labels", json!("[\"ball\"]")),
+            ("attributes", json!("{}")),
+            ("boundary_rules", json!("[]")),
+            ("multi_label", json!("False")),
+        ] {
+            let mut invalid = valid.clone();
+            invalid[field] = value;
+            assert!(parse_conversation_schema_response(&provider(invalid).response).is_err());
+        }
+    }
     #[tokio::test]
     async fn bbox_and_classification_use_one_text_only_call_and_existing_core_schema() {
         for (kind, goal, labels, expected) in [
@@ -2274,7 +2299,18 @@ mod tests {
         let calls = model.requests.lock().unwrap();
         assert_eq!(calls.len(), 1);
         assert!(calls[0].images.is_empty());
-        assert!(calls[0].tools[0].parameters["oneOf"][1]["properties"]["delivery"].is_object());
+        let parameters = &calls[0].tools[0].parameters;
+        assert_eq!(parameters["type"], "object");
+        assert!(parameters.get("oneOf").is_none());
+        assert!(parameters["properties"]["delivery"].is_object());
+        for (field, kind) in [
+            ("labels", "array"),
+            ("attributes", "object"),
+            ("boundary_rules", "array"),
+            ("multi_label", "boolean"),
+        ] {
+            assert_eq!(parameters["properties"][field]["type"], kind);
+        }
         let mut invalid = partial.clone();
         invalid["delivery"]["authorized"] = json!(true);
         assert!(serde_json::from_value::<ConversationSchemaDecision>(invalid).is_err());
