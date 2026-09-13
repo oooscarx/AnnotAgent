@@ -2206,6 +2206,10 @@ fn materialize_feasibility_draft(
                     safe_suggestion.draft.enabled_skills.clone(),
                     chrono::Utc::now(),
                 );
+                suggestion
+                    .draft
+                    .annotation_schema
+                    .clone_from(&safe_suggestion.draft.annotation_schema);
             }
             for binding in compatible_bindings {
                 let Some((node_type, model_id)) = binding.split_once(':') else {
@@ -3409,6 +3413,11 @@ fn salvage_best_discovered_plan(
     annotagent_core::RegistryPipelineSynthesizer
         .materialize_candidate(&selected, &mut draft)
         .map_err(|error| anyhow!(error))?;
+    if safe_suggestion.draft.annotation_schema.is_some() {
+        draft
+            .annotation_schema
+            .clone_from(&safe_suggestion.draft.annotation_schema);
+    }
     freeze_node_prompt_resources(&mut draft);
     normalize_profile_compatibility_bindings(&mut draft, models)?;
     draft.name.clone_from(&selected.name);
@@ -15507,6 +15516,12 @@ impl LocalApplication {
                         } else {
                             created.draft.id = uuid::Uuid::new_v4().to_string();
                         }
+                        if safe_suggestion.draft.annotation_schema.is_some() {
+                            created
+                                .draft
+                                .annotation_schema
+                                .clone_from(&safe_suggestion.draft.annotation_schema);
+                        }
                         if tool == PipelineBuilderTool::CreatePipelineDraft {
                             created.draft.nodes.clear();
                             created.draft.edges.clear();
@@ -27164,6 +27179,87 @@ export:
             Some(annotagent_core::BuilderStopReason::DiscoveryLimitTriggeredSalvage)
         );
         assert!(report.validation.is_some_and(|validation| validation.valid));
+    }
+
+    #[test]
+    fn registry_materialization_preserves_authorized_schema_binding_in_persisted_draft() {
+        let temporary = tempfile::tempdir().expect("temporary workspace");
+        let application = LocalApplication::new(temporary.path()).expect("application");
+        application
+            .create_project(
+                "registry-schema-salvage",
+                include_str!("../../../examples/robocup/project.yaml"),
+            )
+            .expect("RoboCup Project");
+        let settings = load_settings(None).expect("settings");
+        let selected_model =
+            register_pipeline_builder_model(&application, "schema-salvage-builder");
+        let detector = register_available_vision_model(
+            &application,
+            &selected_model,
+            "schema-salvage-detector",
+            [
+                ModelCapability::VisionLanguage,
+                ModelCapability::ObjectDetection,
+            ],
+        );
+        let constraints = WorkflowConstraints::default();
+        let mut input = application
+            .workflow_advisor_input_for_label(
+                "registry-schema-salvage",
+                &settings,
+                constraints.clone(),
+                Some("objects"),
+                Some("ball"),
+            )
+            .expect("Builder input");
+        let binding = annotagent_core::WorkflowSchemaBinding {
+            schema_draft_id: uuid::Uuid::new_v4().to_string(),
+            revision: 7,
+            goal: "Use prompted segmentation to annotate soccer balls".to_owned(),
+            task: input.project_schema.tasks[0].clone(),
+            boundary_rules: vec!["Keep partially occluded balls".to_owned()],
+        };
+        binding.apply_to(&mut input.project_schema);
+        let mut seed = application
+            .suggest_label_pipeline_preview(
+                "registry-schema-salvage",
+                &settings,
+                "objects",
+                "ball",
+                &constraints,
+            )
+            .expect("safe suggestion");
+        seed.draft.annotation_schema = Some(binding.clone());
+
+        let operation_id = uuid::Uuid::new_v4();
+        let template = input.workflow_templates[0].clone();
+        let template_model_node = template
+            .nodes
+            .iter()
+            .find(|node| registry_requirement_for_node(node).is_some())
+            .expect("Registry template model node");
+        let feasibility = annotagent_core::BuildFeasibility::Runnable {
+            candidate_templates: vec![template.id.clone()],
+            compatible_bindings: vec![format!("{}:{}", template_model_node.node_type, detector.id)],
+            warnings: vec![],
+        };
+        let (mut working, _) = materialize_feasibility_draft(&seed, &input, &feasibility)
+            .expect("materialized Registry template");
+        working.draft.id = operation_id.to_string();
+        application
+            .store
+            .save_workflow_draft(&working.draft)
+            .expect("persistent working Draft");
+        assert_eq!(
+            application
+                .store
+                .get_workflow_draft(&operation_id.to_string())
+                .expect("persisted salvaged Draft")
+                .annotation_schema
+                .as_ref(),
+            Some(&binding)
+        );
     }
 
     #[test]
