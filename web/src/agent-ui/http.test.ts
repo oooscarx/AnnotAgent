@@ -71,6 +71,37 @@ it("freezes exact upload receipt identities into one new Task Send",async()=>{
     message:{id:command.id,text:"框出黄色物块",image:null},
   });
 });
+it("defaults a new Task to all existing Project images without authorizing execution",async()=>{
+  const storage=memoryStorage();
+  const images=[
+    {image_id:"00000000-0000-4000-8000-000000000031",project_id:"TEST-alpha",display_index:0,index:0,name:"one.png",path:"one.png",path_snapshot:"one.png",content_hash:"d".repeat(64),size_bytes:1,status:"ready",url:"/api/projects/TEST-alpha/images/one/file"},
+    {image_id:"00000000-0000-4000-8000-000000000032",project_id:"TEST-alpha",display_index:1,index:1,name:"two.png",path:"two.png",path_snapshot:"two.png",content_hash:"e".repeat(64),size_bytes:1,status:"ready",url:"/api/projects/TEST-alpha/images/two/file"},
+  ];
+  const reads=mockTransport({
+    "/api/projects/TEST-alpha/images":{images},
+    "/api/projects/TEST-alpha/goal":{revision:"schema-1"},
+    "/api/projects/TEST-alpha/conversations/conversation-a/agent-model":{revision:2,model_profile_id:null},
+  });
+  const writes:unknown[]=[];
+  const transport:Transport=async<T>(path:string,init?:RequestInit)=>{
+    if(path.endsWith("/send")&&init?.method==="POST"){
+      const body=JSON.parse(String(init.body));writes.push(body);
+      return {message:{conversation_id:"conversation-a",sequence:1,input:body.message},task_id:"t1",disposition:"new_task",agent_model:body.agent_model,mode:body.mode} as T;
+    }
+    return reads.transport<T>(path,init);
+  };
+  const adapter=new HttpAdapter(transport,storage);await adapter.refresh();await adapter.loadTask("TEST-alpha","new:TEST-alpha");
+  const command={id:"00000000-0000-4000-8000-000000000033",project:"TEST-alpha",task:"new:TEST-alpha",revision:""};
+  await adapter.sendMessage(command,"框出足球","execute","");
+  expect(writes).toHaveLength(1);
+  expect(writes[0]).toMatchObject({
+    task_id:null,
+    task_images:images.map(image=>({image_id:image.image_id,sha256:image.content_hash})),
+    message:{id:command.id,text:"框出足球",image:null},
+  });
+  expect(writes[0]).not.toHaveProperty("authorization");
+  expect(writes[0]).not.toHaveProperty("approved");
+});
 it("attaches later uploads to the same described Task with exact CAS and replays an unknown receipt",async()=>{
   const storage=memoryStorage();
   const image={image_id:"00000000-0000-4000-8000-000000000019",content_hash:"c".repeat(64)};

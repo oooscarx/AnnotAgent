@@ -481,7 +481,7 @@ export class HttpAdapter implements WorkspaceAdapter {
       const artifacts = images.images.map(image => {
         if (!image.url.startsWith("/api/") || image.url.startsWith("//")) throw new Error("图片地址不是受控站内资源");
         if(image.thumbnail_url&&!image.thumbnail_url.startsWith("/api/"))throw new Error("缩略图地址不是受控站内资源");
-        return { id: image.image_id, project, name: image.name, src: image.url, thumbnail:image.thumbnail_url, width: 0, height: 0 };
+        return { id: image.image_id, project, name: image.name, src: image.url, thumbnail:image.thumbnail_url, contentHash:image.content_hash, width: 0, height: 0 };
       });
       const current = this.task(id);
       const pendingApproval=this.stored<{id:string;url:string;body:unknown;execution?:string;view?:Task["approval"]}|null>(`approval.${id}`,null);
@@ -716,7 +716,18 @@ export class HttpAdapter implements WorkspaceAdapter {
     const currentSchema=(await this.transport<{revision:string}>(`${this.root(task.project)}/goal`)).revision;
     if(frozen&&frozen.project_schema_revision!==currentSchema)throw new Error("候选引用所用的 Project Schema 已变化；请重新打开当前样例后再发送，未调用模型。");
     const creating=task.id.startsWith("new:");
-    const taskImages=creating?this.stored<ConversationTaskImage[]>(`uploads.${task.id}`,[]):[];
+    const uploadedTaskImages=creating?this.stored<ConversationTaskImage[]>(`uploads.${task.id}`,[]):[];
+    // A new Task belongs to one Project, so its default dataset scope is the
+    // Project's current image inventory. This only freezes stable identities
+    // into the Task; model calls and data egress still require the later exact
+    // Journey authorization. Uploaded receipts remain the source of truth for
+    // files added before this read model was refreshed.
+    const taskImages=creating
+      ? [...this.state.artifacts
+          .filter(artifact=>artifact.project===task.project&&typeof artifact.id==="string"&&typeof artifact.contentHash==="string"&&/^[a-f\d]{64}$/i.test(artifact.contentHash))
+          .map(artifact=>({image_id:String(artifact.id),sha256:artifact.contentHash!})),...uploadedTaskImages]
+          .filter((image,index,all)=>all.findIndex(candidate=>candidate.image_id===image.image_id)===index)
+      : [];
     const input = pending || {message:frozen?selectedMessage(c.id,text,frozen):{id:c.id,text,image:null},...(taskImages.length?{task_images:taskImages}:{}),task_id:creating?null:task.id,schema_revision:currentSchema,agent_model:await this.transport<Preference>(`${root}/agent-model`),mode};
     this.save(`send.${task.id}`,input);
     let receipt:SendReceipt;

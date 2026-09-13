@@ -33,7 +33,7 @@ export type CurrentTaskPresentation = {
 };
 
 const missingQuestions: Record<IntakeSlot, string> = {
-  dataset_scope: "请上传或选择这次要处理的图片。",
+  dataset_scope: "当前任务还没有图片范围。请选择项目图片或上传新图片。",
   label_spec: "这些图片里需要标注哪些类别？",
   training_target: "你需要给图片分类、框出目标，还是描出区域？",
 };

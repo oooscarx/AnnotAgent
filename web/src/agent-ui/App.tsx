@@ -1085,7 +1085,9 @@ export function AgentPreviewApp({
                         <small>
                           {fixture ? "3 张原创示意图" : `${state.artifacts.length} 张项目图片`}
                           <br />
-                          {fixture ? "不含真实模型输出" : state.artifacts.length > 3 ? "预览前 3 张 · 打开数据查看全部" : "原始图片"}
+                          {fixture ? "不含真实模型输出" : task.id.startsWith("new:") && state.artifacts.length
+                            ? `默认用于这个新任务${state.artifacts.length > 3 ? " · 预览前 3 张" : ""}`
+                            : state.artifacts.length > 3 ? "预览前 3 张 · 打开数据查看全部" : "原始图片"}
                         </small>
                       </div>
                       <button

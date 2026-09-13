@@ -142,6 +142,8 @@ export type Snapshot = {
     name: string;
     src: string;
     thumbnail?: string;
+    /** Stable server identity used to freeze an existing Project image into a new Task. */
+    contentHash?: string;
     width: number;
     height: number;
   }[];
