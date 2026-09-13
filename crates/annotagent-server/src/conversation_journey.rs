@@ -106,6 +106,22 @@ fn automatic_visual_models(readiness: &Value) -> ApiResult<Vec<String>> {
                 .as_array()
                 .is_some_and(|roles| roles.iter().any(|role| role.as_str() != Some("agent")))
     };
+    let local_refiners = candidates
+        .iter()
+        .filter(|candidate| {
+            candidate["candidate_type"] == "model_instance"
+                && candidate["readiness"] == "ready"
+                && candidate["production_eligible"] != false
+                && candidate["capabilities"]
+                    .as_array()
+                    .is_some_and(|capabilities| {
+                        capabilities
+                            .iter()
+                            .any(|capability| capability == "prompted_segmentation")
+                    })
+        })
+        .filter_map(|candidate| candidate["id"].as_str().map(str::to_owned))
+        .collect::<Vec<_>>();
     let exact_scope = candidates
         .iter()
         .filter(is_ready_visual)
@@ -113,7 +129,13 @@ fn automatic_visual_models(readiness: &Value) -> ApiResult<Vec<String>> {
         .filter_map(|candidate| candidate["id"].as_str().map(str::to_owned))
         .collect::<Vec<_>>();
     if !exact_scope.is_empty() {
-        return Ok(exact_scope);
+        let mut selected = exact_scope;
+        for id in &local_refiners {
+            if !selected.contains(id) {
+                selected.push(id.clone());
+            }
+        }
+        return Ok(selected);
     }
     let bound = candidates
         .iter()
@@ -143,7 +165,7 @@ fn automatic_visual_models(readiness: &Value) -> ApiResult<Vec<String>> {
     } else {
         None
     };
-    selected
+    let mut selected = selected
         .and_then(|candidate| candidate["id"].as_str())
         .map(|id| vec![id.to_owned()])
         .ok_or_else(|| ApiError {
@@ -157,7 +179,13 @@ fn automatic_visual_models(readiness: &Value) -> ApiResult<Vec<String>> {
                 "setup_requests":readiness["setup_requests"],
                 "eligible_project_model_ids":bound.iter().filter_map(|candidate|candidate["id"].as_str()).collect::<Vec<_>>()
             }),
-        })
+        })?;
+    for id in local_refiners {
+        if !selected.contains(&id) {
+            selected.push(id);
+        }
+    }
+    Ok(selected)
 }
 
 pub(super) async fn preview(
@@ -1129,20 +1157,22 @@ mod tests {
     }
 
     #[test]
-    fn automatic_scope_uses_only_one_explicit_project_primary_binding() {
+    fn automatic_scope_uses_one_project_primary_and_ready_local_refiners() {
         let readiness = json!({
             "registry_revision":"TEST-registry",
             "setup_requests":[{"id":"TEST-setup"}],
             "candidates":[
                 {"id":"model-profile:one","readiness":"ready","roles":["vision_language"],"allowed_by_current_scope":false,
                  "project_bindings":[{"role":"primary_inference"}]},
+                {"id":"model-instance:segment","candidate_type":"model_instance","readiness":"ready","production_eligible":true,
+                 "capabilities":["prompted_segmentation"],"roles":["visual","segmentation"],"allowed_by_current_scope":false,"project_bindings":[]},
                 {"id":"model-profile:other-provider","readiness":"ready","roles":["detection"],"allowed_by_current_scope":false,
                  "project_bindings":[]}
             ]
         });
         assert_eq!(
             automatic_visual_models(&readiness).unwrap(),
-            vec!["model-profile:one"]
+            vec!["model-profile:one", "model-instance:segment"]
         );
         let no_binding = json!({
             "registry_revision":"TEST-registry",
@@ -1159,12 +1189,14 @@ mod tests {
         let frozen = json!({
             "candidates":[
                 {"id":"model-profile:frozen","readiness":"ready","roles":["detection"],"allowed_by_current_scope":true,"project_bindings":[]},
+                {"id":"model-instance:segment","candidate_type":"model_instance","readiness":"ready","production_eligible":true,
+                 "capabilities":["prompted_segmentation"],"roles":["visual","segmentation"],"allowed_by_current_scope":false,"project_bindings":[]},
                 {"id":"model-profile:new","readiness":"ready","roles":["vision_language"],"allowed_by_current_scope":false,"project_bindings":[{"role":"primary_inference"}]}
             ]
         });
         assert_eq!(
             automatic_visual_models(&frozen).unwrap(),
-            vec!["model-profile:frozen"]
+            vec!["model-profile:frozen", "model-instance:segment"]
         );
     }
 }
