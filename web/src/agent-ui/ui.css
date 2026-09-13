@@ -166,9 +166,6 @@ a.primary:hover {
   width: 24px;
   height: 24px;
 }
-.project-sidebar .new-task {
-  text-align: left;
-}
 .project-sidebar > small {
   padding: 10px;
 }
@@ -961,14 +958,19 @@ caption {
 .ui-app .assistant-author { display: inline-flex; align-items: center; gap: 8px; }
 .ui-app .assistant-author .brand-mark { width: 18px; height: 18px; }
 .ui-app .project-sidebar .brand { padding-bottom: 24px; }
-.ui-app .project-sidebar .new-task, .ui-app .project-sidebar .new-project, .ui-app .project-sidebar footer button { justify-content: flex-start; padding: 8px 11px; min-height: 36px; }
+.ui-app .project-sidebar .new-project, .ui-app .project-sidebar footer button { justify-content: flex-start; padding: 8px 11px; min-height: 36px; }
 .ui-app .new-project { display: flex; gap: 10px; align-items: center; color: inherit; text-decoration: none; border-radius: 6px; font-size: 13px; }
 .ui-app .task-search { display: flex; align-items: center; gap: 8px; padding: 0 11px; margin: 6px 0 8px; }
 .ui-app .task-search input { border: 0; width: 100%; padding: 8px 0; background: transparent; font-size: 13px; }
 .ui-app .project-sidebar > small { padding: 12px 11px 8px; }
 .ui-app .project-sidebar nav { flex: 1; min-height: 0; scrollbar-width: thin; }
 .ui-app .project-sidebar nav > div { margin-bottom: 12px; }
-.ui-app .project-sidebar nav .project-folder { display: grid; grid-template-columns: 14px 18px minmax(0,1fr); gap: 7px; min-height: 36px; padding: 8px 10px; font-size: 13px; }
+.ui-app .project-sidebar nav .project-tree-header { display: grid; grid-template-columns: minmax(0,1fr) 28px; align-items: center; gap: 2px; }
+.ui-app .project-sidebar nav .project-folder { display: grid; grid-template-columns: 14px 18px minmax(0,1fr); gap: 7px; min-height: 36px; padding: 8px 4px 8px 10px; font-size: 13px; }
+.ui-app .project-sidebar nav .project-add-task { width: 28px; height: 28px; color: var(--aa-text-muted); }
+.ui-app .project-sidebar nav .project-add-task:hover,
+.ui-app .project-sidebar nav .project-add-task:focus-visible { color: var(--aa-text); background: var(--aa-surface-muted); }
+.ui-app .project-sidebar nav .project-add-task .ui-icon { width: 16px; height: 16px; }
 .ui-app .project-sidebar .sidebar-title { display: block; min-width: 0; overflow: hidden; text-overflow: clip; white-space: nowrap; }
 .ui-app .sidebar-title-text { display: block; width: max-content; transform: translateX(0); transition: transform 180ms ease-out; }
 .ui-app .sidebar-title[data-overflow="true"] { mask-image: linear-gradient(to right, black calc(100% - 12px), transparent); }

@@ -24,6 +24,17 @@ test("one project sidebar, centered composer and no production navigation", asyn
   );
   await expect(page.locator(".artifact-pane")).toHaveCount(0);
 });
+test("each project creates a task from the plus beside its name", async ({ page }) => {
+  await expect(page.locator(".project-sidebar > .new-task")).toHaveCount(0);
+  const project = page.locator(".project-tree-header").filter({
+    hasText: "商品图片标注",
+  });
+  await expect(project.getByRole("button", { name: "在商品图片标注中新建任务" })).toBeVisible();
+  const previousTasks = await page.locator(".task-tree-row").count();
+  await project.getByRole("button", { name: "在商品图片标注中新建任务" }).click();
+  await expect(page.locator(".task-tree-row")).toHaveCount(previousTasks + 1);
+  await expect(page).toHaveURL(/task=[0-9a-f-]{36}/);
+});
 test("IME, Shift Enter, single send, approval, queue, stop and continue", async ({
   page,
 }) => {

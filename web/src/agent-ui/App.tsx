@@ -19,7 +19,7 @@ import { BatchDetail } from "./BatchDetail";
 import { WorkflowEditor } from "./WorkflowEditor";
 import {WorkflowVersionDetail} from "./WorkflowVersionDetail";
 import { ExportManagement } from "./ExportManagement";
-import { Icon, BrandMark } from "./Icon";
+import { Icon, IconButton, BrandMark } from "./Icon";
 import { ProjectMenu } from "./ProjectMenu";
 import { PlanBlock } from "./PlanBlock";
 import { SettingsView } from "./Settings";
@@ -455,6 +455,12 @@ export function AgentPreviewApp({
     if(!created||created.conversationId!==receipt.conversation_id)throw new Error("服务器已返回示例任务，但导航目录尚未包含同一会话；请刷新后核实回执");
     history.pushState(null,"",receiptRoute);setUrl(receiptRoute);
   };
+  const createTaskForProject = (projectId: string) =>
+    void act(async () => {
+      if (!canNavigate()) return;
+      const id = await adapter.createTask(projectId);
+      navigate({ settings: null, task: id, pane: null }, true);
+    });
   return (
     <div
       className="ui-app"
@@ -496,21 +502,6 @@ export function AgentPreviewApp({
             <BrandMark />
             AnnotAgent
           </a>
-          <button
-            className="new-task"
-            onClick={() =>
-              void act(async () => {
-                if (!canNavigate()) return;
-                if (!fixture && !state.projects.length) { location.assign("/projects/new"); return; }
-                const id = await adapter.createTask(
-                  task?.project || state.projects[0]?.id,
-                );
-                navigate({ settings: null, task: id, pane: null }, true);
-              })
-            }
-          >
-            <Icon name="plus" />{text("新任务", "New task")}
-          </button>
           {!fixture && <a className="new-project" href="/projects/new"><Icon name="plus" />新建项目</a>}
           <label className="task-search"><Icon name="search" />
           <input
@@ -524,23 +515,31 @@ export function AgentPreviewApp({
           <nav>
             {state.projects.map((p) => (
               <div key={p.id}>
-                <button
-                  className="project-folder"
-                  aria-expanded={expanded.includes(p.id)}
-                  onClick={() =>
-                    setExpanded((x) =>
-                      x.includes(p.id)
-                        ? x.filter((id) => id !== p.id)
-                        : [...x, p.id],
-                    )
-                  }
-                >
-                  <span className="project-tree-chevron"><Icon name="chevron-right" size={14} /></span><Icon name="folder" /><SidebarTitle>{p.title}</SidebarTitle>
-                </button>
+                <div className="project-tree-header">
+                  <button
+                    className="project-folder"
+                    aria-expanded={expanded.includes(p.id)}
+                    onClick={() =>
+                      setExpanded((x) =>
+                        x.includes(p.id)
+                          ? x.filter((id) => id !== p.id)
+                          : [...x, p.id],
+                      )
+                    }
+                  >
+                    <span className="project-tree-chevron"><Icon name="chevron-right" size={14} /></span><Icon name="folder" /><SidebarTitle>{p.title}</SidebarTitle>
+                  </button>
+                  <IconButton
+                    icon="plus"
+                    className="project-add-task"
+                    label={text(`在${p.title}中新建任务`, `New task in ${p.title}`)}
+                    onClick={() => createTaskForProject(p.id)}
+                  />
+                </div>
                 {(expanded.includes(p.id) || search) &&
                   state.tasks
                     .filter(
-                      (t) => t.project === p.id && t.title.includes(search),
+                      (t) => t.project === p.id && !t.id.startsWith("new:") && t.title.includes(search),
                     )
                     .map((t) => (
                       <div className={`task-tree-row ${!section && t.id === task?.id ? "selected" : ""}`} key={t.id}>
