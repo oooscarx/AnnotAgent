@@ -191,26 +191,17 @@ fn validate_prompt_coverage(
             _ => None,
         })
         .collect::<Vec<_>>();
-    let allow_uncertain_refinement = context
-        .node
-        .parameters
-        .get("allow_uncertain_prompt_refinement")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
     if coverage.len() != prompt_count
         || coverage.iter().any(|coverage| {
             coverage.image_id != context.image_id
                 || coverage.validate().is_err()
                 || coverage.effective_refinement_eligibility()
                     != PromptRefinementEligibility::PlausibleForRefinement
-                || (coverage.automatic_acceptance
-                    == AutomaticAcceptanceEligibility::HumanReviewRequired
-                    && !allow_uncertain_refinement)
         })
     {
         return Err(DagNodeFailure::terminal(
             "invalid_prompt_sent_to_refiner",
-            "Prompted Segmentation requires one valid plausible-for-refinement PromptCoverage Artifact for every prompt; uncertain prompts require an explicit review-preserving policy",
+            "Prompted Segmentation requires one valid Gate-authorized, plausible-for-refinement PromptCoverage Artifact for every prompt",
         ));
     }
     if coverage.iter().any(|coverage| {
@@ -568,7 +559,7 @@ mod tests {
     }
 
     #[test]
-    fn prompted_segmentation_requires_plausible_coverage_and_explicit_uncertain_policy() {
+    fn prompted_segmentation_requires_gate_authorized_plausible_coverage() {
         let image_id = ImageId::new();
         let source = ArtifactRef {
             artifact_id: "local-detections".to_owned(),
@@ -686,30 +677,9 @@ mod tests {
             refinement_eligibility: PromptRefinementEligibility::PlausibleForRefinement,
             automatic_acceptance: AutomaticAcceptanceEligibility::HumanReviewRequired,
         });
-        assert!(
-            validate_prompt_coverage(&context(exploratory.clone()), 1).is_err(),
-            "uncertain refinement requires an explicit policy"
-        );
-        let allowed_node = WorkflowDraftNode {
-            parameters: BTreeMap::from([(
-                "allow_uncertain_prompt_refinement".to_owned(),
-                serde_json::json!(true),
-            )]),
-            ..node.clone()
-        };
-        let allowed_context = DagNodeContext {
-            project_id: ProjectId::new(),
-            run_id: RunId::new(),
-            image_id,
-            node: &allowed_node,
-            input_artifacts: Vec::new(),
-            input_pipeline_artifacts: vec![prompts, exploratory],
-            input_metadata: BTreeMap::new(),
-            cancellation: CancellationToken::new(),
-        };
         assert_eq!(
-            validate_prompt_coverage(&allowed_context, 1)
-                .expect("explicit exploratory refinement policy"),
+            validate_prompt_coverage(&context(exploratory), 1)
+                .expect("Gate-authorized exploratory refinement"),
             "plausible_for_refinement_review_required"
         );
     }

@@ -577,6 +577,10 @@ fn small_object_recovery_template() -> WorkflowTemplate {
     );
     coverage.required_skills.clear();
     coverage.parameters.insert(
+        "allow_uncertain_prompt_refinement".to_owned(),
+        serde_json::json!(true),
+    );
+    coverage.parameters.insert(
         "recovery_route_policy".to_owned(),
         serde_json::json!({
             "action": "relocalize",
@@ -688,8 +692,7 @@ fn small_object_recovery_template() -> WorkflowTemplate {
             "on_unavailable": "review",
             "on_budget_exhausted": "review",
             "attempt": 2,
-            "maximum_attempts": 2,
-            "allow_uncertain_refinement": true
+            "maximum_attempts": 2
         }),
     );
 
@@ -707,10 +710,6 @@ fn small_object_recovery_template() -> WorkflowTemplate {
     segment.required_skills.clear();
     segment.parameters.insert(
         "require_prompt_coverage".to_owned(),
-        serde_json::json!(true),
-    );
-    segment.parameters.insert(
-        "allow_uncertain_prompt_refinement".to_owned(),
         serde_json::json!(true),
     );
 
@@ -1257,6 +1256,16 @@ mod tests {
         assert!(recovery_json.contains("local_crop"));
         assert!(!recovery_json.to_ascii_lowercase().contains("qwen"));
         assert!(!recovery_json.to_ascii_lowercase().contains("efficientsam"));
+        assert!(recovery.nodes.iter().any(|node| {
+            node.node_type == "core.prompt_coverage_gate"
+                && node.parameters["allow_uncertain_prompt_refinement"] == serde_json::json!(true)
+        }));
+        assert!(recovery.nodes.iter().all(|node| {
+            node.node_type != "capability.segment"
+                || !node
+                    .parameters
+                    .contains_key("allow_uncertain_prompt_refinement")
+        }));
         assert!(
             recovery
                 .nodes

@@ -21722,6 +21722,11 @@ mod tests {
             gate.parameters["recovery_route_policy"]["maximum_attempts"],
             json!(1)
         );
+        assert_eq!(
+            gate.parameters["allow_uncertain_prompt_refinement"],
+            json!(true),
+            "materializing the primary path must preserve the Gate-owned partial-overlap policy"
+        );
         assert!(
             original
                 .nodes

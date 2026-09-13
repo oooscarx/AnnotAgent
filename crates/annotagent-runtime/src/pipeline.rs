@@ -865,12 +865,31 @@ fn run_prompt_coverage_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutpu
         .and_then(|value| u32::try_from(value).ok())
         .unwrap_or(2)
         .max(1);
-    let allow_uncertain_refinement = context
+    // Prompt eligibility is a Gate decision. Keep the canonical policy on the
+    // Prompt Coverage Gate so a materialized primary path cannot silently lose
+    // refinement just because the downstream model node has a similarly named
+    // parameter. Read the historical nested spelling for published Drafts.
+    let allow_uncertain_prompt_refinement = context
         .node
         .parameters
-        .get("recovery_route_policy")
-        .and_then(|policy| policy.get("allow_uncertain_refinement"))
+        .get("allow_uncertain_prompt_refinement")
         .and_then(serde_json::Value::as_bool)
+        .or_else(|| {
+            context
+                .node
+                .parameters
+                .get("recovery_route_policy")
+                .and_then(|policy| policy.get("allow_uncertain_prompt_refinement"))
+                .and_then(serde_json::Value::as_bool)
+        })
+        .or_else(|| {
+            context
+                .node
+                .parameters
+                .get("recovery_route_policy")
+                .and_then(|policy| policy.get("allow_uncertain_refinement"))
+                .and_then(serde_json::Value::as_bool)
+        })
         .unwrap_or(false);
     let final_recovery_attempt = recovery_attempt >= maximum_attempts;
     let has_legal_candidate = candidate_set.is_some_and(|set| {
@@ -960,8 +979,15 @@ fn run_prompt_coverage_gate(context: &DagNodeContext<'_>) -> Result<DagNodeOutpu
         );
         let refinement_eligibility = match state {
             PromptCoverageState::Covered => PromptRefinementEligibility::PlausibleForRefinement,
-            PromptCoverageState::PartiallyCovered | PromptCoverageState::Unknown
-                if final_recovery_attempt && allow_uncertain_refinement && has_legal_candidate =>
+            PromptCoverageState::PartiallyCovered
+                if allow_uncertain_prompt_refinement && has_legal_candidate =>
+            {
+                PromptRefinementEligibility::PlausibleForRefinement
+            }
+            PromptCoverageState::Unknown
+                if final_recovery_attempt
+                    && allow_uncertain_prompt_refinement
+                    && has_legal_candidate =>
             {
                 PromptRefinementEligibility::PlausibleForRefinement
             }
@@ -3562,6 +3588,126 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn prompt_coverage_gate_refines_partial_overlap_only_when_gate_policy_allows_it() {
+        let image_id = ImageId::new();
+        let candidate = detection_set(
+            image_id,
+            "candidate-set",
+            "local-model",
+            vec![detection(
+                "candidate-set",
+                "candidate",
+                "target",
+                [0.40, 0.40, 0.10, 0.10],
+                Some(0.9),
+                "local-model",
+                VisionCapability::VisionLanguage,
+            )],
+        );
+        let PipelineArtifact::DetectionSet(candidate_set) = &candidate else {
+            panic!("candidate detections")
+        };
+        let prompts = BoxPromptSetArtifact::from_detections(
+            ArtifactRef {
+                artifact_id: "prompts".to_owned(),
+                source_node: "prompts".to_owned(),
+                port: "prompts".to_owned(),
+                artifact_type: ArtifactKind::BoxPromptSet,
+                item_id: None,
+            },
+            candidate_set,
+            0.0,
+        )
+        .expect("box prompts");
+        let independent = detection_set(
+            image_id,
+            "independent-set",
+            "independent-model",
+            vec![detection(
+                "independent-set",
+                "independent",
+                "target",
+                [0.47, 0.40, 0.10, 0.10],
+                Some(0.8),
+                "independent-model",
+                VisionCapability::ObjectDetection,
+            )],
+        );
+        let gate = WorkflowDraftNode {
+            id: "coverage".to_owned(),
+            node_type: CORE_PROMPT_COVERAGE_GATE.to_owned(),
+            kind: WorkflowNodeKind::Gate,
+            outputs: vec![
+                NodePort {
+                    id: "prompts".to_owned(),
+                    artifact_type: ArtifactKind::BoxPromptSet,
+                    required: true,
+                    multiple: true,
+                },
+                NodePort {
+                    id: "coverage".to_owned(),
+                    artifact_type: ArtifactKind::PromptCoverage,
+                    required: true,
+                    multiple: true,
+                },
+                NodePort {
+                    id: "detections".to_owned(),
+                    artifact_type: ArtifactKind::DetectionSet,
+                    required: true,
+                    multiple: true,
+                },
+            ],
+            ..WorkflowDraftNode::default()
+        };
+        let blocked = CorePipelineRunner
+            .run(node_context(
+                &gate,
+                vec![
+                    PipelineArtifact::BoxPromptSet(prompts.clone()),
+                    candidate.clone(),
+                    independent.clone(),
+                ],
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("conservative coverage decision");
+        assert_eq!(blocked.route.as_deref(), Some("relocalize"));
+
+        let mut allowed_gate = gate;
+        allowed_gate.parameters.insert(
+            "allow_uncertain_prompt_refinement".to_owned(),
+            serde_json::json!(true),
+        );
+        let allowed = CorePipelineRunner
+            .run(node_context(
+                &allowed_gate,
+                vec![
+                    PipelineArtifact::BoxPromptSet(prompts),
+                    candidate,
+                    independent,
+                ],
+                BTreeMap::new(),
+            ))
+            .await
+            .expect("explicit partial-overlap refinement decision");
+        assert_eq!(allowed.route.as_deref(), Some("refine"));
+        assert_eq!(allowed.metadata["failure_code"], "localization_uncertain");
+        let coverage = allowed
+            .pipeline_artifacts
+            .iter()
+            .find_map(|artifact| match artifact {
+                PipelineArtifact::PromptCoverage(coverage) => Some(coverage),
+                _ => None,
+            })
+            .expect("coverage artifact");
+        assert_eq!(coverage.state, PromptCoverageState::PartiallyCovered);
+        assert_eq!(
+            coverage.automatic_acceptance,
+            AutomaticAcceptanceEligibility::HumanReviewRequired
+        );
+    }
+
+    #[tokio::test]
     async fn prompt_coverage_gate_keeps_missing_evidence_unknown() {
         let image_id = ImageId::new();
         let coarse = detection_set(
@@ -3696,14 +3842,19 @@ mod tests {
                     multiple: true,
                 },
             ],
-            parameters: BTreeMap::from([(
-                "recovery_route_policy".to_owned(),
-                serde_json::json!({
-                    "attempt": 2,
-                    "maximum_attempts": 2,
-                    "allow_uncertain_refinement": true
-                }),
-            )]),
+            parameters: BTreeMap::from([
+                (
+                    "allow_uncertain_prompt_refinement".to_owned(),
+                    serde_json::json!(true),
+                ),
+                (
+                    "recovery_route_policy".to_owned(),
+                    serde_json::json!({
+                        "attempt": 2,
+                        "maximum_attempts": 2
+                    }),
+                ),
+            ]),
             ..WorkflowDraftNode::default()
         };
         let output = CorePipelineRunner

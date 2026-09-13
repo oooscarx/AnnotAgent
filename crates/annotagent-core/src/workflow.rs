@@ -1849,6 +1849,8 @@ pub struct GeometryNodeSafetyContext {
     pub output_geometry: crate::GeometrySemantics,
     pub score_semantics: crate::ScoreSemantics,
     pub auto_accept_eligibility: crate::AutoAcceptEligibility,
+    #[serde(default)]
+    pub requires_geometry_verification: bool,
     pub calibration_status: crate::GeometryCalibrationStatus,
     pub available: bool,
 }
@@ -1924,22 +1926,29 @@ pub fn geometry_safety_context(
                         .iter()
                         .find(|contract| contract.operation == node.node_type)
                 });
-            let (output_geometry, score_semantics, auto_accept_eligibility, available) =
-                if let Some(contract) = frozen_contract {
-                    (
-                        contract.output_geometry,
-                        contract.score_semantics,
-                        contract.auto_accept_eligibility,
-                        true,
-                    )
-                } else {
-                    legacy_operation_quality(&node.node_type)?
-                };
+            let (
+                output_geometry,
+                score_semantics,
+                auto_accept_eligibility,
+                requires_geometry_verification,
+                available,
+            ) = if let Some(contract) = frozen_contract {
+                (
+                    contract.output_geometry,
+                    contract.score_semantics,
+                    contract.auto_accept_eligibility,
+                    contract.requires_geometry_verification,
+                    true,
+                )
+            } else {
+                legacy_operation_quality(&node.node_type)?
+            };
             Some(GeometryNodeSafetyContext {
                 node_id: node.id.clone(),
                 output_geometry,
                 score_semantics,
                 auto_accept_eligibility,
+                requires_geometry_verification,
                 calibration_status: crate::GeometryCalibrationStatus::Uncalibrated,
                 available,
             })
@@ -1958,12 +1967,14 @@ fn legacy_operation_quality(
     crate::ScoreSemantics,
     crate::AutoAcceptEligibility,
     bool,
+    bool,
 )> {
     match operation {
         "vlm_detection.detect" | "vision_language" => Some((
             crate::GeometrySemantics::CoarseHypothesis,
             crate::ScoreSemantics::SemanticConfidence,
             crate::AutoAcceptEligibility::NeverFromScoreAlone,
+            true,
             true,
         )),
         "capability.detect"
@@ -1976,17 +1987,20 @@ fn legacy_operation_quality(
             crate::ScoreSemantics::DetectionConfidence,
             crate::AutoAcceptEligibility::RequiresProjectCalibration,
             true,
+            true,
         )),
         "capability.segment" => Some((
             crate::GeometrySemantics::RefinedGeometry,
             crate::ScoreSemantics::NotProvided,
             crate::AutoAcceptEligibility::RequiresProjectCalibration,
+            true,
             false,
         )),
         "capability.semantic_segment" | "semantic_segmentation" => Some((
             crate::GeometrySemantics::PredictedGeometry,
             crate::ScoreSemantics::NotProvided,
             crate::AutoAcceptEligibility::NeverFromScoreAlone,
+            true,
             false,
         )),
         _ => None,
@@ -2258,12 +2272,13 @@ fn validate_prompt_coverage_safety(
     draft: &WorkflowDraft,
     issues: &mut Vec<WorkflowValidationIssue>,
 ) {
-    for (index, segment) in draft
-        .nodes
-        .iter()
-        .enumerate()
-        .filter(|(_, node)| node.node_type == "capability.segment")
-    {
+    for (index, segment) in draft.nodes.iter().enumerate().filter(|(_, node)| {
+        node.node_type == "capability.segment"
+            && node
+                .inputs
+                .iter()
+                .any(|port| port.artifact_type == ArtifactKind::BoxPromptSet)
+    }) {
         if !has_commit_path_without_human_review(draft, &segment.id) {
             continue;
         }
@@ -2491,11 +2506,12 @@ fn validate_geometry_commit_safety(
         .collect::<Vec<_>>();
     for source in draft.nodes.iter().filter(|node| {
         geometry.node(&node.id).is_some_and(|contract| {
-            matches!(
-                contract.output_geometry,
-                crate::GeometrySemantics::CoarseHypothesis
-                    | crate::GeometrySemantics::PredictedGeometry
-            )
+            contract.requires_geometry_verification
+                && matches!(
+                    contract.output_geometry,
+                    crate::GeometrySemantics::CoarseHypothesis
+                        | crate::GeometrySemantics::PredictedGeometry
+                )
         })
     }) {
         let Some(contract) = geometry.node(&source.id) else {
@@ -3547,6 +3563,7 @@ export:
                 output_geometry: crate::GeometrySemantics::CoarseHypothesis,
                 score_semantics: crate::ScoreSemantics::SemanticConfidence,
                 auto_accept_eligibility: crate::AutoAcceptEligibility::NeverFromScoreAlone,
+                requires_geometry_verification: true,
                 calibration_status,
                 available: true,
             }],
@@ -3699,6 +3716,7 @@ export:
                 output_geometry: crate::GeometrySemantics::CoarseHypothesis,
                 score_semantics: crate::ScoreSemantics::SemanticConfidence,
                 auto_accept_eligibility: crate::AutoAcceptEligibility::NeverFromScoreAlone,
+                requires_geometry_verification: true,
                 calibration_status: crate::GeometryCalibrationStatus::Uncalibrated,
                 available: true,
             }],
@@ -3792,6 +3810,7 @@ export:
             output_geometry: crate::GeometrySemantics::RefinedGeometry,
             score_semantics: crate::ScoreSemantics::NotProvided,
             auto_accept_eligibility: crate::AutoAcceptEligibility::RequiresProjectCalibration,
+            requires_geometry_verification: true,
             calibration_status: crate::GeometryCalibrationStatus::Uncalibrated,
             available: true,
         });
@@ -3833,6 +3852,7 @@ export:
             output_geometry: crate::GeometrySemantics::RefinedGeometry,
             score_semantics: crate::ScoreSemantics::NotProvided,
             auto_accept_eligibility: crate::AutoAcceptEligibility::RequiresProjectCalibration,
+            requires_geometry_verification: true,
             calibration_status: crate::GeometryCalibrationStatus::Uncalibrated,
             available: true,
         });
