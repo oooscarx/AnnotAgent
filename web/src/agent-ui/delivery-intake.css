@@ -37,6 +37,10 @@
 .delivery-review .annotation-canvas { display: block; width: 100%; max-width: 100%; max-height: min(65vh,720px); touch-action: none; }
 .delivery-review .canvas-annotation-list { list-style: none; padding: 0; }
 .delivery-review .canvas-hint { color: var(--aa-text-muted); }
+.sample-box-editor { display: grid; grid-template-columns: repeat(4,minmax(96px,1fr)); gap: 8px; }
+.sample-box-editor label { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 5px 8px; color: var(--aa-text-muted); font-size: 12px; }
+.sample-box-editor input { grid-column: 1; width: 100%; min-width: 0; padding: 7px 9px; border: 1px solid var(--aa-border); border-radius: 7px; background: var(--aa-bg); color: var(--aa-text); font: inherit; }
+.sample-box-editor span { grid-column: 2; grid-row: 2; }
 .delivery-object-editor { display: grid; gap: 10px; }
 .delivery-package, .delivery-package-receipt { display: grid; gap: 12px; min-width: 0; padding-block: 12px; }
 .delivery-package h3 { margin: 0; }
@@ -51,4 +55,5 @@
   .delivery-intake-actions button { flex: 1 1 140px; }
   .delivery-review-heading, .delivery-review-tabs { width: 100%; }
   .delivery-review-tabs button { flex: 1; }
+  .sample-box-editor { grid-template-columns: repeat(2,minmax(96px,1fr)); }
 }

@@ -4,6 +4,7 @@ import { DeliveryPackage } from "./DeliveryPackage";
 import { terminalSampleProjection } from "./deliveryVisualSelection";
 import {
   DeliveryReview,
+  type DeliverySampleConfirmation,
   type DeliveryReviewFocus,
   type DeliveryReviewPermissions,
 } from "./DeliveryReview";
@@ -37,7 +38,7 @@ export type P0ResultPanelProps={
   view:P0ResultPanelView;
   onSelection?:(selection:SampleVisualSelection|FormalVisualSelection)=>void;
   onSampleIssue?:(selection:SampleVisualSelection)=>void;
-  onSampleConfirm?:(selection:SampleVisualSelection)=>Promise<void>;
+  onSampleConfirm?:(selection:SampleVisualSelection,confirmation?:DeliverySampleConfirmation)=>Promise<void>;
   onPackageReady?:(packageId:string)=>void;
 };
 

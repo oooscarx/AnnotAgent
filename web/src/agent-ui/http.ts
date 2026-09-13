@@ -982,13 +982,16 @@ export class HttpAdapter implements WorkspaceAdapter {
     // New composers have no workspace yet; display only the confirmed preference.
     if (task.id.startsWith("new:")) this.emit({tasks:this.state.tasks.map(t=>t.project===task.project?{...t,model}:t)});
   }
-  async answerHumanRequest(c: Command, boxes: Box[], classification?:string, reason?:"correct"|"poor_boundary"|"wrong_target") {
+  async answerHumanRequest(c: Command, boxes: Box[], classification?:string, reason?:"correct"|"poor_boundary"|"wrong_target"|"exclude_target") {
     const task=this.checked(c), request=this.workspaces.get(task.id)?.human_requests?.find(h=>h.input.id===task.human?.id&&h.status==="pending"&&!h.deferred);
     if(!request || !task.human) throw new Error("没有当前可提交的人工问题");
     const candidate=boxes.find(b=>b.id===request.input.outcome_id), asset=this.state.artifacts.find(a=>a.id===request.input.image_id);
     let corrected:SampleFeedbackRevision["corrected_value"];
     let label=classification;
-    if(task.human.kind==="classification") { if(!classification || !task.human.labels.includes(classification)) throw new Error("请选择 Schema 中的类别"); corrected={kind:"classification",labels:[classification]}; }
+    if(reason==="exclude_target") {
+      if(!candidate) throw new Error("当前候选已变化，请重新读取后再排除");
+      corrected=null; label=undefined;
+    } else if(task.human.kind==="classification") { if(!classification || !task.human.labels.includes(classification)) throw new Error("请选择 Schema 中的类别"); corrected={kind:"classification",labels:[classification]}; }
     else if(candidate && asset?.width && asset.height) {
       if(![candidate.x,candidate.y,candidate.w,candidate.h].every(Number.isFinite) || candidate.w<=0 || candidate.h<=0 || candidate.x<0 || candidate.y<0 || candidate.x+candidate.w>asset.width || candidate.y+candidate.h>asset.height) throw new Error("边界框超出原图或尺寸无效");
       corrected={kind:"bounding_box",rect:[candidate.x/asset.width,candidate.y/asset.height,candidate.w/asset.width,candidate.h/asset.height]};label=candidate.label;
@@ -997,7 +1000,7 @@ export class HttpAdapter implements WorkspaceAdapter {
     if(previous && JSON.stringify(previous.corrected_value)!==JSON.stringify(corrected)) throw new Error("上次答案回执未知，请使用原答案重试或读取保存结果");
     const feedbackReason=reason || (task.human.kind==="classification"?"wrong_target":"poor_boundary");
     if(feedbackReason==="poor_boundary"&&task.human.kind!=="bounding_box")throw new Error("只有边界框可以保存边界修正");
-    const answer=previous || {revision_id:c.id,sample_test_id:request.input.sample_test_id,image_id:request.input.image_id,sequence:request.input.expected_feedback_sequence+1,reason:feedbackReason,outcome_id:request.input.outcome_id,corrected_value:corrected,corrected_label:label,note:feedbackReason==="correct"?"用户在 Agent 工作区确认当前样例结果":"用户在 Agent 工作区提交样例修正",created_at:new Date().toISOString()} satisfies SampleFeedbackRevision;
+    const answer=previous || {revision_id:c.id,sample_test_id:request.input.sample_test_id,image_id:request.input.image_id,sequence:request.input.expected_feedback_sequence+1,reason:feedbackReason,outcome_id:request.input.outcome_id,corrected_value:corrected,corrected_label:label,note:feedbackReason==="correct"?"用户在 Agent 工作区确认当前样例结果":feedbackReason==="exclude_target"?"用户在 Agent 工作区明确排除当前错误候选":"用户在 Agent 工作区提交样例修正",created_at:new Date().toISOString()} satisfies SampleFeedbackRevision;
     this.save(`answer.${request.input.id}`,answer);
     const saved=await this.transport<HumanRequest>(`${this.taskRoot(task)}/human-requests/${esc(request.input.id)}/answer`,{method:"POST",body:JSON.stringify({answer})});
     if(saved.answer?.revision_id!==answer.revision_id) throw new Error("服务器没有确认相同答案版本");

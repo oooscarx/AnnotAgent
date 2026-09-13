@@ -237,7 +237,7 @@ export interface WorkspaceAdapter {
     command: Command,
     boxes: Box[],
     classification?: string,
-    reason?: "correct" | "poor_boundary" | "wrong_target",
+    reason?: "correct" | "poor_boundary" | "wrong_target" | "exclude_target",
   ): Promise<void>;
   updateSettings(revision: string, settings: Settings): Promise<void>;
   testProvider(

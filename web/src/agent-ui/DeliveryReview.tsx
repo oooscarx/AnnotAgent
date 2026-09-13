@@ -18,6 +18,10 @@ type Selection = { mode: Mode; image: string };
 const formalStateLabel:Record<DeliveryReviewSummary["items"][number]["state"],string>={positive_complete:"整图完整",negative_confirmed:"已确认负样本",excluded:"已排除",unresolved:"待审核",failed:"处理失败"};
 const objectStateLabel:Record<Annotation["review_status"],string>={draft:"草稿",needs_review:"待审核",auto_accepted:"自动接受",human_accepted:"已接受",rejected:"已拒绝"};
 export type DeliveryReviewFocus = {mode:Mode;image_id:string;candidate_id?:string;result_revision:string;reason:string};
+export type DeliverySampleConfirmation = {
+  annotation: Annotation;
+  reason: "correct" | "poor_boundary" | "exclude_target";
+};
 export type DeliveryReviewPermissions = {
   sampleFeedback:boolean;
   editObject:boolean;
@@ -41,7 +45,7 @@ export type DeliveryReviewProps = {
   onEditingState?: (active: boolean) => void;
   onVisualSelection?: (selection: SampleVisualSelection) => void;
   onSampleIssue?: (selection: SampleVisualSelection) => void;
-  onSampleConfirm?: (selection: SampleVisualSelection) => Promise<void>;
+  onSampleConfirm?: (selection: SampleVisualSelection, confirmation?: DeliverySampleConfirmation) => Promise<void>;
   onFormalSelection?: (selection: FormalVisualSelection) => void;
   annotationOrigins?:Record<string,Record<string,DemoAnnotationOrigin>>;
   formalSourceMode?:"preset_candidates"|"live_model";
@@ -96,12 +100,31 @@ export function DeliveryReview({
   const sampleSelectionAvailable = !!selected && !!sampleImage?.candidates.find((item) => item.candidate_id === selected)?.selection;
   const formalImage = formalResult?.images.find((item) => item.image_id === selection.image);
   const formalRun = formalImage?.child_run_id ?? null;
-  const original = view?.snapshot.annotations.find((item) => item.id === selected);
+  const original = selection.mode === "sample"
+    ? sampleImage?.annotations.find((item) => item.id === selected)
+    : view?.snapshot.annotations.find((item) => item.id === selected);
   const object = draft ?? original;
   const creating = !!draft && !original;
   const dirty = !!draft && JSON.stringify(draft) !== JSON.stringify(original);
+  const sampleBox = selection.mode === "sample" && object?.value.kind === "bounding_box" ? object : undefined;
+  const sampleRect = sampleBox?.value.kind === "bounding_box" ? sampleBox.value.rect : undefined;
+  const updateSampleBox = (index: 0 | 1 | 2 | 3, raw: string) => {
+    if (!sampleBox || !sampleRect || busy || locked || permissions?.sampleFeedback === false || !sampleSelectionAvailable) return;
+    const numeric = Number(raw);
+    if (!Number.isFinite(numeric)) return;
+    const rect = [...sampleRect] as [number, number, number, number];
+    const normalized = numeric / 100;
+    rect[index] = index === 0
+      ? Math.max(0, Math.min(1 - rect[2], normalized))
+      : index === 1
+        ? Math.max(0, Math.min(1 - rect[3], normalized))
+        : index === 2
+          ? Math.max(0.002, Math.min(1 - rect[0], normalized))
+          : Math.max(0.002, Math.min(1 - rect[1], normalized));
+    setDraft({ ...sampleBox, value: { kind: "bounding_box", rect } });
+  };
   const activeAnnotations = useMemo(() => {
-    if (selection.mode === "sample") return sampleImage?.annotations ?? [];
+    if (selection.mode === "sample") return sampleImage?.annotations.map((item) => draft?.id === item.id ? draft : item) ?? [];
     if ((!formalResult || !formalImage) && !presetFormal) return [];
     const saved = view?.snapshot.annotations
       .filter((item) => item.review_status !== "rejected")
@@ -390,6 +413,29 @@ export function DeliveryReview({
     finally { pending.current = false; setBusy(false); }
   };
 
+  const confirmSample = async (feedbackReason: DeliverySampleConfirmation["reason"]) => {
+    if (selection.mode !== "sample" || !object || !sampleSelectionAvailable || !onSampleConfirm || pending.current || busy || locked) return;
+    if (feedbackReason === "correct" && dirty) return;
+    if (feedbackReason === "poor_boundary" && (!dirty || object.value.kind !== "bounding_box")) return;
+    if (feedbackReason === "exclude_target" && dirty) return;
+    const next = emitSample(object);
+    if (!next) return;
+    pending.current = true; setBusy(true); setError(""); setMessage("");
+    try {
+      await onSampleConfirm(next, { annotation: structuredClone(object), reason: feedbackReason });
+      setDraft(undefined);
+      setMessage(feedbackReason === "correct"
+        ? "当前样例结果已确认；这仍是 Sandbox 反馈，不是正式标注。"
+        : feedbackReason === "poor_boundary"
+          ? "修正框已保存为 Sandbox 反馈；没有写入正式标注。"
+          : "当前候选已标记为错误目标；没有写入正式标注。");
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      pending.current = false; setBusy(false);
+    }
+  };
+
   const positive = (!!formalRun || presetFormal) && !!view && view.accepted_objects > 0 && view.unresolved_objects === 0;
   const negative = !!view && view.accepted_objects === 0 && view.unresolved_objects === 0;
 
@@ -432,30 +478,53 @@ export function DeliveryReview({
       selectedId={selected}
       onSelect={selectObject}
       onChange={(next) => {
-        if (selection.mode === "formal" && !busy && !locked) { setSelected(next.id); setDraft(next); }
+        if (selection.mode === "sample") {
+          if (!busy && !locked && permissions?.sampleFeedback !== false && sampleSelectionAvailable && next.id === selected && next.value.kind === "bounding_box") {
+            setDraft(next);
+          }
+        } else if (!busy && !locked) { setSelected(next.id); setDraft(next); }
       }}
-      readOnly={selection.mode === "sample" || busy || locked || ((!formalResult || !formalImage || !service.editObject) && (!presetFormal || !service.reviewPresetObject)) || permissions?.editObject===false}
+      readOnly={busy || locked || (selection.mode === "sample"
+        ? permissions?.sampleFeedback === false || !sampleSelectionAvailable || object?.value.kind !== "bounding_box"
+        : ((!formalResult || !formalImage || !service.editObject) && (!presetFormal || !service.reviewPresetObject)) || permissions?.editObject===false)}
       compactList
     />}
+    {sampleBox && sampleRect && <div className="sample-box-editor" aria-label="样例框坐标">
+      {([["左边界", 0], ["上边界", 1], ["宽度", 2], ["高度", 3]] as const).map(([label, index]) => <label key={label}>
+        {label}
+        <input
+          aria-label={`样例框${label}（百分比）`}
+          type="number"
+          min={index < 2 ? 0 : 0.2}
+          max={100}
+          step={0.1}
+          value={Number((sampleRect[index] * 100).toFixed(3))}
+          disabled={busy || locked || permissions?.sampleFeedback === false || !sampleSelectionAvailable}
+          onChange={(event) => updateSampleBox(index, event.target.value)}
+        />
+        <span>%</span>
+      </label>)}
+    </div>}
     {image&&Object.keys({...annotationOrigins[image.id],...summaryItems.find(item=>item.image_id===image.id)?.annotation_origins}).length>0&&<div className="delivery-source-receipt" aria-label="当前图片候选来源">
       {Object.entries({...annotationOrigins[image.id],...summaryItems.find(item=>item.image_id===image.id)?.annotation_origins}).map(([annotationId,origin])=><span key={annotationId}>{annotationId===selected?"当前对象 · ":""}{demoOriginLabel(origin)}</span>)}
     </div>}
     {selection.mode === "sample" && sampleResult && <div className="actions">
-      <button className="primary" type="button" disabled={busy || !sampleSelectionAvailable || !onSampleConfirm} onClick={() => {
-        const annotation=sampleImage?.annotations.find(item=>item.id===selected);
-        const next=annotation&&emitSample(annotation);
-        if(!next||!onSampleConfirm)return;
-        pending.current=true;setBusy(true);setError("");setMessage("");
-        void onSampleConfirm(next).then(()=>setMessage("当前样例判断已保存；这仍是 Sandbox 反馈，不是正式标注。"))
-          .catch(cause=>setError((cause as Error).message))
-          .finally(()=>{pending.current=false;setBusy(false);});
-      }}>这个样例结果正确</button>
+      <button className="primary" type="button" disabled={busy || dirty || !sampleSelectionAvailable || !onSampleConfirm} onClick={() => void confirmSample("correct")}>这个样例结果正确</button>
+      {dirty && <>
+        <button type="button" disabled={busy} onClick={() => setDraft(undefined)}>撤销修正</button>
+        <button className="primary" type="button" disabled={busy || !sampleSelectionAvailable || !onSampleConfirm || object?.value.kind !== "bounding_box"} onClick={() => void confirmSample("poor_boundary")}>保存修正框</button>
+      </>}
+      {!dirty && <button type="button" disabled={busy || !sampleSelectionAvailable || !onSampleConfirm} onClick={() => void confirmSample("exclude_target")}>这个候选不是目标</button>}
       <button type="button" disabled={!sampleSelectionAvailable || permissions?.sampleFeedback===false} onClick={() => {
-        const annotation = sampleImage?.annotations.find((item) => item.id === selected);
+        const annotation = object;
         const next = annotation && emitSample(annotation);
         if (next) onSampleIssue?.(next);
-      }}>这个样例框有问题</button>
-      <p>{selected&&!sampleSelectionAvailable?"此终端候选没有服务端签发的反馈引用，因此只能查看，不能提交修改。":"仅创建带 Draft、Sample Test、Artifact 和 feedback revision 的反馈引用，不写正式标注。"}</p>
+      }}>说明其他问题</button>
+      <p>{selected&&!sampleSelectionAvailable
+        ? "此终端候选没有服务端签发的反馈引用，因此只能查看，不能提交修改。"
+        : object?.value.kind === "bounding_box"
+          ? "选中框后可直接拖动或缩放；修正只写入当前 Sample Test 的 Sandbox 反馈，不写正式标注。"
+          : "样例反馈只写入当前 Sample Test 的 Sandbox，不写正式标注。"}</p>
     </div>}
     {selection.mode === "formal" && view && ((formalResult && formalImage) || presetFormal) && <>
       {service.createObject && !presetFormal && <button type="button" disabled={busy || locked || dirty || !formalRun || !readable || !labels.length || permissions?.createObject===false} onClick={addObject}>新增漏标目标框</button>}

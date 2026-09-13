@@ -161,6 +161,64 @@ test("sample issue emits a complete sample VisualSelection and never writes form
   })]);
 });
 
+test("sample bounding boxes stay editable and save a poor-boundary correction without writing formal review", async ({ page }) => {
+  const sampleImage = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Crect width='100' height='100' fill='white'/%3E%3C/svg%3E";
+  await page.goto("/ui-preview?task=new&delivery_view=sample");
+  await page.evaluate(async ([path, imageUrl]) => {
+    const { React, createRoot, DeliveryReview } = await import(path);
+    const host = document.createElement("main");
+    document.body.replaceChildren(host);
+    const annotation = {
+      id: "sample-object", image_id: "image-one", task_id: "objects", label: "ball",
+      value: { kind: "bounding_box", rect: [0.1, 0.1, 0.2, 0.2] },
+      attributes: {}, source: "model", review_status: "needs_review", provenance: {}, created_at: "TEST",
+    };
+    const state = { confirmations: [] as unknown[], formalWrites: 0 };
+    Object.assign(window, { sampleCorrectionTest: state });
+    const service = {
+      image: async () => { throw new Error("formal read must not run"); },
+      editObject: async () => { state.formalWrites += 1; },
+      confirmImage: async () => { state.formalWrites += 1; },
+    };
+    createRoot(host).render(React.createElement(DeliveryReview, {
+      service, project: "TEST", task: "TEST-task",
+      sampleResult: {
+        project_id: "TEST", conversation_id: "conversation-one", task_id: "TEST-task", project_schema_revision: "schema-one",
+        draft_id: "draft-one", draft_revision: 7, sample_test_id: "sample-one",
+        images: [{
+          image_id: "image-one", image_sha256: "image-pixels", result_revision: "sample:feedback:3",
+          candidates: [{ candidate_id: "sample-object", selection: {
+            project_id: "TEST", conversation_id: "conversation-one", task_id: "TEST-task", project_schema_revision: "schema-one",
+            image: { image_id: "image-one", sha256: "image-pixels" },
+            sample: { draft_id: "draft-one", draft_revision: 7, sample_test_id: "sample-one" },
+            candidate: { candidate_id: "sample-object", source_artifact_id: "artifact-one" },
+            annotation: { kind: "bounding_box", label: "ball" }, result_revision: "sample:feedback:3",
+          } }],
+          annotations: [annotation],
+        }],
+      },
+      images: [{ id: "image-one", name: "TEST original", src: imageUrl }],
+      onSampleConfirm: async (selection: unknown, correction?: unknown) => { state.confirmations.push({ selection, correction }); },
+    }));
+  }, [`/@fs${resolve("e2e/ui-preview/delivery-review-harness.tsx")}`, sampleImage]);
+
+  await page.getByRole("button", { name: "Annotation list · 1", exact: true }).click();
+  await page.getByRole("button", { name: /ball/ }).click();
+  await expect(page.getByText(/Drag the box to move it/)).toBeVisible();
+  await page.getByLabel("样例框左边界（百分比）").fill("15");
+  await expect(page.getByRole("button", { name: "保存修正框", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "这个样例结果正确", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "保存修正框", exact: true }).click();
+
+  const state = await page.evaluate(() => (window as unknown as { sampleCorrectionTest: { confirmations: { correction: { reason: string; annotation: { value: { rect: number[] } } } }[]; formalWrites: number } }).sampleCorrectionTest);
+  expect(state.formalWrites).toBe(0);
+  expect(state.confirmations).toHaveLength(1);
+  expect(state.confirmations[0].correction).toMatchObject({
+    reason: "poor_boundary",
+    annotation: { id: "sample-object", value: { kind: "bounding_box", rect: [0.15, 0.1, 0.2, 0.2] } },
+  });
+});
+
 test("negative confirmation and exclusion remain explicit per-image review decisions", async ({ page }) => {
   await page.goto("/ui-preview?task=new");
   await page.evaluate(async ([path, imageUrl]) => {

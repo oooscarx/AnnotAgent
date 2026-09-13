@@ -1193,10 +1193,16 @@ export function AgentPreviewApp({
                         setReference(selection);
                         requestAnimationFrame(() => compose.current?.focus());
                       }}
-                      onSampleConfirm={async selection => {
+                      onSampleConfirm={async (selection, confirmation) => {
                         if(!task.human||String(task.human.image)!==selection.image.image_id||task.human.candidate!==selection.candidate.candidate_id)throw new Error("当前人工问题已经变化；请重新读取后再确认。");
-                        const boxes=task.boxesByImage?.[selection.image.image_id]||[];
-                        await adapter.answerHumanRequest(command(task),boxes,task.human.kind==="classification"?task.human.label:undefined,"correct");
+                        const originalBoxes=task.boxesByImage?.[selection.image.image_id]||[];
+                        const annotation=confirmation?.annotation;
+                        const asset=taskAssets.find(candidate=>String(candidate.id)===selection.image.image_id);
+                        const correctedRect=annotation?.value.kind==="bounding_box"?annotation.value.rect:null;
+                        const boxes=correctedRect&&asset?.width&&asset.height
+                          ? originalBoxes.map(box=>box.id===annotation?.id?{...box,label:annotation?.label||box.label,x:correctedRect[0]*asset.width!,y:correctedRect[1]*asset.height!,w:correctedRect[2]*asset.width!,h:correctedRect[3]*asset.height!}:box)
+                          : originalBoxes;
+                        await adapter.answerHumanRequest(command(task),boxes,task.human.kind==="classification"?task.human.label:undefined,confirmation?.reason||"correct");
                       }}
                     />
                   </aside>}
