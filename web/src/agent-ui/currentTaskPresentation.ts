@@ -1,5 +1,6 @@
 import type { SchemaClarification, Task } from "./adapter";
 import { taskIsComplete, type IntakeSlot, type MainlineAction, type MainlineResultDiagnostic } from "./mainline";
+import { taskModelBindingSummary, type TaskModelBindingSummary } from "./modelBindingSummary";
 
 export type CurrentTaskAction =
   | { kind: "prepare_sample" }
@@ -30,6 +31,7 @@ export type CurrentTaskPresentation = {
   action?: MainlineAction;
   clarification?: SchemaClarification;
   diagnostic?: MainlineResultDiagnostic;
+  modelBindings?: TaskModelBindingSummary;
 };
 
 const missingQuestions: Record<IntakeSlot, string> = {
@@ -53,14 +55,19 @@ const diagnosticCopy:Record<MainlineResultDiagnostic["code"],{title:string;detai
   model_weights_missing:{title:"本地模型缺少权重",detail:"当前模型实例没有可验证的权重。请在模型设置中完成安装后返回此任务；现有结果会保留。"},
   model_capability_unavailable:{title:"缺少当前任务需要的模型能力",detail:"没有 Ready 且兼容的模型绑定。查看模型准备要求后再决定是否配置；不会自动安装或改用演示结果。"},
   provider_request_not_sent:{title:"模型请求没有发出",detail:"请求在发送前失败，没有产生远端结果。修复配置后仍需重新确认新的调用范围。"},
-  provider_outcome_unknown:{title:"远端结果未知",detail:"服务端无法确认远端是否完成。不会自动重试可能收费的请求；请在执行详情核实原回执。"},
-  model_response_invalid_structure:{title:"模型响应结构无法使用",detail:"Provider 已返回响应，但结构校验失败。原回执和已有结果会保留；再次调用需要新的授权。"},
+  provider_outcome_unknown:{title:"远端结果未知",detail:"服务端无法确认远端是否完成或计费。请先查看原请求回执；当前页面不会直接重试可能收费的调用。"},
+  model_response_invalid_structure:{title:"模型响应结构无法使用",detail:"Provider 已返回响应，但结构校验失败，因此没有执行半截 JSON 或工具参数。请先查看校验记录并修正响应模式；再次调用需要新的授权。"},
   legal_empty_detection:{title:"这张样例没有检测到候选",detail:"这是一次合法的空检测结果，不等于人工确认的负样本。请查看原图后再决定如何处理。"},
   candidate_projection_failed:{title:"候选无法投影到原图",detail:"模型产生了候选，但其 Artifact 无法安全映射到原图。其他有效结果会保留，不会伪造替代框。"},
   authorization_expired:{title:"当前模型授权已过期",detail:"原授权范围已过有效期，服务端已停止继续调用。只读检查不会续期；再次执行必须重新确认当前范围。"},
   authorization_revoked:{title:"当前模型授权已撤销",detail:"原授权已被明确撤销，服务端不会恢复或继续消费。已有调用回执和结果仍保留。"},
-  task_call_budget_exhausted:{title:"当前任务的模型调用额度已用完",detail:"此任务已达到获准的调用上限。服务端不会自动增加额度；已有费用和未知结果仍计入原账本。"},
+  task_call_budget_exhausted:{title:"当前任务的模型调用额度已用完",detail:"此任务已达到原授权的调用上限。先查看授权与用量账本；只有服务器提供新的精确范围时才能再次确认，重复提交原提示不会重置额度。"},
 };
+
+const activeProviderReceipt=(task:Task)=>(task.receipts||[]).find(item=>
+  ["reserved","running","queued","pending","cancelling"].includes(item.status)
+  && (item.title.includes("模型")||item.stage==="provider_request"),
+);
 
 /** Select only a diagnostic tied to the task's current failing source. */
 export function currentResultDiagnostic(task:Task):MainlineResultDiagnostic|undefined{
@@ -77,6 +84,7 @@ export function currentResultDiagnostic(task:Task):MainlineResultDiagnostic|unde
   const setupRequests=(task.mainline?.capability_readiness as {setup_requests?:{id:string;status:string}[]}|undefined)?.setup_requests||[];
   const requiredIds=new Set(setupRequests.filter(item=>item.status==="required").map(item=>item.id));
   const currentReceipts=new Set((task.receipts||[]).filter(item=>["failed","in_doubt","invalid_result"].includes(item.status)).map(item=>item.id));
+  const providerRequestActive=!!activeProviderReceipt(task);
   // A provider outcome that is still unknown is the most important safety
   // boundary: an exhausted grant is a consequence of that physical attempt,
   // not permission to hide it behind a generic allowance message.
@@ -85,7 +93,7 @@ export function currentResultDiagnostic(task:Task):MainlineResultDiagnostic|unde
   // A task-scoped grant is otherwise the immediate execution boundary. Model
   // setup cannot revive an expired/revoked grant or increase an exhausted call
   // budget.
-  const authorization=[...diagnostics].reverse().find(item=>item.source.kind==="call_grant");
+  const authorization=providerRequestActive?undefined:[...diagnostics].reverse().find(item=>item.source.kind==="call_grant");
   if(authorization)return authorization;
   const modelCall=[...diagnostics].reverse().find(item=>item.source.kind==="model_call"&&currentReceipts.has(item.source.id));
   if(modelCall)return modelCall;
@@ -100,6 +108,7 @@ export function currentResultDiagnostic(task:Task):MainlineResultDiagnostic|unde
  * behind explicit adapter commands or the server-owned Journey worker.
  */
 export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentation {
+  const selected=(():CurrentTaskPresentation=>{
   const view = task.mainline;
   if (!view) {
     return {
@@ -159,6 +168,16 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
       detail: `${Math.max(view.review_summary.pending_reviews || view.review_summary.current_reviews || 1, 1)} 个结果需要人工判断；预置候选不是模型推理结果，也尚未被人工接受。`,
       primary: { kind: "open_review", id: view.review_work_item_id },
       action: deliveryReview,
+    };
+  }
+
+  const providerRequest=activeProviderReceipt(task);
+  if(providerRequest){
+    return {
+      kind:"running",
+      title:providerRequest.status==="cancelling"?"正在请求停止模型调用":"模型请求正在执行",
+      detail:"这是服务端记录的活动 Provider 请求。原授权可能已预留调用额度，但在请求结算前不会显示成“额度已用完”。关闭页面不会重新发送请求。",
+      primary:providerRequest.status!=="cancelling"&&task.actions?.stop?.available?{kind:"stop"}:undefined,
     };
   }
 
@@ -324,10 +343,11 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
   );
   if (duplicateSampleApproval) {
     return {
-      kind: "blocked",
-      title: "样例自动接续没有完成",
+      kind: "ready_to_start",
+      title: "方案已保存，可以继续测试样例",
       detail:
-        "同一 Builder 与样例授权不应再次要求手动启动。请核实授权是否失效或范围是否变化。",
+        "继续只执行服务器冻结 Draft 的样例阶段，不会重新提交 Schema、重建方案、发布版本或启动全量处理。确认前会再次显示精确图片、视觉模型和剩余调用范围。",
+      primary:{kind:"prepare_sample"},
       action: duplicateSampleApproval,
     };
   }
@@ -376,4 +396,6 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
     title: "任务状态已保存",
     detail: "当前没有需要你执行的技术步骤；等待服务器状态更新或继续说明需求。",
   };
+  })();
+  return {...selected,modelBindings:taskModelBindingSummary(task)};
 }

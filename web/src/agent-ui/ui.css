@@ -1023,6 +1023,15 @@ caption {
   padding: 16px 0;
   border-block: 1px solid var(--aa-border);
 }
+.ui-app .task-model-bindings { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 1px; border-block: 1px solid var(--aa-border); background: var(--aa-border); }
+.ui-app .task-model-role, .ui-app .task-refiner-state { display: grid; align-content: start; gap: 5px; min-width: 0; padding: 12px; background: var(--aa-bg); }
+.ui-app .task-model-bindings span { color: var(--aa-text-muted); font-size: 11px; }
+.ui-app .task-model-bindings strong, .ui-app .task-model-bindings code { overflow-wrap: anywhere; }
+.ui-app .task-model-bindings small { line-height: 1.5; }
+.ui-app .task-model-bindings > .ui-disclosure { grid-column: 1 / -1; padding: 6px 12px; background: var(--aa-bg); }
+.ui-app .task-refiner-in_draft strong { color: var(--aa-success); }
+.ui-app .task-refiner-authorized_only strong { color: var(--aa-warning); }
+@media(max-width:760px) { .ui-app .task-model-bindings { grid-template-columns: minmax(0,1fr); } .ui-app .task-model-bindings > .ui-disclosure { grid-column: 1; } }
 .ui-app .current-task-copy { display: grid; gap: 5px; }
 .ui-app .current-task-copy > small {
   color: var(--aa-text-muted);

@@ -372,7 +372,7 @@ describe("single current-task presentation", () => {
     expect(result.primary).toBeUndefined();
   });
 
-  it("never exposes a second same-scope Sample execution approval", () => {
+  it("continues the frozen Sample stage without resubmitting Schema or Builder", () => {
     const result = selectCurrentTaskPresentation(
       task(
         view({
@@ -383,9 +383,25 @@ describe("single current-task presentation", () => {
       ),
     );
 
-    expect(result.kind).toBe("blocked");
-    expect(result.primary).toBeUndefined();
-    expect(result.detail).toContain("授权");
+    expect(result).toMatchObject({
+      kind:"ready_to_start",
+      title:"方案已保存，可以继续测试样例",
+      primary:{kind:"prepare_sample"},
+      action:{id:"test_pipeline_samples"},
+    });
+    expect(result.detail).toContain("不会重新提交 Schema");
+  });
+
+  it("keeps an active Provider request ahead of an exhausted grant diagnostic",()=>{
+    const exhausted=diagnostic("task_call_budget_exhausted","call_grant");
+    const result=selectCurrentTaskPresentation(task(view({result_diagnostics:[exhausted]}),{
+      phase:"running",
+      receipts:[{id:"call-active",title:"模型结构化决策",status:"running",stage:"provider_request"}],
+      actions:{stop:{available:true,reason:"provider request active"}},
+    }));
+    expect(result).toMatchObject({kind:"running",title:"模型请求正在执行",primary:{kind:"stop"}});
+    expect(result.title).not.toContain("额度已用完");
+    expect(result.diagnostic).toBeUndefined();
   });
 
   it("uses actual server activity as the running state", () => {

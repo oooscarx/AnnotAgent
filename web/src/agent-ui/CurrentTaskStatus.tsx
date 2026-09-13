@@ -6,9 +6,10 @@ import type {
 } from "./currentTaskPresentation";
 import { Disclosure } from "./Disclosure";
 import { Icon } from "./Icon";
+import { TaskModelBindings } from "./TaskModelBindings";
 
 const actionLabel: Record<CurrentTaskAction["kind"], string> = {
-  prepare_sample: "开始标注样例",
+  prepare_sample: "生成方案并测试样例",
   confirm_approval: "确认当前范围",
   stop: "停止当前操作",
   resume: "继续任务",
@@ -51,6 +52,9 @@ export function CurrentTaskStatus({
   const primary = presentation.primary;
   const downloadable =
     primary?.kind === "download_package" && primary.url ? primary.url : undefined;
+  const primaryLabel = presentation.action?.id === "test_pipeline_samples"
+    ? "继续测试已保存方案"
+    : primary ? actionLabel[primary.kind] : "";
 
   return (
     <section
@@ -63,6 +67,8 @@ export function CurrentTaskStatus({
         <strong>{presentation.title}</strong>
         <p>{presentation.detail}</p>
       </div>
+
+      {presentation.modelBindings && <TaskModelBindings summary={presentation.modelBindings} />}
 
       {approval && presentation.kind !== "running" && (
         <Disclosure title="查看图片、模型、预算和有效期">
@@ -119,7 +125,7 @@ export function CurrentTaskStatus({
                   : "primary"
               }
               type="button"
-              disabled={busy}
+              disabled={busy && primary.kind !== "stop"}
               onClick={() => onPrimary(primary)}
             >
               <Icon
@@ -134,7 +140,7 @@ export function CurrentTaskStatus({
                 }
                 size={16}
               />
-              {busy ? "正在读取服务器状态…" : actionLabel[primary.kind]}
+              {busy && primary.kind !== "stop" ? "正在读取服务器状态…" : primaryLabel}
             </button>
           )
         )}
