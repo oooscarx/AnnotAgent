@@ -130,8 +130,8 @@ Legacy saved Schema attempts without `diagnostic` remain readable through the de
   retained and only one physical request occurs.
 - Model Profile caps 1,024, 2,048 and 4,096 remain identical in stage Provider/request config.
 
-No commercial Provider call was made. Real `glm-5.2` recovery remains unverified without a new
-explicit cost authorization.
+These checks were completed before the authorized live smoke below. They do not depend on a
+commercial Provider.
 
 ## Explicit recovery API
 
@@ -230,9 +230,69 @@ they do not resend the Provider request.
 Migration `0072_conversation_schema_retries.sql` stores exact retry membership and enforces one
 successor command per `(task_id,retry_of)`. Old calls and authorization rows remain unchanged.
 
+## Authorized live GLM smoke (2026-09-13)
+
+The user explicitly authorized paid testing. The test copied the live SQLite database and the one
+required workspace-file credential into `/tmp/TEST-schema-output-paid.MGUL5Y`, then ran this branch
+on `127.0.0.1:8894`. The existing `127.0.0.1:8788` process and real workspace stayed running and
+unchanged. The TEST Project was `TEST-schema-paid-1b51c5c9`; it contained no images and no saved
+Schema, Workflow, Run or annotations.
+
+The saved Endpoint was the OpenAI-compatible proxy `https://lab.cs.tsinghua.edu.cn/ai-platform/api/v1`,
+not the official Zhipu hostname. The official Zhipu references checked before the test document
+`thinking: {"type":"disabled"}`, `response_format: {"type":"json_object"}` and `tool_choice:auto`:
+
+- <https://docs.bigmodel.cn/cn/guide/capabilities/thinking-mode>
+- <https://docs.bigmodel.cn/api-reference/%E6%A8%A1%E5%9E%8B-api/%E5%AF%B9%E8%AF%9D%E8%A1%A5%E5%85%A8>
+
+The test therefore used explicit TEST-only Profile revisions rather than detecting a dialect from
+the model name. Both revisions froze a 4,096 output cap and
+`thinking: {"type":"disabled"}`. Revision 4 selected JSON Object; revision 5 selected native tool.
+Each change produced a new passive preview and authorization scope before its request. Schema set
+Provider retries to zero.
+
+### Attempt 1: JSON Object
+
+- Call `e010e115-4286-4cdc-85af-127f5f4c8bf9`, request hash
+  `35d79954d960b4466050c45a5da6e542b5f84868da230f2bf92e6dfc95f81e41`.
+- 4.412 seconds; 544 input tokens, 247 output tokens, zero cached input tokens; Provider cost
+  unavailable, so cost remains `null` rather than zero.
+- Provider returned `finish_reason=stop`, 907 bytes of content, zero tool calls and 26 reasoning
+  tokens. Although disabled thinking was sent, the response still contained 153 bytes of
+  `reasoning_content`; the system records only its presence/length and never its text.
+- The content was JSON-like but omitted the required action `name`. The call settled with
+  `action_json_incomplete` and safe Provider detail `action_name_missing`. The invalid content was
+  discarded after usage and lengths were saved. No Schema Draft or image operation was created.
+
+### Attempt 2: explicit native-tool recovery
+
+- `GET schema-retry-preview` bound the new native-tool Profile revision, the first call/request
+  hash, `previous_grant_id`, cumulative `maximum_calls=2`, a new scope hash, 4,096 cap and disabled
+  thinking.
+- New call `2d064d93-ebfe-44f1-afea-90e2ff9c2d84`, request hash
+  `c8f85da2411db6d4a3e1d7659351ec765edcfa946a96fef4f57ca6014ffcc2c9`, linked through
+  `retry_of=e010e115-4286-4cdc-85af-127f5f4c8bf9`.
+- 5.338 seconds; 1,469 input tokens, 28 output tokens, zero cached input tokens; cost remains
+  unknown/null.
+- Provider returned `finish_reason=tool_calls`, no content, and exactly one correctly named native
+  `propose_annotation_schema` call. Its arguments were `{}`, so the strict business parser rejected
+  missing required field `decision` as `schema_violation`. The response reported 20 reasoning
+  tokens and 111 bytes of reasoning content despite the disabled-thinking request; again no
+  reasoning text was persisted.
+- Reposting the exact retry command returned `replayed=true`, the identical receipt ID and request
+  hash, and did not add an attempt. The task has exactly two physical attempt records and two call
+  receipts. Both `calls/{call}/schema-draft` reads returned `null`.
+
+The live smoke therefore verifies request delivery, frozen request evidence, actual usage retention,
+strict rejection, explicit retry linkage and no-duplicate replay. It does **not** establish a valid
+GLM Schema result on this proxy: JSON Object omitted the envelope name, while native tool emitted
+empty arguments. HTTP completion and billed usage are distinct from a valid Schema decision.
+
 ## Remaining limits
 
-- No commercial `glm-5.2` request was made, so the real endpoint path is not claimed verified.
+- Two explicitly authorized `glm-5.2` requests reached the configured proxy. Neither produced a
+  business-valid Schema, so Schema success and subsequent real Sample continuation remain
+  unverified for this Endpoint/Profile. No further paid retry was made.
 - The recovery path supports a settled invalid Schema response from the direct Task/Journey Schema
   operation. It does not reinterpret a queued supplement as the original Task Schema.
 - Provider rejection without a completed response remains `in_doubt` or typed Provider failure;
