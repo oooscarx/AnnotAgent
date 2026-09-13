@@ -391,6 +391,33 @@ it("sample consent uses the saved delivery Schema instead of another Schema mode
   expect(JSON.parse(query.get("allowed_models")!)).toEqual(["model-profile:vision","model-instance:ready-local"]);
   expect(reads.paths.some(p=>p.includes("schema-preview"))).toBe(false);
 });
+it("replaces an exhausted separated Builder grant through one fresh Builder plus Sample consent",async()=>{
+  const separated={id:"build_and_test_pipeline",state:"requires_confirmation",method:"GET",url:`${root}/t1/builder-preview`,requires_confirmation:true,reason:"builder_and_image_permissions_are_separate"};
+  const workspace={project_id:"TEST-alpha",project_owner_id:"owner-a",conversation_id:"conversation-a",task:{input:{id:"t1",schema_revision:"schema-1"}},agent_model:{revision:2,model_profile_id:null},actions:{},queue:[],calls:[],mainline:{...mainline("t1"),available_actions:[separated]}};
+  const reads=mockTransport({
+    [`${root}/t1/workspace`]:workspace,
+    "/api/projects/TEST-alpha/model-bindings":{bindings:[{model_profile_id:"vision"}]},
+    "/api/model-instances":{instances:[],model_profiles:[{selectable:true,capabilities:["prompted_segmentation"],selection_id:"model-instance:sam"}]},
+    [`${root}/t1/delivery-schema`]:{required:true,schema:{id:"00000000-0000-4000-8000-000000000041",revision:2}},
+  });
+  const calls:string[]=[];
+  const consent={id:"journey-new",task_id:"t1",builder_operation_id:"builder-new",sample_operation_id:"sample-new",builder_model_id:"planner",previous_grant_id:"builder-old",builder_scope_hash:"new-scope",schema_id:"00000000-0000-4000-8000-000000000041",schema_revision:2,schema_digest:"schema",images:[{image_id:"image-uuid",content_hash:"pixels"}],allowed_models:[{model_id:"model-profile:vision",binding_digest:"vision-digest"},{model_id:"model-instance:sam",binding_digest:"sam-digest"}],maximum_builder_calls:8,maximum_sample_calls:12,expires_at:"2099-01-01T00:00:00Z",allow_unknown_cost:false};
+  const preview={consent,builder:{model_name:"Planner",destination:"https://TEST.invalid"},data:{models:[{scope:consent.allowed_models[0],display_name:"Vision",destination:"https://VISION.invalid",permissions:{}},{scope:consent.allowed_models[1],display_name:"SAM",destination:"Local",permissions:{}}]}};
+  const transport:Transport=async<T>(path:string,init?:RequestInit)=>{
+    calls.push(path);
+    if(path.startsWith(`${root}/t1/journey-preview?`))return preview as T;
+    return reads.transport<T>(path,init);
+  };
+  const adapter=new HttpAdapter(transport,memoryStorage());await adapter.refresh();await adapter.loadTask("TEST-alpha","t1");calls.length=0;
+  await adapter.prepareAction({id:"fresh-scope",project:"TEST-alpha",task:"t1",revision:"schema-1"},"sample");
+  expect(calls).not.toContain(`${root}/t1/builder-preview`);
+  const journey=calls.find(path=>path.startsWith(`${root}/t1/journey-preview?`));
+  expect(journey).toBeTruthy();
+  const query=new URL(journey!,"http://TEST.local").searchParams;
+  expect(query.get("schema_id")).toBe(consent.schema_id);
+  expect(JSON.parse(query.get("allowed_models")!)).toEqual(["model-profile:vision","model-instance:sam"]);
+  expect(adapter.snapshot().tasks.find(item=>item.id==="t1")?.approval).toMatchObject({title:"批准生成方案并测试样例",revision:"new-scope"});
+});
 it("uses one server-owned preview and approval for Schema, Builder and Sample",async()=>{
   const previewPath=`${root}/t1/journey-preview`;
   const combined={id:"build_and_test_pipeline",state:"requires_confirmation",method:"GET",url:previewPath,requires_confirmation:true,reason:"confirm_one_bounded_schema_builder_sample_scope",scope:{maximum_sample_images:3}};

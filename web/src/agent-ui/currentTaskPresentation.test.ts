@@ -275,6 +275,21 @@ describe("single current-task presentation", () => {
     expect(result.primary).toBeUndefined();
   });
 
+  it("offers a newly scoped Sample authorization after an older task call grant is exhausted",()=>{
+    const exhausted=diagnostic("task_call_budget_exhausted","call_grant");
+    const result=selectCurrentTaskPresentation(task(view({
+      result_diagnostics:[exhausted],
+      available_actions:[action("build_and_test_pipeline","requires_confirmation")],
+    })));
+    expect(result).toMatchObject({
+      kind:"ready_to_start",
+      title:"上一轮没有完成，可以重新准备样例",
+      primary:{kind:"prepare_sample"},
+      action:{id:"build_and_test_pipeline",state:"requires_confirmation"},
+    });
+    expect(result.detail).toContain("不会沿用旧授权自动重试");
+  });
+
   it("keeps a current failed model receipt ahead of a broader setup request",()=>{
     const invalid=diagnostic("model_response_invalid_structure","model_call");
     const missingWeights=diagnostic("model_weights_missing","capability_setup_request");

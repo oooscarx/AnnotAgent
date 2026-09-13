@@ -156,6 +156,28 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
     };
   }
 
+  const buildAndSample = action(
+    task,
+    "build_and_test_pipeline",
+    "requires_confirmation",
+  );
+  const missing = view.intake?.missing_slots || [];
+  const hasFrozenImages = !missing.includes("dataset_scope");
+  if (buildAndSample && hasFrozenImages) {
+    const previousFailure = currentResultDiagnostic(task);
+    return {
+      kind: "ready_to_start",
+      title: previousFailure
+        ? "上一轮没有完成，可以重新准备样例"
+        : "图片和要求已记录，可以准备样例",
+      detail: previousFailure
+        ? "上一轮的额度、费用和失败记录会保留；继续前将展示新的图片、模型和调用范围，不会沿用旧授权自动重试。"
+        : "确认当前图片、模型和预算范围后，服务器会连续准备规范、生成方案并运行最多 3 张样例。",
+      primary: { kind: "prepare_sample" },
+      action: buildAndSample,
+    };
+  }
+
   const diagnostic=currentResultDiagnostic(task);
   if(diagnostic){
     const copy=diagnosticCopy[diagnostic.code];
@@ -274,24 +296,6 @@ export function selectCurrentTaskPresentation(task: Task): CurrentTaskPresentati
         : "确认这次样例范围",
       detail: "这是当前任务唯一待确认的范围；详细模型、图片和预算保持可查看。",
       primary: { kind: "confirm_approval" },
-    };
-  }
-
-  const buildAndSample = action(
-    task,
-    "build_and_test_pipeline",
-    "requires_confirmation",
-  );
-  const missing = view.intake?.missing_slots || [];
-  const hasFrozenImages = !missing.includes("dataset_scope");
-  if (buildAndSample && hasFrozenImages) {
-    return {
-      kind: "ready_to_start",
-      title: "图片和要求已记录，可以准备样例",
-      detail:
-        "确认当前图片、模型和预算范围后，服务器会连续准备规范、生成方案并运行最多 3 张样例。",
-      primary: { kind: "prepare_sample" },
-      action: buildAndSample,
     };
   }
 

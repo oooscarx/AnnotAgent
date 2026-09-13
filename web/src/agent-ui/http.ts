@@ -752,7 +752,15 @@ export class HttpAdapter implements WorkspaceAdapter {
       if(combined) {
         if(combined.state!=="requires_confirmation"||combined.method!=="GET"||!combined.requires_confirmation)throw new Error("服务器没有提供可确认的方案与样例范围");
         const read=new URL(combined.url,"http://annotagent.local");
-        if(read.origin!=="http://annotagent.local"||read.pathname!==`${root}/journey-preview`||read.search||read.hash)throw new Error("服务器返回的方案与样例预览地址不属于当前任务");
+        if(read.origin!=="http://annotagent.local"||read.search||read.hash)throw new Error("服务器返回的方案与样例预览地址不属于当前任务");
+        if(read.pathname===`${root}/builder-preview`&&combined.reason==="builder_and_image_permissions_are_separate") {
+          // Older complete-intake read models exposed the separated Builder
+          // preview without its required selection query. Do not call that
+          // incomplete URL. Fall through to the existing exact Journey preview
+          // construction below so a fresh consent replaces the exhausted grant
+          // and still covers Builder + Sample as one user decision.
+        } else {
+          if(read.pathname!==`${root}/journey-preview`)throw new Error("服务器返回的方案与样例预览地址不属于当前任务");
         const p=await this.transport<JourneyPreview>(combined.url);
         const raw=p.consent;
         const complete=[raw.id,raw.task_id,raw.builder_operation_id,raw.sample_operation_id,raw.builder_scope_hash,raw.schema_digest,raw.expires_at].every(value=>typeof value==="string"&&value.length>0);
@@ -763,6 +771,7 @@ export class HttpAdapter implements WorkspaceAdapter {
         this.approvals.set(task.id,{id:c.id,url:`${root}/journey-consents`,body:consent});
         this.emit({tasks:this.state.tasks.map(t=>t.id===task.id?{...t,approval:{id:c.id,title:"确认这次样例范围",revision:consent.builder_scope_hash,budget:null,scope:[`${consent.images.length} 张图片已冻结；最多 ${consent.maximum_builder_calls} 次规划调用、${consent.maximum_sample_calls} 次样例调用`,p.builder.model_name,p.builder.destination,...models.map(model=>`${model.display_name} → ${model.destination}`),`有效期：${consent.expires_at}`,"保存这一次授权后由服务器连续准备标注规范、生成方案并运行样例；不发布、不批量处理、不写正式标注"]}}:t)});
         return;
+        }
       }
       const action=task.mainline?.available_actions.find(item=>item.id==="test_pipeline_samples");
       if(action) {
