@@ -12,6 +12,7 @@ export function batchControls(batch:DatasetBatchSummary):("pause"|"resume"|"canc
   if(batch.in_trash)return [];
   if(batch.status==="running")return ["pause","cancel"];
   if(batch.status==="paused"||batch.status==="pending")return ["resume","cancel"];
+  if(batch.status==="awaiting_review")return ["cancel"];
   return [];
 }
 export function BatchDetail({service,projectId,batchId}:{service:BatchDetailService;projectId:string;batchId:string}) {

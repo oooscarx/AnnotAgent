@@ -12,6 +12,7 @@ it("preserves supported controls without inventing terminal resume",()=>{
   expect(batchControls(batch)).toEqual(["pause","cancel"]);
   expect(batchControls({...batch,status:"paused"})).toEqual(["resume","cancel"]);
   expect(batchControls({...batch,status:"pending"})).toEqual(["resume","cancel"]);
+  expect(batchControls({...batch,status:"awaiting_review"})).toEqual(["cancel"]);
   expect(batchControls({...batch,in_trash:true})).toEqual([]);
-  for(const status of ["failed","interrupted","cancelled","completed","awaiting_review","partial","budget_exceeded"] as const)expect(batchControls({...batch,status})).toEqual([]);
+  for(const status of ["failed","interrupted","cancelled","completed","partial","budget_exceeded"] as const)expect(batchControls({...batch,status})).toEqual([]);
 });
