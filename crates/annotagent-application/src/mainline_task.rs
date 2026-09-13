@@ -497,6 +497,23 @@ impl LocalApplication {
                 "message":"Complete the Task delivery intake before planning or execution."
             }));
         } else if delivery.blockers.is_empty()
+            && let Some(pending_journey_sample) = pending_journey_sample
+        {
+            // A saved Journey owns the transition from Schema through Builder
+            // and Sample. Do not expose the initial preview again while that
+            // durable dispatch is running, queued, or waiting at its next exact
+            // checkpoint; doing so can only collide with its original grant.
+            actions.push(pending_journey_sample);
+        } else if schema.is_none() && !calls.is_empty() {
+            // Every initial Schema authorization is immutable. A terminal or
+            // in-flight receipt without a usable Draft must be inspected (and,
+            // where supported, repaired through its explicit retry contract),
+            // never replaced by another initial Journey preview.
+            blockers.push(json!({
+                "code":"schema_attempt_requires_resolution",
+                "message":"The existing Schema request has a durable receipt but no usable Schema Draft. Inspect that receipt; a fresh initial Journey is not available for this Task."
+            }));
+        } else if delivery.blockers.is_empty()
             && !delivery.missing_slots.is_empty()
             && delivery.saved.as_ref().is_some_and(|saved| {
                 saved
@@ -579,10 +596,6 @@ impl LocalApplication {
                     "preview_freezes_model_bindings_destination_and_cost":true
                 }
             }));
-        } else if processing.is_empty()
-            && let Some(pending_journey_sample) = pending_journey_sample
-        {
-            actions.push(pending_journey_sample);
         } else if processing.is_empty() && journey_sample_operation(&journeys).is_some() {
             let sample = journey_sample_operation(&journeys).expect("checked Journey sample");
             let status = sample["status"].as_str().unwrap_or("unknown");

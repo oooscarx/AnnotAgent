@@ -76,11 +76,17 @@ export function currentResultDiagnostic(task:Task):MainlineResultDiagnostic|unde
   }
   const setupRequests=(task.mainline?.capability_readiness as {setup_requests?:{id:string;status:string}[]}|undefined)?.setup_requests||[];
   const requiredIds=new Set(setupRequests.filter(item=>item.status==="required").map(item=>item.id));
-  // A task-scoped grant is the immediate execution boundary. Model setup cannot
-  // revive an expired/revoked grant or increase an exhausted call budget.
+  const currentReceipts=new Set((task.receipts||[]).filter(item=>["failed","in_doubt","invalid_result"].includes(item.status)).map(item=>item.id));
+  // A provider outcome that is still unknown is the most important safety
+  // boundary: an exhausted grant is a consequence of that physical attempt,
+  // not permission to hide it behind a generic allowance message.
+  const unknownCall=[...diagnostics].reverse().find(item=>item.code==="provider_outcome_unknown"&&item.source.kind==="model_call"&&currentReceipts.has(item.source.id));
+  if(unknownCall)return unknownCall;
+  // A task-scoped grant is otherwise the immediate execution boundary. Model
+  // setup cannot revive an expired/revoked grant or increase an exhausted call
+  // budget.
   const authorization=[...diagnostics].reverse().find(item=>item.source.kind==="call_grant");
   if(authorization)return authorization;
-  const currentReceipts=new Set((task.receipts||[]).filter(item=>["failed","in_doubt","invalid_result"].includes(item.status)).map(item=>item.id));
   const modelCall=[...diagnostics].reverse().find(item=>item.source.kind==="model_call"&&currentReceipts.has(item.source.id));
   if(modelCall)return modelCall;
   const capability=[...diagnostics].reverse().find(item=>item.source.kind==="capability_setup_request"&&requiredIds.has(item.source.id));

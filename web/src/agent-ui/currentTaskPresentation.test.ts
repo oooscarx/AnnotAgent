@@ -275,6 +275,20 @@ describe("single current-task presentation", () => {
     expect(result.primary).toBeUndefined();
   });
 
+  it("keeps an unknown provider outcome ahead of the allowance consumed by that request",()=>{
+    const exhausted=diagnostic("task_call_budget_exhausted","call_grant");
+    const unknown=diagnostic("provider_outcome_unknown","model_call");
+    const result=selectCurrentTaskPresentation(task(view({
+      result_diagnostics:[unknown,exhausted],
+    }),{phase:"outcome_unknown",receipts:[{id:"call-1",title:"provider request",status:"in_doubt"}]}));
+    expect(result).toMatchObject({
+      kind:"blocked",
+      title:"远端结果未知",
+      diagnostic:{code:"provider_outcome_unknown"},
+    });
+    expect(result.primary).toBeUndefined();
+  });
+
   it("offers a newly scoped Sample authorization after an older task call grant is exhausted",()=>{
     const exhausted=diagnostic("task_call_budget_exhausted","call_grant");
     const result=selectCurrentTaskPresentation(task(view({

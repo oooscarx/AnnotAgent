@@ -1035,6 +1035,63 @@ mod tests {
             read["available_actions"][0]["scope"]["maximum_sample_images"],
             3
         );
+        let owner = app.conversation_project_identity(project).unwrap();
+        let unresolved_call = Uuid::new_v4();
+        let unresolved_scope = "a".repeat(64);
+        app.store()
+            .authorize_conversation_calls(
+                &owner,
+                &annotagent_storage::ConversationCallGrant {
+                    id: unresolved_call,
+                    task_id: receipt.task_id,
+                    scope_hash: unresolved_scope.clone(),
+                    maximum_calls: 2,
+                    expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+                },
+            )
+            .unwrap();
+        app.store()
+            .reserve_conversation_call(
+                &owner,
+                receipt.task_id,
+                unresolved_call,
+                &unresolved_scope,
+                &"b".repeat(64),
+            )
+            .unwrap();
+        app.store()
+            .finish_conversation_call(
+                &owner,
+                receipt.task_id,
+                unresolved_call,
+                annotagent_storage::ConversationCallStatus::InDoubt,
+                serde_json::json!({"failure":{
+                    "stage":"provider_request",
+                    "category":"interrupted",
+                    "http_status":504
+                }}),
+            )
+            .unwrap();
+        let unresolved = app
+            .mainline_task_read_model(project, conversation, receipt.task_id)
+            .unwrap();
+        assert!(
+            unresolved["available_actions"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            unresolved["result_diagnostics"][0]["code"],
+            "provider_outcome_unknown"
+        );
+        assert!(
+            unresolved["blockers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|blocker| { blocker["code"] == "schema_attempt_requires_resolution" })
+        );
         assert_eq!(
             app.send_project_conversation_message(project, conversation, &command)
                 .unwrap(),
