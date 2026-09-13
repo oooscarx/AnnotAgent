@@ -495,6 +495,7 @@ impl SqliteStore {
         }
         self.with_connection(|db| {
             let tx = db.unchecked_transaction()?; owner(&tx, project, grant.task_id)?;
+            crate::conversation_task_lifecycle::require_active_in(&tx, grant.task_id)?;
             let saved: Option<(String,Option<String>,String,u32,String)> = tx.query_row("SELECT task_id,previous_id,scope_hash,maximum_calls,expires_at FROM conversation_authorization_revisions WHERE id=?1", [grant.id.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).optional()?;
             if let Some((task,base,scope,maximum,expiry)) = saved {
                 if task != grant.task_id.to_string() || base != Some(previous.to_string()) || scope != grant.scope_hash || maximum != grant.maximum_calls || expiry != grant.expires_at.to_rfc3339() { return Err(invalid("authorization revision retry conflicts")); }
@@ -712,6 +713,7 @@ impl SqliteStore {
         self.with_connection(|db| {
             let tx = db.unchecked_transaction()?;
             owner(&tx, project, grant.task_id)?;
+            crate::conversation_task_lifecycle::require_active_in(&tx, grant.task_id)?;
             let authorize = || -> Result<bool, StorageError> {
             let historical: Option<(String,String,u32,String)> = tx.query_row("SELECT task_id,scope_hash,maximum_calls,expires_at FROM conversation_authorization_revisions WHERE id=?1 AND previous_id IS NULL", [grant.id.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).optional()?;
             if let Some((task,scope,maximum,expires)) = historical {
@@ -762,6 +764,7 @@ impl SqliteStore {
                 if original_scope != scope_hash { return Err(invalid("call scope changed")); }
                 return Ok(ConversationCallAdmission::Existing(saved));
             }
+            crate::conversation_task_lifecycle::require_active_in(&tx, task)?;
             require_call_admission_clear(&tx, task, id)?;
             crate::conversation_queued_planning::require_call(&tx,project,task,id,request_hash)?;
             crate::conversation_future_schema_proposal::require_current_source_for_call(&tx,project,task,id)?;

@@ -189,6 +189,7 @@ impl SqliteStore {
                 }
                 return Ok(Some(saved));
             }
+            crate::conversation_task_lifecycle::require_active_in(&tx,task)?;
             crate::conversation_stop::require_admission_clear(&tx,task,&id.to_string(),true)?;
             if let Some((schema_id,revision))=schema {
                 let saved=crate::conversation_schema::read(&tx,project,schema_id,Some(revision))?;

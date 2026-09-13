@@ -201,7 +201,7 @@ pub(super) async fn send(
         .map_err(|error| {
             if matches!(error.downcast_ref::<annotagent_storage::StorageError>(), Some(annotagent_storage::StorageError::StaleConversationAgentModel)) {
                 ApiError { status: StatusCode::CONFLICT, body: json!({"error":error.to_string(),"code":"send_model_selection_changed","status":409,"admitted":false}) }
-            } else { ApiError::bad_request(error) }
+            } else { ApiError::conversation(error) }
         })
 }
 
@@ -222,12 +222,44 @@ pub(super) async fn send_receipt(
 pub(super) async fn tasks(
     State(state): State<ServerState>,
     AxumPath((project, conversation)): AxumPath<(String, uuid::Uuid)>,
+    Query(page): Query<TaskPage>,
 ) -> ApiResult<Json<Vec<annotagent_storage::ConversationTask>>> {
     state
         .application
-        .conversation_tasks(&project, conversation)
+        .conversation_tasks_filtered(&project, conversation, page.state)
         .map(Json)
         .map_err(ApiError::conversation)
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub(super) struct TaskPage {
+    #[serde(default)]
+    state: annotagent_storage::ConversationTaskLifecycleFilter,
+}
+
+pub(super) async fn change_task_lifecycle(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, task)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+    Json(input): Json<annotagent_storage::ConversationTaskLifecycleCommand>,
+) -> ApiResult<Json<annotagent_storage::ConversationTaskLifecycleReceipt>> {
+    state
+        .application
+        .change_conversation_task_lifecycle(&project, conversation, task, &input)
+        .map(Json)
+        .map_err(ApiError::conversation)
+}
+
+pub(super) async fn task_lifecycle_receipt(
+    State(state): State<ServerState>,
+    AxumPath((project, conversation, command)): AxumPath<(String, uuid::Uuid, uuid::Uuid)>,
+) -> ApiResult<Json<annotagent_storage::ConversationTaskLifecycleReceipt>> {
+    state
+        .application
+        .conversation_task_lifecycle_receipt(&project, conversation, command)
+        .map_err(ApiError::conversation)?
+        .map(Json)
+        .ok_or_else(|| ApiError::not_found("Task lifecycle operation was not found"))
 }
 
 pub(super) async fn selection(

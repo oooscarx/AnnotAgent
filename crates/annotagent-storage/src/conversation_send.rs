@@ -131,6 +131,7 @@ impl SqliteStore {
             if disposition!=ConversationSendDisposition::NewTask {
                 let owned:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_tasks WHERE id=?1 AND conversation_id=?2 AND schema_revision=?3)",params![task_id.to_string(),conversation.to_string(),input.schema_revision],|r|r.get(0))?;
                 if !owned { return Err(invalid("Send task is foreign, missing or has a different frozen schema")); }
+                crate::conversation_task_lifecycle::require_active_in(&tx, task_id)?;
             }
             let message=crate::conversations::append_message_in_transaction(&tx,project,conversation,&input.message)?;
             if disposition==ConversationSendDisposition::NewTask {

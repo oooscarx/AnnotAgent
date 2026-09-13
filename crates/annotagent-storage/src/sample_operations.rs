@@ -69,6 +69,7 @@ impl SqliteStore {
             }
             if let Some(task)=value.request["conversation"]["task_id"].as_str() {
                 let task=uuid::Uuid::parse_str(task).map_err(|_|StorageError::InvalidSampleOperation("invalid conversation task".into()))?;
+                crate::conversation_task_lifecycle::require_active_in(&transaction,task)?;
                 crate::conversation_stop::require_admission_clear(&transaction,task,&value.id,true)?;
             }
             let active: u32 = transaction.query_row("SELECT COUNT(*) FROM sample_operations WHERE status IN ('queued','running','cancelling')", [], |row| row.get(0))?;

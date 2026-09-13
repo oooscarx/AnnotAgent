@@ -17,6 +17,7 @@ pub struct ConversationTask {
     pub conversation_id: Uuid,
     pub input: BeginConversationTask,
     pub created_at: String,
+    pub lifecycle: crate::ConversationTaskLifecycle,
 }
 
 fn invalid(message: &str) -> StorageError {
@@ -56,7 +57,9 @@ impl SqliteStore {
                 if owner != conversation.to_string() || message != input.source_message_id.to_string() || revision != input.schema_revision {
                     return Err(invalid("task request conflicts with its frozen goal or schema revision"));
                 }
-                return Ok(ConversationTask { conversation_id: conversation, input: BeginConversationTask { id: Uuid::parse_str(&id).map_err(|_| invalid("invalid saved task ID"))?, ..input.clone() }, created_at });
+                let id = Uuid::parse_str(&id).map_err(|_| invalid("invalid saved task ID"))?;
+                let lifecycle = crate::conversation_task_lifecycle::read_in(&transaction,id,&created_at)?;
+                return Ok(ConversationTask { conversation_id: conversation, input: BeginConversationTask { id, ..input.clone() }, created_at, lifecycle });
             }
             let source: Option<String> = transaction.query_row(
                 "SELECT input_json FROM conversation_messages WHERE conversation_id=?1 AND message_id=?2",
@@ -68,8 +71,9 @@ impl SqliteStore {
             }
             let created_at = chrono::Utc::now().to_rfc3339();
             transaction.execute("INSERT INTO conversation_tasks(id,conversation_id,source_message_id,schema_revision,created_at) VALUES(?1,?2,?3,?4,?5)", params![input.id.to_string(),conversation.to_string(),input.source_message_id.to_string(),input.schema_revision,created_at])?;
+            let lifecycle = crate::conversation_task_lifecycle::read_in(&transaction,input.id,&created_at)?;
             transaction.commit()?;
-            Ok(ConversationTask { conversation_id: conversation, input: input.clone(), created_at })
+            Ok(ConversationTask { conversation_id: conversation, input: input.clone(), created_at, lifecycle })
         })
     }
 
@@ -81,13 +85,30 @@ impl SqliteStore {
         // Reuse the journal owner boundary even when there are no tasks.
         self.conversation_messages(project, conversation, 0, 1)?;
         self.with_connection(|db| {
-            let mut statement = db.prepare("SELECT id,source_message_id,schema_revision,created_at FROM conversation_tasks WHERE conversation_id=?1 ORDER BY created_at,id")?;
-            let rows = statement.query_map([conversation.to_string()], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?)))?;
+            let mut statement = db.prepare("SELECT t.id,t.source_message_id,t.schema_revision,t.created_at,COALESCE(l.state,'active'),COALESCE(l.revision,0),l.archived_at,l.trashed_at,l.deletion_operation_id,COALESCE(l.updated_at,t.created_at) FROM conversation_tasks t LEFT JOIN conversation_task_lifecycle l ON l.task_id=t.id WHERE t.conversation_id=?1 ORDER BY t.created_at,t.id")?;
+            let rows = statement.query_map([conversation.to_string()], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?,row.get::<_,String>(4)?,row.get::<_,i64>(5)?,row.get::<_,Option<String>>(6)?,row.get::<_,Option<String>>(7)?,row.get::<_,Option<String>>(8)?,row.get::<_,String>(9)?)))?;
             rows.map(|row| {
-                let (id,source,schema_revision,created_at) = row?;
-                Ok(ConversationTask { conversation_id: conversation, input: BeginConversationTask { id: Uuid::parse_str(&id).map_err(|_| invalid("invalid saved task ID"))?, source_message_id: Uuid::parse_str(&source).map_err(|_| invalid("invalid saved message ID"))?, schema_revision }, created_at })
+                let (id,source,schema_revision,created_at,state,revision,archived_at,trashed_at,deletion_operation_id,updated_at) = row?;
+                Ok(ConversationTask { conversation_id: conversation, input: BeginConversationTask { id: Uuid::parse_str(&id).map_err(|_| invalid("invalid saved task ID"))?, source_message_id: Uuid::parse_str(&source).map_err(|_| invalid("invalid saved message ID"))?, schema_revision }, created_at, lifecycle: crate::ConversationTaskLifecycle { state: match state.as_str() { "active"=>crate::ConversationTaskLifecycleState::Active,"archived"=>crate::ConversationTaskLifecycleState::Archived,"trashed"=>crate::ConversationTaskLifecycleState::Trashed,_=>return Err(invalid("invalid saved task lifecycle")) }, revision:u64::try_from(revision).map_err(|_|invalid("invalid saved task lifecycle revision"))?, archived_at, trashed_at, deletion_operation_id:deletion_operation_id.map(|value|Uuid::parse_str(&value).map_err(|_|invalid("invalid saved deletion operation ID"))).transpose()?, updated_at } })
             }).collect()
         })
+    }
+
+    pub fn conversation_tasks_filtered(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        filter: crate::ConversationTaskLifecycleFilter,
+    ) -> Result<Vec<ConversationTask>, StorageError> {
+        Ok(self
+            .conversation_tasks(project, conversation)?
+            .into_iter()
+            .filter(|task| {
+                filter
+                    .sql_name()
+                    .is_none_or(|state| task.lifecycle.state.name() == state)
+            })
+            .collect())
     }
 }
 

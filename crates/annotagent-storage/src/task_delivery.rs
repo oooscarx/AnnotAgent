@@ -80,6 +80,7 @@ impl SqliteStore {
                 }
                 return Ok(TaskDeliveryRevision { revision, content_sha256: digest, intent: intent.clone() });
             }
+            crate::conversation_task_lifecycle::require_active_in(&tx,intent.task_id)?;
             let current: u32 = tx.query_row("SELECT COALESCE(MAX(revision),0) FROM task_delivery_intents WHERE task_id=?1", [intent.task_id.to_string()], |r| r.get(0))?;
             if current != expected_revision { return Err(invalid("delivery intent changed; reload before saving")); }
             let revision = current.checked_add(1).ok_or_else(|| invalid("delivery revision overflow"))?;

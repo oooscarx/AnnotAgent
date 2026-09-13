@@ -161,12 +161,14 @@ fn read(
             task_id: None,
         }),
         |(revision, task)| {
+            let task_id =
+                Uuid::parse_str(&task).map_err(|_| invalid("Invalid saved task identity"))?;
             Ok(ConversationTaskSelection {
                 revision: u64::try_from(revision)
                     .map_err(|_| invalid("Invalid task selection revision"))?,
-                task_id: Some(
-                    Uuid::parse_str(&task).map_err(|_| invalid("Invalid saved task identity"))?,
-                ),
+                task_id: crate::conversation_task_lifecycle::require_active_in(db, task_id)
+                    .is_ok()
+                    .then_some(task_id),
             })
         },
     )
@@ -190,6 +192,7 @@ impl SqliteStore {
             let current=read(&tx,project,conversation)?;
             let owned:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM conversation_tasks WHERE id=?1 AND conversation_id=?2)",params![input.task_id.to_string(),conversation.to_string()],|r|r.get(0))?;
             if !owned{return Err(invalid("Selected task belongs to another conversation"));}
+            crate::conversation_task_lifecycle::require_active_in(&tx,input.task_id)?;
             let saved:Option<(String,i64,String)>=tx.query_row("SELECT conversation_id,revision,task_id FROM conversation_task_selections WHERE request_id=?1",[input.request_id.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
             if let Some((owner,revision,task))=saved {
                 if owner!=conversation.to_string()||u64::try_from(revision).ok().and_then(|value|value.checked_sub(1))!=Some(input.expected_revision)||task!=input.task_id.to_string(){return Err(invalid("Selection retry changed its original request"));}

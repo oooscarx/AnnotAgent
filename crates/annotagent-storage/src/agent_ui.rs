@@ -39,6 +39,23 @@ impl SqliteStore {
         after: i64,
         limit: u32,
     ) -> Result<Value, StorageError> {
+        self.agent_ui_tasks_filtered(
+            project,
+            conversation,
+            after,
+            limit,
+            crate::ConversationTaskLifecycleFilter::Active,
+        )
+    }
+
+    pub fn agent_ui_tasks_filtered(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        after: i64,
+        limit: u32,
+        filter: crate::ConversationTaskLifecycleFilter,
+    ) -> Result<Value, StorageError> {
         let limit = bounds(after, limit)?;
         self.with_connection(|db| {
             crate::conversations::require_owner(db, project, conversation)?;
@@ -50,10 +67,12 @@ impl SqliteStore {
                 WHEN EXISTS(SELECT 1 FROM conversation_model_calls c WHERE c.task_id=t.id AND c.status='reserved') OR EXISTS(SELECT 1 FROM sample_operations s WHERE json_extract(s.request_json,'$.conversation.task_id')=t.id AND s.status IN ('queued','running')) OR EXISTS(SELECT 1 FROM conversation_builder_operations b WHERE b.task_id=t.id AND b.status='reserved') OR EXISTS(SELECT 1 FROM processing_operations p JOIN dataset_batches b ON b.id=p.id WHERE json_extract(p.state_json,'$.authorization.conversation.task_id')=t.id AND b.status IN ('pending','running')) THEN 'running'
                 WHEN EXISTS(SELECT 1 FROM conversation_human_requests h WHERE h.task_id=t.id AND h.status='pending') THEN 'waiting_for_human'
                 WHEN EXISTS(SELECT 1 FROM conversation_message_queue q LEFT JOIN conversation_queued_planning p USING(conversation_id,message_id) WHERE q.task_id=t.id AND q.cancelled_at IS NULL AND p.call_id IS NULL) THEN 'awaiting_approval'
-                ELSE 'idle' END
-                FROM conversation_tasks t JOIN conversation_messages m ON m.conversation_id=t.conversation_id AND m.message_id=t.source_message_id WHERE t.conversation_id=?1 AND m.sequence>?2 ORDER BY m.sequence LIMIT ?3")?;
-            let items = query.query_map(params![conversation.to_string(),after,i64::try_from(limit+1).expect("bounded page limit")], |r| Ok(json!({
-                "task_id":r.get::<_,String>(0)?,"source_message_id":r.get::<_,String>(1)?,"schema_revision":r.get::<_,String>(2)?,"created_at":r.get::<_,String>(3)?,"sequence":r.get::<_,i64>(4)?,"title":r.get::<_,String>(5)?.chars().take(160).collect::<String>(),"project_owner_id":project,"conversation_id":conversation,"state":r.get::<_,String>(6)?,"state_scope":"task_activity"
+                ELSE 'idle' END,
+                COALESCE(l.state,'active'),COALESCE(l.revision,0),l.archived_at,l.trashed_at,l.deletion_operation_id,COALESCE(l.updated_at,t.created_at)
+                FROM conversation_tasks t JOIN conversation_messages m ON m.conversation_id=t.conversation_id AND m.message_id=t.source_message_id LEFT JOIN conversation_task_lifecycle l ON l.task_id=t.id WHERE t.conversation_id=?1 AND m.sequence>?2 AND (?4 IS NULL OR COALESCE(l.state,'active')=?4) ORDER BY m.sequence LIMIT ?3")?;
+            let items = query.query_map(params![conversation.to_string(),after,i64::try_from(limit+1).expect("bounded page limit"),filter.sql_name()], |r| Ok(json!({
+                "task_id":r.get::<_,String>(0)?,"source_message_id":r.get::<_,String>(1)?,"schema_revision":r.get::<_,String>(2)?,"created_at":r.get::<_,String>(3)?,"sequence":r.get::<_,i64>(4)?,"title":r.get::<_,String>(5)?.chars().take(160).collect::<String>(),"project_owner_id":project,"conversation_id":conversation,"state":r.get::<_,String>(6)?,"state_scope":"task_activity",
+                "lifecycle_state":r.get::<_,String>(7)?,"lifecycle_revision":r.get::<_,i64>(8)?,"archived_at":r.get::<_,Option<String>>(9)?,"trashed_at":r.get::<_,Option<String>>(10)?,"deletion_operation_id":r.get::<_,Option<String>>(11)?,"lifecycle_updated_at":r.get::<_,String>(12)?
             })))?.collect::<Result<Vec<_>,_>>()?;
             Ok(page(items, limit))
         })

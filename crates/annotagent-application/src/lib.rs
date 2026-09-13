@@ -9809,6 +9809,43 @@ impl LocalApplication {
         Ok(self.store.conversation_tasks(&owner, conversation)?)
     }
 
+    pub fn conversation_tasks_filtered(
+        &self,
+        project_id: &str,
+        conversation: uuid::Uuid,
+        filter: annotagent_storage::ConversationTaskLifecycleFilter,
+    ) -> Result<Vec<annotagent_storage::ConversationTask>> {
+        let owner = self.conversation_project_identity(project_id)?;
+        Ok(self
+            .store
+            .conversation_tasks_filtered(&owner, conversation, filter)?)
+    }
+
+    pub fn change_conversation_task_lifecycle(
+        &self,
+        project_id: &str,
+        conversation: uuid::Uuid,
+        task: uuid::Uuid,
+        input: &annotagent_storage::ConversationTaskLifecycleCommand,
+    ) -> Result<annotagent_storage::ConversationTaskLifecycleReceipt> {
+        let owner = self.conversation_project_identity(project_id)?;
+        Ok(self
+            .store
+            .change_conversation_task_lifecycle(&owner, conversation, task, input)?)
+    }
+
+    pub fn conversation_task_lifecycle_receipt(
+        &self,
+        project_id: &str,
+        conversation: uuid::Uuid,
+        command: uuid::Uuid,
+    ) -> Result<Option<annotagent_storage::ConversationTaskLifecycleReceipt>> {
+        let owner = self.conversation_project_identity(project_id)?;
+        Ok(self
+            .store
+            .conversation_task_lifecycle_receipt(&owner, conversation, command)?)
+    }
+
     pub fn conversation_task_selection(
         &self,
         project: &str,

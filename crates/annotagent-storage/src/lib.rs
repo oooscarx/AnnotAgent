@@ -62,6 +62,7 @@ pub use demo_onboarding::{
     DemoImageSeed, DemoPresetAnnotationSeed, DemoPresetObjectReviewInput, DemoSourceMode,
     DemoSourceProvenance, DemoStartReceipt, DemoStartScope, DemoStartSeed, DemoStartStatus,
 };
+mod conversation_task_lifecycle;
 mod conversation_task_selection;
 mod conversation_tasks;
 mod delivery_image_review;
@@ -88,6 +89,11 @@ pub use conversation_schema::{ConversationSchemaDefinition, ConversationSchemaDr
 pub use conversation_send::{
     ConversationSendDisposition, ConversationSendInput, ConversationSendMode,
     ConversationSendReceipt,
+};
+pub use conversation_task_lifecycle::{
+    ConversationTaskLifecycle, ConversationTaskLifecycleAction, ConversationTaskLifecycleCommand,
+    ConversationTaskLifecycleFilter, ConversationTaskLifecycleReceipt,
+    ConversationTaskLifecycleState,
 };
 pub use conversation_task_selection::{ConversationTaskSelection, SelectConversationTask};
 pub use delivery_image_review::{
@@ -764,6 +770,7 @@ impl SqliteStore {
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(71,'demo_onboarding',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute_batch(include_str!("../../../migrations/0072_conversation_schema_retries.sql"))?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(72,'conversation_schema_retries',?1)",[Utc::now().to_rfc3339()])?;
+            crate::conversation_task_lifecycle::migrate(&transaction)?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(68,'delivery_package_consents',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(67,'delivery_export_snapshots',?1)",[Utc::now().to_rfc3339()])?;
             transaction.execute("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES(66,'delivery_image_reviews',?1)",[Utc::now().to_rfc3339()])?;

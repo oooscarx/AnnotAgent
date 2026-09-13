@@ -96,6 +96,10 @@ impl SqliteStore {
                     return Err(StorageError::InvalidEnum("Processing request key belongs to different authorization".into()));
                 }
             } else {
+                if let Some(task) = state["authorization"]["conversation"]["task_id"].as_str() {
+                    let task = uuid::Uuid::parse_str(task).map_err(|_| StorageError::InvalidConversation("Processing authorization has an invalid task identity".into()))?;
+                    crate::conversation_task_lifecycle::require_active_in(&transaction,task)?;
+                }
                 transaction.execute("INSERT INTO processing_operations(id,project_id,request_json,state_json,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?5)", params![id,project,serialized,serde_json::to_string(state)?,Utc::now().to_rfc3339()])?;
             }
             transaction.commit()?;

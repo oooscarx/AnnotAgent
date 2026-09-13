@@ -108,6 +108,7 @@ impl SqliteStore {
             let saved=intent(&tx,project,conversation,task)?;
             let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM delivery_package_consents WHERE id=?1)",[input.id.to_string()],|r|r.get(0))?;
             if exists{let old=read(&tx,project,conversation,task,input.id)?;if old.input!=*input{return Err(invalid("Package permission retries cannot change scope"));}return Ok(old);}
+            crate::conversation_task_lifecycle::require_active_in(&tx,task)?;
             if saved.revision!=input.intent_revision||saved.content_sha256!=input.intent_sha256||!saved.intent.missing_slots().is_empty()||!saved.intent.training_target.as_ref().is_some_and(annotagent_core::dataset_delivery::TrainingTarget::is_detection_preset){return Err(invalid("Package permission requires the exact complete supported delivery version"));}
             let active:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM delivery_package_consents WHERE task_id=?1 AND state='armed')",[task.to_string()],|r|r.get(0))?;
             if active{return Err(invalid("A package permission is already armed; inspect or cancel it before replacing"));}

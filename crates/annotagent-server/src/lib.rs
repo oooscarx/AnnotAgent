@@ -459,9 +459,19 @@ impl ApiError {
         if let Some(StorageError::ConversationContract { code, .. }) =
             error.downcast_ref::<StorageError>()
         {
+            let conflict = matches!(
+                *code,
+                "task_lifecycle_active_work"
+                    | "task_lifecycle_revision_conflict"
+                    | "task_lifecycle_command_conflict"
+            );
             return Self {
-                status: StatusCode::BAD_REQUEST,
-                body: json!({"error":error.to_string(),"status":400,"code":code,"suggested_action":"reload_owner_snapshot","current_revision":null}),
+                status: if conflict {
+                    StatusCode::CONFLICT
+                } else {
+                    StatusCode::BAD_REQUEST
+                },
+                body: json!({"error":error.to_string(),"status":if conflict {409}else{400},"code":code,"suggested_action":if conflict {"reload_task_lifecycle"}else{"reload_owner_snapshot"},"current_revision":null}),
             };
         }
         Self::bad_request(error)
@@ -15297,6 +15307,187 @@ export:
                 .annotation_schema
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn conversation_task_lifecycle_http_is_filtered_owned_recoverable_and_csrf_protected() {
+        use axum::http::Method;
+        let temp = tempfile::tempdir().unwrap();
+        let application = Arc::new(LocalApplication::new(temp.path()).unwrap());
+        let yaml = "version: 1\nproject:\n  name: TEST lifecycle\ndataset:\n  root: images\nruntime: {}\ntasks: []\nreview:\n  auto_accept_confidence: 0.9\n  force_review_below: 0.5\nexport:\n  formats: [native]\n";
+        application.create_project("task-life", yaml).unwrap();
+        application.create_project("task-life-other", yaml).unwrap();
+        let conversation = application
+            .create_project_conversation("task-life")
+            .unwrap();
+        let service = router(
+            test_state(
+                application.clone(),
+                Arc::new(InMemorySecretStore::default()),
+            )
+            .await,
+            None,
+        );
+        let send_url = format!("/api/projects/task-life/conversations/{conversation}/send");
+        let sent = call_json(
+            &service,
+            Method::POST,
+            &send_url,
+            json!({
+                "message":{"id":uuid::Uuid::new_v4(),"text":"TEST archive me","image":null},
+                "task_id":null,
+                "schema_revision":application.project_goal("task-life").unwrap()["revision"],
+                "mode":"plan"
+            }),
+        )
+        .await;
+        assert_eq!(sent.0, StatusCode::OK);
+        let task = sent.1["task_id"].as_str().unwrap();
+        let task_root =
+            format!("/api/projects/task-life/conversations/{conversation}/tasks/{task}");
+        let tasks_url = format!("/api/projects/task-life/conversations/{conversation}/tasks");
+        let navigation_url =
+            format!("/api/projects/task-life/conversations/{conversation}/task-navigation");
+        let active = call_json(&service, Method::GET, &tasks_url, Value::Null).await;
+        assert_eq!(active.0, StatusCode::OK);
+        assert_eq!(active.1[0]["lifecycle"]["state"], "active");
+        let navigation = call_json(&service, Method::GET, &navigation_url, Value::Null).await;
+        assert_eq!(navigation.1["items"][0]["lifecycle_state"], "active");
+        assert_eq!(navigation.1["items"][0]["lifecycle_revision"], 0);
+
+        let command = uuid::Uuid::new_v4();
+        let lifecycle_url = format!("{task_root}/lifecycle");
+        let unauthorized = service
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method(Method::POST)
+                    .uri(&lifecycle_url)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({"command_id":command,"expected_revision":0,"action":"archive"})
+                            .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+        let archived = call_json(
+            &service,
+            Method::POST,
+            &lifecycle_url,
+            json!({"command_id":command,"expected_revision":0,"action":"archive"}),
+        )
+        .await;
+        assert_eq!(archived.0, StatusCode::OK);
+        assert_eq!(archived.1["lifecycle"]["state"], "archived");
+        assert_eq!(archived.1["replayed"], false);
+        let replay = call_json(
+            &service,
+            Method::POST,
+            &lifecycle_url,
+            json!({"command_id":command,"expected_revision":0,"action":"archive"}),
+        )
+        .await;
+        assert_eq!(replay.1["replayed"], true);
+        assert_eq!(
+            call_json(&service, Method::GET, &tasks_url, Value::Null)
+                .await
+                .1,
+            json!([])
+        );
+        assert_eq!(
+            call_json(
+                &service,
+                Method::GET,
+                &format!("{tasks_url}?state=archived"),
+                Value::Null,
+            )
+            .await
+            .1[0]["input"]["id"],
+            task
+        );
+        let archived_navigation = call_json(
+            &service,
+            Method::GET,
+            &format!("{navigation_url}?state=archived"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(archived_navigation.1["items"][0]["task_id"], task);
+        assert_eq!(
+            call_json(
+                &service,
+                Method::GET,
+                &format!("{task_root}/thread"),
+                Value::Null,
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        let followup = call_json(
+            &service,
+            Method::POST,
+            &send_url,
+            json!({
+                "message":{"id":uuid::Uuid::new_v4(),"text":"TEST must not write","image":null},
+                "task_id":task,
+                "schema_revision":application.project_goal("task-life").unwrap()["revision"],
+                "mode":"plan"
+            }),
+        )
+        .await;
+        assert_eq!(followup.0, StatusCode::BAD_REQUEST);
+        assert_eq!(followup.1["code"], "task_not_active");
+        let receipt_url = format!(
+            "/api/projects/task-life/conversations/{conversation}/task-lifecycle-operations/{command}"
+        );
+        let receipt = call_json(&service, Method::GET, &receipt_url, Value::Null).await;
+        assert_eq!(receipt.0, StatusCode::OK);
+        assert_eq!(receipt.1["lifecycle"]["state"], "archived");
+        assert_eq!(
+            call_json(
+                &service,
+                Method::GET,
+                &receipt_url.replace("task-life/", "task-life-other/"),
+                Value::Null,
+            )
+            .await
+            .0,
+            StatusCode::BAD_REQUEST
+        );
+
+        let restore = call_json(
+            &service,
+            Method::POST,
+            &lifecycle_url,
+            json!({"command_id":uuid::Uuid::new_v4(),"expected_revision":1,"action":"restore"}),
+        )
+        .await;
+        assert_eq!(restore.0, StatusCode::OK);
+        assert_eq!(restore.1["lifecycle"]["state"], "active");
+        let owner =
+            stable_project_id(&temp.path().join("task-life").canonicalize().unwrap()).to_string();
+        application
+            .store()
+            .reserve_conversation_builder(
+                &owner,
+                task.parse().unwrap(),
+                uuid::Uuid::new_v4(),
+                &"a".repeat(64),
+            )
+            .unwrap();
+        let blocked = call_json(
+            &service,
+            Method::POST,
+            &lifecycle_url,
+            json!({"command_id":uuid::Uuid::new_v4(),"expected_revision":2,"action":"move_to_trash"}),
+        )
+        .await;
+        assert_eq!(blocked.0, StatusCode::CONFLICT);
+        assert_eq!(blocked.1["code"], "task_lifecycle_active_work");
     }
 
     #[tokio::test]

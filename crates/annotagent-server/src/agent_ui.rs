@@ -5,6 +5,8 @@ use super::*;
 pub(super) struct Page {
     cursor: Option<String>,
     limit: Option<u32>,
+    #[serde(default)]
+    state: annotagent_storage::ConversationTaskLifecycleFilter,
 }
 pub(super) async fn navigation(
     State(state): State<ServerState>,
@@ -29,7 +31,13 @@ pub(super) async fn tasks(
         .map_err(ApiError::bad_request)?;
     state
         .application
-        .agent_ui_tasks(&project, conversation, after, page.limit.unwrap_or(50))
+        .agent_ui_tasks_filtered(
+            &project,
+            conversation,
+            after,
+            page.limit.unwrap_or(50),
+            page.state,
+        )
         .map(Json)
         .map_err(ApiError::conversation)
 }

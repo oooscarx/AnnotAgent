@@ -51,6 +51,22 @@ impl LocalApplication {
             limit,
         )?)
     }
+    pub fn agent_ui_tasks_filtered(
+        &self,
+        project: &str,
+        conversation: Uuid,
+        after: i64,
+        limit: u32,
+        filter: annotagent_storage::ConversationTaskLifecycleFilter,
+    ) -> Result<Value> {
+        Ok(self.store.agent_ui_tasks_filtered(
+            &self.conversation_project_identity(project)?,
+            conversation,
+            after,
+            limit,
+            filter,
+        )?)
+    }
     pub fn agent_ui_thread(
         &self,
         project: &str,
@@ -80,6 +96,8 @@ impl LocalApplication {
             .into_iter()
             .find(|v| v.input.id == task)
             .ok_or_else(|| anyhow::anyhow!("Task missing"))?;
+        let task_active = task_record.lifecycle.state
+            == annotagent_storage::ConversationTaskLifecycleState::Active;
         let owner = self.conversation_project_identity(project)?;
         let operations =
             self.store
@@ -125,7 +143,7 @@ impl LocalApplication {
             "budget":self.optional_conversation_builder_budget(project,conversation,task)?,
             "actions":{
                 "stop":{"available":can_stop,"reason":if can_stop { "Select an exact operation target" } else { "No active operation" }},
-                "send":{"available":true,"reason":"Saves a message; execution requires exact separate consent"},
+                "send":{"available":task_active,"reason":if task_active {"Saves a message; execution requires exact separate consent"} else {"Restore this archived or trashed task before making changes"}},
                 "approve":{"available":false,"reason":"Select an exact operation preview and its current scope"},
                 "resume":{"available":can_resume,"reason":"Select an available exact checkpoint from resume_actions; unknown outcomes cannot be automatically retried"}
             },
