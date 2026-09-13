@@ -870,6 +870,7 @@ fn set_batch_status_in(
 /// Consume one explicit, task-owned whole-image delivery review into the Dataset Batch
 /// lifecycle. Review receipts remain immutable history; this only closes the corresponding
 /// suspended image and, once no work remains, releases the Project's active Batch slot.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn complete_delivery_reviewed_batch_image_in(
     transaction: &Transaction<'_>,
     project: &str,
