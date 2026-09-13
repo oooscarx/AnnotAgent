@@ -1,5 +1,4 @@
 import { expect, test } from "@playwright/test";
-import { randomUUID } from "node:crypto";
 
 test("task archive, soft delete and restore stay project-scoped and leave the current task safely", async ({ page, request }) => {
   expect((await request.get("/api/health")).headers()["x-annotagent-fixture"]).toBe("external-model-only");
@@ -7,20 +6,11 @@ test("task archive, soft delete and restore stay project-scoped and leave the cu
   const project = navigation.items.find((item: { title: string }) => item.title === "TEST Agent UI HTTP fixture");
   expect(project).toBeTruthy();
   const root = `/api/projects/${project.project_id}/conversations/${project.conversation_id}`;
-  const session = await (await request.get("/api/session")).json();
-  const goal = await (await request.get(`/api/projects/${project.project_id}/goal`)).json();
-  const taskTitle = `TEST task lifecycle ${randomUUID()}`;
-  const created = await request.post(`${root}/send`, {
-    headers: { "x-annotagent-csrf": session.csrf_token },
-    data: {
-      task_id: null,
-      message: { id: randomUUID(), text: taskTitle, image: null },
-      schema_revision: goal.revision,
-      mode: "plan",
-    },
-  });
-  expect(created.ok(), await created.text()).toBeTruthy();
-  const taskId = (await created.json()).task_id;
+  const tasks = await (await request.get(`${root}/task-navigation?limit=100`)).json();
+  const selected = tasks.items.find((item: { state: string }) => item.state === "idle");
+  expect(selected).toBeTruthy();
+  const taskId = selected.task_id;
+  const taskTitle = selected.title;
 
   const writes: string[] = [];
   page.on("request", request => {
@@ -29,7 +19,7 @@ test("task archive, soft delete and restore stay project-scoped and leave the cu
   });
 
   await page.goto(`/projects/${project.project_id}/work?task=${taskId}`);
-  await page.getByRole("button", { name: `管理任务 ${taskTitle}`, exact: true }).click();
+  await page.locator(".task-tree-row", { hasText: taskTitle }).locator(".task-lifecycle-menu summary").click();
   await page.getByRole("menuitem", { name: "归档", exact: true }).click();
   const archive = page.getByRole("dialog", { name: "归档任务" });
   await expect(archive).toContainText("完整对话、执行轨迹和 JSON 上下文都会保留");
@@ -45,7 +35,7 @@ test("task archive, soft delete and restore stay project-scoped and leave the cu
   await expect(archived.getByText("没有已归档任务。", { exact: true })).toBeVisible();
 
   await page.goto(`/projects/${project.project_id}/work?task=${taskId}`);
-  await page.getByRole("button", { name: `管理任务 ${taskTitle}`, exact: true }).click();
+  await page.locator(".task-tree-row", { hasText: taskTitle }).locator(".task-lifecycle-menu summary").click();
   await page.getByRole("menuitem", { name: "移入回收站…", exact: true }).click();
   const remove = page.getByRole("dialog", { name: "将任务移入回收站" });
   await expect(remove).toContainText("可恢复的软删除");
@@ -70,7 +60,7 @@ test("task lifecycle menus close with Escape and do not submit any mutation", as
   await page.goto(`/projects/${project.project_id}/work?task=${tasks.items[0].task_id}`);
   let writes = 0;
   page.on("request", request => { if (request.method() === "POST" && request.url().endsWith("/lifecycle")) writes += 1; });
-  const trigger = page.getByRole("button", { name: new RegExp("管理任务") }).first();
+  const trigger = page.locator(".task-lifecycle-menu summary").first();
   await trigger.click();
   await expect(page.getByRole("menu")).toBeVisible();
   await page.keyboard.press("Escape");
