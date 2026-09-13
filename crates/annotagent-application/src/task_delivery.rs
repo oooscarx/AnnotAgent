@@ -343,6 +343,17 @@ impl LocalApplication {
             "Review cursor is outside the current scope"
         );
         let formal = self.task_delivery_formal_result(project, conversation, task)?;
+        let preset_review_ready = self.store.is_demo_preset_task(
+            &self.conversation_project_identity(project)?,
+            conversation,
+            task,
+        )? && self
+            .conversation_processing_history(project, conversation, task)?
+            .is_empty();
+        ensure!(
+            !formal.is_null() || preset_review_ready,
+            "Formal processing source is unavailable; review cannot start before a Batch is created"
+        );
         let formal_images = formal["images"].as_array().cloned().unwrap_or_default();
         let project_images = self.list_project_image_summaries(project)?;
         let end = cursor.saturating_add(limit).min(scope.len());

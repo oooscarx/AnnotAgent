@@ -145,6 +145,18 @@ fn authorization_result_diagnostic(
     }))
 }
 
+fn failed_processing_can_be_reconfirmed(processing: &[Value], formal_result: &Value) -> bool {
+    !processing.is_empty()
+        && formal_result.is_null()
+        && processing.iter().all(|operation| {
+            operation["batch_id"].is_null()
+                && matches!(
+                    operation["phase"].as_str(),
+                    Some("failed" | "cancelled" | "interrupted")
+                )
+        })
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdvanceTaskInput {
@@ -399,7 +411,11 @@ impl LocalApplication {
             .collect::<Vec<_>>();
         let pending_journey_sample =
             self.pending_journey_sample_action(project, conversation, task, &journeys)?;
-        let preset_review_ready = self.store.is_demo_preset_task(&owner, conversation, task)?;
+        // A real processing attempt supersedes the optional preset-candidate
+        // experience. A failed admission must never fall back to fixture-like
+        // review rows or imply that formal inference completed.
+        let preset_review_ready =
+            processing.is_empty() && self.store.is_demo_preset_task(&owner, conversation, task)?;
         let processing_completed = preset_review_ready
             || processing.iter().any(|operation| {
                 matches!(
@@ -443,43 +459,47 @@ impl LocalApplication {
         } else {
             Value::Null
         };
+        let failed_processing_retryable =
+            failed_processing_can_be_reconfirmed(&processing, &formal_result);
 
-        let (selected_images, reviewed_images, current_reviews, pending_reviews) =
-            if let Some(saved) = &delivery.saved {
-                let scope = saved.intent.dataset_scope.as_deref().unwrap_or_default();
-                let reviews = self
-                    .store
-                    .delivery_image_reviews(&owner, conversation, task)?;
-                let mut current = 0usize;
-                for image in scope {
-                    let review = reviews
-                        .iter()
-                        .find(|review| review.input.image_id == image.image_id);
-                    if let Some(review) = review {
-                        if self
-                            .store
-                            .delivery_image_snapshot(
-                                &owner,
-                                conversation,
-                                task,
-                                image.image_id,
-                                review.input.source_run_id,
-                            )
-                            .is_ok_and(|snapshot| snapshot.sha256 == review.snapshot.sha256)
-                        {
-                            current += 1;
-                        }
+        let (selected_images, reviewed_images, current_reviews, pending_reviews) = if !formal_result
+            .is_null()
+            && let Some(saved) = &delivery.saved
+        {
+            let scope = saved.intent.dataset_scope.as_deref().unwrap_or_default();
+            let reviews = self
+                .store
+                .delivery_image_reviews(&owner, conversation, task)?;
+            let mut current = 0usize;
+            for image in scope {
+                let review = reviews
+                    .iter()
+                    .find(|review| review.input.image_id == image.image_id);
+                if let Some(review) = review {
+                    if self
+                        .store
+                        .delivery_image_snapshot(
+                            &owner,
+                            conversation,
+                            task,
+                            image.image_id,
+                            review.input.source_run_id,
+                        )
+                        .is_ok_and(|snapshot| snapshot.sha256 == review.snapshot.sha256)
+                    {
+                        current += 1;
                     }
                 }
-                (
-                    scope.len(),
-                    reviews.len(),
-                    current,
-                    scope.len().saturating_sub(current),
-                )
-            } else {
-                (0, 0, 0, 0)
-            };
+            }
+            (
+                scope.len(),
+                reviews.len(),
+                current,
+                scope.len().saturating_sub(current),
+            )
+        } else {
+            (0, 0, 0, 0)
+        };
 
         let root = format!("/api/projects/{project}/conversations/{conversation}/tasks/{task}");
         let active_operations =
@@ -583,7 +603,7 @@ impl LocalApplication {
                 "url":format!("{root}/advance"),"requires_confirmation":false,
                 "reason":null
             }));
-        } else if processing.is_empty()
+        } else if (processing.is_empty() || failed_processing_retryable)
             && let Some(candidate) = processing_candidate.as_ref()
         {
             let draft_id = candidate["draft_id"].as_str().unwrap();
@@ -592,12 +612,13 @@ impl LocalApplication {
                 "id":"start_delivery_processing","state":"requires_confirmation","method":"GET",
                 "url":format!("/api/projects/{project}/processing-preview?draft_id={draft_id}&sample_test_id={sample_test_id}"),
                 "requires_confirmation":true,
-                "reason":"exact_delivery_processing_scope_requires_confirmation",
+                "reason":if failed_processing_retryable{"previous_processing_failed_before_batch_retry_requires_confirmation"}else{"exact_delivery_processing_scope_requires_confirmation"},
                 "scope":{
                     "delivery_revision":delivery.saved.as_ref().map(|saved|saved.revision),
                     "delivery_sha256":delivery.saved.as_ref().map(|saved|saved.content_sha256.clone()),
                     "images":delivery.saved.as_ref().and_then(|saved|saved.intent.dataset_scope.clone()).unwrap_or_default(),
                     "draft":candidate,
+                    "previous_failed_operation_ids":if failed_processing_retryable {processing.iter().filter_map(|operation|operation["id"].as_str()).collect::<Vec<_>>()} else {Vec::new()},
                     "preview_freezes_model_bindings_destination_and_cost":true
                 }
             }));
@@ -647,7 +668,7 @@ impl LocalApplication {
             "messages":messages,
             "steps":[
                 {"id":"schema","kind":"schema","title":"Task Schema","state":if schema.is_some()||preset_review_ready{"completed"}else{"waiting"},"status":if schema.is_some()||preset_review_ready{"completed"}else if delivery.saved.is_none()||!delivery.missing_slots.is_empty(){"blocked"}else{"ready"},"request_completed":schema.is_some()||preset_review_ready,"task_completed":false},
-                {"id":"processing","kind":"processing","title":"Dataset processing","state":if processing_completed{"completed"}else if processing.is_empty(){"waiting"}else{"running"},"status":if processing_completed{"completed"}else if processing.is_empty(){"awaiting_approval"}else{"running"},"request_completed":processing_completed,"task_completed":false},
+                {"id":"processing","kind":"processing","title":"Dataset processing","state":if processing_completed{"completed"}else if failed_processing_retryable{"failed"}else if processing.is_empty(){"waiting"}else{"running"},"status":if processing_completed{"completed"}else if failed_processing_retryable{"failed"}else if processing.is_empty(){"awaiting_approval"}else{"running"},"request_completed":processing_completed,"task_completed":false},
                 {"id":"whole_image_review","kind":"whole_image_review","title":"Whole-image review","state":if selected_images>0&&pending_reviews==0{"completed"}else{"waiting"},"status":if selected_images>0&&pending_reviews==0{"completed"}else if processing_completed{"ready"}else{"blocked"},"request_completed":selected_images>0&&pending_reviews==0,"task_completed":false},
                 {"id":"training_package","kind":"training_package","title":"Training package","state":package_state,"status":if package_ready{"completed"}else if package_state=="failed"{"failed"}else if package_state=="running"{"running"}else if selected_images>0&&pending_reviews==0{"awaiting_approval"}else{"blocked"},"request_completed":package_ready,"task_completed":package_ready}
             ],
@@ -830,8 +851,8 @@ impl LocalApplication {
 #[cfg(test)]
 mod tests {
     use super::{
-        authorization_result_diagnostic, call_result_diagnostic, journey_sample_operation,
-        sample_result_diagnostics,
+        authorization_result_diagnostic, call_result_diagnostic,
+        failed_processing_can_be_reconfirmed, journey_sample_operation, sample_result_diagnostics,
     };
     use annotagent_core::{ModelFailure, ModelFailureCategory, ModelFailureStage};
     use annotagent_storage::{
@@ -852,6 +873,26 @@ mod tests {
             "saved-operation"
         );
         assert!(journey_sample_operation(&[json!({"sample":null})]).is_none());
+    }
+
+    #[test]
+    fn only_terminal_pre_batch_failures_allow_explicit_processing_reconfirmation() {
+        assert!(failed_processing_can_be_reconfirmed(
+            &[json!({"id":"failed","phase":"failed","batch_id":null})],
+            &serde_json::Value::Null,
+        ));
+        assert!(!failed_processing_can_be_reconfirmed(
+            &[json!({"id":"running","phase":"running","batch_id":null})],
+            &serde_json::Value::Null,
+        ));
+        assert!(!failed_processing_can_be_reconfirmed(
+            &[json!({"id":"failed","phase":"failed","batch_id":"batch-1"})],
+            &serde_json::Value::Null,
+        ));
+        assert!(!failed_processing_can_be_reconfirmed(
+            &[json!({"id":"failed","phase":"failed","batch_id":null})],
+            &json!({"batch_id":"batch-1"}),
+        ));
     }
 
     #[test]
