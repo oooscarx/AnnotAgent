@@ -1,5 +1,15 @@
 # 本轮验证记录
 
+## 使用指南补全（2026-09-13）
+
+- 基线：`main`，`8a711ded7698b7337a561f17b1afe33382b848bc`。开始前仅存在既有、未跟踪的设计与产品资料目录，本次未读取、修改或提交这些目录。
+- `target/debug/annotagent serve --help`：通过，确认 `--workspace`、`--open` 和 `--port` 是当前 CLI 的真实参数。
+- `npm --prefix web run build`：通过；包含 design token 检查、TypeScript 检查和 Vite production build。Vite 报告一个大于 500 kB 的 chunk 警告，不影响构建成功。
+- `npm --prefix web test`：通过，124 个 test files、468 项测试全部通过。
+- `cargo build --locked --workspace --all-features`：通过，包含应用、服务和仓库内 Plugin crates。
+- `git diff --check` 与 README 素材/本地链接检查：通过。
+- 本次没有启动或重启现有服务，没有读取凭证、调用 Provider、产生模型费用、修改真实工作区或生成新标注。README 中的真实模型演示是操作说明，不是本次重新执行的准确率证明。
+
 日期：2026-09-12。仅文档与只读取证，不改应用、真实数据、凭证、依赖声明或部署配置。
 
 ## 实际执行

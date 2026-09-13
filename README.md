@@ -11,7 +11,7 @@
 
 > Alpha · 本地单用户应用。需要配置模型；样例验证、正式审核和打包条件仍需确认。当前完整训练包仅支持 Ultralytics YOLO 检测预设，不执行模型训练。
 
-[开始使用](#开始使用) · [任务示例](#一次任务从图片到数据包) · [文档](docs/product/readme/GUIDE.md) · [English](README.en.md)
+[编译与启动](#编译与启动) · [配置模型](#配置-provider-endpoint-和-api-key) · [演示用例](#两个可执行演示) · [文档](docs/product/readme/GUIDE.md) · [English](README.en.md)
 
 ![真实 B-Human 足球样例：左侧项目与任务，中间会话，右侧候选框及待人工协助状态](docs/product/readme/workspace.png)
 
@@ -50,23 +50,103 @@
 
 这些是面向视觉标注的专门机制，不意味着通用 Agent 无法实现相同能力。
 
-## 开始使用
+## 编译与启动
 
-目前推荐**从源码启动**。仓库固定 Rust **1.98.0**；Node.js 推荐 **22.12 或更高**，使用 npm 和仓库锁文件。原生推理还需要相应平台依赖与兼容权重。
+目前推荐**从源码启动**。仓库固定 Rust **1.98.0**；Node.js 需要 **20.19+ 或 22.12+**，CI 使用 Node.js 22。请使用 npm 和仓库中的 `package-lock.json`。原生视觉模型还需要对应平台的 Plugin、兼容权重及运行库。
 
 ```bash
+git clone git@github.com:oooscarx/AnnotAgent.git
+cd AnnotAgent
+
+# 安装前端依赖并生成生产前端
 npm --prefix web ci
 npm --prefix web run build
-cargo run --locked -p annotagent -- serve --workspace ./workspace --open
+
+# 编译整个 Rust workspace
+cargo build --locked --workspace --all-features
 ```
 
-打开 [本地工作台](http://127.0.0.1:8787)，新建项目并进入任务。通过 Settings 配置自己的 Provider Endpoint、API Key 与模型；说明图片范围、标注目标和训练用途，按任务提示补全信息、确认样例与正式处理。缺少模型能力时先完成准备，再返回原任务。
+使用一个**可写**的工作区目录启动正式应用：
 
-- **源码启动**连接 Rust 服务与本地工作区；页面打开不代表模型推理已验证。
-- **UI Preview**是开发用预览数据界面，不是实际模型执行环境；参见[开发文档](docs/DEVELOPMENT.md)。
-- **真实模型调用**需要自己的模型连接或兼容本地权重，并确认请求范围和费用。仓库不包含全部生产权重。
+```bash
+cargo run --locked -p annotagent -- \
+  serve --workspace ./workspace --port 8787 --open
+```
 
-本轮实际执行的命令及结果见[验证记录](docs/product/readme/VALIDATION.md)，不将已有工程测试视为本轮重跑。
+如果没有自动打开浏览器，访问 [http://127.0.0.1:8787/projects](http://127.0.0.1:8787/projects)。端口已占用时换一个端口，例如 `--port 8788`；多个服务不要共用同一个工作区。SQLite、任务记录、Provider 配置、凭证引用、标注和导出都保存在所选工作区中，因此该目录必须可写且不应提交到 Git。
+
+只查看开发中的 Fixture 界面时可以运行 `npm --prefix web run dev:ui-preview`。**UI Preview 不连接真实工作区，不会调用模型，也不能作为端到端运行结果。**
+
+### 配置 Provider Endpoint 和 API Key
+
+1. 打开 **设置 → Providers 与账户**（`/settings/providers`），点击“添加 Provider”。可以选预设，也可以选择自定义 OpenAI-compatible Endpoint。
+2. 填写显示名称和服务商提供的 Base URL，例如 `https://api.example.com/v1`。不要填 `/chat/completions`，不要在 Endpoint 中加入 API Key、用户名、查询参数或其他凭证。
+3. 先保存账户，再打开该账户的编辑页。在“凭证存储”中选择一种方式：
+   - **本地工作区文件（推荐）**：粘贴 API Key 并保存。密钥以 owner-only 权限写入当前工作区的 `.annotagent/credentials/`，被 Git 忽略，可跨重启使用；不会存入系统钥匙串或浏览器存储。
+   - **服务器环境变量引用**：先在启动 AnnotAgent 的终端设置变量，再在界面里只填变量名，例如 `ANNOTAGENT_API_KEY`，不要把密钥填进“环境变量名称”。
+   - **仅服务器当前进程**：重启后失效，适合临时测试。
+4. 显式执行连接检查或模型发现。发现到远程模型 ID 只证明 Provider 返回了目录，不证明该模型能完成推理。
+
+环境变量方式示例：
+
+```bash
+export ANNOTAGENT_API_KEY='replace-with-your-own-key'
+cargo run --locked -p annotagent -- \
+  serve --workspace ./workspace --port 8787 --open
+```
+
+README、TOML、项目名称和 Endpoint 中都不要写真实密钥。应用只显示凭证是否存在，不会把已保存密钥读回页面。
+
+### 登记 Agent 模型和视觉模型
+
+Provider 是账户连接，Model Profile 才是可选的具体模型，两者需要分别配置：
+
+1. 在 **设置 → Agent 模型**（`/settings/agent-models`）添加规划模型，选择 Provider，填写服务商的精确模型 ID，并声明 `text` 输入和 `text_generation` 能力。工具调用、Structured Output 或 JSON Schema 仅在服务商实际支持时勾选。
+2. 在 **设置 → 视觉模型与插件**（`/settings/vision-models`）添加 VLM，至少声明 `image` 输入以及实际具备的视觉能力，例如 Vision Language、Object Detection、Open-vocabulary Detection 或 Phrase Grounding。
+3. 保存后启用模型，并执行显式测试。手工填写的能力在测试成功前仍是“用户声明”，不是可用性证据。
+4. 在任务 Composer 中选择的 Agent 模型负责理解要求和规划；图片推理使用 Workflow 节点绑定的视觉模型。切换 Agent 模型不会把正在执行的 Workflow 视觉模型一并替换。
+
+本地 EfficientSAM 等专家模型在同一“视觉模型与插件”页管理。`Plugin 已安装`、`Model Instance Ready` 和某次 Pipeline 中**实际执行过**是三个不同状态；请以任务执行轨迹和 Artifact 来源为准。
+
+## 两个可执行演示
+
+### 演示 1：离线检查候选并导出 YOLO ZIP
+
+这个演示不需要 API Key，也不会发生模型推理。为避免影响已有项目，使用新的工作区：
+
+```bash
+cargo run --locked -p annotagent -- \
+  serve --workspace ./workspace-demo --port 8789 --open
+```
+
+打开 `/projects` 后，在“第一次体验”中选择“体验预置候选”。AnnotAgent 会创建独立 Demo Project 和 Task，载入仓库自带的 6 张 `cup` / `bottle` 合成图片。逐图完成对象和整图审核，修正边界或漏框；满足就绪条件后生成并下载 Ultralytics YOLO Detection ZIP。界面会明确标注“本次无模型请求”，预置候选不能当成真实模型准确率证据。
+
+### 演示 2：用真实模型标注足球
+
+准备 1–5 张有权处理的比赛图片，创建项目并导入图片。确保规划模型、带图像输入的 VLM 已就绪；如果希望精修边界，还需安装兼容的 EfficientSAM Plugin 和 Model Instance。创建新任务后可直接使用下面的目标：
+
+> 本次只标注项目图片中的足球 ball，用贴合球体的 bbox。不标机器人、鞋子、白线或点球点。先生成真实方案并测试最多 3 张样例，不启动全量处理。VLM 生成候选；坐标不可靠时检查局部目标，并在兼容且已就绪时使用 EfficientSAM 精修。保留几何校验和人工审核，禁止 mock/fixture。样例审核通过后处理这 5 张项目图片，逐图人工确认，并导出 Ultralytics YOLO Detection ZIP。
+
+实际流程是：保存图片与目标 → 确认本次模型、图片、目的地和费用范围 → 自动生成方案并试跑样例 → 检查终端候选及执行轨迹 → 批准正式处理 → 逐图审核 → 生成并下载 ZIP。是否调用了 SAM 不能从提示词或安装列表推断；只有执行轨迹中出现对应节点和 Model Instance、且结果带有该 Artifact 来源，才算真正执行。
+
+真实 Provider 会收到获准范围内的图片与文本并可能产生费用。费用未知时界面应显示“未知”，不是零；出现“远端结果未知”时先查看同一请求的执行记录，不要盲目重复收费调用。
+
+## 开发检查
+
+提交改动前建议运行与 CI 一致的核心检查：
+
+```bash
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
+cargo build --locked --workspace --all-features
+
+npm --prefix web run typecheck
+npm --prefix web test
+npm --prefix web run build
+```
+
+浏览器端到端测试使用 `npm --prefix web run test:e2e`，需要先满足相应测试服务和 Playwright 浏览器条件。具体架构、TUI 和离线 CLI Demo 参见[开发文档](docs/DEVELOPMENT.md)；本轮实际验证记录见[验证记录](docs/product/readme/VALIDATION.md)。
 
 ## 模型与导出支持
 
